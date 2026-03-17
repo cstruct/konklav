@@ -1,0 +1,56 @@
+tenants (
+    {
+        id root
+        display_name "Root tenant"
+    }
+    {
+        id tenant-a
+        display_name "Tenant A"
+    }
+    {
+        id tenant-b
+        display_name "Tenant B"
+        parent tenant-a
+    }
+)
+
+subjects (
+    {
+        id operator-1
+        display_name "Root operator"
+    }
+    {
+        id doctor-1
+        display_name "Tenant doctor"
+    }
+)
+
+memberships (
+    {
+        subject operator-1
+        tenant root
+        roles ()
+        facts (
+            {key authn_level, integer 2}
+            {key operator_mode, string delegated}
+        )
+    }
+    {
+        subject doctor-1
+        tenant tenant-a
+        roles (doctor)
+        facts (
+            {key department, string general-practice}
+        )
+    }
+)
+
+assumption_grants (
+    {
+        subject operator-1
+        source_tenant root
+        target_tenant tenant-a
+        target_roles (doctor)
+        ttl_seconds 600
+    }
+)

@@ -1,0 +1,21 @@
+server {
+    host 127.0.0.1
+    port 8080
+}
+
+jwt {
+    issuer http://127.0.0.1:8080
+    default_audience conclave-dev
+    signing_secret conclave-dev-secret
+    ttl_seconds 900
+}
+
+feldera {
+    enabled false
+    base_url http://127.0.0.1:8080
+    pipeline_prefix conclave
+    readiness_probe true
+    compile_profile dev
+    auto_start false
+    start_initial paused
+}

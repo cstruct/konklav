@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/core", "crates/managed-config", "crates/server"]
+resolver = "2"
