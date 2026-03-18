@@ -75,10 +75,12 @@ impl AppState {
             store.bootstrap_if_empty(&managed.managed).await?;
             let durable_managed = store.load_managed().await?;
             let durable_apply_id = store.load_latest_apply_id().await?;
+            let (invites, credentials, sessions) = store.load_runtime_auth_state().await?;
             let mut state = ControlPlaneState::new(durable_managed)?;
             if let Some(apply_id) = durable_apply_id {
                 state.set_last_apply_id(apply_id);
             }
+            state.replace_runtime_auth_state(invites, credentials, sessions);
             (
                 state,
                 format!(
@@ -331,18 +333,38 @@ async fn create_invite(
         return response;
     }
 
-    let mut guard = state.state.write().expect("state lock should not poison");
-    match guard.create_invite(&body.subject, body.expires_in_seconds.unwrap_or(900)) {
-        Ok((invite_id, redeem_code, expires_at)) => HttpResponse::Ok().json(InviteCreateResponse {
-            invite_id,
-            subject: body.subject.clone(),
-            redeem_code,
-            expires_at,
-        }),
-        Err(err) => HttpResponse::BadRequest().json(serde_json::json!({
-            "error": err.to_string(),
-        })),
+    let planned = {
+        let guard = state.state.write().expect("state lock should not poison");
+        match guard.plan_invite(&body.subject, body.expires_in_seconds.unwrap_or(900)) {
+            Ok(planned) => planned,
+            Err(err) => {
+                return HttpResponse::BadRequest().json(serde_json::json!({
+                    "error": err.to_string(),
+                }))
+            }
+        }
+    };
+
+    if let Some(store) = &state.managed_store {
+        if let Err(err) = store.persist_invite(&planned.invite).await {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": err.to_string(),
+            }));
+        }
     }
+
+    let mut guard = state.state.write().expect("state lock should not poison");
+    let invite_id = planned.invite.invite_id.clone();
+    let expires_at = planned.invite.expires_at;
+    let redeem_code = planned.redeem_code.clone();
+    guard.record_invite(planned.invite);
+
+    HttpResponse::Ok().json(InviteCreateResponse {
+        invite_id,
+        subject: body.subject.clone(),
+        redeem_code,
+        expires_at,
+    })
 }
 
 #[post("/v1/invites/redeem")]
@@ -350,30 +372,66 @@ async fn redeem_invite(
     state: web::Data<AppState>,
     body: web::Json<RedeemInviteRequest>,
 ) -> impl Responder {
-    let mut guard = state.state.write().expect("state lock should not poison");
-    match guard.redeem_invite(&body.redeem_code, &body.password) {
-        Ok(subject) => HttpResponse::Ok().json(RedeemInviteResponse {
-            subject,
-            linked: true,
-        }),
-        Err(err) => HttpResponse::Forbidden().json(serde_json::json!({
-            "error": err.to_string(),
-        })),
-    }
-}
-
-#[post("/v1/login")]
-async fn login(state: web::Data<AppState>, body: web::Json<LoginRequest>) -> impl Responder {
-    let session_id = {
-        let mut guard = state.state.write().expect("state lock should not poison");
-        match guard.login(&body.subject, &body.password, &body.tenant) {
-            Ok(session_id) => session_id,
+    let planned = {
+        let guard = state.state.write().expect("state lock should not poison");
+        match guard.plan_redeem_invite(&body.redeem_code, &body.password) {
+            Ok(planned) => planned,
             Err(err) => {
                 return HttpResponse::Forbidden().json(serde_json::json!({
                     "error": err.to_string(),
                 }))
             }
         }
+    };
+
+    if let Some(store) = &state.managed_store {
+        if let Err(err) = store
+            .persist_redeemed_invite(
+                &planned.invite,
+                planned.previous_invite_row_version,
+                &planned.credential,
+            )
+            .await
+        {
+            return HttpResponse::Forbidden().json(serde_json::json!({
+                "error": err.to_string(),
+            }));
+        }
+    }
+
+    let mut guard = state.state.write().expect("state lock should not poison");
+    let subject = guard.apply_redeemed_invite(planned);
+    HttpResponse::Ok().json(RedeemInviteResponse {
+        subject,
+        linked: true,
+    })
+}
+
+#[post("/v1/login")]
+async fn login(state: web::Data<AppState>, body: web::Json<LoginRequest>) -> impl Responder {
+    let session = {
+        let guard = state.state.write().expect("state lock should not poison");
+        match guard.plan_login(&body.subject, &body.password, &body.tenant) {
+            Ok(session) => session,
+            Err(err) => {
+                return HttpResponse::Forbidden().json(serde_json::json!({
+                    "error": err.to_string(),
+                }))
+            }
+        }
+    };
+
+    if let Some(store) = &state.managed_store {
+        if let Err(err) = store.persist_session(&session).await {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": err.to_string(),
+            }));
+        }
+    }
+
+    let session_id = {
+        let mut guard = state.state.write().expect("state lock should not poison");
+        guard.record_session(session)
     };
 
     let (authz, tenants) = match state.current_snapshot() {
@@ -672,8 +730,31 @@ memberships (
         }
 
         #[patch("/v0/pipelines/{name}")]
-        async fn patch_pipeline() -> impl Responder {
-            HttpResponse::Ok().finish()
+        async fn patch_pipeline(
+            body: web::Json<serde_json::Value>,
+            path: web::Path<String>,
+        ) -> impl Responder {
+            HttpResponse::Ok().json(crate::feldera::PipelineRecord {
+                name: path.into_inner(),
+                description: body
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                program_code: body
+                    .get("program_code")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: serde_json::from_value(
+                    body.get("program_config")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                )
+                .ok(),
+            })
         }
 
         #[post("/v0/pipelines/{name}/start")]
@@ -698,6 +779,8 @@ memberships (
                 HttpResponse::Ok().body(r#"[{"count":0}]"#)
             } else if sql.contains("ORDER BY committed_at DESC") {
                 HttpResponse::Ok().body(r#"[{"apply_id":"apply-bootstrap"}]"#)
+            } else if sql.contains("CURRENT_AUTH_RUNTIME_EVENT") {
+                HttpResponse::Ok().body("[]")
             } else {
                 HttpResponse::Ok().body(
                     r#"[
@@ -842,8 +925,31 @@ catalog {
         }
 
         #[patch("/v0/pipelines/{name}")]
-        async fn patch_pipeline() -> impl Responder {
-            HttpResponse::Ok().finish()
+        async fn patch_pipeline(
+            body: web::Json<serde_json::Value>,
+            path: web::Path<String>,
+        ) -> impl Responder {
+            HttpResponse::Ok().json(crate::feldera::PipelineRecord {
+                name: path.into_inner(),
+                description: body
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                program_code: body
+                    .get("program_code")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: serde_json::from_value(
+                    body.get("program_config")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                )
+                .ok(),
+            })
         }
 
         #[get("/v0/pipelines/{name}/query")]
@@ -867,6 +973,8 @@ catalog {
                 HttpResponse::Ok().body(r#"[{"count":0}]"#)
             } else if sql.contains("ORDER BY committed_at DESC") {
                 HttpResponse::Ok().body(r#"[{"apply_id":"apply-bootstrap"}]"#)
+            } else if sql.contains("CURRENT_AUTH_RUNTIME_EVENT") {
+                HttpResponse::Ok().body("[]")
             } else {
                 HttpResponse::Ok().body(
                     r#"[
@@ -960,6 +1068,385 @@ catalog {
         assert!(seen.pipeline_creates >= 1);
         assert!(seen.query_calls >= 2);
         assert!(seen.ingress_calls >= 1);
+    }
+
+    // r[verify authn.session.persisted-history]
+    // r[verify identity.subject.linked-credentials.versioned-history]
+    // r[verify identity.subject.invite.audit-history]
+    #[actix_web::test]
+    async fn reloads_runtime_auth_state_from_feldera_after_restart() {
+        use actix_web::{patch, HttpResponse};
+        use serde_json::Value;
+        use std::collections::BTreeMap;
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        #[derive(Default)]
+        struct FakeStore {
+            pipelines_created: usize,
+            pipeline: Option<crate::feldera::PipelineRecord>,
+            managed_events: Vec<Value>,
+            apply_commits: Vec<Value>,
+            auth_runtime_events: Vec<Value>,
+            auth_runtime_commits: Vec<Value>,
+        }
+
+        fn decode_sql(request: &HttpRequest) -> String {
+            request
+                .query_string()
+                .split('&')
+                .find_map(|entry| entry.strip_prefix("sql="))
+                .unwrap_or_default()
+                .replace('+', " ")
+                .replace("%20", " ")
+                .replace("%28", "(")
+                .replace("%29", ")")
+                .replace("%2A", "*")
+        }
+
+        fn latest_rows(rows: &[Value]) -> Vec<Value> {
+            let mut latest = BTreeMap::<(String, String), Value>::new();
+
+            for row in rows {
+                let kind = row
+                    .get("resource_kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let key = row
+                    .get("resource_key")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let row_version = row.get("row_version").and_then(Value::as_u64).unwrap_or(0);
+                let replace = latest
+                    .get(&(kind.clone(), key.clone()))
+                    .and_then(|current| current.get("row_version").and_then(Value::as_u64))
+                    .map(|current| row_version >= current)
+                    .unwrap_or(true);
+                if replace {
+                    latest.insert((kind, key), row.clone());
+                }
+            }
+
+            latest
+                .into_values()
+                .filter(|row| !row.get("deleted").and_then(Value::as_bool).unwrap_or(false))
+                .collect()
+        }
+
+        #[get("/v0/pipelines/{name}")]
+        async fn get_pipeline(store: web::Data<Arc<Mutex<FakeStore>>>) -> impl Responder {
+            let pipeline = store.lock().expect("store lock").pipeline.clone();
+            if let Some(pipeline) = pipeline {
+                HttpResponse::Ok().json(pipeline)
+            } else {
+                HttpResponse::NotFound().finish()
+            }
+        }
+
+        #[post("/v0/pipelines")]
+        async fn create_pipeline(
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+            body: web::Json<crate::feldera::DesiredPipeline>,
+        ) -> impl Responder {
+            let record = crate::feldera::PipelineRecord {
+                name: body.name.clone(),
+                description: Some(body.description.clone()),
+                program_code: Some(body.program_code.clone()),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: body.program_config.clone(),
+            };
+            let mut store = store.lock().expect("store lock");
+            store.pipelines_created += 1;
+            store.pipeline = Some(record.clone());
+            HttpResponse::Ok().json(record)
+        }
+
+        #[post("/v0/pipelines/{name}/start")]
+        async fn start_pipeline() -> impl Responder {
+            HttpResponse::Ok().finish()
+        }
+
+        #[patch("/v0/pipelines/{name}")]
+        async fn patch_pipeline(
+            body: web::Json<serde_json::Value>,
+            path: web::Path<String>,
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+        ) -> impl Responder {
+            let record = crate::feldera::PipelineRecord {
+                name: path.into_inner(),
+                description: body
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                program_code: body
+                    .get("program_code")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: serde_json::from_value(
+                    body.get("program_config")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                )
+                .ok(),
+            };
+            store.lock().expect("store lock").pipeline = Some(record.clone());
+            HttpResponse::Ok().json(record)
+        }
+
+        #[post("/v0/pipelines/{name}/ingress/{table}")]
+        async fn ingress_rows(
+            path: web::Path<(String, String)>,
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+            body: web::Json<Vec<Value>>,
+        ) -> impl Responder {
+            let table = &path.1;
+            let mut store = store.lock().expect("store lock");
+            match table.as_str() {
+                "MANAGED_EVENT" => store.managed_events.extend(body.into_inner()),
+                "APPLY_COMMIT" => store.apply_commits.extend(body.into_inner()),
+                "AUTH_RUNTIME_EVENT" => store.auth_runtime_events.extend(body.into_inner()),
+                "AUTH_RUNTIME_COMMIT" => store.auth_runtime_commits.extend(body.into_inner()),
+                _ => {}
+            }
+
+            HttpResponse::Ok().json(serde_json::json!({ "completion_token": "done-1" }))
+        }
+
+        #[get("/v0/pipelines/{name}/completion_status")]
+        async fn completion_status() -> impl Responder {
+            HttpResponse::Ok().json(serde_json::json!({ "completed": true }))
+        }
+
+        #[get("/v0/pipelines/{name}/query")]
+        async fn query_pipeline(
+            request: HttpRequest,
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+        ) -> impl Responder {
+            let sql = decode_sql(&request);
+            let store = store.lock().expect("store lock");
+
+            if sql.contains("FROM APPLY_COMMIT") && sql.contains("COUNT(*)") {
+                let count = store
+                    .apply_commits
+                    .iter()
+                    .filter(|row| row.get("committed").and_then(Value::as_bool) == Some(true))
+                    .count();
+                HttpResponse::Ok().json(vec![serde_json::json!({ "count": count })])
+            } else if sql.contains("ORDER BY committed_at DESC") {
+                let apply_id = store
+                    .apply_commits
+                    .iter()
+                    .filter(|row| row.get("committed").and_then(Value::as_bool) == Some(true))
+                    .max_by_key(|row| row.get("committed_at").and_then(Value::as_u64).unwrap_or(0))
+                    .and_then(|row| row.get("apply_id").and_then(Value::as_str))
+                    .unwrap_or("apply-bootstrap");
+                HttpResponse::Ok().json(vec![serde_json::json!({ "apply_id": apply_id })])
+            } else if sql.contains("FROM CURRENT_MANAGED_EVENT") {
+                HttpResponse::Ok().json(latest_rows(&store.managed_events))
+            } else if sql.contains("FROM CURRENT_AUTH_RUNTIME_EVENT") {
+                HttpResponse::Ok().json(latest_rows(&store.auth_runtime_events))
+            } else if sql.contains("FROM MANAGED_EVENT") && sql.contains("MAX(row_version)") {
+                let resource_kind = sql
+                    .split("resource_kind = '")
+                    .nth(1)
+                    .and_then(|part| part.split('\'').next())
+                    .unwrap_or_default();
+                let scope = sql
+                    .split("scope = '")
+                    .nth(1)
+                    .and_then(|part| part.split('\'').next())
+                    .unwrap_or_default();
+                let max = store
+                    .managed_events
+                    .iter()
+                    .filter(|row| {
+                        row.get("resource_kind").and_then(Value::as_str) == Some(resource_kind)
+                            && row.get("scope").and_then(Value::as_str) == Some(scope)
+                    })
+                    .filter_map(|row| row.get("row_version").and_then(Value::as_u64))
+                    .max()
+                    .unwrap_or(0);
+                HttpResponse::Ok().json(vec![serde_json::json!({ "count": max })])
+            } else {
+                HttpResponse::Ok().json(Vec::<Value>::new())
+            }
+        }
+
+        let store = Arc::new(Mutex::new(FakeStore::default()));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("listener should have local addr");
+        let server_store = store.clone();
+        let server = actix_web::HttpServer::new(move || {
+            App::new()
+                .app_data(web::Data::new(server_store.clone()))
+                .service(get_pipeline)
+                .service(create_pipeline)
+                .service(start_pipeline)
+                .service(patch_pipeline)
+                .service(ingress_rows)
+                .service(completion_status)
+                .service(query_pipeline)
+        })
+        .listen(listener)
+        .expect("server should listen")
+        .run();
+        let handle = server.handle();
+        actix_web::rt::spawn(server);
+        actix_web::rt::time::sleep(Duration::from_millis(25)).await;
+
+        let loaded_config = || {
+            let mut loaded = LoadedConfig {
+                config: AppConfig::default(),
+                managed_dir: std::path::PathBuf::from("config"),
+                source: "test".to_owned(),
+            };
+            loaded.config.feldera.enabled = true;
+            loaded.config.feldera.base_url = format!("http://{}", addr);
+            loaded
+        };
+        let managed_config = || conclave_managed_config::LoadedManagedConfig {
+            managed: ManagedConfig::load_from_str(
+                r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+    )
+}
+templates (
+    {
+        tenant "tenant-a",
+        key "doctor",
+        policies (
+            {effect allow, action "tenant:user:read"}
+        )
+    }
+)
+roles (
+    {
+        tenant "tenant-a",
+        key "doctor"
+        template "doctor"
+    }
+)
+tenants (
+    {id "root"}
+    {id "tenant-a"}
+)
+subjects (
+    {id "doctor-1", display_name "Doctor One"}
+)
+memberships (
+    {
+        subject "doctor-1"
+        tenant "tenant-a"
+        roles ("doctor")
+    }
+)
+"#,
+            )
+            .expect("managed config should parse"),
+            source: "test-managed".to_owned(),
+        };
+
+        let loaded = loaded_config();
+        let signer = JwtSigner::from_seed(
+            loaded.config.jwt.signing_key_id.clone(),
+            loaded
+                .config
+                .jwt
+                .signing_seed_bytes()
+                .expect("seed should decode"),
+        );
+        let verifier = signer.verifier();
+        let state = AppState::from_loaded_config(loaded, managed_config(), signer, verifier)
+            .await
+            .expect("state should build");
+        let control = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state.clone()))
+                .configure(configure_control_plane),
+        )
+        .await;
+        let subject = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state.clone()))
+                .configure(configure_subject),
+        )
+        .await;
+
+        let invite_request = test::TestRequest::post()
+            .uri("/v1/invites")
+            .insert_header(("Authorization", "Bearer conclave-bootstrap-token"))
+            .set_json(&InviteCreateRequest {
+                subject: "doctor-1".to_owned(),
+                expires_in_seconds: Some(300),
+            })
+            .to_request();
+        let invite_response: InviteCreateResponse =
+            test::call_and_read_body_json(&control, invite_request).await;
+
+        let redeem_request = test::TestRequest::post()
+            .uri("/v1/invites/redeem")
+            .set_json(&RedeemInviteRequest {
+                redeem_code: invite_response.redeem_code,
+                password: "swordfish".to_owned(),
+            })
+            .to_request();
+        let _: RedeemInviteResponse = test::call_and_read_body_json(&subject, redeem_request).await;
+
+        let reloaded_loaded = loaded_config();
+        let reloaded_signer = JwtSigner::from_seed(
+            reloaded_loaded.config.jwt.signing_key_id.clone(),
+            reloaded_loaded
+                .config
+                .jwt
+                .signing_seed_bytes()
+                .expect("seed should decode"),
+        );
+        let reloaded_verifier = reloaded_signer.verifier();
+        let reloaded_state = AppState::from_loaded_config(
+            reloaded_loaded,
+            managed_config(),
+            reloaded_signer,
+            reloaded_verifier,
+        )
+        .await
+        .expect("reloaded state should build");
+        let reloaded_subject = test::init_service(
+            App::new()
+                .app_data(web::Data::new(reloaded_state.clone()))
+                .configure(configure_subject),
+        )
+        .await;
+
+        let login_request = test::TestRequest::post()
+            .uri("/v1/login")
+            .set_json(&LoginRequest {
+                subject: "doctor-1".to_owned(),
+                password: "swordfish".to_owned(),
+                tenant: "tenant-a".to_owned(),
+                audience: Some("clinic-api".to_owned()),
+            })
+            .to_request();
+        let login_response: LoginResponse =
+            test::call_and_read_body_json(&reloaded_subject, login_request).await;
+
+        handle.stop(true).await;
+        assert_eq!(login_response.claims.sub, "doctor-1");
+        let store = store.lock().expect("store lock");
+        assert!(store.auth_runtime_events.len() >= 3);
     }
 
     #[actix_web::test]

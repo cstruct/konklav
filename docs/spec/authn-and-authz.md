@@ -31,6 +31,9 @@ The platform MUST support an initial bootstrap operator credential for authentic
 r[authn.local-credential.login]
 The platform MUST support a local subject login flow that redeems a linked credential into a tenant-aware session and token without requiring browser SSO for the initial operator and subject story.
 
+r[authn.session.persisted-history]
+Tenant-aware sessions MUST be persisted with introspectible temporal history so login and tenant context activity remain auditable across server restarts.
+
 ## IAM and authorization
 
 r[authz.role.tenant-scoped]

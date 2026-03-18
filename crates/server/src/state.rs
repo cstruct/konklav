@@ -6,6 +6,7 @@ use conclave_managed_config::{
     ActionSpec, AssumptionGrantConfig, ManagedConfig, MembershipConfig, RoleConfig, SubjectConfig,
     TemplateConfig, TenantConfig,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::authz::{compile_managed_authz, CompiledAuthzModel};
 use crate::tenants::{compile_managed_tenants, CompiledTenantModel};
@@ -33,7 +34,7 @@ pub struct HistoryStore {
     pub catalog_actions: Vec<VersionedRecord<ActionSpec>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InviteRecord {
     pub invite_id: String,
     pub subject: String,
@@ -41,9 +42,11 @@ pub struct InviteRecord {
     pub created_at: u64,
     pub expires_at: u64,
     pub redeemed_at: Option<u64>,
+    pub valid_from: u64,
+    pub row_version: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CredentialRecord {
     pub subject: String,
     pub salt: String,
@@ -53,13 +56,30 @@ pub struct CredentialRecord {
     pub row_version: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionRecord {
     pub session_id: String,
     pub subject: String,
     pub tenant: String,
     pub created_at: u64,
     pub last_seen_at: u64,
+    pub valid_from: u64,
+    pub valid_to: Option<u64>,
+    pub row_version: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct PlannedInvite {
+    pub invite: InviteRecord,
+    pub redeem_code: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct PlannedInviteRedeem {
+    pub subject: String,
+    pub previous_invite_row_version: u64,
+    pub invite: InviteRecord,
+    pub credential: CredentialRecord,
 }
 
 #[derive(Clone, Debug)]
@@ -300,11 +320,51 @@ impl ControlPlaneState {
         self.last_apply_id = apply_id.into();
     }
 
-    pub fn create_invite(
+    pub fn replace_runtime_auth_state(
         &mut self,
+        invites: Vec<InviteRecord>,
+        credentials: Vec<CredentialRecord>,
+        sessions: Vec<SessionRecord>,
+    ) {
+        self.invites = invites;
+        self.credentials = credentials;
+        self.sessions = sessions;
+        sync_max_version(
+            &mut self.scoped_versions,
+            "invites",
+            "global",
+            self.invites
+                .iter()
+                .map(|entry| entry.row_version)
+                .max()
+                .unwrap_or(0),
+        );
+        sync_max_version(
+            &mut self.scoped_versions,
+            "credentials",
+            "global",
+            self.credentials
+                .iter()
+                .map(|entry| entry.row_version)
+                .max()
+                .unwrap_or(0),
+        );
+
+        let mut session_versions = BTreeMap::new();
+        for session in &self.sessions {
+            let entry = session_versions.entry(session.tenant.clone()).or_insert(0);
+            *entry = (*entry).max(session.row_version);
+        }
+        for (tenant, row_version) in session_versions {
+            sync_max_version(&mut self.scoped_versions, "sessions", &tenant, row_version);
+        }
+    }
+
+    pub fn plan_invite(
+        &self,
         subject: &str,
         expires_in_seconds: u64,
-    ) -> Result<(String, String, u64), DynError> {
+    ) -> Result<PlannedInvite, DynError> {
         let snapshot = self.snapshot()?;
         if !snapshot
             .tenants
@@ -319,27 +379,69 @@ impl ControlPlaneState {
         }
 
         let now = now_unix_seconds()?;
-        let invite_id = format!("invite-{:06}", self.invites.len() + 1);
+        let invite_id = format!(
+            "invite-{}",
+            &digest_hex(&format!("{subject}:{now}:invite"))[0..12]
+        );
         let redeem_code = digest_hex(&format!("{subject}:{invite_id}:{now}:code"));
-        let invite = InviteRecord {
-            invite_id: invite_id.clone(),
-            subject: subject.to_owned(),
-            redeem_code_hash: digest_hex(&redeem_code),
-            created_at: now,
-            expires_at: now + expires_in_seconds.max(60),
-            redeemed_at: None,
-        };
-        self.invites.push(invite);
-
-        Ok((invite_id, redeem_code, now + expires_in_seconds.max(60)))
+        let row_version = self
+            .invites
+            .iter()
+            .map(|entry| entry.row_version)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        Ok(PlannedInvite {
+            invite: InviteRecord {
+                invite_id,
+                subject: subject.to_owned(),
+                redeem_code_hash: digest_hex(&redeem_code),
+                created_at: now,
+                expires_at: now + expires_in_seconds.max(60),
+                redeemed_at: None,
+                valid_from: now,
+                row_version,
+            },
+            redeem_code,
+        })
     }
 
-    pub fn redeem_invite(&mut self, code: &str, password: &str) -> Result<String, DynError> {
+    pub fn record_invite(&mut self, invite: InviteRecord) {
+        self.invites
+            .retain(|entry| entry.invite_id != invite.invite_id);
+        sync_max_version(
+            &mut self.scoped_versions,
+            "invites",
+            "global",
+            invite.row_version,
+        );
+        self.invites.push(invite);
+    }
+
+    pub fn create_invite(
+        &mut self,
+        subject: &str,
+        expires_in_seconds: u64,
+    ) -> Result<(String, String, u64), DynError> {
+        let planned = self.plan_invite(subject, expires_in_seconds)?;
+        let invite_id = planned.invite.invite_id.clone();
+        let expires_at = planned.invite.expires_at;
+        let redeem_code = planned.redeem_code.clone();
+        self.record_invite(planned.invite);
+
+        Ok((invite_id, redeem_code, expires_at))
+    }
+
+    pub fn plan_redeem_invite(
+        &self,
+        code: &str,
+        password: &str,
+    ) -> Result<PlannedInviteRedeem, DynError> {
         let now = now_unix_seconds()?;
         let digest = digest_hex(code);
         let invite = self
             .invites
-            .iter_mut()
+            .iter()
             .find(|entry| {
                 entry.redeem_code_hash == digest
                     && entry.redeemed_at.is_none()
@@ -352,28 +454,65 @@ impl ControlPlaneState {
                 )) as DynError
             })?;
 
-        invite.redeemed_at = Some(now);
         let subject = invite.subject.clone();
         let salt = digest_hex(&format!("{subject}:{now}:salt"));
-        let version = next_version(&mut self.scoped_versions, "credentials", "global");
-        self.credentials.push(CredentialRecord {
+        let version = self
+            .credentials
+            .iter()
+            .filter(|entry| entry.subject == subject)
+            .map(|entry| entry.row_version)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        Ok(PlannedInviteRedeem {
             subject: subject.clone(),
-            salt: salt.clone(),
-            password_hash: digest_hex(&format!("{salt}:{password}")),
-            valid_from: self.apply_seq.max(1),
-            valid_to: None,
-            row_version: version,
-        });
-
-        Ok(subject)
+            previous_invite_row_version: invite.row_version,
+            invite: InviteRecord {
+                invite_id: invite.invite_id.clone(),
+                subject: subject.clone(),
+                redeem_code_hash: invite.redeem_code_hash.clone(),
+                created_at: invite.created_at,
+                expires_at: invite.expires_at,
+                redeemed_at: Some(now),
+                valid_from: now,
+                row_version: invite.row_version + 1,
+            },
+            credential: CredentialRecord {
+                subject,
+                salt: salt.clone(),
+                password_hash: digest_hex(&format!("{salt}:{password}")),
+                valid_from: now,
+                valid_to: None,
+                row_version: version,
+            },
+        })
     }
 
-    pub fn login(
-        &mut self,
+    pub fn apply_redeemed_invite(&mut self, planned: PlannedInviteRedeem) -> String {
+        self.record_invite(planned.invite);
+        self.credentials
+            .retain(|entry| entry.subject != planned.credential.subject);
+        sync_max_version(
+            &mut self.scoped_versions,
+            "credentials",
+            "global",
+            planned.credential.row_version,
+        );
+        self.credentials.push(planned.credential);
+        planned.subject
+    }
+
+    pub fn redeem_invite(&mut self, code: &str, password: &str) -> Result<String, DynError> {
+        let planned = self.plan_redeem_invite(code, password)?;
+        Ok(self.apply_redeemed_invite(planned))
+    }
+
+    pub fn plan_login(
+        &self,
         subject: &str,
         password: &str,
         tenant: &str,
-    ) -> Result<String, DynError> {
+    ) -> Result<SessionRecord, DynError> {
         let credential = self
             .credentials
             .iter()
@@ -406,16 +545,50 @@ impl ControlPlaneState {
         snapshot.tenants.require_active_tenant(tenant)?;
 
         let now = now_unix_seconds()?;
-        let session_id = format!("session-{:06}", self.sessions.len() + 1);
-        self.sessions.push(SessionRecord {
+        let session_id = format!(
+            "session-{}",
+            &digest_hex(&format!("{subject}:{tenant}:{now}:session"))[0..12]
+        );
+        let row_version = self
+            .sessions
+            .iter()
+            .filter(|entry| entry.tenant == tenant)
+            .map(|entry| entry.row_version)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        Ok(SessionRecord {
             session_id: session_id.clone(),
             subject: subject.to_owned(),
             tenant: tenant.to_owned(),
             created_at: now,
             last_seen_at: now,
-        });
+            valid_from: now,
+            valid_to: None,
+            row_version,
+        })
+    }
 
-        Ok(session_id)
+    pub fn record_session(&mut self, session: SessionRecord) -> String {
+        let session_id = session.session_id.clone();
+        sync_max_version(
+            &mut self.scoped_versions,
+            "sessions",
+            &session.tenant,
+            session.row_version,
+        );
+        self.sessions.push(session);
+        session_id
+    }
+
+    pub fn login(
+        &mut self,
+        subject: &str,
+        password: &str,
+        tenant: &str,
+    ) -> Result<String, DynError> {
+        let session = self.plan_login(subject, password, tenant)?;
+        Ok(self.record_session(session))
     }
 }
 
@@ -592,6 +765,18 @@ fn next_version(versions: &mut BTreeMap<(String, String), u64>, table: &str, sco
         .or_insert(0);
     *entry += 1;
     *entry
+}
+
+fn sync_max_version(
+    versions: &mut BTreeMap<(String, String), u64>,
+    table: &str,
+    scope: &str,
+    row_version: u64,
+) {
+    let entry = versions
+        .entry((table.to_owned(), scope.to_owned()))
+        .or_insert(0);
+    *entry = (*entry).max(row_version);
 }
 
 pub fn now_unix_seconds() -> Result<u64, DynError> {

@@ -44,5 +44,11 @@ Every identity subject MUST have a stable internal identifier that survives user
 r[identity.subject.linked-credentials]
 An identity subject MUST be able to link multiple credential or federation sources to the same internal subject record.
 
+r[identity.subject.linked-credentials.versioned-history]
+Linked subject credentials MUST preserve temporal history so replacement, revocation, and recovery remain auditable rather than overwriting prior credential state in place.
+
 r[identity.subject.invite-redeem]
 The platform MUST support issuing a subject invite and redeeming it into a linked credential without requiring a provider-specific email delivery implementation.
+
+r[identity.subject.invite.audit-history]
+Issued subject invites MUST preserve auditable issue, expiry, and redemption state across control-plane restarts.

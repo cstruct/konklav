@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::FelderaConfig;
 use crate::feldera::{DesiredPipeline, FelderaClient, PipelineProgramConfig};
-use crate::state::{digest_hex, now_unix_seconds};
+use crate::state::{digest_hex, now_unix_seconds, CredentialRecord, InviteRecord, SessionRecord};
 use crate::types::DynError;
 
 #[derive(Clone, Debug)]
@@ -58,6 +58,36 @@ struct CountRow {
 struct LatestApplyRow {
     #[serde(alias = "APPLY_ID")]
     apply_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RuntimeAuthEventRow {
+    #[serde(alias = "RESOURCE_KIND")]
+    resource_kind: String,
+    #[serde(alias = "RESOURCE_KEY")]
+    resource_key: String,
+    #[serde(alias = "SCOPE")]
+    scope: String,
+    #[serde(alias = "CHANGE_ID")]
+    change_id: String,
+    #[serde(alias = "ROW_VERSION")]
+    row_version: u64,
+    #[serde(alias = "VALID_FROM")]
+    valid_from: u64,
+    #[serde(alias = "DELETED")]
+    deleted: bool,
+    #[serde(alias = "PAYLOAD_JSON")]
+    payload_json: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RuntimeAuthCommitRow {
+    #[serde(alias = "CHANGE_ID")]
+    change_id: String,
+    #[serde(alias = "COMMITTED_AT")]
+    committed_at: u64,
+    #[serde(alias = "COMMITTED")]
+    committed: bool,
 }
 
 impl FelderaManagedStore {
@@ -210,6 +240,45 @@ impl FelderaManagedStore {
         Ok(rows.into_iter().next().map(|row| row.apply_id))
     }
 
+    pub async fn load_runtime_auth_state(
+        &self,
+    ) -> Result<(Vec<InviteRecord>, Vec<CredentialRecord>, Vec<SessionRecord>), DynError> {
+        self.ensure_pipeline().await?;
+        let rows: Vec<RuntimeAuthEventRow> = self
+            .client
+            .query_json(
+                &self.pipeline_name,
+                "SELECT resource_kind, resource_key, scope, change_id, row_version, valid_from, deleted, payload_json FROM CURRENT_AUTH_RUNTIME_EVENT WHERE deleted = FALSE",
+            )
+            .await?;
+
+        let mut invites = Vec::new();
+        let mut credentials = Vec::new();
+        let mut sessions = Vec::new();
+
+        for row in rows {
+            let payload = row.payload_json.unwrap_or_default();
+            match row.resource_kind.as_str() {
+                "invite" => invites.push(serde_json::from_str::<InviteRecord>(&payload)?),
+                "credential" => {
+                    credentials.push(serde_json::from_str::<CredentialRecord>(&payload)?)
+                }
+                "session" => sessions.push(serde_json::from_str::<SessionRecord>(&payload)?),
+                _ => {}
+            }
+        }
+
+        invites.sort_by(|left, right| left.invite_id.cmp(&right.invite_id));
+        credentials.sort_by(|left, right| left.subject.cmp(&right.subject));
+        sessions.sort_by(|left, right| {
+            left.tenant
+                .cmp(&right.tenant)
+                .then_with(|| left.session_id.cmp(&right.session_id))
+        });
+
+        Ok((invites, credentials, sessions))
+    }
+
     pub async fn apply(&self, desired: &ManagedConfig) -> Result<String, DynError> {
         self.ensure_pipeline().await?;
         let current = self
@@ -260,6 +329,75 @@ impl FelderaManagedStore {
         Ok(apply_id)
     }
 
+    // r[impl identity.subject.invite.audit-history]
+    pub async fn persist_invite(&self, invite: &InviteRecord) -> Result<(), DynError> {
+        self.persist_runtime_auth_changes(vec![RuntimeAuthChange {
+            resource_kind: "invite".to_owned(),
+            resource_key: invite.invite_id.clone(),
+            scope: "global".to_owned(),
+            row_version: invite.row_version,
+            payload_json: serde_json::to_string(invite)?,
+        }])
+        .await
+    }
+
+    // r[impl identity.subject.linked-credentials.versioned-history]
+    // r[impl identity.subject.invite.audit-history]
+    pub async fn persist_redeemed_invite(
+        &self,
+        invite: &InviteRecord,
+        expected_previous_row_version: u64,
+        credential: &CredentialRecord,
+    ) -> Result<(), DynError> {
+        let (invites, _, _) = self.load_runtime_auth_state().await?;
+        let current = invites
+            .iter()
+            .find(|entry| entry.invite_id == invite.invite_id)
+            .ok_or_else(|| {
+                Box::<std::io::Error>::new(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("invite {} not found in runtime store", invite.invite_id),
+                )) as DynError
+            })?;
+
+        if current.row_version != expected_previous_row_version || current.redeemed_at.is_some() {
+            return Err(Box::<std::io::Error>::new(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "invite has already been redeemed or changed",
+            )));
+        }
+
+        self.persist_runtime_auth_changes(vec![
+            RuntimeAuthChange {
+                resource_kind: "invite".to_owned(),
+                resource_key: invite.invite_id.clone(),
+                scope: "global".to_owned(),
+                row_version: invite.row_version,
+                payload_json: serde_json::to_string(invite)?,
+            },
+            RuntimeAuthChange {
+                resource_kind: "credential".to_owned(),
+                resource_key: credential.subject.clone(),
+                scope: "global".to_owned(),
+                row_version: credential.row_version,
+                payload_json: serde_json::to_string(credential)?,
+            },
+        ])
+        .await
+    }
+
+    // r[impl authn.session.persisted-history]
+    pub async fn persist_session(&self, session: &SessionRecord) -> Result<(), DynError> {
+        self.persist_runtime_auth_changes(vec![RuntimeAuthChange {
+            resource_kind: "session".to_owned(),
+            resource_key: session.session_id.clone(),
+            scope: session.tenant.clone(),
+            row_version: session.row_version,
+            payload_json: serde_json::to_string(session)?,
+        }])
+        .await
+    }
+
     async fn next_row_version(&self, resource_kind: &str, scope: &str) -> Result<u64, DynError> {
         let sql = format!(
             "SELECT CAST(COALESCE(MAX(row_version), 0) AS BIGINT) AS count FROM MANAGED_EVENT WHERE resource_kind = '{}' AND scope = '{}'",
@@ -268,6 +406,58 @@ impl FelderaManagedStore {
         );
         let rows: Vec<CountRow> = self.client.query_json(&self.pipeline_name, &sql).await?;
         Ok(rows.first().map(|row| row.count).unwrap_or(0) + 1)
+    }
+
+    async fn persist_runtime_auth_changes(
+        &self,
+        changes: Vec<RuntimeAuthChange>,
+    ) -> Result<(), DynError> {
+        self.ensure_pipeline().await?;
+        if changes.is_empty() {
+            return Ok(());
+        }
+
+        let valid_from = now_unix_seconds()?;
+        let change_id = format!(
+            "change-{}",
+            &digest_hex(&format!(
+                "{valid_from}:{}",
+                serde_json::to_string(&changes)?
+            ))[0..12]
+        );
+
+        for change in changes {
+            self.client
+                .insert_json_rows(
+                    &self.pipeline_name,
+                    "AUTH_RUNTIME_EVENT",
+                    vec![RuntimeAuthEventRow {
+                        resource_kind: change.resource_kind,
+                        resource_key: change.resource_key,
+                        scope: change.scope,
+                        change_id: change_id.clone(),
+                        row_version: change.row_version,
+                        valid_from,
+                        deleted: false,
+                        payload_json: Some(change.payload_json),
+                    }],
+                )
+                .await?;
+        }
+
+        self.client
+            .insert_json_rows(
+                &self.pipeline_name,
+                "AUTH_RUNTIME_COMMIT",
+                vec![RuntimeAuthCommitRow {
+                    change_id,
+                    committed_at: valid_from,
+                    committed: true,
+                }],
+            )
+            .await?;
+
+        Ok(())
     }
 }
 
@@ -278,6 +468,15 @@ struct ChangeRow {
     scope: String,
     deleted: bool,
     payload_json: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct RuntimeAuthChange {
+    resource_kind: String,
+    resource_key: String,
+    scope: String,
+    row_version: u64,
+    payload_json: String,
 }
 
 fn diff_rows(current: &ManagedConfig, desired: &ManagedConfig) -> Vec<ChangeRow> {
@@ -412,6 +611,23 @@ CREATE TABLE MANAGED_EVENT (
     payload_json VARCHAR
 ) WITH ('materialized' = 'true');
 
+CREATE TABLE AUTH_RUNTIME_COMMIT (
+    change_id VARCHAR NOT NULL,
+    committed_at BIGINT NOT NULL,
+    committed BOOLEAN NOT NULL
+) WITH ('materialized' = 'true');
+
+CREATE TABLE AUTH_RUNTIME_EVENT (
+    resource_kind VARCHAR NOT NULL,
+    resource_key VARCHAR NOT NULL,
+    scope VARCHAR NOT NULL,
+    change_id VARCHAR NOT NULL,
+    row_version BIGINT NOT NULL,
+    valid_from BIGINT NOT NULL,
+    deleted BOOLEAN NOT NULL,
+    payload_json VARCHAR
+) WITH ('materialized' = 'true');
+
 CREATE MATERIALIZED VIEW VERSIONED_MANAGED_EVENT AS
 SELECT
     e.resource_kind,
@@ -445,6 +661,40 @@ SELECT
     payload_json
 FROM VERSIONED_MANAGED_EVENT
 WHERE valid_to IS NULL;
+
+CREATE MATERIALIZED VIEW VERSIONED_AUTH_RUNTIME_EVENT AS
+SELECT
+    e.resource_kind,
+    e.resource_key,
+    e.scope,
+    e.change_id,
+    e.row_version,
+    e.valid_from,
+    (
+        SELECT MIN(e2.valid_from)
+        FROM AUTH_RUNTIME_EVENT e2
+        JOIN AUTH_RUNTIME_COMMIT c2 ON e2.change_id = c2.change_id AND c2.committed = TRUE
+        WHERE e2.resource_kind = e.resource_kind
+          AND e2.resource_key = e.resource_key
+          AND e2.row_version > e.row_version
+    ) AS valid_to,
+    e.deleted,
+    e.payload_json
+FROM AUTH_RUNTIME_EVENT e
+JOIN AUTH_RUNTIME_COMMIT c ON e.change_id = c.change_id AND c.committed = TRUE;
+
+CREATE MATERIALIZED VIEW CURRENT_AUTH_RUNTIME_EVENT AS
+SELECT
+    resource_kind,
+    resource_key,
+    scope,
+    change_id,
+    row_version,
+    valid_from,
+    deleted,
+    payload_json
+FROM VERSIONED_AUTH_RUNTIME_EVENT
+WHERE valid_to IS NULL;
 "#
     .trim()
     .to_owned()
@@ -470,8 +720,12 @@ mod tests {
 
         assert!(sql.contains("CREATE TABLE APPLY_COMMIT"));
         assert!(sql.contains("CREATE TABLE MANAGED_EVENT"));
+        assert!(sql.contains("CREATE TABLE AUTH_RUNTIME_COMMIT"));
+        assert!(sql.contains("CREATE TABLE AUTH_RUNTIME_EVENT"));
         assert!(sql.contains("CREATE MATERIALIZED VIEW VERSIONED_MANAGED_EVENT"));
         assert!(sql.contains("CREATE MATERIALIZED VIEW CURRENT_MANAGED_EVENT"));
+        assert!(sql.contains("CREATE MATERIALIZED VIEW VERSIONED_AUTH_RUNTIME_EVENT"));
+        assert!(sql.contains("CREATE MATERIALIZED VIEW CURRENT_AUTH_RUNTIME_EVENT"));
         assert!(sql.contains("valid_to"));
     }
 

@@ -23,6 +23,8 @@ The first persisted-state model is temporal and append-only:
 
 When the control-plane store is empty, the server bootstraps it from the managed configuration directory at startup. On later restarts, the server reloads managed state from Feldera instead of treating the local managed directory as the source of truth. This keeps the initial operator and subject flow testable without requiring the CLI to run first.
 
+Invite records, linked local credentials, and tenant-aware sessions follow the same persisted-history approach even though they are not declarative managed resources. This keeps the initial subject lifecycle auditable and restart-safe while preserving a clear separation between managed desired state and runtime-auth state.
+
 ## Atomic visibility
 
 Logical apply atomicity is modeled with a publish barrier:
