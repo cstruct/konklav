@@ -35,6 +35,10 @@ async fn main() -> io::Result<()> {
     let verifier = signer.verifier();
     let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
         .map_err(io::Error::other)?;
+    let feldera_sync = state
+        .sync_feldera_on_startup()
+        .await
+        .map_err(io::Error::other)?;
     let control_plane_bind = state.control_plane_bind_address();
     let subject_bind = state.subject_bind_address();
     let relying_bind = state.relying_bind_address();
@@ -43,6 +47,7 @@ async fn main() -> io::Result<()> {
         control_plane_bind,
         subject_bind,
         relying_bind,
+        feldera_sync = ?feldera_sync,
         "starting conclave server"
     );
 

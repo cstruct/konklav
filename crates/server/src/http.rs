@@ -11,7 +11,7 @@ use serde::Serialize;
 
 use crate::authz::CompiledAuthzModel;
 use crate::config::{AppConfig, LoadedConfig};
-use crate::feldera::FelderaClient;
+use crate::feldera::{sync_authz_pipeline, FelderaClient, StartPipelineRequest};
 use crate::state::ControlPlaneState;
 use crate::tenants::{AssumeAccessTokenRequest, CompiledTenantModel, ValidateAccessTokenRequest};
 
@@ -109,6 +109,22 @@ impl AppState {
                 })
                 .collect(),
         })
+    }
+
+    // r[impl config.managed.authz-recompile-before-issuance]
+    pub async fn sync_feldera_on_startup(&self) -> Result<Option<String>, crate::types::DynError> {
+        let Some(client) = &self.feldera else {
+            return Ok(None);
+        };
+
+        let (authz, _) = self.current_snapshot()?;
+        let start = self.config.feldera.auto_start.then(|| StartPipelineRequest {
+            initial: self.config.feldera.start_initial.clone(),
+            bootstrap_policy: None,
+        });
+        let result = sync_authz_pipeline(client, &self.config.feldera, &authz, start).await?;
+
+        Ok(Some(result.status))
     }
 
     fn ensure_bootstrap_token(&self, request: &HttpRequest) -> Result<(), HttpResponse> {
@@ -562,6 +578,109 @@ memberships (
             test::call_and_read_body_json(&relying, catalog_request).await;
         assert_eq!(catalog_response.actions.len(), 1);
         assert_eq!(catalog_response.actions[0].name, "tenant:user:read");
+    }
+
+    #[actix_web::test]
+    async fn syncs_authz_pipeline_against_a_manager_endpoint() {
+        use actix_web::patch;
+        use std::sync::{Arc, Mutex};
+        use std::{net::TcpListener, time::Duration};
+
+        #[derive(Default, Clone)]
+        struct Seen {
+            gets: usize,
+            creates: usize,
+        }
+
+        #[get("/v0/pipelines/{name}")]
+        async fn get_pipeline(seen: web::Data<Arc<Mutex<Seen>>>) -> impl Responder {
+            seen.lock().expect("seen lock").gets += 1;
+            HttpResponse::NotFound().finish()
+        }
+
+        #[post("/v0/pipelines")]
+        async fn create_pipeline(
+            seen: web::Data<Arc<Mutex<Seen>>>,
+            body: web::Json<crate::feldera::DesiredPipeline>,
+        ) -> impl Responder {
+            seen.lock().expect("seen lock").creates += 1;
+            HttpResponse::Ok().json(crate::feldera::PipelineRecord {
+                name: body.name.clone(),
+                description: Some(body.description.clone()),
+                program_code: Some(body.program_code.clone()),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: None,
+                deployment_runtime_status: None,
+                program_config: body.program_config.clone(),
+            })
+        }
+
+        #[patch("/v0/pipelines/{name}")]
+        async fn patch_pipeline() -> impl Responder {
+            HttpResponse::Ok().finish()
+        }
+
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let addr = listener.local_addr().expect("listener should have local addr");
+        let server_seen = seen.clone();
+        let server = actix_web::HttpServer::new(move || {
+            App::new()
+                .app_data(web::Data::new(server_seen.clone()))
+                .service(get_pipeline)
+                .service(create_pipeline)
+                .service(patch_pipeline)
+        })
+        .listen(listener)
+        .expect("server should listen")
+        .run();
+        let handle = server.handle();
+        actix_web::rt::spawn(server);
+        actix_web::rt::time::sleep(Duration::from_millis(25)).await;
+
+        let mut loaded = LoadedConfig {
+            config: AppConfig::default(),
+            managed_dir: std::path::PathBuf::from("config"),
+            source: "test".to_owned(),
+        };
+        loaded.config.feldera.enabled = true;
+        loaded.config.feldera.base_url = format!("http://{}", addr);
+        let managed = conclave_managed_config::LoadedManagedConfig {
+            managed: ManagedConfig::load_from_str(
+                r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+    )
+}
+"#,
+            )
+            .expect("managed config should parse"),
+            source: "test-managed".to_owned(),
+        };
+        let signer = JwtSigner::from_seed(
+            loaded.config.jwt.signing_key_id.clone(),
+            loaded
+                .config
+                .jwt
+                .signing_seed_bytes()
+                .expect("seed should decode"),
+        );
+        let verifier = signer.verifier();
+        let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
+            .expect("state should build");
+
+        let result = state
+            .sync_feldera_on_startup()
+            .await
+            .expect("startup sync should succeed");
+
+        handle.stop(true).await;
+        assert_eq!(result.as_deref(), Some("created"));
+        let seen = seen.lock().expect("seen lock");
+        assert_eq!(seen.gets, 1);
+        assert_eq!(seen.creates, 1);
     }
 
     #[actix_web::test]
