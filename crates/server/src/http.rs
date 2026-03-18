@@ -62,7 +62,8 @@ impl AppState {
                 loaded.config.feldera.api_key.clone(),
             )
         });
-        let state = ControlPlaneState::new(managed.managed)?;
+        let mut state = ControlPlaneState::empty();
+        state.bootstrap_from_managed_if_empty(managed.managed)?;
 
         Ok(Self {
             config: Arc::new(loaded.config),
@@ -561,5 +562,50 @@ memberships (
             test::call_and_read_body_json(&relying, catalog_request).await;
         assert_eq!(catalog_response.actions.len(), 1);
         assert_eq!(catalog_response.actions[0].name, "tenant:user:read");
+    }
+
+    #[actix_web::test]
+    #[ignore = "requires a running Feldera manager via CONCLAVE_COMPONENT_FELDERA_URL"]
+    async fn readyz_checks_a_live_feldera_manager() {
+        let mut loaded = LoadedConfig {
+            config: AppConfig::default(),
+            managed_dir: std::path::PathBuf::from("config"),
+            source: "test".to_owned(),
+        };
+        loaded.config.feldera.enabled = true;
+        loaded.config.feldera.readiness_probe = true;
+        loaded.config.feldera.base_url = std::env::var("CONCLAVE_COMPONENT_FELDERA_URL")
+            .expect("set CONCLAVE_COMPONENT_FELDERA_URL to run this test");
+        let managed = conclave_managed_config::LoadedManagedConfig {
+            managed: ManagedConfig::load_from_str(
+                r#"
+catalog { actions () }
+"#,
+            )
+            .expect("managed config should parse"),
+            source: "test-managed".to_owned(),
+        };
+        let signer = JwtSigner::from_seed(
+            loaded.config.jwt.signing_key_id.clone(),
+            loaded
+                .config
+                .jwt
+                .signing_seed_bytes()
+                .expect("seed should decode"),
+        );
+        let verifier = signer.verifier();
+        let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
+            .expect("state should build");
+        let control = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .configure(configure_control_plane),
+        )
+        .await;
+
+        let request = test::TestRequest::get().uri("/readyz").to_request();
+        let response = test::call_service(&control, request).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

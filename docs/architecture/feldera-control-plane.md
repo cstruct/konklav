@@ -20,6 +20,8 @@ The first persisted-state model is temporal and append-only:
 - current-state projections only consider committed rows
 - history remains introspectible rather than being rewritten in place
 
+When the control-plane store is empty, the server bootstraps it from the managed configuration directory at startup. This keeps the initial operator and subject flow testable without requiring the CLI to run first.
+
 ## Atomic visibility
 
 Logical apply atomicity is modeled with a publish barrier:

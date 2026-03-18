@@ -47,6 +47,9 @@ The managed configuration interface MUST use a single canonical root schema for 
 r[config.managed.fragment-assembly]
 The managed configuration interface MUST support assembling one managed bundle from multiple Styx documents using deterministic merge semantics over the canonical root schema so operators can organize desired state across files.
 
+r[config.managed.bootstrap-seed]
+The server MUST be able to seed an empty control-plane store from managed configuration during startup so the initial operator and subject story can be exercised without a separate apply step.
+
 r[config.managed.bundle-transaction]
 Applying a declarative configuration bundle MUST be atomic at least at the bundle or tenant scope selected for the operation.
 

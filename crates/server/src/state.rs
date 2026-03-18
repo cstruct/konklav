@@ -84,19 +84,36 @@ pub struct ControlPlaneState {
 
 impl ControlPlaneState {
     pub fn new(managed: ManagedConfig) -> Result<Self, DynError> {
-        let mut state = Self {
+        let mut state = Self::empty();
+        state.bootstrap_from_managed_if_empty(managed)?;
+        Ok(state)
+    }
+
+    pub fn empty() -> Self {
+        Self {
             apply_seq: 0,
             apply_counter: 0,
             last_apply_id: "apply-000000".to_owned(),
-            managed: managed.clone(),
+            managed: empty_managed_config(),
             history: HistoryStore::default(),
             invites: Vec::new(),
             credentials: Vec::new(),
             sessions: Vec::new(),
             scoped_versions: BTreeMap::new(),
-        };
-        state.apply(managed)?;
-        Ok(state)
+        }
+    }
+
+    // r[impl config.managed.bootstrap-seed]
+    pub fn bootstrap_from_managed_if_empty(
+        &mut self,
+        managed: ManagedConfig,
+    ) -> Result<bool, DynError> {
+        if self.is_empty() {
+            self.apply(managed)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     pub fn managed(&self) -> &ManagedConfig {
@@ -113,6 +130,19 @@ impl ControlPlaneState {
 
     pub fn sessions(&self) -> &[SessionRecord] {
         &self.sessions
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.history.tenants.is_empty()
+            && self.history.subjects.is_empty()
+            && self.history.memberships.is_empty()
+            && self.history.assumption_grants.is_empty()
+            && self.history.templates.is_empty()
+            && self.history.roles.is_empty()
+            && self.history.catalog_actions.is_empty()
+            && self.invites.is_empty()
+            && self.credentials.is_empty()
+            && self.sessions.is_empty()
     }
 
     pub fn snapshot(&self) -> Result<StateSnapshot, DynError> {
@@ -562,4 +592,53 @@ pub fn digest_hex(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+fn empty_managed_config() -> ManagedConfig {
+    ManagedConfig::load_from_str("catalog { actions () }")
+        .expect("empty managed config should parse")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ControlPlaneState;
+    use conclave_managed_config::ManagedConfig;
+
+    // r[verify config.managed.bootstrap-seed]
+    #[test]
+    fn bootstraps_empty_store_from_managed_config_once() {
+        let mut state = ControlPlaneState::empty();
+        let managed = ManagedConfig::load_from_str(
+            r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+    )
+}
+tenants (
+    {id "tenant-a"}
+)
+subjects (
+    {id "doctor-1"}
+)
+"#,
+        )
+        .expect("managed config should parse");
+
+        let bootstrapped = state
+            .bootstrap_from_managed_if_empty(managed.clone())
+            .expect("bootstrap should succeed");
+        let second = state
+            .bootstrap_from_managed_if_empty(managed)
+            .expect("second bootstrap should succeed");
+
+        assert!(bootstrapped);
+        assert!(!second);
+        assert_eq!(state.last_apply_id, "apply-000001");
+        assert!(state
+            .managed()
+            .subjects
+            .iter()
+            .any(|subject| subject.id == "doctor-1"));
+    }
 }
