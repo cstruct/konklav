@@ -3,6 +3,7 @@ mod config;
 mod control_plane;
 mod feldera;
 mod http;
+mod managed_store;
 mod state;
 mod tenants;
 mod types;
@@ -34,6 +35,7 @@ async fn main() -> io::Result<()> {
     );
     let verifier = signer.verifier();
     let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
+        .await
         .map_err(io::Error::other)?;
     let feldera_sync = state
         .sync_feldera_on_startup()

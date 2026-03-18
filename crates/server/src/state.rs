@@ -195,10 +195,18 @@ impl ControlPlaneState {
     }
 
     pub fn apply(&mut self, managed: ManagedConfig) -> Result<ManagedPlanResponse, DynError> {
+        self.apply_with_id(managed, None)
+    }
+
+    pub fn apply_with_id(
+        &mut self,
+        managed: ManagedConfig,
+        apply_id: Option<String>,
+    ) -> Result<ManagedPlanResponse, DynError> {
         let plan = self.plan(&managed)?;
         self.apply_counter += 1;
         self.apply_seq += 1;
-        self.last_apply_id = format!("apply-{:06}", self.apply_counter);
+        self.last_apply_id = apply_id.unwrap_or_else(|| format!("apply-{:06}", self.apply_counter));
         let apply_id = self.last_apply_id.clone();
 
         sync_versioned(
@@ -286,6 +294,10 @@ impl ControlPlaneState {
 
         self.managed = managed;
         Ok(plan)
+    }
+
+    pub fn set_last_apply_id(&mut self, apply_id: impl Into<String>) {
+        self.last_apply_id = apply_id.into();
     }
 
     pub fn create_invite(

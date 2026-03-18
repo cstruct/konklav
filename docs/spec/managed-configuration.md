@@ -36,6 +36,9 @@ Managed resources MUST persist ownership or manager metadata so Conclave can dis
 r[config.managed.versioned-history]
 Persisted managed control-plane state MUST preserve introspectible temporal history using validity windows rather than destructive in-place replacement.
 
+r[config.managed.feldera-authoritative-store]
+For the Feldera-backed control-plane phase, Feldera MUST be able to act as the authoritative persisted store for managed control-plane state, with server-local state limited to runtime caching or derived projections.
+
 ## Apply semantics
 
 r[config.managed.apply-operation]

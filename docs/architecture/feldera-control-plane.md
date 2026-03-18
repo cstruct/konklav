@@ -1,6 +1,6 @@
 # Feldera Control-Plane Architecture
 
-This note describes the first end-to-end operator and subject flow that uses Feldera-oriented state projections together with Conclave control-plane APIs.
+This note describes the first end-to-end operator and subject flow that uses Feldera-backed managed state together with Conclave control-plane APIs.
 
 ## Surfaces
 
@@ -19,8 +19,9 @@ The first persisted-state model is temporal and append-only:
 - every durable row records `valid_from`, `valid_to`, `row_version`, and audit metadata
 - current-state projections only consider committed rows
 - history remains introspectible rather than being rewritten in place
+- the server may keep an in-memory runtime cache, but Feldera is the authoritative persisted store for managed control-plane state in this phase
 
-When the control-plane store is empty, the server bootstraps it from the managed configuration directory at startup. This keeps the initial operator and subject flow testable without requiring the CLI to run first.
+When the control-plane store is empty, the server bootstraps it from the managed configuration directory at startup. On later restarts, the server reloads managed state from Feldera instead of treating the local managed directory as the source of truth. This keeps the initial operator and subject flow testable without requiring the CLI to run first.
 
 ## Atomic visibility
 

@@ -1,4 +1,7 @@
+use std::time::Duration;
+
 use reqwest::{Client, Method, StatusCode};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -90,6 +93,22 @@ pub struct PipelineSyncResult {
 pub struct StartPipelineRequest {
     pub initial: String,
     pub bootstrap_policy: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct CompletionStatusResponse {
+    #[serde(default, alias = "status", alias = "STATUS")]
+    status: Option<String>,
+    #[serde(default, alias = "completed", alias = "COMPLETED")]
+    completed: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct IngressResponse {
+    #[serde(default, alias = "completion_token", alias = "COMPLETION_TOKEN")]
+    completion_token: Option<String>,
+    #[serde(default, alias = "token", alias = "TOKEN")]
+    token: Option<String>,
 }
 
 #[derive(Debug)]
@@ -211,6 +230,63 @@ impl FelderaClient {
             .send()
             .await?
             .error_for_status()?;
+
+        Ok(())
+    }
+
+    pub async fn query_json<T>(&self, pipeline_name: &str, sql: &str) -> Result<Vec<T>, DynError>
+    where
+        T: DeserializeOwned,
+    {
+        let url = format!("{}/v0/pipelines/{pipeline_name}/query", self.base_url);
+        let response = self
+            .request(Method::GET, url)
+            .query(&[("sql", sql), ("format", "json")])
+            .send()
+            .await?
+            .error_for_status()?;
+        let body = response.text().await?;
+
+        parse_json_rows(&body)
+    }
+
+    pub async fn insert_json_rows<T>(
+        &self,
+        pipeline_name: &str,
+        table_name: &str,
+        rows: Vec<T>,
+    ) -> Result<(), DynError>
+    where
+        T: Serialize,
+    {
+        if rows.is_empty() {
+            return Ok(());
+        }
+
+        let url = format!(
+            "{}/v0/pipelines/{pipeline_name}/ingress/{table_name}",
+            self.base_url
+        );
+        let response = self
+            .request(Method::POST, url)
+            .query(&[
+                ("format", "json"),
+                ("array", "true"),
+                ("force", "true"),
+                ("update_format", "raw"),
+            ])
+            .json(&rows)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let completion = response.json::<IngressResponse>().await.ok();
+        if let Some(token) = completion
+            .and_then(|entry| entry.completion_token.or(entry.token))
+            .filter(|token| !token.is_empty())
+        {
+            self.wait_for_completion(pipeline_name, &token).await?;
+        }
 
         Ok(())
     }
@@ -390,6 +466,71 @@ impl FelderaClient {
             builder
         }
     }
+
+    async fn wait_for_completion(&self, pipeline_name: &str, token: &str) -> Result<(), DynError> {
+        let url = format!(
+            "{}/v0/pipelines/{pipeline_name}/completion_status",
+            self.base_url
+        );
+
+        for _ in 0..20 {
+            let response = self
+                .request(Method::GET, url.clone())
+                .query(&[("token", token)])
+                .send()
+                .await?
+                .error_for_status()?;
+            let status = response.json::<CompletionStatusResponse>().await?;
+
+            if status.completed == Some(true) {
+                return Ok(());
+            }
+
+            if status.status.as_deref().is_some_and(|value| {
+                value.eq_ignore_ascii_case("success")
+                    || value.eq_ignore_ascii_case("complete")
+                    || value.eq_ignore_ascii_case("completed")
+            }) {
+                return Ok(());
+            }
+
+            actix_web::rt::time::sleep(Duration::from_millis(25)).await;
+        }
+
+        Err(Box::new(FelderaError::new(format!(
+            "timed out waiting for completion token {token} on pipeline {pipeline_name}"
+        ))))
+    }
+}
+
+fn parse_json_rows<T>(body: &str) -> Result<Vec<T>, DynError>
+where
+    T: DeserializeOwned,
+{
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if let Ok(rows) = serde_json::from_str::<Vec<T>>(trimmed) {
+        return Ok(rows);
+    }
+
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        if let Some(rows) = value.get("rows").cloned() {
+            return Ok(serde_json::from_value(rows)?);
+        }
+
+        if value.is_array() {
+            return Ok(serde_json::from_value(value)?);
+        }
+    }
+
+    trimmed
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str::<T>(line).map_err(|err| Box::new(err) as DynError))
+        .collect()
 }
 
 pub async fn fetch_authz_pipeline_plan(
@@ -416,15 +557,21 @@ pub async fn sync_authz_pipeline(
 #[cfg(test)]
 mod tests {
     use conclave_managed_config::ManagedConfig;
+    use serde::Deserialize;
     use serde_json::json;
 
     use crate::authz::compile_managed_authz;
     use crate::config::FelderaConfig;
 
     use super::{
-        changed_fields, DesiredPipeline, PipelineProgramConfig, PipelineRecord, PipelineSummary,
-        PipelineSyncAction, PipelineSyncPlan,
+        changed_fields, parse_json_rows, DesiredPipeline, PipelineProgramConfig, PipelineRecord,
+        PipelineSummary, PipelineSyncAction, PipelineSyncPlan,
     };
+
+    #[derive(Debug, Deserialize, PartialEq, Eq)]
+    struct QueryRow {
+        id: u64,
+    }
 
     #[test]
     fn reads_pipeline_summary_from_known_fields() {
@@ -554,5 +701,21 @@ roles ()
             desired.program_config.and_then(|config| config.profile),
             Some("optimized".to_owned())
         );
+    }
+
+    #[test]
+    fn parses_json_query_arrays() {
+        let rows: Vec<QueryRow> =
+            parse_json_rows(r#"[{"id":1},{"id":2}]"#).expect("rows should parse");
+
+        assert_eq!(rows, vec![QueryRow { id: 1 }, QueryRow { id: 2 }]);
+    }
+
+    #[test]
+    fn parses_ndjson_query_rows() {
+        let rows: Vec<QueryRow> =
+            parse_json_rows("{\"id\":1}\n{\"id\":2}\n").expect("rows should parse");
+
+        assert_eq!(rows, vec![QueryRow { id: 1 }, QueryRow { id: 2 }]);
     }
 }

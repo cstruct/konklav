@@ -12,6 +12,7 @@ use serde::Serialize;
 use crate::authz::CompiledAuthzModel;
 use crate::config::{AppConfig, LoadedConfig};
 use crate::feldera::{sync_authz_pipeline, FelderaClient, StartPipelineRequest};
+use crate::managed_store::FelderaManagedStore;
 use crate::state::ControlPlaneState;
 use crate::tenants::{AssumeAccessTokenRequest, CompiledTenantModel, ValidateAccessTokenRequest};
 
@@ -24,6 +25,7 @@ pub struct AppState {
     signer: Arc<JwtSigner>,
     verifier: Arc<JwtVerifier>,
     feldera: Option<FelderaClient>,
+    managed_store: Option<Arc<FelderaManagedStore>>,
 }
 
 #[derive(Serialize)]
@@ -50,7 +52,8 @@ struct MetaResponse {
 }
 
 impl AppState {
-    pub fn from_loaded_config(
+    // r[impl config.managed.feldera-authoritative-store]
+    pub async fn from_loaded_config(
         loaded: LoadedConfig,
         managed: conclave_managed_config::LoadedManagedConfig,
         signer: JwtSigner,
@@ -62,17 +65,42 @@ impl AppState {
                 loaded.config.feldera.api_key.clone(),
             )
         });
-        let mut state = ControlPlaneState::empty();
-        state.bootstrap_from_managed_if_empty(managed.managed)?;
+        let managed_store = feldera.clone().map(|client| {
+            Arc::new(FelderaManagedStore::new(
+                client,
+                loaded.config.feldera.clone(),
+            ))
+        });
+        let (state, managed_source) = if let Some(store) = &managed_store {
+            store.bootstrap_if_empty(&managed.managed).await?;
+            let durable_managed = store.load_managed().await?;
+            let durable_apply_id = store.load_latest_apply_id().await?;
+            let mut state = ControlPlaneState::new(durable_managed)?;
+            if let Some(apply_id) = durable_apply_id {
+                state.set_last_apply_id(apply_id);
+            }
+            (
+                state,
+                format!(
+                    "feldera:{} (bootstrap seed {})",
+                    loaded.config.feldera.pipeline_prefix, managed.source
+                ),
+            )
+        } else {
+            let mut state = ControlPlaneState::empty();
+            state.bootstrap_from_managed_if_empty(managed.managed)?;
+            (state, managed.source)
+        };
 
         Ok(Self {
             config: Arc::new(loaded.config),
             config_source: Arc::new(loaded.source),
-            managed_source: Arc::new(managed.source),
+            managed_source: Arc::new(managed_source),
             state: Arc::new(RwLock::new(state)),
             signer: Arc::new(signer),
             verifier: Arc::new(verifier),
             feldera,
+            managed_store,
         })
     }
 
@@ -118,10 +146,14 @@ impl AppState {
         };
 
         let (authz, _) = self.current_snapshot()?;
-        let start = self.config.feldera.auto_start.then(|| StartPipelineRequest {
-            initial: self.config.feldera.start_initial.clone(),
-            bootstrap_policy: None,
-        });
+        let start = self
+            .config
+            .feldera
+            .auto_start
+            .then(|| StartPipelineRequest {
+                initial: self.config.feldera.start_initial.clone(),
+                bootstrap_policy: None,
+            });
         let result = sync_authz_pipeline(client, &self.config.feldera, &authz, start).await?;
 
         Ok(Some(result.status))
@@ -253,8 +285,29 @@ async fn managed_apply(
         return response;
     }
 
+    {
+        let guard = state.state.read().expect("state lock should not poison");
+        if let Err(err) = guard.plan(&body.managed) {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": err.to_string(),
+            }));
+        }
+    }
+
+    let durable_apply_id = match &state.managed_store {
+        Some(store) => match store.apply(&body.managed).await {
+            Ok(apply_id) => Some(apply_id),
+            Err(err) => {
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": err.to_string(),
+                }))
+            }
+        },
+        None => None,
+    };
+
     let mut guard = state.state.write().expect("state lock should not poison");
-    match guard.apply(body.managed.clone()) {
+    match guard.apply_with_id(body.managed.clone(), durable_apply_id) {
         Ok(plan) => HttpResponse::Ok().json(ManagedApplyResponse {
             applied: true,
             apply_id: guard.last_apply_id.clone(),
@@ -437,7 +490,7 @@ mod tests {
 
     use super::*;
 
-    fn test_state() -> AppState {
+    async fn test_state() -> AppState {
         let loaded = LoadedConfig {
             config: AppConfig::default(),
             managed_dir: std::path::PathBuf::from("config"),
@@ -496,12 +549,14 @@ memberships (
         );
         let verifier = signer.verifier();
 
-        AppState::from_loaded_config(loaded, managed, signer, verifier).expect("state should build")
+        AppState::from_loaded_config(loaded, managed, signer, verifier)
+            .await
+            .expect("state should build")
     }
 
     #[actix_web::test]
     async fn control_plane_invite_and_subject_login_flow() {
-        let state = test_state();
+        let state = test_state().await;
         let control = test::init_service(
             App::new()
                 .app_data(web::Data::new(state.clone()))
@@ -556,7 +611,7 @@ memberships (
 
     #[actix_web::test]
     async fn relying_surface_exposes_jwks_and_catalog() {
-        let state = test_state();
+        let state = test_state().await;
         let relying = test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
@@ -621,9 +676,61 @@ memberships (
             HttpResponse::Ok().finish()
         }
 
+        #[post("/v0/pipelines/{name}/start")]
+        async fn start_pipeline() -> impl Responder {
+            HttpResponse::Ok().finish()
+        }
+
+        #[get("/v0/pipelines/{name}/query")]
+        async fn query_pipeline(request: HttpRequest) -> impl Responder {
+            let sql = request
+                .query_string()
+                .split('&')
+                .find_map(|entry| entry.strip_prefix("sql="))
+                .unwrap_or_default()
+                .replace('+', " ")
+                .replace("%20", " ")
+                .replace("%28", "(")
+                .replace("%29", ")")
+                .replace("%2A", "*");
+
+            if sql.contains("COUNT(*)") {
+                HttpResponse::Ok().body(r#"[{"count":0}]"#)
+            } else if sql.contains("ORDER BY committed_at DESC") {
+                HttpResponse::Ok().body(r#"[{"apply_id":"apply-bootstrap"}]"#)
+            } else {
+                HttpResponse::Ok().body(
+                    r#"[
+                        {
+                            "resource_kind":"action",
+                            "resource_key":"tenant:user:read",
+                            "scope":"global",
+                            "apply_id":"apply-bootstrap",
+                            "row_version":1,
+                            "valid_from":1,
+                            "deleted":false,
+                            "payload_json":"{\"name\":\"tenant:user:read\"}"
+                        }
+                    ]"#,
+                )
+            }
+        }
+
+        #[post("/v0/pipelines/{name}/ingress/{table}")]
+        async fn ingress_rows() -> impl Responder {
+            HttpResponse::Ok().json(serde_json::json!({ "completion_token": "done-1" }))
+        }
+
+        #[get("/v0/pipelines/{name}/completion_status")]
+        async fn completion_status() -> impl Responder {
+            HttpResponse::Ok().json(serde_json::json!({ "completed": true }))
+        }
+
         let seen = Arc::new(Mutex::new(Seen::default()));
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
-        let addr = listener.local_addr().expect("listener should have local addr");
+        let addr = listener
+            .local_addr()
+            .expect("listener should have local addr");
         let server_seen = seen.clone();
         let server = actix_web::HttpServer::new(move || {
             App::new()
@@ -631,6 +738,10 @@ memberships (
                 .service(get_pipeline)
                 .service(create_pipeline)
                 .service(patch_pipeline)
+                .service(start_pipeline)
+                .service(query_pipeline)
+                .service(ingress_rows)
+                .service(completion_status)
         })
         .listen(listener)
         .expect("server should listen")
@@ -669,6 +780,7 @@ catalog {
         );
         let verifier = signer.verifier();
         let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
+            .await
             .expect("state should build");
 
         let result = state
@@ -679,8 +791,175 @@ catalog {
         handle.stop(true).await;
         assert_eq!(result.as_deref(), Some("created"));
         let seen = seen.lock().expect("seen lock");
-        assert_eq!(seen.gets, 1);
-        assert_eq!(seen.creates, 1);
+        assert!(seen.gets >= 2);
+        assert!(seen.creates >= 2);
+    }
+
+    // r[verify config.managed.feldera-authoritative-store]
+    #[actix_web::test]
+    async fn bootstraps_managed_state_from_feldera_when_enabled() {
+        use actix_web::{patch, HttpResponse};
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        #[derive(Default, Clone)]
+        struct Seen {
+            pipeline_gets: usize,
+            pipeline_creates: usize,
+            query_calls: usize,
+            ingress_calls: usize,
+        }
+
+        #[get("/v0/pipelines/{name}")]
+        async fn get_pipeline(seen: web::Data<Arc<Mutex<Seen>>>) -> impl Responder {
+            let mut seen = seen.lock().expect("seen lock");
+            seen.pipeline_gets += 1;
+            HttpResponse::NotFound().finish()
+        }
+
+        #[post("/v0/pipelines")]
+        async fn create_pipeline(
+            seen: web::Data<Arc<Mutex<Seen>>>,
+            body: web::Json<crate::feldera::DesiredPipeline>,
+        ) -> impl Responder {
+            seen.lock().expect("seen lock").pipeline_creates += 1;
+            HttpResponse::Ok().json(crate::feldera::PipelineRecord {
+                name: body.name.clone(),
+                description: Some(body.description.clone()),
+                program_code: Some(body.program_code.clone()),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: body.program_config.clone(),
+            })
+        }
+
+        #[post("/v0/pipelines/{name}/start")]
+        async fn start_pipeline() -> impl Responder {
+            HttpResponse::Ok().finish()
+        }
+
+        #[patch("/v0/pipelines/{name}")]
+        async fn patch_pipeline() -> impl Responder {
+            HttpResponse::Ok().finish()
+        }
+
+        #[get("/v0/pipelines/{name}/query")]
+        async fn query_pipeline(
+            seen: web::Data<Arc<Mutex<Seen>>>,
+            request: HttpRequest,
+        ) -> impl Responder {
+            let sql = request
+                .query_string()
+                .split('&')
+                .find_map(|entry| entry.strip_prefix("sql="))
+                .unwrap_or_default()
+                .replace('+', " ")
+                .replace("%20", " ")
+                .replace("%28", "(")
+                .replace("%29", ")")
+                .replace("%2A", "*");
+            seen.lock().expect("seen lock").query_calls += 1;
+
+            if sql.contains("COUNT(*)") {
+                HttpResponse::Ok().body(r#"[{"count":0}]"#)
+            } else if sql.contains("ORDER BY committed_at DESC") {
+                HttpResponse::Ok().body(r#"[{"apply_id":"apply-bootstrap"}]"#)
+            } else {
+                HttpResponse::Ok().body(
+                    r#"[
+                        {
+                            "resource_kind":"action",
+                            "resource_key":"tenant:user:read",
+                            "scope":"global",
+                            "apply_id":"apply-bootstrap",
+                            "row_version":1,
+                            "valid_from":1,
+                            "deleted":false,
+                            "payload_json":"{\"name\":\"tenant:user:read\"}"
+                        }
+                    ]"#,
+                )
+            }
+        }
+
+        #[post("/v0/pipelines/{name}/ingress/{table}")]
+        async fn ingress_rows(seen: web::Data<Arc<Mutex<Seen>>>) -> impl Responder {
+            seen.lock().expect("seen lock").ingress_calls += 1;
+            HttpResponse::Ok().json(serde_json::json!({ "completion_token": "done-1" }))
+        }
+
+        #[get("/v0/pipelines/{name}/completion_status")]
+        async fn completion_status() -> impl Responder {
+            HttpResponse::Ok().json(serde_json::json!({ "completed": true }))
+        }
+
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("listener should have local addr");
+        let server_seen = seen.clone();
+        let server = actix_web::HttpServer::new(move || {
+            App::new()
+                .app_data(web::Data::new(server_seen.clone()))
+                .service(get_pipeline)
+                .service(create_pipeline)
+                .service(start_pipeline)
+                .service(patch_pipeline)
+                .service(query_pipeline)
+                .service(ingress_rows)
+                .service(completion_status)
+        })
+        .listen(listener)
+        .expect("server should listen")
+        .run();
+        let handle = server.handle();
+        actix_web::rt::spawn(server);
+        actix_web::rt::time::sleep(Duration::from_millis(25)).await;
+
+        let mut loaded = LoadedConfig {
+            config: AppConfig::default(),
+            managed_dir: std::path::PathBuf::from("config"),
+            source: "test".to_owned(),
+        };
+        loaded.config.feldera.enabled = true;
+        loaded.config.feldera.base_url = format!("http://{}", addr);
+        let managed = conclave_managed_config::LoadedManagedConfig {
+            managed: ManagedConfig::load_from_str(
+                r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+    )
+}
+"#,
+            )
+            .expect("managed config should parse"),
+            source: "bootstrap-managed".to_owned(),
+        };
+        let signer = JwtSigner::from_seed(
+            loaded.config.jwt.signing_key_id.clone(),
+            loaded
+                .config
+                .jwt
+                .signing_seed_bytes()
+                .expect("seed should decode"),
+        );
+        let verifier = signer.verifier();
+        let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
+            .await
+            .expect("state should build");
+        let catalog = state.current_catalog().expect("catalog should compile");
+
+        handle.stop(true).await;
+        assert_eq!(catalog.actions.len(), 1);
+        let seen = seen.lock().expect("seen lock");
+        assert!(seen.pipeline_creates >= 1);
+        assert!(seen.query_calls >= 2);
+        assert!(seen.ingress_calls >= 1);
     }
 
     #[actix_web::test]
@@ -693,6 +972,13 @@ catalog {
         };
         loaded.config.feldera.enabled = true;
         loaded.config.feldera.readiness_probe = true;
+        loaded.config.feldera.pipeline_prefix = format!(
+            "component-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should be monotonic enough")
+                .as_secs()
+        );
         loaded.config.feldera.base_url = std::env::var("CONCLAVE_COMPONENT_FELDERA_URL")
             .expect("set CONCLAVE_COMPONENT_FELDERA_URL to run this test");
         let managed = conclave_managed_config::LoadedManagedConfig {
@@ -714,6 +1000,7 @@ catalog { actions () }
         );
         let verifier = signer.verifier();
         let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
+            .await
             .expect("state should build");
         let control = test::init_service(
             App::new()
