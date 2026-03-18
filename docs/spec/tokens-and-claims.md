@@ -44,6 +44,12 @@ Relying systems validating an access token MUST combine token signature validati
 r[token.access.use.staleness-bounds]
 Offline authorization decisions based on token-carried entitlements MUST be bounded by token expiry and by a defined strategy for catalog or policy revision invalidation.
 
+r[token.access.jwt.asymmetric-signing]
+Access tokens intended for relying-system validation MUST support asymmetric signing so verification keys can be distributed without sharing signing secrets.
+
+r[token.access.jwt.jwks-publication]
+The platform MUST publish verification keys for relying-system token validation through a JWKS-compatible surface.
+
 ## Illustrative payload
 
 The initial claim layout can follow a structure like this:

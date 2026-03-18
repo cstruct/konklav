@@ -3,6 +3,7 @@ mod config;
 mod control_plane;
 mod feldera;
 mod http;
+mod state;
 mod tenants;
 mod types;
 
@@ -10,12 +11,11 @@ use std::io;
 
 use actix_web::{web, App, HttpServer};
 use conclave_managed_config::ManagedConfig;
+use conclave_relying_auth::JwtSigner;
 use tracing_subscriber::EnvFilter;
 
-use crate::authz::compile_managed_authz;
 use crate::config::AppConfig;
 use crate::http::AppState;
-use crate::tenants::compile_managed_tenants;
 
 // r[impl platform.server.bootstrap]
 #[actix_web::main]
@@ -24,21 +24,61 @@ async fn main() -> io::Result<()> {
 
     let loaded = AppConfig::load().map_err(io::Error::other)?;
     let managed = ManagedConfig::load_from_dir(&loaded.managed_dir).map_err(io::Error::other)?;
-    let authz = compile_managed_authz(&managed.managed).map_err(io::Error::other)?;
-    let tenants = compile_managed_tenants(&managed.managed, &authz).map_err(io::Error::other)?;
-    let state = AppState::from_loaded_config(loaded, managed, authz, tenants);
-    let bind_address = state.bind_address();
+    let signer = JwtSigner::from_seed(
+        loaded.config.jwt.signing_key_id.clone(),
+        loaded
+            .config
+            .jwt
+            .signing_seed_bytes()
+            .map_err(io::Error::other)?,
+    );
+    let verifier = signer.verifier();
+    let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
+        .map_err(io::Error::other)?;
+    let control_plane_bind = state.control_plane_bind_address();
+    let subject_bind = state.subject_bind_address();
+    let relying_bind = state.relying_bind_address();
 
-    tracing::info!(bind_address, "starting conclave server");
+    tracing::info!(
+        control_plane_bind,
+        subject_bind,
+        relying_bind,
+        "starting conclave server"
+    );
 
-    HttpServer::new(move || {
+    let control_plane = HttpServer::new({
+        let state = state.clone();
+        move || {
+            App::new()
+                .app_data(web::Data::new(state.clone()))
+                .configure(http::configure_control_plane)
+        }
+    })
+    .bind(&control_plane_bind)?
+    .run();
+
+    let subject = HttpServer::new({
+        let state = state.clone();
+        move || {
+            App::new()
+                .app_data(web::Data::new(state.clone()))
+                .configure(http::configure_subject)
+        }
+    })
+    .bind(&subject_bind)?
+    .run();
+
+    let relying = HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(state.clone()))
-            .configure(http::configure)
+            .configure(http::configure_relying)
     })
-    .bind(&bind_address)?
-    .run()
-    .await
+    .bind(&relying_bind)?
+    .run();
+
+    futures_util::future::try_join3(control_plane, subject, relying)
+        .await
+        .map(|_| ())
 }
 
 fn initialize_tracing() {

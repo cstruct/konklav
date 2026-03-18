@@ -43,3 +43,6 @@ Every identity subject MUST have a stable internal identifier that survives user
 
 r[identity.subject.linked-credentials]
 An identity subject MUST be able to link multiple credential or federation sources to the same internal subject record.
+
+r[identity.subject.invite-redeem]
+The platform MUST support issuing a subject invite and redeeming it into a linked credential without requiring a provider-specific email delivery implementation.

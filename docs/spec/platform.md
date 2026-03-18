@@ -18,5 +18,11 @@ The repository MUST provide a Rust server workspace member that can build and ru
 r[platform.cli.operator-interface]
 The repository MUST provide a Rust CLI workspace member that serves as the operator interface for validating, planning, and applying managed configuration against the Conclave control plane.
 
+r[platform.relying-auth.library]
+The repository MUST provide a Rust library workspace member that lets relying systems validate Conclave-issued JWTs and evaluate token-carried authorization snapshots offline.
+
 r[platform.server.control-plane-boundary]
 The first server component MUST own the orchestration boundary for tenants, identities, authentication, authorization, and federation even if those domains are later split into separate services.
+
+r[platform.server.multi-surface-runtime]
+The first server component MUST support distinct control-plane, subject-facing, and relying-system HTTP surfaces even when they run from one process.

@@ -1,31 +1,28 @@
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
-use hmac::{Hmac, Mac};
+use conclave_relying_auth::{
+    AccessDecision, AccessTokenClaims, ActionCatalogEntry, ActorChainClaim,
+    AuthorizationSnapshotClaim, JwtSigner, JwtVerifier, ScopedBitsClaim, ValidationOptions,
+};
 use serde_json::Value;
-use sha2::Sha256;
 
 use crate::authz::CompiledAuthzModel;
 use crate::config::JwtConfig;
 use crate::types::DynError;
 
-use super::compile::{compile_entitlements, tenant_is_descendant_of, Bitset, TenantError};
+use super::compile::{compile_entitlements, tenant_is_descendant_of, TenantError};
 use super::model::{
-    AccessDecision, AccessTokenClaims, AccessTokenResponse, ActorChainClaim,
-    AssumeAccessTokenRequest, AuthorizationSnapshotClaim, CompiledScopeGrant, CompiledTenantModel,
-    DirectAccessTokenRequest, ScopedBitsClaim, ValidateAccessTokenRequest,
-    ValidateAccessTokenResponse,
+    AccessTokenResponse, AssumeAccessTokenRequest, CompiledScopeGrant, CompiledTenantModel,
+    DirectAccessTokenRequest, ValidateAccessTokenRequest, ValidateAccessTokenResponse,
 };
-
-type HmacSha256 = Hmac<Sha256>;
 
 impl CompiledTenantModel {
     pub fn issue_direct_token(
         &self,
         authz: &CompiledAuthzModel,
         jwt: &JwtConfig,
+        signer: &JwtSigner,
         request: &DirectAccessTokenRequest,
     ) -> Result<AccessTokenResponse, DynError> {
         let membership = self
@@ -38,21 +35,20 @@ impl CompiledTenantModel {
             })?;
 
         let tenant = self.require_active_tenant(&request.tenant)?;
-        let ttl_seconds = request.ttl_seconds.unwrap_or(jwt.ttl_seconds).max(1);
         let claims = build_access_token_claims(
             authz,
             jwt,
             &request.subject,
             &tenant.id,
             request.audience.as_deref(),
-            ttl_seconds,
+            request.ttl_seconds.unwrap_or(jwt.ttl_seconds).max(1),
             None,
             membership.tenant_bits_hex.clone(),
             membership.scoped_entries.clone(),
             membership.facts.clone(),
             self.policy_revision,
         )?;
-        let token = encode_access_token(&claims, &jwt.signing_secret)?;
+        let token = signer.sign(&claims)?;
 
         Ok(AccessTokenResponse {
             token,
@@ -71,6 +67,7 @@ impl CompiledTenantModel {
         &self,
         authz: &CompiledAuthzModel,
         jwt: &JwtConfig,
+        signer: &JwtSigner,
         request: &AssumeAccessTokenRequest,
     ) -> Result<AccessTokenResponse, DynError> {
         let source_membership = self
@@ -121,7 +118,7 @@ impl CompiledTenantModel {
             source_membership.facts.clone(),
             self.policy_revision,
         )?;
-        let token = encode_access_token(&claims, &jwt.signing_secret)?;
+        let token = signer.sign(&claims)?;
 
         Ok(AccessTokenResponse {
             token,
@@ -136,10 +133,39 @@ impl CompiledTenantModel {
         &self,
         authz: &CompiledAuthzModel,
         jwt: &JwtConfig,
+        verifier: &JwtVerifier,
         request: &ValidateAccessTokenRequest,
     ) -> Result<ValidateAccessTokenResponse, DynError> {
-        let claims = decode_access_token(&request.token, &jwt.signing_secret)?;
         let now = now_unix_seconds()?;
+        let actions: Vec<ActionCatalogEntry> = authz
+            .actions
+            .iter()
+            .map(|entry| ActionCatalogEntry {
+                name: entry.name.clone(),
+                bit: entry.bit,
+            })
+            .collect();
+        let validated = verifier.verify(
+            &request.token,
+            &actions,
+            ValidationOptions {
+                issuer: Some(&jwt.issuer),
+                audience: request.audience.as_deref(),
+                expected_tenant: Some(&request.expected_tenant),
+                current_catalog_revision: request
+                    .require_current_revisions
+                    .unwrap_or(true)
+                    .then_some(authz.catalog_revision),
+                current_policy_revision: request
+                    .require_current_revisions
+                    .unwrap_or(true)
+                    .then_some(self.policy_revision),
+                action: request.action.as_deref(),
+                scope_kind: request.scope_kind.as_deref(),
+                scope_id: request.scope_id.as_deref(),
+            },
+        )?;
+        let claims = validated.claims;
 
         if claims.exp <= now {
             return Ok(ValidateAccessTokenResponse {
@@ -150,70 +176,17 @@ impl CompiledTenantModel {
             });
         }
 
-        if claims.tid != request.expected_tenant {
-            let actual_tenant = claims.tid.clone();
-            return Ok(ValidateAccessTokenResponse {
-                valid: false,
-                claims: Some(claims),
-                decision: None,
-                error: Some(format!(
-                    "token targets tenant {}, expected {}",
-                    actual_tenant, request.expected_tenant
-                )),
-            });
-        }
-
-        if let Some(audience) = request.audience.as_deref() {
-            if claims.aud != audience {
-                let actual_audience = claims.aud.clone();
-                return Ok(ValidateAccessTokenResponse {
-                    valid: false,
-                    claims: Some(claims),
-                    decision: None,
-                    error: Some(format!(
-                        "token audience {} does not match {}",
-                        actual_audience, audience
-                    )),
-                });
-            }
-        }
-
-        if request.require_current_revisions.unwrap_or(true)
-            && (claims.az.catalog_rev != authz.catalog_revision
-                || claims.az.policy_rev != self.policy_revision)
-        {
-            return Ok(ValidateAccessTokenResponse {
-                valid: false,
-                claims: Some(claims),
-                decision: None,
-                error: Some("token authorization snapshot is stale".to_owned()),
-            });
-        }
-
-        let decision = if let Some(action) = request.action.as_deref() {
-            let action_bit = authz.action_bit(action).ok_or_else(|| {
-                Box::new(TenantError::new(format!("unknown action {action}"))) as DynError
-            })?;
-            let (allowed, matched_scope) = evaluate_action(
-                &claims.az,
-                action_bit,
-                request.scope_kind.as_deref(),
-                request.scope_id.as_deref(),
-            )?;
-
-            Some(AccessDecision {
-                action: action.to_owned(),
-                allowed,
-                matched_scope,
-            })
-        } else {
-            None
-        };
-
         Ok(ValidateAccessTokenResponse {
-            valid: decision.as_ref().is_none_or(|entry| entry.allowed),
+            valid: validated
+                .decision
+                .as_ref()
+                .is_none_or(|decision| decision.allowed),
             claims: Some(claims),
-            decision,
+            decision: validated.decision.map(|entry| AccessDecision {
+                action: entry.action,
+                allowed: entry.allowed,
+                matched_scope: entry.matched_scope,
+            }),
             error: None,
         })
     }
@@ -246,13 +219,12 @@ fn build_access_token_claims(
 ) -> Result<AccessTokenClaims, DynError> {
     let iat = now_unix_seconds()?;
     let exp = iat + ttl_seconds.max(1);
-    let jti = build_token_id(subject, target_tenant, iat, exp, actor_chain.as_ref());
 
     Ok(AccessTokenClaims {
         iss: jwt.issuer.clone(),
         sub: subject.to_owned(),
         aud: audience.unwrap_or(&jwt.default_audience).to_owned(),
-        jti,
+        jti: build_token_id(subject, target_tenant, iat, exp, actor_chain.as_ref()),
         iat,
         exp,
         tid: target_tenant.to_owned(),
@@ -272,98 +244,6 @@ fn build_access_token_claims(
             facts: facts.into_iter().collect(),
         },
     })
-}
-
-fn encode_access_token(
-    claims: &AccessTokenClaims,
-    signing_secret: &str,
-) -> Result<String, DynError> {
-    if signing_secret.is_empty() {
-        return Err(Box::new(TenantError::new(
-            "jwt signing secret cannot be empty",
-        )));
-    }
-
-    let header = serde_json::json!({
-        "alg": "HS256",
-        "typ": "JWT",
-    });
-    let header = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header)?);
-    let claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(claims)?);
-    let signature = sign_hs256(signing_secret, &header, &claims)?;
-
-    Ok(format!("{header}.{claims}.{signature}"))
-}
-
-fn decode_access_token(token: &str, signing_secret: &str) -> Result<AccessTokenClaims, DynError> {
-    let segments: Vec<&str> = token.split('.').collect();
-    if segments.len() != 3 {
-        return Err(Box::new(TenantError::new(
-            "token does not contain three JWT segments",
-        )));
-    }
-
-    let expected_signature = sign_hs256(signing_secret, segments[0], segments[1])?;
-    if expected_signature != segments[2] {
-        return Err(Box::new(TenantError::new(
-            "token signature verification failed",
-        )));
-    }
-
-    let header: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(segments[0])?)?;
-    if header.get("alg").and_then(Value::as_str) != Some("HS256") {
-        return Err(Box::new(TenantError::new("unsupported JWT alg")));
-    }
-
-    Ok(serde_json::from_slice(
-        &URL_SAFE_NO_PAD.decode(segments[1])?,
-    )?)
-}
-
-fn sign_hs256(signing_secret: &str, header: &str, claims: &str) -> Result<String, DynError> {
-    let mut mac = HmacSha256::new_from_slice(signing_secret.as_bytes())
-        .map_err(|_| Box::new(TenantError::new("invalid jwt signing secret")) as DynError)?;
-    mac.update(header.as_bytes());
-    mac.update(b".");
-    mac.update(claims.as_bytes());
-    let signature = mac.finalize().into_bytes();
-    Ok(URL_SAFE_NO_PAD.encode(signature))
-}
-
-fn evaluate_action(
-    snapshot: &AuthorizationSnapshotClaim,
-    action_bit: usize,
-    scope_kind: Option<&str>,
-    scope_id: Option<&str>,
-) -> Result<(bool, Option<String>), DynError> {
-    if Bitset::from_hex(&snapshot.tenant_bits, action_bit + 1)?.contains(action_bit) {
-        return Ok((true, Some("tenant".to_owned())));
-    }
-
-    if let Some(scope_kind) = scope_kind {
-        for scope in &snapshot.scopes {
-            if scope.kind != scope_kind {
-                continue;
-            }
-
-            let id_matches = match (scope.id.as_deref(), scope_id) {
-                (None, _) => true,
-                (Some(left), Some(right)) => left == right,
-                _ => false,
-            };
-
-            if id_matches && Bitset::from_hex(&scope.bits, action_bit + 1)?.contains(action_bit) {
-                let matched_scope = scope
-                    .id
-                    .as_ref()
-                    .map(|id| format!("{scope_kind}:{id}"))
-                    .unwrap_or_else(|| format!("{scope_kind}:*"));
-                return Ok((true, Some(matched_scope)));
-            }
-        }
-    }
-
-    Ok((false, None))
 }
 
 fn now_unix_seconds() -> Result<u64, DynError> {

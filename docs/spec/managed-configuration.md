@@ -33,6 +33,9 @@ The platform MUST detect drift between declarative intent and live managed state
 r[config.managed.ownership]
 Managed resources MUST persist ownership or manager metadata so Conclave can distinguish declaratively managed fields from manually managed fields.
 
+r[config.managed.versioned-history]
+Persisted managed control-plane state MUST preserve introspectible temporal history using validity windows rather than destructive in-place replacement.
+
 ## Apply semantics
 
 r[config.managed.apply-operation]

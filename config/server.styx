@@ -1,21 +1,38 @@
-server {
-    host 127.0.0.1
+control_plane {
+    host "127.0.0.1"
     port 8080
 }
 
+subject {
+    host "127.0.0.1"
+    port 8081
+}
+
+relying {
+    host "127.0.0.1"
+    port 8082
+}
+
+bootstrap {
+    subject "root-operator"
+    token "conclave-bootstrap-token"
+    display_name "Bootstrap root operator"
+}
+
 jwt {
-    issuer http://127.0.0.1:8080
-    default_audience conclave-dev
-    signing_secret conclave-dev-secret
+    issuer "http://127.0.0.1:8082"
+    default_audience "conclave-dev"
+    signing_key_id "dev-key-1"
+    signing_seed "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
     ttl_seconds 900
 }
 
 feldera {
     enabled false
-    base_url http://127.0.0.1:8080
-    pipeline_prefix conclave
+    base_url "http://127.0.0.1:8080"
+    pipeline_prefix "conclave"
     readiness_probe true
-    compile_profile dev
+    compile_profile "dev"
     auto_start false
-    start_initial paused
+    start_initial "paused"
 }

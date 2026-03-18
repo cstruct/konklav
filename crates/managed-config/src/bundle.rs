@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use conclave_core::DynError;
 use facet::Facet;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::authz::{ActionCatalogConfig, RoleConfig, TemplateConfig};
 use crate::tenants::{AssumptionGrantConfig, MembershipConfig, SubjectConfig, TenantConfig};
@@ -15,7 +15,7 @@ pub struct LoadedManagedConfig {
     pub source: String,
 }
 
-#[derive(Clone, Debug, Facet, PartialEq, Serialize)]
+#[derive(Clone, Debug, Facet, PartialEq, Serialize, Deserialize)]
 pub struct ManagedConfig {
     pub catalog: ActionCatalogConfig,
     #[facet(default)]
@@ -32,7 +32,7 @@ pub struct ManagedConfig {
     pub assumption_grants: Vec<AssumptionGrantConfig>,
 }
 
-#[derive(Clone, Debug, Default, Facet, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Facet, PartialEq, Serialize, Deserialize)]
 struct ManagedConfigFragment {
     #[facet(default)]
     pub catalog: Option<ActionCatalogConfig>,

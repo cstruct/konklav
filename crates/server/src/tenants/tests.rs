@@ -1,6 +1,7 @@
 use serde_json::Value;
 
 use conclave_managed_config::ManagedConfig;
+use conclave_relying_auth::JwtSigner;
 
 use crate::authz::{compile_managed_authz, CompiledAuthzModel};
 use crate::config::JwtConfig;
@@ -106,9 +107,18 @@ fn jwt_config() -> JwtConfig {
     JwtConfig {
         issuer: "https://conclave.test".to_owned(),
         default_audience: "conclave-api".to_owned(),
-        signing_secret: "test-secret".to_owned(),
+        signing_key_id: "test-key".to_owned(),
+        signing_seed: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20".to_owned(),
         ttl_seconds: 900,
     }
+}
+
+fn signer() -> JwtSigner {
+    let jwt = jwt_config();
+    JwtSigner::from_seed(
+        jwt.signing_key_id.clone(),
+        jwt.signing_seed_bytes().expect("seed should decode"),
+    )
 }
 
 // r[verify tenant.root.bootstrap]
@@ -241,6 +251,7 @@ memberships (
     let result = tenants.issue_direct_token(
         &authz,
         &jwt_config(),
+        &signer(),
         &DirectAccessTokenRequest {
             subject: "doctor-1".to_owned(),
             tenant: "tenant-a".to_owned(),
@@ -302,6 +313,7 @@ memberships (
     let result = tenants.issue_assumed_token(
         &authz,
         &jwt_config(),
+        &signer(),
         &AssumeAccessTokenRequest {
             subject: "operator-1".to_owned(),
             source_tenant: "root".to_owned(),
@@ -329,6 +341,7 @@ fn issues_direct_access_token() {
         .issue_direct_token(
             &authz,
             &jwt,
+            &signer(),
             &DirectAccessTokenRequest {
                 subject: "doctor-1".to_owned(),
                 tenant: "tenant-a".to_owned(),
@@ -371,6 +384,7 @@ fn issues_assumed_access_token_with_actor_context() {
         .issue_assumed_token(
             &authz,
             &jwt,
+            &signer(),
             &AssumeAccessTokenRequest {
                 subject: "operator-1".to_owned(),
                 source_tenant: "root".to_owned(),
@@ -404,6 +418,7 @@ fn validates_token_signature_scope_and_revisions() {
         .issue_assumed_token(
             &authz,
             &jwt,
+            &signer(),
             &AssumeAccessTokenRequest {
                 subject: "operator-1".to_owned(),
                 source_tenant: "root".to_owned(),
@@ -417,6 +432,7 @@ fn validates_token_signature_scope_and_revisions() {
         .validate_access_token(
             &authz,
             &jwt,
+            &signer().verifier(),
             &ValidateAccessTokenRequest {
                 token: token.token,
                 expected_tenant: "tenant-a".to_owned(),

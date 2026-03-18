@@ -1,3 +1,10 @@
 [workspace]
-members = ["crates/core", "crates/managed-config", "crates/server"]
+members = [
+    "crates/cli",
+    "crates/controlplane-api",
+    "crates/core",
+    "crates/managed-config",
+    "crates/relying-auth",
+    "crates/server",
+]
 resolver = "2"

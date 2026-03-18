@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use conclave_relying_auth::{AccessDecision, AccessTokenClaims};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -96,50 +97,6 @@ pub struct ValidateAccessTokenResponse {
     pub claims: Option<AccessTokenClaims>,
     pub decision: Option<AccessDecision>,
     pub error: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AccessDecision {
-    pub action: crate::types::ActionName,
-    pub allowed: bool,
-    pub matched_scope: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AccessTokenClaims {
-    pub iss: String,
-    pub sub: SubjectId,
-    pub aud: String,
-    pub jti: String,
-    pub iat: u64,
-    pub exp: u64,
-    pub tid: TenantId,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub act: Option<ActorChainClaim>,
-    pub az: AuthorizationSnapshotClaim,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ActorChainClaim {
-    pub sub: SubjectId,
-    pub tid: TenantId,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AuthorizationSnapshotClaim {
-    pub catalog_rev: CatalogRevision,
-    pub policy_rev: PolicyRevision,
-    pub tenant_bits: String,
-    pub scopes: Vec<ScopedBitsClaim>,
-    pub facts: Map<String, Value>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ScopedBitsClaim {
-    pub kind: crate::types::ScopeKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<crate::types::ScopeId>,
-    pub bits: String,
 }
 
 impl CompiledTenantModel {

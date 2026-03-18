@@ -1,8 +1,8 @@
 use conclave_core::{RoleKey, SubjectId, TenantId};
 use facet::Facet;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Facet, PartialEq, Serialize)]
+#[derive(Clone, Debug, Facet, PartialEq, Serialize, Deserialize)]
 pub struct TenantConfig {
     pub id: TenantId,
     pub display_name: Option<String>,
@@ -11,13 +11,13 @@ pub struct TenantConfig {
     pub state: String,
 }
 
-#[derive(Clone, Debug, Facet, PartialEq, Serialize)]
+#[derive(Clone, Debug, Facet, PartialEq, Serialize, Deserialize)]
 pub struct SubjectConfig {
     pub id: SubjectId,
     pub display_name: Option<String>,
 }
 
-#[derive(Clone, Debug, Facet, PartialEq, Serialize)]
+#[derive(Clone, Debug, Facet, PartialEq, Serialize, Deserialize)]
 pub struct MembershipConfig {
     pub subject: SubjectId,
     pub tenant: TenantId,
@@ -27,7 +27,7 @@ pub struct MembershipConfig {
     pub facts: Vec<PortableFactConfig>,
 }
 
-#[derive(Clone, Debug, Facet, PartialEq, Serialize)]
+#[derive(Clone, Debug, Facet, PartialEq, Serialize, Deserialize)]
 pub struct PortableFactConfig {
     pub key: String,
     pub string: Option<String>,
@@ -35,7 +35,7 @@ pub struct PortableFactConfig {
     pub boolean: Option<bool>,
 }
 
-#[derive(Clone, Debug, Facet, PartialEq, Serialize)]
+#[derive(Clone, Debug, Facet, PartialEq, Serialize, Deserialize)]
 pub struct AssumptionGrantConfig {
     pub subject: SubjectId,
     pub source_tenant: TenantId,

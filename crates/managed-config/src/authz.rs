@@ -1,19 +1,19 @@
 use conclave_core::{ActionName, RoleKey, TemplateKey, TenantId};
 use facet::Facet;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Facet, PartialEq, Serialize)]
+#[derive(Clone, Debug, Facet, PartialEq, Serialize, Deserialize)]
 pub struct ActionCatalogConfig {
     pub actions: Vec<ActionSpec>,
 }
 
-#[derive(Clone, Debug, Facet, PartialEq, Serialize)]
+#[derive(Clone, Debug, Facet, PartialEq, Serialize, Deserialize)]
 pub struct ActionSpec {
     pub name: ActionName,
     pub description: Option<String>,
 }
 
-#[derive(Clone, Debug, Facet, PartialEq, Serialize)]
+#[derive(Clone, Debug, Facet, PartialEq, Serialize, Deserialize)]
 pub struct TemplateConfig {
     pub tenant: TenantId,
     pub key: TemplateKey,
@@ -22,7 +22,7 @@ pub struct TemplateConfig {
     pub policies: Vec<PolicySpec>,
 }
 
-#[derive(Clone, Debug, Facet, PartialEq, Serialize)]
+#[derive(Clone, Debug, Facet, PartialEq, Serialize, Deserialize)]
 pub struct RoleConfig {
     pub tenant: TenantId,
     pub key: RoleKey,
@@ -31,7 +31,7 @@ pub struct RoleConfig {
     pub policies: Vec<PolicySpec>,
 }
 
-#[derive(Clone, Debug, Facet, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Facet, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TemplateSourceConfig {
     pub tenant: TenantId,
     pub key: TemplateKey,
@@ -39,7 +39,7 @@ pub struct TemplateSourceConfig {
     pub mode: String,
 }
 
-#[derive(Clone, Debug, Facet, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Facet, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicySpec {
     pub effect: String,
     pub action: ActionName,

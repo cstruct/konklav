@@ -25,6 +25,12 @@ Assumed tenant sessions MUST be time-bounded and auditable.
 r[authn.assumption.target-context]
 Once assumption succeeds, authorization for the assumed session MUST be evaluated in the target tenant context while preserving the originating actor chain for audit and policy inspection.
 
+r[authn.bootstrap.root-operator]
+The platform MUST support an initial bootstrap operator credential for authenticating the first root operator to the Conclave control plane.
+
+r[authn.local-credential.login]
+The platform MUST support a local subject login flow that redeems a linked credential into a tenant-aware session and token without requiring browser SSO for the initial operator and subject story.
+
 ## IAM and authorization
 
 r[authz.role.tenant-scoped]
@@ -137,6 +143,9 @@ Issued tokens MUST be able to carry enough authorization context for downstream 
 
 r[authz.token.revocation-story]
 The authorization model MUST define how token-carried claims are constrained by expiry, rotation, revocation, or versioning so decentralized decisions remain bounded in time.
+
+r[authz.offline.relying-system-library]
+Relying systems MUST be able to validate Conclave-issued JWTs and evaluate token-carried authorization snapshots offline through a stable library boundary.
 
 ## Control-plane authorization
 
