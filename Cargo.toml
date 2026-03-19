@@ -1,10 +1,10 @@
 [workspace]
 members = [
-    "crates/cli",
-    "crates/controlplane-api",
-    "crates/core",
-    "crates/managed-config",
-    "crates/relying-auth",
-    "crates/server",
+    "items/cli",
+    "items/controlplane-api",
+    "items/core",
+    "items/managed-config",
+    "items/relying-auth",
+    "items/server",
 ]
 resolver = "2"

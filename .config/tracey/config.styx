@@ -8,7 +8,7 @@ specs (
             {
                 name rust
                 include (
-                    crates/**/*.rs
+                    items/**/*.rs
                 )
                 exclude (
                     target/**

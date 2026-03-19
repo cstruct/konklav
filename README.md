@@ -16,7 +16,7 @@ This repo is organized around Tracey specifications:
 
 - Specs live in `docs/spec/`.
 - Shared terminology lives in `docs/nomenclature.md`.
-- Rust implementation code lives in `crates/`.
+- Rust implementation code lives in `items/`.
 - Tracey configuration lives in `.config/tracey/config.styx`.
 
 The repository keeps normative requirements in specs, shared vocabulary in nomenclature, and implementation code in workspace crates.
@@ -80,7 +80,7 @@ Representative endpoints:
 - `GET /v1/revisions`
 - `GET /v1/authz/catalog`
 
-See [crates/server/src/http.rs](crates/server/src/http.rs) for the route definitions and how they are split across the three surfaces.
+See [items/server/src/http.rs](items/server/src/http.rs) for the route definitions and how they are split across the three surfaces.
 
 Config defaults live in `config/server.styx`, and the managed playground data lives in the adjacent managed-config directory. Common local overrides include:
 
@@ -109,7 +109,7 @@ Config defaults live in `config/server.styx`, and the managed playground data li
 - `CONCLAVE_FELDERA_AUTO_START`
 - `CONCLAVE_FELDERA_START_INITIAL`
 
-See [crates/server/src/config.rs](crates/server/src/config.rs) for the full set of startup overrides and default values.
+See [items/server/src/config.rs](items/server/src/config.rs) for the full set of startup overrides and default values.
 
 The local development model is compile-first:
 

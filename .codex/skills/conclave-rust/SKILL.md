@@ -1,6 +1,6 @@
 ---
 name: conclave-rust
-description: Rust conventions for Conclave crates. Use when editing Rust code in this repo, especially when introducing new modules, shared types, or representation boundaries.
+description: Rust conventions for Conclave Rust workspace members. Use when editing Rust code in this repo, especially when introducing new modules, shared types, or representation boundaries.
 ---
 
 # Conclave Rust
