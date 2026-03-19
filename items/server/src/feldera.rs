@@ -132,6 +132,25 @@ pub struct TransactionStartResponse {
     pub transaction_id: u64,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub struct CheckpointStartResponse {
+    pub checkpoint_sequence_number: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub struct CheckpointStatus {
+    #[serde(default)]
+    pub success: Option<u64>,
+    #[serde(default)]
+    pub failure: Option<CheckpointFailure>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub struct CheckpointFailure {
+    pub sequence_number: u64,
+    pub error: String,
+}
+
 #[derive(Debug)]
 struct FelderaError {
     message: String,
@@ -305,6 +324,69 @@ impl FelderaClient {
             .error_for_status()?;
 
         Ok(())
+    }
+
+    pub async fn checkpoint_now(
+        &self,
+        pipeline_name: &str,
+    ) -> Result<CheckpointStartResponse, DynError> {
+        let url = format!("{}/v0/pipelines/{pipeline_name}/checkpoint", self.base_url);
+        Ok(self
+            .request(Method::POST, url)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?)
+    }
+
+    pub async fn get_checkpoint_status(
+        &self,
+        pipeline_name: &str,
+    ) -> Result<CheckpointStatus, DynError> {
+        let url = format!(
+            "{}/v0/pipelines/{pipeline_name}/checkpoint_status",
+            self.base_url
+        );
+        Ok(self
+            .request(Method::GET, url)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?)
+    }
+
+    pub async fn wait_for_checkpoint(
+        &self,
+        pipeline_name: &str,
+        checkpoint_sequence_number: u64,
+    ) -> Result<(), DynError> {
+        for _ in 0..120 {
+            let status = self.get_checkpoint_status(pipeline_name).await?;
+
+            if status
+                .success
+                .is_some_and(|success| success >= checkpoint_sequence_number)
+            {
+                return Ok(());
+            }
+
+            if let Some(failure) = status.failure {
+                if failure.sequence_number >= checkpoint_sequence_number {
+                    return Err(Box::new(FelderaError::new(format!(
+                        "checkpoint {checkpoint_sequence_number} failed for pipeline {pipeline_name}: {}",
+                        failure.error
+                    ))));
+                }
+            }
+
+            actix_web::rt::time::sleep(Duration::from_millis(250)).await;
+        }
+
+        Err(Box::new(FelderaError::new(format!(
+            "timed out waiting for checkpoint {checkpoint_sequence_number} on pipeline {pipeline_name}"
+        ))))
     }
 
     pub async fn query_json<T>(&self, pipeline_name: &str, sql: &str) -> Result<Vec<T>, DynError>
@@ -657,9 +739,9 @@ mod tests {
     use crate::config::FelderaConfig;
 
     use super::{
-        changed_fields, parse_json_rows, DesiredPipeline, FelderaClient, PipelineGlobalMetrics,
-        PipelineProgramConfig, PipelineRecord, PipelineStats, PipelineSummary, PipelineSyncAction,
-        PipelineSyncPlan,
+        changed_fields, parse_json_rows, CheckpointStatus, DesiredPipeline, FelderaClient,
+        PipelineGlobalMetrics, PipelineProgramConfig, PipelineRecord, PipelineStats,
+        PipelineSummary, PipelineSyncAction, PipelineSyncPlan,
     };
 
     #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -936,5 +1018,82 @@ roles ()
         assert_eq!(seen.starts, 1);
         assert_eq!(seen.commits, 1);
         assert_eq!(seen.stop_forces, vec![false]);
+    }
+
+    #[actix_web::test]
+    async fn starts_and_waits_for_checkpoints() {
+        use actix_web::{get, post, web, App, HttpResponse, Responder};
+
+        #[derive(Default)]
+        struct Seen {
+            checkpoints: usize,
+            status_calls: usize,
+        }
+
+        #[post("/v0/pipelines/{name}/checkpoint")]
+        async fn start_checkpoint(seen: web::Data<Arc<Mutex<Seen>>>) -> impl Responder {
+            seen.lock().expect("seen lock").checkpoints += 1;
+            HttpResponse::Ok().json(json!({ "checkpoint_sequence_number": 12 }))
+        }
+
+        #[get("/v0/pipelines/{name}/checkpoint_status")]
+        async fn checkpoint_status(seen: web::Data<Arc<Mutex<Seen>>>) -> impl Responder {
+            let mut seen = seen.lock().expect("seen lock");
+            seen.status_calls += 1;
+            if seen.status_calls == 1 {
+                HttpResponse::Ok().json(json!({ "success": 11 }))
+            } else {
+                HttpResponse::Ok().json(json!({ "success": 12 }))
+            }
+        }
+
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("listener should expose address");
+        let server_seen = seen.clone();
+        let server = actix_web::HttpServer::new(move || {
+            App::new()
+                .app_data(web::Data::new(server_seen.clone()))
+                .service(start_checkpoint)
+                .service(checkpoint_status)
+        })
+        .listen(listener)
+        .expect("server should listen")
+        .run();
+        let handle = server.handle();
+        actix_web::rt::spawn(server);
+
+        let client = FelderaClient::new(format!("http://{}", addr), None);
+        let started_checkpoint = client
+            .checkpoint_now("conclave_controlplane")
+            .await
+            .expect("checkpoint should start");
+        let status = client
+            .get_checkpoint_status("conclave_controlplane")
+            .await
+            .expect("checkpoint status should load");
+        client
+            .wait_for_checkpoint(
+                "conclave_controlplane",
+                started_checkpoint.checkpoint_sequence_number,
+            )
+            .await
+            .expect("checkpoint wait should succeed");
+
+        handle.stop(true).await;
+
+        assert_eq!(started_checkpoint.checkpoint_sequence_number, 12);
+        assert_eq!(
+            status,
+            CheckpointStatus {
+                success: Some(11),
+                failure: None,
+            }
+        );
+        let seen = seen.lock().expect("seen lock");
+        assert_eq!(seen.checkpoints, 1);
+        assert_eq!(seen.status_calls, 2);
     }
 }

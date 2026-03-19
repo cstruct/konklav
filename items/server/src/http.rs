@@ -13,7 +13,7 @@ use serde::Serialize;
 use crate::authz::CompiledAuthzModel;
 use crate::config::{AppConfig, LoadedConfig};
 use crate::feldera::{sync_authz_pipeline, FelderaClient, StartPipelineRequest};
-use crate::managed_store::FelderaManagedStore;
+use crate::managed_store::{FelderaManagedStore, ManagedApplyFailure};
 use crate::state::ControlPlaneState;
 use crate::tenants::{AssumeAccessTokenRequest, CompiledTenantModel, ValidateAccessTokenRequest};
 
@@ -351,6 +351,23 @@ fn revisions_for_managed(managed: &ManagedConfig) -> Result<(u32, u64), crate::t
     ))
 }
 
+fn managed_apply_error_response(err: &crate::types::DynError) -> HttpResponse {
+    if let Some(failure) = err.downcast_ref::<ManagedApplyFailure>() {
+        HttpResponse::InternalServerError().json(failure)
+    } else if err
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|inner| inner.kind() == std::io::ErrorKind::InvalidInput)
+    {
+        HttpResponse::BadRequest().json(serde_json::json!({
+            "error": err.to_string(),
+        }))
+    } else {
+        HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": err.to_string(),
+        }))
+    }
+}
+
 #[post("/v1/managed/apply")]
 async fn managed_apply(
     state: web::Data<AppState>,
@@ -364,11 +381,7 @@ async fn managed_apply(
     if let Some(store) = &state.managed_store {
         let applied = match store.apply(&body.managed).await {
             Ok(applied) => applied,
-            Err(err) => {
-                return HttpResponse::BadRequest().json(serde_json::json!({
-                    "error": err.to_string(),
-                }))
-            }
+            Err(err) => return managed_apply_error_response(&err),
         };
         let (catalog_revision, policy_revision) = match revisions_for_managed(&body.managed) {
             Ok(revisions) => revisions,
@@ -422,6 +435,54 @@ async fn managed_apply(
                 "error": err.to_string(),
             })),
         }
+    }
+}
+
+#[cfg(test)]
+mod managed_apply_error_tests {
+    use super::managed_apply_error_response;
+    use crate::managed_store::{ManagedApplyFailure, ManagedApplyPhase};
+    use actix_web::{body::to_bytes, http::StatusCode};
+    use conclave_controlplane_api::ManagedMutationCounts;
+
+    // r[verify config.managed.partial-failure]
+    #[actix_web::test]
+    async fn serializes_structured_managed_apply_failures() {
+        let err = Box::new(ManagedApplyFailure {
+            apply_id: "apply-test".to_owned(),
+            phase: ManagedApplyPhase::Commit,
+            transaction_id: Some(7),
+            checkpoint_sequence_number: Some(3),
+            summary: ManagedMutationCounts {
+                created: 1,
+                updated: 2,
+                deleted: 0,
+            },
+            affected_resources: vec!["update tenant tenant-a".to_owned()],
+            rolled_back_resources: vec!["update tenant tenant-a".to_owned()],
+            recovery_attempted: true,
+            recovery_succeeded: true,
+            operator_intervention: Vec::new(),
+            error: "commit failed".to_owned(),
+        }) as crate::types::DynError;
+
+        let response = managed_apply_error_response(&err);
+        let status = response.status();
+        let body = to_bytes(response.into_body())
+            .await
+            .expect("response body should read");
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).expect("response should be valid json");
+
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(json["apply_id"], "apply-test");
+        assert_eq!(json["phase"], "commit");
+        assert_eq!(json["transaction_id"], 7);
+        assert_eq!(json["checkpoint_sequence_number"], 3);
+        assert_eq!(json["affected_resources"][0], "update tenant tenant-a");
+        assert_eq!(json["rolled_back_resources"][0], "update tenant tenant-a");
+        assert_eq!(json["recovery_attempted"], true);
+        assert_eq!(json["recovery_succeeded"], true);
     }
 }
 

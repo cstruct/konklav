@@ -71,6 +71,18 @@ The desired partial-failure contract is:
 - if any step fails before transaction commit completes, the apply failed and the prior committed state remains authoritative
 - the operator receives as much diagnostic context as the server can gather about the failing step, Feldera transaction state, and any recovery action taken
 
+The current operator-facing failure payload includes:
+
+- `apply_id`
+- failure `phase`
+- Feldera `transaction_id` when a transaction had started
+- pre-transaction `checkpoint_sequence_number`
+- the apply mutation summary
+- `affected_resources`
+- `rolled_back_resources`
+- whether recovery was attempted and whether it succeeded
+- any `operator_intervention` follow-up the server can recommend
+
 Feldera's current transaction documentation says transactions are experimental and cannot be aborted or rolled back directly. The recovery strategy for this design is therefore based on checkpoint-and-resume support:
 
 - Conclave should only rely on this transactional apply mode when the Feldera pipeline is configured with checkpoint-and-resume support
@@ -87,6 +99,5 @@ That keeps the “state of last apply” introspectible while preserving idempot
 
 - Should `managed_apply` record transaction identifiers and recovery-attempt metadata, or is failure context in server logs and API responses sufficient?
 - Should `apply_commit` remain an explicit table once Feldera transaction commit becomes the authoritative visibility barrier, or should committed visibility derive from transaction semantics alone?
-- How should Conclave detect and surface “commit still in progress” versus “commit failed and recovery required” in operator-facing APIs?
 - `effective_grants` is in the transaction boundary by decision, but signing-key rotation and JWKS publication are still undecided and need a later architectural call.
 - The exact Feldera runtime/storage configuration that Conclave should require for checkpoint-and-resume safety is still open; the current design assumes this becomes an explicit deployment prerequisite rather than an implicit best effort.
