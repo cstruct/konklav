@@ -34,6 +34,17 @@ This document defines the preferred language for Conclave specs, code, API surfa
 - `tenant`
   - An explicit isolation boundary for memberships, roles, templates, policy assignments, sessions, and data.
 
+## Software architecture and traceability
+
+- `software item`
+  - An identifiable architectural part of a larger software product or subsystem that is tracked as a meaningful design, dependency, or traceability boundary.
+  - A software item can be implemented as a Rust crate today, but it can also be another kind of component such as a service, CLI, SDK, UI, worker, or integration.
+  - Prefer this term over `crate` when the discussion is intended to stay valid as the repository grows beyond Rust.
+
+- `software unit`
+  - A software item that is not further subdivided for the purpose of a given design or verification discussion.
+  - Use this term sparingly and only for lower-level design or verification contexts where the decomposition boundary matters.
+
 ## Authorization concepts
 
 - `control-plane capability`
@@ -55,4 +66,7 @@ This document defines the preferred language for Conclave specs, code, API surfa
 - Prefer `subject` over `user` unless the text is specifically about a human person or tenant-member experience.
 - Prefer `tenant member`, `operator`, or `service principal` when one of those is the precise actor.
 - Prefer `relying system` over vague phrases like `using system` or `target system`.
+- Prefer `software item` over `crate` in architecture or traceability guidance that should remain valid for non-Rust components.
+- Keep using `crate` when the text specifically describes a Rust workspace member, crate README, or Rust-only implementation detail.
+- Avoid bare `system`, `item`, or `unit` in normative text when `relying system`, `software item`, or `software unit` would be clearer.
 - If a new term becomes important to the project, add it here before spreading it across specs or APIs.
