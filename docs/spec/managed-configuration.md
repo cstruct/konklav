@@ -39,6 +39,12 @@ Persisted managed control-plane state MUST preserve introspectible temporal hist
 r[config.managed.feldera-authoritative-store]
 For the Feldera-backed control-plane phase, Feldera MUST be able to act as the authoritative persisted store for managed control-plane state, with server-local state limited to runtime caching or derived projections.
 
+r[config.managed.store.feldera-authoritative-reads]
+When the Feldera-backed managed store is enabled, server read paths for managed control-plane state MUST read from Feldera current-state views or from bounded derived projections refreshed from those views rather than from an authoritative in-memory mirror.
+
+r[config.managed.store.bounded-derived-cache]
+If the server keeps a derived cache of managed control-plane state while Feldera is enabled, that cache MUST be bounded, non-authoritative, and invalidated when the committed managed apply revision changes.
+
 r[config.managed.store.typed-entity-tables]
 The Feldera-backed managed store MUST persist each managed entity kind in its own typed temporal table rather than one generic multi-kind event bucket.
 
@@ -50,6 +56,15 @@ Each typed temporal table MUST advance `row_version` within the stable key of th
 
 r[config.managed.store.apply-provenance]
 Managed typed temporal rows MUST record the `apply_id` of the managed apply that produced them.
+
+r[config.managed.store.managed-apply-state]
+The Feldera-backed managed store MUST persist one durable `managed_apply` record per evaluated apply attempt, including the `apply_id`, bundle identity, mutation summary, and whether the apply was a noop.
+
+r[config.managed.store.managed-ownership-state]
+The Feldera-backed managed store MUST persist durable `managed_ownership` state for managed entities so later plans and applies can distinguish currently managed entities from unmanaged live state.
+
+r[config.managed.store.entity-fingerprint]
+Managed ownership state MUST record a stable desired-state fingerprint per owned entity so the control plane can detect whether an entity's declarative intent changed across applies.
 
 r[config.managed.store.runtime-provenance]
 Runtime-auth temporal rows such as invites, linked credentials, and sessions MUST use a runtime change provenance marker that is distinct from managed `apply_id`.

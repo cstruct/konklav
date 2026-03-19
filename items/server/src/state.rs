@@ -166,7 +166,11 @@ impl ControlPlaneState {
     }
 
     pub fn snapshot(&self) -> Result<StateSnapshot, DynError> {
-        let managed = self.managed.clone();
+        Self::snapshot_from_managed(&self.managed)
+    }
+
+    pub fn snapshot_from_managed(managed: &ManagedConfig) -> Result<StateSnapshot, DynError> {
+        let managed = managed.clone();
         let authz = compile_managed_authz(&managed)?;
         let tenants = compile_managed_tenants(&managed, &authz)?;
 
@@ -193,6 +197,13 @@ impl ControlPlaneState {
     }
 
     pub fn plan(&self, managed: &ManagedConfig) -> Result<ManagedPlanResponse, DynError> {
+        Self::plan_against(&self.managed, managed)
+    }
+
+    pub fn plan_against(
+        current: &ManagedConfig,
+        managed: &ManagedConfig,
+    ) -> Result<ManagedPlanResponse, DynError> {
         let issues = Self::validate(managed);
         if !issues.is_empty() {
             return Err(Box::<std::io::Error>::new(std::io::Error::new(
@@ -201,7 +212,7 @@ impl ControlPlaneState {
             )));
         }
 
-        let changes = diff_managed(&self.managed, managed);
+        let changes = diff_managed(current, managed);
         let authz = compile_managed_authz(managed)?;
         let tenants = compile_managed_tenants(managed, &authz)?;
 
@@ -365,13 +376,16 @@ impl ControlPlaneState {
         subject: &str,
         expires_in_seconds: u64,
     ) -> Result<PlannedInvite, DynError> {
-        let snapshot = self.snapshot()?;
-        if !snapshot
-            .tenants
-            .subjects
-            .iter()
-            .any(|entry| entry.id == subject)
-        {
+        self.plan_invite_with_managed(&self.managed, subject, expires_in_seconds)
+    }
+
+    pub fn plan_invite_with_managed(
+        &self,
+        managed: &ManagedConfig,
+        subject: &str,
+        expires_in_seconds: u64,
+    ) -> Result<PlannedInvite, DynError> {
+        if !managed.subjects.iter().any(|entry| entry.id == subject) {
             return Err(Box::<std::io::Error>::new(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!("unknown subject {subject}"),
@@ -513,6 +527,16 @@ impl ControlPlaneState {
         password: &str,
         tenant: &str,
     ) -> Result<SessionRecord, DynError> {
+        self.plan_login_with_managed(&self.managed, subject, password, tenant)
+    }
+
+    pub fn plan_login_with_managed(
+        &self,
+        managed: &ManagedConfig,
+        subject: &str,
+        password: &str,
+        tenant: &str,
+    ) -> Result<SessionRecord, DynError> {
         let credential = self
             .credentials
             .iter()
@@ -532,7 +556,7 @@ impl ControlPlaneState {
             )));
         }
 
-        let snapshot = self.snapshot()?;
+        let snapshot = Self::snapshot_from_managed(managed)?;
         snapshot
             .tenants
             .find_membership(subject, tenant)

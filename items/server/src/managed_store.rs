@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
+use conclave_controlplane_api::ManagedMutationCounts;
 use conclave_managed_config::{
     ActionSpec, AssumptionGrantConfig, ManagedConfig, MembershipConfig, PolicySpec,
     PortableFactConfig, RoleConfig, SubjectConfig, TemplateConfig, TemplateSourceConfig,
@@ -11,7 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::FelderaConfig;
 use crate::feldera::{DesiredPipeline, FelderaClient, PipelineProgramConfig};
-use crate::state::{digest_hex, now_unix_seconds, CredentialRecord, InviteRecord, SessionRecord};
+use crate::state::{
+    digest_hex, now_unix_seconds, ControlPlaneState, CredentialRecord, InviteRecord, SessionRecord,
+};
 use crate::types::DynError;
 
 #[derive(Clone, Debug)]
@@ -88,6 +91,14 @@ const MANAGED_VIEW_SPECS: &[TemporalViewSpec] = &[
         provenance_column: "apply_id",
         key_columns: &["tenant_id", "role_key"],
     },
+    TemporalViewSpec {
+        table_name: "managed_ownership",
+        versioned_view: "versioned_managed_ownership",
+        current_view: "current_managed_ownership",
+        commit_table: "apply_commit",
+        provenance_column: "apply_id",
+        key_columns: &["entity_kind", "entity_key"],
+    },
 ];
 
 const RUNTIME_VIEW_SPECS: &[TemporalViewSpec] = &[
@@ -147,6 +158,140 @@ struct CountRow {
 struct LatestApplyRow {
     #[serde(alias = "APPLY_ID")]
     apply_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ManagedApplyRow {
+    #[serde(alias = "APPLY_ID")]
+    apply_id: String,
+    #[serde(alias = "APPLIED_AT")]
+    applied_at: u64,
+    #[serde(alias = "BUNDLE_JSON")]
+    bundle_json: String,
+    #[serde(alias = "BUNDLE_FINGERPRINT")]
+    bundle_fingerprint: String,
+    #[serde(alias = "CREATED_COUNT")]
+    created_count: u64,
+    #[serde(alias = "UPDATED_COUNT")]
+    updated_count: u64,
+    #[serde(alias = "DELETED_COUNT")]
+    deleted_count: u64,
+    #[serde(alias = "NOOP")]
+    noop: bool,
+}
+
+impl ManagedApplyRow {
+    fn into_record(self) -> Result<StoredManagedApply, DynError> {
+        Ok(StoredManagedApply {
+            apply_id: self.apply_id,
+            applied_at: self.applied_at,
+            bundle_fingerprint: self.bundle_fingerprint,
+            summary: ManagedMutationCounts {
+                created: self.created_count as usize,
+                updated: self.updated_count as usize,
+                deleted: self.deleted_count as usize,
+            },
+            noop: self.noop,
+            managed: serde_json::from_str(&self.bundle_json)?,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ManagedOwnershipRow {
+    #[serde(alias = "ENTITY_KIND")]
+    entity_kind: String,
+    #[serde(alias = "ENTITY_KEY")]
+    entity_key: String,
+    #[serde(alias = "DESIRED_FINGERPRINT")]
+    desired_fingerprint: String,
+    #[serde(alias = "APPLY_ID")]
+    apply_id: String,
+    #[serde(alias = "ROW_VERSION")]
+    row_version: u64,
+    #[serde(alias = "VALID_FROM")]
+    valid_from: u64,
+    #[serde(alias = "DELETED")]
+    deleted: bool,
+}
+
+impl ManagedOwnershipRow {
+    fn from_mutation(
+        mutation: &ManagedOwnershipMutation,
+        apply_id: String,
+        row_version: u64,
+        valid_from: u64,
+    ) -> Self {
+        Self {
+            entity_kind: mutation.entity_kind.to_owned(),
+            entity_key: mutation.entity_key.clone(),
+            desired_fingerprint: mutation.desired_fingerprint.clone().unwrap_or_default(),
+            apply_id,
+            row_version,
+            valid_from,
+            deleted: mutation.deleted,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManagedStorePlan {
+    pub noop: bool,
+    pub summary: ManagedMutationCounts,
+    pub changes: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StoredManagedApply {
+    pub apply_id: String,
+    pub applied_at: u64,
+    pub bundle_fingerprint: String,
+    pub summary: ManagedMutationCounts,
+    pub noop: bool,
+    pub managed: ManagedConfig,
+}
+
+#[derive(Clone)]
+enum ManagedEntityOperation {
+    Create,
+    Update,
+    Delete,
+}
+
+#[derive(Clone)]
+struct ManagedEntityChange<T> {
+    value: T,
+    operation: ManagedEntityOperation,
+}
+
+#[derive(Clone)]
+struct ManagedOwnershipMutation {
+    entity_kind: &'static str,
+    entity_key: String,
+    desired_fingerprint: Option<String>,
+    deleted: bool,
+}
+
+struct EntityPlan<T> {
+    changes: Vec<ManagedEntityChange<T>>,
+    ownership: Vec<ManagedOwnershipMutation>,
+    reported_changes: Vec<String>,
+}
+
+struct ManagedApplyPlan {
+    desired_bundle_json: String,
+    desired_bundle_fingerprint: String,
+    summary: ManagedMutationCounts,
+    changes: Vec<String>,
+    noop: bool,
+    tenant_changes: Vec<ManagedEntityChange<TenantConfig>>,
+    subject_changes: Vec<ManagedEntityChange<SubjectConfig>>,
+    membership_changes: Vec<ManagedEntityChange<MembershipConfig>>,
+    assumption_grant_changes: Vec<ManagedEntityChange<AssumptionGrantConfig>>,
+    action_changes: Vec<ManagedEntityChange<ActionSpec>>,
+    template_changes: Vec<ManagedEntityChange<TemplateConfig>>,
+    role_changes: Vec<ManagedEntityChange<RoleConfig>>,
+    ownership_mutations: Vec<ManagedOwnershipMutation>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -838,6 +983,30 @@ impl FelderaManagedStore {
         Ok(rows.into_iter().next().map(|row| row.apply_id))
     }
 
+    pub async fn load_latest_managed_apply(&self) -> Result<Option<StoredManagedApply>, DynError> {
+        self.ensure_pipeline().await?;
+        let rows: Vec<ManagedApplyRow> = self
+            .client
+            .query_json(
+                &self.pipeline_name,
+                r#"
+SELECT ma.*
+FROM managed_apply ma
+JOIN apply_commit ac
+  ON ma.apply_id = ac.apply_id
+ AND ac.committed = TRUE
+ORDER BY ma.applied_at DESC
+LIMIT 1
+"#,
+            )
+            .await?;
+
+        rows.into_iter()
+            .next()
+            .map(ManagedApplyRow::into_record)
+            .transpose()
+    }
+
     // r[impl config.managed.store.runtime-provenance]
     pub async fn load_runtime_auth_state(
         &self,
@@ -874,15 +1043,29 @@ impl FelderaManagedStore {
         Ok((invites, credentials, sessions))
     }
 
+    // r[impl config.managed.plan-before-apply]
+    // r[impl config.managed.server-authoritative-validation]
+    pub async fn plan(&self, desired: &ManagedConfig) -> Result<ManagedStorePlan, DynError> {
+        self.ensure_pipeline().await?;
+        let planned = self.build_apply_plan(desired).await?;
+
+        Ok(ManagedStorePlan {
+            noop: planned.noop,
+            summary: planned.summary,
+            changes: planned.changes,
+        })
+    }
+
+    // r[impl config.managed.apply-operation]
+    // r[impl config.managed.idempotent-apply]
     // r[impl config.managed.versioned-history]
     // r[impl config.managed.store.typed-entity-tables]
     // r[impl config.managed.store.apply-provenance]
-    pub async fn apply(&self, desired: &ManagedConfig) -> Result<String, DynError> {
+    // r[impl config.managed.store.managed-apply-state]
+    // r[impl config.managed.store.managed-ownership-state]
+    pub async fn apply(&self, desired: &ManagedConfig) -> Result<StoredManagedApply, DynError> {
         self.ensure_pipeline().await?;
-        let current = self
-            .load_managed()
-            .await
-            .unwrap_or_else(|_| empty_managed_config());
+        let planned = self.build_apply_plan(desired).await?;
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos();
@@ -892,8 +1075,8 @@ impl FelderaManagedStore {
         );
         let valid_from = now_unix_seconds()?;
 
-        for change in collect_changes(&current.tenants, &desired.tenants, |entry| entry.id.clone())
-        {
+        for change in planned.tenant_changes {
+            let deleted = matches!(change.operation, ManagedEntityOperation::Delete);
             let row_version = self
                 .next_row_version("tenant", &[("tenant_id", change.value.id.clone())])
                 .await?;
@@ -906,15 +1089,14 @@ impl FelderaManagedStore {
                         apply_id.clone(),
                         row_version,
                         valid_from,
-                        change.deleted,
+                        deleted,
                     )],
                 )
                 .await?;
         }
 
-        for change in collect_changes(&current.subjects, &desired.subjects, |entry| {
-            entry.id.clone()
-        }) {
+        for change in planned.subject_changes {
+            let deleted = matches!(change.operation, ManagedEntityOperation::Delete);
             let row_version = self
                 .next_row_version("subject", &[("subject_id", change.value.id.clone())])
                 .await?;
@@ -927,15 +1109,14 @@ impl FelderaManagedStore {
                         apply_id.clone(),
                         row_version,
                         valid_from,
-                        change.deleted,
+                        deleted,
                     )],
                 )
                 .await?;
         }
 
-        for change in collect_changes(&current.memberships, &desired.memberships, |entry| {
-            format!("{}@{}", entry.subject, entry.tenant)
-        }) {
+        for change in planned.membership_changes {
+            let deleted = matches!(change.operation, ManagedEntityOperation::Delete);
             let row_version = self
                 .next_row_version(
                     "membership",
@@ -954,22 +1135,14 @@ impl FelderaManagedStore {
                         apply_id.clone(),
                         row_version,
                         valid_from,
-                        change.deleted,
+                        deleted,
                     )],
                 )
                 .await?;
         }
 
-        for change in collect_changes(
-            &current.assumption_grants,
-            &desired.assumption_grants,
-            |entry| {
-                format!(
-                    "{}:{}:{}",
-                    entry.subject, entry.source_tenant, entry.target_tenant
-                )
-            },
-        ) {
+        for change in planned.assumption_grant_changes {
+            let deleted = matches!(change.operation, ManagedEntityOperation::Delete);
             let row_version = self
                 .next_row_version(
                     "assumption_grant",
@@ -989,17 +1162,14 @@ impl FelderaManagedStore {
                         apply_id.clone(),
                         row_version,
                         valid_from,
-                        change.deleted,
+                        deleted,
                     )],
                 )
                 .await?;
         }
 
-        for change in collect_changes(
-            &current.catalog.actions,
-            &desired.catalog.actions,
-            |entry| entry.name.clone(),
-        ) {
+        for change in planned.action_changes {
+            let deleted = matches!(change.operation, ManagedEntityOperation::Delete);
             let row_version = self
                 .next_row_version("action", &[("action_name", change.value.name.clone())])
                 .await?;
@@ -1012,15 +1182,14 @@ impl FelderaManagedStore {
                         apply_id.clone(),
                         row_version,
                         valid_from,
-                        change.deleted,
+                        deleted,
                     )],
                 )
                 .await?;
         }
 
-        for change in collect_changes(&current.templates, &desired.templates, |entry| {
-            format!("{}:{}", entry.tenant, entry.key)
-        }) {
+        for change in planned.template_changes {
+            let deleted = matches!(change.operation, ManagedEntityOperation::Delete);
             let row_version = self
                 .next_row_version(
                     "template",
@@ -1039,15 +1208,14 @@ impl FelderaManagedStore {
                         apply_id.clone(),
                         row_version,
                         valid_from,
-                        change.deleted,
+                        deleted,
                     )],
                 )
                 .await?;
         }
 
-        for change in collect_changes(&current.roles, &desired.roles, |entry| {
-            format!("{}:{}", entry.tenant, entry.key)
-        }) {
+        for change in planned.role_changes {
+            let deleted = matches!(change.operation, ManagedEntityOperation::Delete);
             let row_version = self
                 .next_row_version(
                     "role",
@@ -1066,11 +1234,52 @@ impl FelderaManagedStore {
                         apply_id.clone(),
                         row_version,
                         valid_from,
-                        change.deleted,
+                        deleted,
                     )],
                 )
                 .await?;
         }
+
+        for mutation in &planned.ownership_mutations {
+            let row_version = self
+                .next_row_version(
+                    "managed_ownership",
+                    &[
+                        ("entity_kind", mutation.entity_kind.to_owned()),
+                        ("entity_key", mutation.entity_key.clone()),
+                    ],
+                )
+                .await?;
+            self.client
+                .insert_json_rows(
+                    &self.pipeline_name,
+                    "managed_ownership",
+                    vec![ManagedOwnershipRow::from_mutation(
+                        mutation,
+                        apply_id.clone(),
+                        row_version,
+                        valid_from,
+                    )],
+                )
+                .await?;
+        }
+
+        self.client
+            .insert_json_rows(
+                &self.pipeline_name,
+                "managed_apply",
+                vec![ManagedApplyRow {
+                    apply_id: apply_id.clone(),
+                    applied_at: valid_from,
+                    bundle_json: planned.desired_bundle_json.clone(),
+                    bundle_fingerprint: planned.desired_bundle_fingerprint.clone(),
+                    created_count: planned.summary.created as u64,
+                    updated_count: planned.summary.updated as u64,
+                    deleted_count: planned.summary.deleted as u64,
+                    noop: planned.noop,
+                }],
+            )
+            .await?;
 
         self.client
             .insert_json_rows(
@@ -1084,7 +1293,14 @@ impl FelderaManagedStore {
             )
             .await?;
 
-        Ok(apply_id)
+        Ok(StoredManagedApply {
+            apply_id,
+            applied_at: valid_from,
+            bundle_fingerprint: planned.desired_bundle_fingerprint,
+            summary: planned.summary,
+            noop: planned.noop,
+            managed: desired.clone(),
+        })
     }
 
     // r[impl identity.subject.invite.audit-history]
@@ -1138,6 +1354,11 @@ impl FelderaManagedStore {
     {
         let sql = select_current_sql(view_name);
         self.client.query_json(&self.pipeline_name, &sql).await
+    }
+
+    async fn load_current_ownership_rows(&self) -> Result<Vec<ManagedOwnershipRow>, DynError> {
+        self.load_current_rows::<ManagedOwnershipRow>("current_managed_ownership")
+            .await
     }
 
     // r[impl config.managed.store.row-version-per-entity]
@@ -1267,6 +1488,137 @@ impl FelderaManagedStore {
             )
             .await
     }
+
+    // r[impl config.managed.three-way-diff]
+    // r[impl config.managed.ownership]
+    // r[impl config.managed.store.entity-fingerprint]
+    async fn build_apply_plan(
+        &self,
+        desired: &ManagedConfig,
+    ) -> Result<ManagedApplyPlan, DynError> {
+        let issues = ControlPlaneState::validate(desired);
+        if !issues.is_empty() {
+            return Err(Box::<std::io::Error>::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                issues.join("; "),
+            )));
+        }
+
+        let current = self
+            .load_managed()
+            .await
+            .unwrap_or_else(|_| empty_managed_config());
+        let ownership_rows = self.load_current_ownership_rows().await.unwrap_or_default();
+        let ownership = ownership_rows
+            .into_iter()
+            .map(|row| ((row.entity_kind.clone(), row.entity_key.clone()), row))
+            .collect::<BTreeMap<_, _>>();
+
+        let tenant_plan = plan_entity_changes(
+            "tenant",
+            &current.tenants,
+            &desired.tenants,
+            &ownership,
+            |entry| entry.id.clone(),
+        );
+        let subject_plan = plan_entity_changes(
+            "subject",
+            &current.subjects,
+            &desired.subjects,
+            &ownership,
+            |entry| entry.id.clone(),
+        );
+        let membership_plan = plan_entity_changes(
+            "membership",
+            &current.memberships,
+            &desired.memberships,
+            &ownership,
+            |entry| format!("{}@{}", entry.subject, entry.tenant),
+        );
+        let assumption_grant_plan = plan_entity_changes(
+            "assumption_grant",
+            &current.assumption_grants,
+            &desired.assumption_grants,
+            &ownership,
+            |entry| {
+                format!(
+                    "{}:{}:{}",
+                    entry.subject, entry.source_tenant, entry.target_tenant
+                )
+            },
+        );
+        let action_plan = plan_entity_changes(
+            "action",
+            &current.catalog.actions,
+            &desired.catalog.actions,
+            &ownership,
+            |entry| entry.name.clone(),
+        );
+        let template_plan = plan_entity_changes(
+            "template",
+            &current.templates,
+            &desired.templates,
+            &ownership,
+            |entry| format!("{}:{}", entry.tenant, entry.key),
+        );
+        let role_plan = plan_entity_changes(
+            "role",
+            &current.roles,
+            &desired.roles,
+            &ownership,
+            |entry| format!("{}:{}", entry.tenant, entry.key),
+        );
+
+        let summary = sum_mutation_counts(&[
+            summarize_entity_changes(&tenant_plan.changes),
+            summarize_entity_changes(&subject_plan.changes),
+            summarize_entity_changes(&membership_plan.changes),
+            summarize_entity_changes(&assumption_grant_plan.changes),
+            summarize_entity_changes(&action_plan.changes),
+            summarize_entity_changes(&template_plan.changes),
+            summarize_entity_changes(&role_plan.changes),
+        ]);
+
+        let changes = tenant_plan
+            .reported_changes
+            .iter()
+            .chain(subject_plan.reported_changes.iter())
+            .chain(membership_plan.reported_changes.iter())
+            .chain(assumption_grant_plan.reported_changes.iter())
+            .chain(action_plan.reported_changes.iter())
+            .chain(template_plan.reported_changes.iter())
+            .chain(role_plan.reported_changes.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        let ownership_mutations = tenant_plan
+            .ownership
+            .into_iter()
+            .chain(subject_plan.ownership.into_iter())
+            .chain(membership_plan.ownership.into_iter())
+            .chain(assumption_grant_plan.ownership.into_iter())
+            .chain(action_plan.ownership.into_iter())
+            .chain(template_plan.ownership.into_iter())
+            .chain(role_plan.ownership.into_iter())
+            .collect::<Vec<_>>();
+        let desired_bundle_json = serialize_json(desired);
+        let noop = changes.is_empty() && ownership_mutations.is_empty();
+
+        Ok(ManagedApplyPlan {
+            desired_bundle_fingerprint: digest_hex(&desired_bundle_json),
+            desired_bundle_json,
+            summary,
+            changes,
+            noop,
+            tenant_changes: tenant_plan.changes,
+            subject_changes: subject_plan.changes,
+            membership_changes: membership_plan.changes,
+            assumption_grant_changes: assumption_grant_plan.changes,
+            action_changes: action_plan.changes,
+            template_changes: template_plan.changes,
+            role_changes: role_plan.changes,
+            ownership_mutations,
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -1316,6 +1668,168 @@ where
     changes
 }
 
+fn plan_entity_changes<T, K>(
+    entity_kind: &'static str,
+    current: &[T],
+    desired: &[T],
+    ownership: &BTreeMap<(String, String), ManagedOwnershipRow>,
+    key: K,
+) -> EntityPlan<T>
+where
+    T: Clone + PartialEq + Serialize,
+    K: Fn(&T) -> String,
+{
+    let current_map: BTreeMap<String, &T> =
+        current.iter().map(|entry| (key(entry), entry)).collect();
+    let desired_map: BTreeMap<String, &T> =
+        desired.iter().map(|entry| (key(entry), entry)).collect();
+    let mut keys: BTreeSet<String> = current_map
+        .keys()
+        .chain(desired_map.keys())
+        .cloned()
+        .collect();
+    for (kind, entity_key) in ownership.keys() {
+        if kind == entity_kind {
+            keys.insert(entity_key.clone());
+        }
+    }
+
+    let mut changes = Vec::new();
+    let mut ownership_changes = Vec::new();
+    let mut reported_changes = Vec::new();
+
+    for entity_key in keys {
+        let ownership_key = (entity_kind.to_owned(), entity_key.clone());
+        let current_ownership = ownership.get(&ownership_key);
+        let current_entry = current_map.get(&entity_key).copied();
+        let desired_entry = desired_map.get(&entity_key).copied();
+
+        match (current_entry, desired_entry) {
+            (Some(left), Some(right)) if left == right => {
+                let desired_fingerprint = entity_fingerprint(right);
+                if ownership_needs_update(current_ownership, &desired_fingerprint) {
+                    ownership_changes.push(ManagedOwnershipMutation {
+                        entity_kind,
+                        entity_key: entity_key.clone(),
+                        desired_fingerprint: Some(desired_fingerprint),
+                        deleted: false,
+                    });
+                    reported_changes.push(format!("adopt {entity_kind} {entity_key}"));
+                }
+            }
+            (None, Some(value)) => {
+                let desired_fingerprint = entity_fingerprint(value);
+                changes.push(ManagedEntityChange {
+                    value: value.clone(),
+                    operation: ManagedEntityOperation::Create,
+                });
+                ownership_changes.push(ManagedOwnershipMutation {
+                    entity_kind,
+                    entity_key: entity_key.clone(),
+                    desired_fingerprint: Some(desired_fingerprint),
+                    deleted: false,
+                });
+                reported_changes.push(format!("create {entity_kind} {entity_key}"));
+            }
+            (Some(_), Some(value)) => {
+                let desired_fingerprint = entity_fingerprint(value);
+                changes.push(ManagedEntityChange {
+                    value: value.clone(),
+                    operation: ManagedEntityOperation::Update,
+                });
+                if ownership_needs_update(current_ownership, &desired_fingerprint) {
+                    ownership_changes.push(ManagedOwnershipMutation {
+                        entity_kind,
+                        entity_key: entity_key.clone(),
+                        desired_fingerprint: Some(desired_fingerprint),
+                        deleted: false,
+                    });
+                }
+                reported_changes.push(format!("update {entity_kind} {entity_key}"));
+            }
+            (Some(value), None) if current_ownership.is_some() => {
+                changes.push(ManagedEntityChange {
+                    value: value.clone(),
+                    operation: ManagedEntityOperation::Delete,
+                });
+                ownership_changes.push(ManagedOwnershipMutation {
+                    entity_kind,
+                    entity_key: entity_key.clone(),
+                    desired_fingerprint: None,
+                    deleted: true,
+                });
+                reported_changes.push(format!("delete {entity_kind} {entity_key}"));
+            }
+            (None, None) if current_ownership.is_some() => {
+                ownership_changes.push(ManagedOwnershipMutation {
+                    entity_kind,
+                    entity_key: entity_key.clone(),
+                    desired_fingerprint: None,
+                    deleted: true,
+                });
+                reported_changes.push(format!("release {entity_kind} {entity_key}"));
+            }
+            _ => {}
+        }
+    }
+
+    EntityPlan {
+        changes,
+        ownership: ownership_changes,
+        reported_changes,
+    }
+}
+
+fn summarize_entity_changes<T>(changes: &[ManagedEntityChange<T>]) -> ManagedMutationCounts {
+    let mut counts = ManagedMutationCounts {
+        created: 0,
+        updated: 0,
+        deleted: 0,
+    };
+
+    for change in changes {
+        match change.operation {
+            ManagedEntityOperation::Create => counts.created += 1,
+            ManagedEntityOperation::Update => counts.updated += 1,
+            ManagedEntityOperation::Delete => counts.deleted += 1,
+        }
+    }
+
+    counts
+}
+
+fn sum_mutation_counts(counts: &[ManagedMutationCounts]) -> ManagedMutationCounts {
+    counts.iter().fold(
+        ManagedMutationCounts {
+            created: 0,
+            updated: 0,
+            deleted: 0,
+        },
+        |mut total, count| {
+            total.created += count.created;
+            total.updated += count.updated;
+            total.deleted += count.deleted;
+            total
+        },
+    )
+}
+
+fn ownership_needs_update(
+    current: Option<&ManagedOwnershipRow>,
+    desired_fingerprint: &str,
+) -> bool {
+    current
+        .map(|row| row.desired_fingerprint != desired_fingerprint)
+        .unwrap_or(true)
+}
+
+fn entity_fingerprint<T>(value: &T) -> String
+where
+    T: Serialize,
+{
+    digest_hex(&serialize_json(value))
+}
+
 // r[impl config.managed.store.sql-lower-snake-case]
 fn managed_store_sql() -> String {
     let mut statements = vec![
@@ -1324,6 +1838,20 @@ CREATE TABLE apply_commit (
     apply_id VARCHAR NOT NULL,
     committed_at BIGINT NOT NULL,
     committed BOOLEAN NOT NULL
+) WITH ('materialized' = 'true');
+"#
+        .trim()
+        .to_owned(),
+        r#"
+CREATE TABLE managed_apply (
+    apply_id VARCHAR NOT NULL,
+    applied_at BIGINT NOT NULL,
+    bundle_json VARCHAR NOT NULL,
+    bundle_fingerprint VARCHAR NOT NULL,
+    created_count BIGINT NOT NULL,
+    updated_count BIGINT NOT NULL,
+    deleted_count BIGINT NOT NULL,
+    noop BOOLEAN NOT NULL
 ) WITH ('materialized' = 'true');
 "#
         .trim()
@@ -1417,6 +1945,19 @@ CREATE TABLE role (
     role_key VARCHAR NOT NULL,
     template_key VARCHAR,
     policies_json VARCHAR NOT NULL,
+    apply_id VARCHAR NOT NULL,
+    row_version BIGINT NOT NULL,
+    valid_from BIGINT NOT NULL,
+    deleted BOOLEAN NOT NULL
+) WITH ('materialized' = 'true');
+"#
+        .trim()
+        .to_owned(),
+        r#"
+CREATE TABLE managed_ownership (
+    entity_kind VARCHAR NOT NULL,
+    entity_key VARCHAR NOT NULL,
+    desired_fingerprint VARCHAR NOT NULL,
     apply_id VARCHAR NOT NULL,
     row_version BIGINT NOT NULL,
     valid_from BIGINT NOT NULL,
@@ -1588,10 +2129,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_changes, managed_store_sql, select_current_sql, select_history_sql,
-        select_max_row_version_sql, ApplyCommitRow, InviteRow, TenantRow,
+        collect_changes, managed_store_sql, plan_entity_changes, select_current_sql,
+        select_history_sql, select_max_row_version_sql, ApplyCommitRow, InviteRow,
+        ManagedOwnershipRow, TenantRow,
     };
     use conclave_managed_config::ManagedConfig;
+    use serde_json::Value;
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     // r[verify config.managed.store.typed-entity-tables]
@@ -1603,6 +2149,7 @@ mod tests {
         let sql = managed_store_sql();
 
         assert!(sql.contains("CREATE TABLE apply_commit"));
+        assert!(sql.contains("CREATE TABLE managed_apply"));
         assert!(sql.contains("CREATE TABLE tenant"));
         assert!(sql.contains("CREATE TABLE subject"));
         assert!(sql.contains("CREATE TABLE membership"));
@@ -1610,11 +2157,13 @@ mod tests {
         assert!(sql.contains("CREATE TABLE action"));
         assert!(sql.contains("CREATE TABLE template"));
         assert!(sql.contains("CREATE TABLE role"));
+        assert!(sql.contains("CREATE TABLE managed_ownership"));
         assert!(sql.contains("CREATE TABLE invite"));
         assert!(sql.contains("CREATE TABLE subject_credential"));
         assert!(sql.contains("CREATE TABLE session_state"));
         assert!(sql.contains("CREATE MATERIALIZED VIEW versioned_tenant"));
         assert!(sql.contains("CREATE MATERIALIZED VIEW current_tenant"));
+        assert!(sql.contains("CREATE MATERIALIZED VIEW current_managed_ownership"));
         assert!(sql.contains("CREATE MATERIALIZED VIEW versioned_invite"));
         assert!(sql.contains("CREATE MATERIALIZED VIEW current_session"));
         assert!(!sql.contains("MANAGED_EVENT"));
@@ -1703,6 +2252,49 @@ tenants ({id "tenant-b"})
     }
 
     #[test]
+    fn ownership_aware_plan_only_deletes_owned_entities() {
+        let current = vec![
+            conclave_managed_config::TenantConfig {
+                id: "tenant-owned".to_owned(),
+                display_name: None,
+                parent: None,
+                state: "active".to_owned(),
+            },
+            conclave_managed_config::TenantConfig {
+                id: "tenant-unowned".to_owned(),
+                display_name: None,
+                parent: None,
+                state: "active".to_owned(),
+            },
+        ];
+        let ownership = BTreeMap::from([(
+            ("tenant".to_owned(), "tenant-owned".to_owned()),
+            ManagedOwnershipRow {
+                entity_kind: "tenant".to_owned(),
+                entity_key: "tenant-owned".to_owned(),
+                desired_fingerprint: "fp-1".to_owned(),
+                apply_id: "apply-1".to_owned(),
+                row_version: 1,
+                valid_from: 1,
+                deleted: false,
+            },
+        )]);
+
+        let plan = plan_entity_changes("tenant", &current, &[], &ownership, |entry| {
+            entry.id.clone()
+        });
+
+        assert!(plan
+            .reported_changes
+            .iter()
+            .any(|change| change == "delete tenant tenant-owned"));
+        assert!(!plan
+            .reported_changes
+            .iter()
+            .any(|change| change.contains("tenant-unowned")));
+    }
+
+    #[test]
     fn deserializes_uppercase_query_rows_for_typed_schema() {
         let tenant: TenantRow = serde_json::from_str(
             r#"{
@@ -1739,6 +2331,442 @@ tenants ({id "tenant-b"})
         assert_eq!(tenant.tenant_id, "tenant-a");
         assert_eq!(invite.invite_id, "invite-1");
         assert!(commit.committed);
+    }
+
+    // r[verify config.managed.apply-operation]
+    // r[verify config.managed.plan-before-apply]
+    // r[verify config.managed.idempotent-apply]
+    // r[verify config.managed.three-way-diff]
+    // r[verify config.managed.ownership]
+    // r[verify config.managed.store.managed-apply-state]
+    // r[verify config.managed.store.managed-ownership-state]
+    // r[verify config.managed.store.entity-fingerprint]
+    #[actix_web::test]
+    async fn persists_managed_apply_and_ownership_state_across_reapply() {
+        use actix_web::{get, patch, post, web, App, HttpRequest, HttpResponse, Responder};
+        use std::time::Duration;
+
+        #[derive(Default)]
+        struct FakeStore {
+            pipeline: Option<crate::feldera::PipelineRecord>,
+            tables: BTreeMap<String, Vec<Value>>,
+        }
+
+        fn decode_sql(request: &HttpRequest) -> String {
+            request
+                .query_string()
+                .split('&')
+                .find_map(|entry| entry.strip_prefix("sql="))
+                .unwrap_or_default()
+                .replace('+', " ")
+                .replace("%20", " ")
+                .replace("%28", "(")
+                .replace("%29", ")")
+                .replace("%2A", "*")
+        }
+
+        fn table_key_columns(name: &str) -> &'static [&'static str] {
+            match name {
+                "tenant" | "versioned_tenant" | "current_tenant" => &["tenant_id"],
+                "subject" | "versioned_subject" | "current_subject" => &["subject_id"],
+                "membership" | "versioned_membership" | "current_membership" => {
+                    &["tenant_id", "subject_id"]
+                }
+                "assumption_grant" | "versioned_assumption_grant" | "current_assumption_grant" => {
+                    &["subject_id", "source_tenant_id", "target_tenant_id"]
+                }
+                "action" | "versioned_action" | "current_action" => &["action_name"],
+                "template" | "versioned_template" | "current_template" => {
+                    &["tenant_id", "template_key"]
+                }
+                "role" | "versioned_role" | "current_role" => &["tenant_id", "role_key"],
+                "managed_ownership"
+                | "versioned_managed_ownership"
+                | "current_managed_ownership" => &["entity_kind", "entity_key"],
+                "invite" | "versioned_invite" | "current_invite" => &["invite_id"],
+                "subject_credential"
+                | "versioned_subject_credential"
+                | "current_subject_credential" => &["subject_id"],
+                "session_state" => &["session_id"],
+                "session" | "versioned_session" | "current_session" => &["session_id"],
+                _ => &[],
+            }
+        }
+
+        fn backing_table_name(name: &str) -> &str {
+            match name {
+                "session" | "versioned_session" | "current_session" => "session_state",
+                _ => name,
+            }
+        }
+
+        fn table_name_from_sql(sql: &str) -> Option<&str> {
+            sql.split("FROM ")
+                .nth(1)
+                .and_then(|part| part.split_whitespace().next())
+        }
+
+        fn sql_filters(sql: &str) -> Vec<(String, String)> {
+            let Some(where_clause) = sql.split(" WHERE ").nth(1) else {
+                return Vec::new();
+            };
+            let predicate_segment = where_clause
+                .split(" ORDER BY ")
+                .next()
+                .unwrap_or(where_clause);
+
+            predicate_segment
+                .split(" AND ")
+                .filter_map(|predicate| {
+                    let (column, rest) = predicate.split_once(" = '")?;
+                    let value = rest.strip_suffix('\'')?.replace("''", "'");
+                    Some((column.to_owned(), value))
+                })
+                .collect()
+        }
+
+        fn latest_rows(rows: &[Value], key_columns: &[&str]) -> Vec<Value> {
+            let mut latest = BTreeMap::<Vec<String>, Value>::new();
+
+            for row in rows {
+                let key = key_columns
+                    .iter()
+                    .map(|column| {
+                        row.get(*column)
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned()
+                    })
+                    .collect::<Vec<_>>();
+                let row_version = row.get("row_version").and_then(Value::as_u64).unwrap_or(0);
+                let replace = latest
+                    .get(&key)
+                    .and_then(|current| current.get("row_version").and_then(Value::as_u64))
+                    .map(|current| row_version >= current)
+                    .unwrap_or(true);
+                if replace {
+                    latest.insert(key, row.clone());
+                }
+            }
+
+            latest
+                .into_values()
+                .filter(|row| !row.get("deleted").and_then(Value::as_bool).unwrap_or(false))
+                .collect()
+        }
+
+        #[get("/v0/pipelines/{name}")]
+        async fn get_pipeline(store: web::Data<Arc<Mutex<FakeStore>>>) -> impl Responder {
+            let pipeline = store.lock().expect("store lock").pipeline.clone();
+            if let Some(pipeline) = pipeline {
+                HttpResponse::Ok().json(pipeline)
+            } else {
+                HttpResponse::NotFound().finish()
+            }
+        }
+
+        #[post("/v0/pipelines")]
+        async fn create_pipeline(
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+            body: web::Json<crate::feldera::DesiredPipeline>,
+        ) -> impl Responder {
+            let record = crate::feldera::PipelineRecord {
+                name: body.name.clone(),
+                description: Some(body.description.clone()),
+                program_code: Some(body.program_code.clone()),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: body.program_config.clone(),
+            };
+            store.lock().expect("store lock").pipeline = Some(record.clone());
+            HttpResponse::Ok().json(record)
+        }
+
+        #[post("/v0/pipelines/{name}/start")]
+        async fn start_pipeline() -> impl Responder {
+            HttpResponse::Ok().finish()
+        }
+
+        #[patch("/v0/pipelines/{name}")]
+        async fn patch_pipeline(
+            body: web::Json<serde_json::Value>,
+            path: web::Path<String>,
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+        ) -> impl Responder {
+            let record = crate::feldera::PipelineRecord {
+                name: path.into_inner(),
+                description: body
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                program_code: body
+                    .get("program_code")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: serde_json::from_value(
+                    body.get("program_config")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                )
+                .ok(),
+            };
+            store.lock().expect("store lock").pipeline = Some(record.clone());
+            HttpResponse::Ok().json(record)
+        }
+
+        #[post("/v0/pipelines/{name}/ingress/{table}")]
+        async fn ingress_rows(
+            path: web::Path<(String, String)>,
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+            body: web::Json<Vec<Value>>,
+        ) -> impl Responder {
+            let table = &path.1;
+            let mut store = store.lock().expect("store lock");
+            store
+                .tables
+                .entry(table.to_owned())
+                .or_default()
+                .extend(body.into_inner());
+
+            HttpResponse::Ok().json(serde_json::json!({ "completion_token": "done-1" }))
+        }
+
+        #[get("/v0/pipelines/{name}/completion_status")]
+        async fn completion_status() -> impl Responder {
+            HttpResponse::Ok().json(serde_json::json!({ "completed": true }))
+        }
+
+        #[get("/v0/pipelines/{name}/query")]
+        async fn query_pipeline(
+            request: HttpRequest,
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+        ) -> impl Responder {
+            let sql = decode_sql(&request);
+            let store = store.lock().expect("store lock");
+
+            if sql.contains("FROM apply_commit") && sql.contains("COUNT(*)") {
+                let count = store
+                    .tables
+                    .get("apply_commit")
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter(|row| row.get("committed").and_then(Value::as_bool) == Some(true))
+                    .count();
+                HttpResponse::Ok().json(vec![serde_json::json!({ "count": count })])
+            } else if sql.contains("FROM managed_apply")
+                && sql.contains("ORDER BY ma.applied_at DESC")
+            {
+                let committed = store
+                    .tables
+                    .get("apply_commit")
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter(|row| row.get("committed").and_then(Value::as_bool) == Some(true))
+                    .filter_map(|row| row.get("apply_id").and_then(Value::as_str))
+                    .collect::<BTreeSet<_>>();
+                let row = store
+                    .tables
+                    .get("managed_apply")
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter(|row| {
+                        row.get("apply_id")
+                            .and_then(Value::as_str)
+                            .map(|apply_id| committed.contains(apply_id))
+                            .unwrap_or(false)
+                    })
+                    .max_by_key(|row| row.get("applied_at").and_then(Value::as_u64).unwrap_or(0))
+                    .cloned();
+                HttpResponse::Ok().json(row.into_iter().collect::<Vec<_>>())
+            } else if sql.contains("ORDER BY committed_at DESC") {
+                let apply_id = store
+                    .tables
+                    .get("apply_commit")
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter(|row| row.get("committed").and_then(Value::as_bool) == Some(true))
+                    .max_by_key(|row| row.get("committed_at").and_then(Value::as_u64).unwrap_or(0))
+                    .and_then(|row| row.get("apply_id").and_then(Value::as_str))
+                    .unwrap_or("apply-bootstrap");
+                HttpResponse::Ok().json(vec![serde_json::json!({ "apply_id": apply_id })])
+            } else if sql.contains("MAX(row_version)") {
+                let table_name = table_name_from_sql(&sql).unwrap_or_default();
+                let filters = sql_filters(&sql);
+                let max = store
+                    .tables
+                    .get(table_name)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter(|row| {
+                        filters.iter().all(|(column, expected)| {
+                            row.get(column)
+                                .and_then(Value::as_str)
+                                .map(|value| value == expected)
+                                .unwrap_or(false)
+                        })
+                    })
+                    .filter_map(|row| row.get("row_version").and_then(Value::as_u64))
+                    .max()
+                    .unwrap_or(0);
+                HttpResponse::Ok().json(vec![serde_json::json!({ "count": max })])
+            } else if let Some(view_name) = table_name_from_sql(&sql) {
+                let table_name =
+                    backing_table_name(view_name.strip_prefix("current_").unwrap_or(view_name));
+                let key_columns = table_key_columns(view_name);
+                let rows = store
+                    .tables
+                    .get(table_name)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                HttpResponse::Ok().json(latest_rows(rows, key_columns))
+            } else {
+                HttpResponse::Ok().json(Vec::<Value>::new())
+            }
+        }
+
+        let store = Arc::new(Mutex::new(FakeStore::default()));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("listener should have local addr");
+        let server_store = store.clone();
+        let server = actix_web::HttpServer::new(move || {
+            App::new()
+                .app_data(web::Data::new(server_store.clone()))
+                .service(get_pipeline)
+                .service(create_pipeline)
+                .service(start_pipeline)
+                .service(patch_pipeline)
+                .service(ingress_rows)
+                .service(completion_status)
+                .service(query_pipeline)
+        })
+        .listen(listener)
+        .expect("server should listen")
+        .run();
+        let handle = server.handle();
+        actix_web::rt::spawn(server);
+        actix_web::rt::time::sleep(Duration::from_millis(25)).await;
+
+        let client = crate::feldera::FelderaClient::new(format!("http://{}", addr), None);
+        let store_client = super::FelderaManagedStore::new(
+            client,
+            crate::config::FelderaConfig {
+                enabled: true,
+                base_url: format!("http://{}", addr),
+                pipeline_prefix: "task2-store".to_owned(),
+                readiness_probe: false,
+                api_key: None,
+                compile_profile: "dev".to_owned(),
+                auto_start: false,
+                start_initial: "paused".to_owned(),
+            },
+        );
+
+        let initial = ManagedConfig::load_from_str(
+            r#"
+catalog { actions ({name "tenant:user:read"}) }
+tenants ({id "tenant-a"})
+subjects ({id "subject-a", display_name "Subject A"})
+"#,
+        )
+        .expect("initial config should parse");
+        let updated = ManagedConfig::load_from_str(
+            r#"
+catalog { actions ({name "tenant:user:write"}) }
+tenants ({id "tenant-a", display_name "Tenant A"})
+subjects ({id "subject-a", display_name "Subject A+"})
+"#,
+        )
+        .expect("updated config should parse");
+
+        let first_plan = store_client
+            .plan(&initial)
+            .await
+            .expect("plan should succeed");
+        let first_apply = store_client
+            .apply(&initial)
+            .await
+            .expect("first apply should succeed");
+        let second_plan = store_client
+            .plan(&updated)
+            .await
+            .expect("plan should succeed");
+        let second_apply = store_client
+            .apply(&updated)
+            .await
+            .expect("second apply should succeed");
+        let third_plan = store_client
+            .plan(&updated)
+            .await
+            .expect("plan should succeed");
+        let third_apply = store_client
+            .apply(&updated)
+            .await
+            .expect("noop apply should succeed");
+        let latest_apply = store_client
+            .load_latest_managed_apply()
+            .await
+            .expect("latest apply should load")
+            .expect("latest apply should exist");
+        let loaded = store_client
+            .load_managed()
+            .await
+            .expect("managed state should load");
+
+        handle.stop(true).await;
+
+        assert!(!first_plan.noop);
+        assert_eq!(first_apply.summary.created, 3);
+        assert!(second_plan
+            .changes
+            .iter()
+            .any(|change| change.starts_with("update tenant")));
+        assert!(second_plan
+            .changes
+            .iter()
+            .any(|change| change.starts_with("update subject")));
+        assert!(second_plan
+            .changes
+            .iter()
+            .any(|change| change.starts_with("delete action")));
+        assert!(second_plan
+            .changes
+            .iter()
+            .any(|change| change.starts_with("create action")));
+        assert_eq!(second_apply.summary.created, 1);
+        assert_eq!(second_apply.summary.updated, 2);
+        assert_eq!(second_apply.summary.deleted, 1);
+        assert!(third_plan.noop);
+        assert!(third_apply.noop);
+        assert_eq!(third_apply.summary.created, 0);
+        assert_eq!(latest_apply.managed, updated);
+        assert!(loaded
+            .catalog
+            .actions
+            .iter()
+            .any(|action| action.name == "tenant:user:write"));
+        assert_eq!(
+            store
+                .lock()
+                .expect("store lock")
+                .tables
+                .get("managed_ownership")
+                .map(Vec::len)
+                .unwrap_or(0),
+            7
+        );
     }
 
     #[actix_web::test]

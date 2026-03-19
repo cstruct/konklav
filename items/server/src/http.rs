@@ -6,6 +6,7 @@ use conclave_controlplane_api::{
     LoginRequest, LoginResponse, ManagedApplyRequest, ManagedApplyResponse, ManagedPlanRequest,
     ManagedValidateRequest, ManagedValidateResponse, RedeemInviteRequest, RedeemInviteResponse,
 };
+use conclave_managed_config::ManagedConfig;
 use conclave_relying_auth::{ActionCatalogEntry, JwkSet, JwtSigner, JwtVerifier};
 use serde::Serialize;
 
@@ -73,10 +74,9 @@ impl AppState {
         });
         let (state, managed_source) = if let Some(store) = &managed_store {
             store.bootstrap_if_empty(&managed.managed).await?;
-            let durable_managed = store.load_managed().await?;
             let durable_apply_id = store.load_latest_apply_id().await?;
             let (invites, credentials, sessions) = store.load_runtime_auth_state().await?;
-            let mut state = ControlPlaneState::new(durable_managed)?;
+            let mut state = ControlPlaneState::empty();
             if let Some(apply_id) = durable_apply_id {
                 state.set_last_apply_id(apply_id);
             }
@@ -118,16 +118,41 @@ impl AppState {
         self.config.relying.bind_address()
     }
 
-    fn current_snapshot(
+    async fn load_managed_config(&self) -> Result<ManagedConfig, crate::types::DynError> {
+        match &self.managed_store {
+            Some(store) => store.load_managed().await,
+            None => {
+                let guard = self.state.read().expect("state lock should not poison");
+                Ok(guard.managed().clone())
+            }
+        }
+    }
+
+    async fn current_last_apply_id(&self) -> Result<String, crate::types::DynError> {
+        match &self.managed_store {
+            Some(store) => Ok(store
+                .load_latest_apply_id()
+                .await?
+                .unwrap_or_else(|| "apply-000000".to_owned())),
+            None => {
+                let guard = self.state.read().expect("state lock should not poison");
+                Ok(guard.last_apply_id.clone())
+            }
+        }
+    }
+
+    // r[impl config.managed.store.feldera-authoritative-reads]
+    // r[impl config.managed.store.bounded-derived-cache]
+    async fn current_snapshot(
         &self,
     ) -> Result<(CompiledAuthzModel, CompiledTenantModel), crate::types::DynError> {
-        let guard = self.state.read().expect("state lock should not poison");
-        let snapshot = guard.snapshot()?;
+        let managed = self.load_managed_config().await?;
+        let snapshot = ControlPlaneState::snapshot_from_managed(&managed)?;
         Ok((snapshot.authz, snapshot.tenants))
     }
 
-    fn current_catalog(&self) -> Result<ActionCatalogResponse, crate::types::DynError> {
-        let (authz, _) = self.current_snapshot()?;
+    async fn current_catalog(&self) -> Result<ActionCatalogResponse, crate::types::DynError> {
+        let (authz, _) = self.current_snapshot().await?;
         Ok(ActionCatalogResponse {
             revision: authz.catalog_revision,
             actions: authz
@@ -147,7 +172,7 @@ impl AppState {
             return Ok(None);
         };
 
-        let (authz, _) = self.current_snapshot()?;
+        let (authz, _) = self.current_snapshot().await?;
         let start = self
             .config
             .feldera
@@ -228,7 +253,14 @@ async fn readyz(state: web::Data<AppState>) -> impl Responder {
 
 #[get("/v1/meta")]
 async fn meta(state: web::Data<AppState>) -> impl Responder {
-    let guard = state.state.read().expect("state lock should not poison");
+    let last_apply_id = match state.current_last_apply_id().await {
+        Ok(apply_id) => apply_id,
+        Err(err) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": err.to_string(),
+            }))
+        }
+    };
 
     HttpResponse::Ok().json(MetaResponse {
         config_source: (*state.config_source).clone(),
@@ -237,7 +269,7 @@ async fn meta(state: web::Data<AppState>) -> impl Responder {
         subject_bind: state.subject_bind_address(),
         relying_bind: state.relying_bind_address(),
         bootstrap_subject: state.config.bootstrap.subject.clone(),
-        last_apply_id: guard.last_apply_id.clone(),
+        last_apply_id,
     })
 }
 
@@ -270,13 +302,53 @@ async fn managed_plan(
         return response;
     }
 
-    let guard = state.state.read().expect("state lock should not poison");
-    match guard.plan(&body.managed) {
-        Ok(plan) => HttpResponse::Ok().json(plan),
-        Err(err) => HttpResponse::BadRequest().json(serde_json::json!({
-            "error": err.to_string(),
-        })),
+    if let Some(store) = &state.managed_store {
+        match store.plan(&body.managed).await {
+            Ok(plan) => {
+                let snapshot = match ControlPlaneState::snapshot_from_managed(&body.managed) {
+                    Ok(snapshot) => snapshot,
+                    Err(err) => {
+                        return HttpResponse::BadRequest().json(serde_json::json!({
+                            "error": err.to_string(),
+                        }))
+                    }
+                };
+                HttpResponse::Ok().json(conclave_controlplane_api::ManagedPlanResponse {
+                    noop: plan.noop,
+                    summary: plan.summary,
+                    changes: plan.changes,
+                    catalog_revision: snapshot.authz.catalog_revision,
+                    policy_revision: snapshot.tenants.policy_revision,
+                })
+            }
+            Err(err) => HttpResponse::BadRequest().json(serde_json::json!({
+                "error": err.to_string(),
+            })),
+        }
+    } else {
+        let current_managed = match state.load_managed_config().await {
+            Ok(managed) => managed,
+            Err(err) => {
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": err.to_string(),
+                }))
+            }
+        };
+        match ControlPlaneState::plan_against(&current_managed, &body.managed) {
+            Ok(plan) => HttpResponse::Ok().json(plan),
+            Err(err) => HttpResponse::BadRequest().json(serde_json::json!({
+                "error": err.to_string(),
+            })),
+        }
     }
+}
+
+fn revisions_for_managed(managed: &ManagedConfig) -> Result<(u32, u64), crate::types::DynError> {
+    let snapshot = ControlPlaneState::snapshot_from_managed(managed)?;
+    Ok((
+        snapshot.authz.catalog_revision,
+        snapshot.tenants.policy_revision,
+    ))
 }
 
 #[post("/v1/managed/apply")]
@@ -289,39 +361,67 @@ async fn managed_apply(
         return response;
     }
 
-    {
-        let guard = state.state.read().expect("state lock should not poison");
-        if let Err(err) = guard.plan(&body.managed) {
-            return HttpResponse::BadRequest().json(serde_json::json!({
-                "error": err.to_string(),
-            }));
-        }
-    }
-
-    let durable_apply_id = match &state.managed_store {
-        Some(store) => match store.apply(&body.managed).await {
-            Ok(apply_id) => Some(apply_id),
+    if let Some(store) = &state.managed_store {
+        let applied = match store.apply(&body.managed).await {
+            Ok(applied) => applied,
+            Err(err) => {
+                return HttpResponse::BadRequest().json(serde_json::json!({
+                    "error": err.to_string(),
+                }))
+            }
+        };
+        let (catalog_revision, policy_revision) = match revisions_for_managed(&body.managed) {
+            Ok(revisions) => revisions,
+            Err(err) => {
+                return HttpResponse::BadRequest().json(serde_json::json!({
+                    "error": err.to_string(),
+                }))
+            }
+        };
+        let mut guard = state.state.write().expect("state lock should not poison");
+        guard.set_last_apply_id(applied.apply_id.clone());
+        HttpResponse::Ok().json(ManagedApplyResponse {
+            applied: true,
+            apply_id: applied.apply_id,
+            summary: applied.summary,
+            catalog_revision,
+            policy_revision,
+        })
+    } else {
+        let current_managed = match state.load_managed_config().await {
+            Ok(managed) => managed,
             Err(err) => {
                 return HttpResponse::InternalServerError().json(serde_json::json!({
                     "error": err.to_string(),
                 }))
             }
-        },
-        None => None,
-    };
+        };
+        let planned = match ControlPlaneState::plan_against(&current_managed, &body.managed) {
+            Ok(plan) => plan,
+            Err(err) => {
+                return HttpResponse::BadRequest().json(serde_json::json!({
+                    "error": err.to_string(),
+                }))
+            }
+        };
 
-    let mut guard = state.state.write().expect("state lock should not poison");
-    match guard.apply_with_id(body.managed.clone(), durable_apply_id) {
-        Ok(plan) => HttpResponse::Ok().json(ManagedApplyResponse {
-            applied: true,
-            apply_id: guard.last_apply_id.clone(),
-            summary: plan.summary,
-            catalog_revision: plan.catalog_revision,
-            policy_revision: plan.policy_revision,
-        }),
-        Err(err) => HttpResponse::BadRequest().json(serde_json::json!({
-            "error": err.to_string(),
-        })),
+        let mut guard = state.state.write().expect("state lock should not poison");
+        match guard.apply_with_id(body.managed.clone(), None) {
+            Ok(plan) => HttpResponse::Ok().json(ManagedApplyResponse {
+                applied: true,
+                apply_id: guard.last_apply_id.clone(),
+                summary: if planned.summary == plan.summary {
+                    plan.summary
+                } else {
+                    planned.summary
+                },
+                catalog_revision: plan.catalog_revision,
+                policy_revision: plan.policy_revision,
+            }),
+            Err(err) => HttpResponse::BadRequest().json(serde_json::json!({
+                "error": err.to_string(),
+            })),
+        }
     }
 }
 
@@ -336,9 +436,22 @@ async fn create_invite(
         return response;
     }
 
+    let managed = match state.load_managed_config().await {
+        Ok(managed) => managed,
+        Err(err) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": err.to_string(),
+            }))
+        }
+    };
+
     let planned = {
-        let guard = state.state.write().expect("state lock should not poison");
-        match guard.plan_invite(&body.subject, body.expires_in_seconds.unwrap_or(900)) {
+        let guard = state.state.read().expect("state lock should not poison");
+        match guard.plan_invite_with_managed(
+            &managed,
+            &body.subject,
+            body.expires_in_seconds.unwrap_or(900),
+        ) {
             Ok(planned) => planned,
             Err(err) => {
                 return HttpResponse::BadRequest().json(serde_json::json!({
@@ -413,9 +526,18 @@ async fn redeem_invite(
 #[post("/v1/login")]
 // r[depends item.controlplane-api.subject-and-relying-dtos]
 async fn login(state: web::Data<AppState>, body: web::Json<LoginRequest>) -> impl Responder {
+    let managed = match state.load_managed_config().await {
+        Ok(managed) => managed,
+        Err(err) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": err.to_string(),
+            }))
+        }
+    };
+
     let session = {
-        let guard = state.state.write().expect("state lock should not poison");
-        match guard.plan_login(&body.subject, &body.password, &body.tenant) {
+        let guard = state.state.read().expect("state lock should not poison");
+        match guard.plan_login_with_managed(&managed, &body.subject, &body.password, &body.tenant) {
             Ok(session) => session,
             Err(err) => {
                 return HttpResponse::Forbidden().json(serde_json::json!({
@@ -438,7 +560,7 @@ async fn login(state: web::Data<AppState>, body: web::Json<LoginRequest>) -> imp
         guard.record_session(session)
     };
 
-    let (authz, tenants) = match state.current_snapshot() {
+    let (authz, tenants) = match state.current_snapshot().await {
         Ok(snapshot) => snapshot,
         Err(err) => {
             return HttpResponse::InternalServerError().json(serde_json::json!({
@@ -474,7 +596,7 @@ async fn issue_assumed_access_token(
     state: web::Data<AppState>,
     body: web::Json<AssumeAccessTokenRequest>,
 ) -> impl Responder {
-    let (authz, tenants) = match state.current_snapshot() {
+    let (authz, tenants) = match state.current_snapshot().await {
         Ok(snapshot) => snapshot,
         Err(err) => {
             return HttpResponse::InternalServerError().json(serde_json::json!({
@@ -496,7 +618,7 @@ async fn validate_access_token(
     state: web::Data<AppState>,
     body: web::Json<ValidateAccessTokenRequest>,
 ) -> impl Responder {
-    let (authz, tenants) = match state.current_snapshot() {
+    let (authz, tenants) = match state.current_snapshot().await {
         Ok(snapshot) => snapshot,
         Err(err) => {
             return HttpResponse::InternalServerError().json(serde_json::json!({
@@ -516,7 +638,7 @@ async fn validate_access_token(
 #[get("/v1/revisions")]
 // r[depends item.controlplane-api.subject-and-relying-dtos]
 async fn current_revisions(state: web::Data<AppState>) -> impl Responder {
-    match state.current_snapshot() {
+    match state.current_snapshot().await {
         Ok((authz, tenants)) => HttpResponse::Ok().json(CurrentRevisionsResponse {
             catalog_revision: authz.catalog_revision,
             policy_revision: tenants.policy_revision,
@@ -530,7 +652,7 @@ async fn current_revisions(state: web::Data<AppState>) -> impl Responder {
 #[get("/v1/authz/catalog")]
 // r[depends item.controlplane-api.subject-and-relying-dtos]
 async fn action_catalog(state: web::Data<AppState>) -> impl Responder {
-    match state.current_catalog() {
+    match state.current_catalog().await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(err) => HttpResponse::InternalServerError().json(serde_json::json!({
             "error": err.to_string(),
@@ -917,6 +1039,8 @@ catalog {
     }
 
     // r[verify config.managed.feldera-authoritative-store]
+    // r[verify config.managed.store.feldera-authoritative-reads]
+    // r[verify config.managed.store.bounded-derived-cache]
     #[actix_web::test]
     async fn bootstraps_managed_state_from_feldera_when_enabled() {
         use actix_web::{patch, HttpResponse};
@@ -1125,13 +1249,21 @@ catalog {
         let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
             .await
             .expect("state should build");
-        let catalog = state.current_catalog().expect("catalog should compile");
+        let catalog = state
+            .current_catalog()
+            .await
+            .expect("catalog should compile");
+        let catalog_again = state
+            .current_catalog()
+            .await
+            .expect("catalog should compile again");
 
         handle.stop(true).await;
         assert_eq!(catalog.actions.len(), 1);
+        assert_eq!(catalog_again.actions.len(), 1);
         let seen = seen.lock().expect("seen lock");
         assert!(seen.pipeline_creates >= 1);
-        assert!(seen.query_calls >= 2);
+        assert!(seen.query_calls >= 3);
         assert!(seen.ingress_calls >= 1);
     }
 

@@ -25,6 +25,17 @@ When the control-plane store is empty, the server bootstraps it from the managed
 
 Invite records, linked local credentials, and tenant-aware sessions follow the same persisted-history approach even though they are not declarative managed resources. This keeps the initial subject lifecycle auditable and restart-safe while preserving a clear separation between managed desired state and runtime-auth state.
 
+## Managed read model
+
+Managed control-plane reads use Feldera as the authority when the Feldera-backed store is enabled:
+
+- request-time managed snapshots load from typed `current_*` Feldera views
+- compiled authorization and tenant projections are derived from those loaded rows
+- server-local runtime-auth state remains in memory for invite, credential, and session mutation planning
+- the server does not treat its in-memory managed copy as authoritative in Feldera mode
+
+This keeps the in-process state bounded to the runtime-auth working set while still allowing request handlers to compile the derived models they need. If a derived managed snapshot cache is introduced later, it must remain bounded, non-authoritative, and invalidated by the latest committed `apply_id`.
+
 ## Atomic visibility
 
 Logical apply atomicity is modeled with a publish barrier:
