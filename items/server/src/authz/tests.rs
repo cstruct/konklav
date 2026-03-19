@@ -1,5 +1,7 @@
 use conclave_managed_config::ManagedConfig;
 
+use crate::tenants::compile_managed_tenants;
+
 use super::{compile_managed_authz, normalize_managed_authz};
 
 // r[verify config.managed.authz-template-resources]
@@ -377,11 +379,18 @@ roles (
     .expect("bundle should parse");
 
     let compiled = compile_managed_authz(&config).expect("bundle should compile");
-    let sql = compiled.feldera_sql("conclave");
+    let tenants = compile_managed_tenants(&config, &compiled).expect("tenants should compile");
+    let sql = compiled.feldera_sql("conclave", &tenants);
 
     assert!(sql.contains("CREATE TABLE action_catalog"));
+    assert!(sql.contains("CREATE TABLE compiled_authz_metadata"));
     assert!(sql.contains("INSERT INTO managed_role_templates"));
     assert!(sql.contains("INSERT INTO managed_roles"));
+    assert!(sql.contains("CREATE TABLE effective_grant_identity"));
+    assert!(sql.contains("CREATE TABLE effective_grant_role_assignment"));
+    assert!(sql.contains("CREATE MATERIALIZED VIEW effective_grants"));
+    assert!(sql.contains("CREATE MATERIALIZED VIEW effective_grant_actions"));
+    assert!(sql.contains("CREATE TABLE compiled_role_action_effects"));
     assert!(sql.contains("source_revision BIGINT"));
     assert!(sql.contains("inherits_json STRING NOT NULL"));
     assert!(sql.contains("compiled_role_policies"));

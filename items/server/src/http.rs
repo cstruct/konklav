@@ -12,10 +12,17 @@ use serde::Serialize;
 
 use crate::authz::CompiledAuthzModel;
 use crate::config::{AppConfig, LoadedConfig};
-use crate::feldera::{sync_authz_pipeline, FelderaClient, StartPipelineRequest};
+use crate::feldera::{
+    load_action_catalog_entries, load_compiled_authz_metadata, load_effective_grant,
+    sync_authz_pipeline, CompiledAuthzMetadata, FelderaClient, StartPipelineRequest,
+};
 use crate::managed_store::{FelderaManagedStore, ManagedApplyFailure};
 use crate::state::{ControlPlaneState, RuntimeAuthState};
-use crate::tenants::{AssumeAccessTokenRequest, CompiledTenantModel, ValidateAccessTokenRequest};
+use crate::tenants::{
+    issue_effective_grant_token, validate_access_token_with_current_metadata,
+    AssumeAccessTokenRequest, CompiledEffectiveGrant, CompiledTenantModel,
+    ValidateAccessTokenRequest,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -163,11 +170,27 @@ impl AppState {
         Ok((snapshot.authz, snapshot.tenants))
     }
 
-    async fn current_catalog(&self) -> Result<ActionCatalogResponse, crate::types::DynError> {
-        let (authz, _) = self.current_snapshot().await?;
-        Ok(ActionCatalogResponse {
-            revision: authz.catalog_revision,
-            actions: authz
+    async fn current_compiled_metadata(
+        &self,
+    ) -> Result<(CompiledAuthzMetadata, Vec<ActionCatalogEntry>), crate::types::DynError> {
+        if let Some(client) = &self.feldera {
+            if let Some(metadata) =
+                load_compiled_authz_metadata(client, &self.config.feldera).await?
+            {
+                let actions = load_action_catalog_entries(client, &self.config.feldera).await?;
+                if !actions.is_empty() {
+                    return Ok((metadata, actions));
+                }
+            }
+        }
+
+        let (authz, tenants) = self.current_snapshot().await?;
+        Ok((
+            CompiledAuthzMetadata {
+                catalog_revision: authz.catalog_revision,
+                policy_revision: tenants.policy_revision,
+            },
+            authz
                 .actions
                 .iter()
                 .map(|entry| ActionCatalogEntry {
@@ -175,6 +198,48 @@ impl AppState {
                     bit: entry.bit,
                 })
                 .collect(),
+        ))
+    }
+
+    async fn find_compiled_effective_grant(
+        &self,
+        grant_kind: &str,
+        subject: &str,
+        target_tenant: &str,
+        source_tenant: Option<&str>,
+    ) -> Result<Option<CompiledEffectiveGrant>, crate::types::DynError> {
+        if let Some(client) = &self.feldera {
+            let loaded = load_effective_grant(
+                client,
+                &self.config.feldera,
+                grant_kind,
+                subject,
+                target_tenant,
+                source_tenant,
+            )
+            .await?;
+            if loaded.is_some() {
+                return Ok(loaded);
+            }
+        }
+
+        let (_, tenants) = self.current_snapshot().await?;
+        Ok(match (grant_kind, source_tenant) {
+            ("direct", None) => tenants
+                .find_direct_effective_grant(subject, target_tenant)
+                .cloned(),
+            ("assumed", Some(source_tenant)) => tenants
+                .find_assumed_effective_grant(subject, source_tenant, target_tenant)
+                .cloned(),
+            _ => None,
+        })
+    }
+
+    async fn current_catalog(&self) -> Result<ActionCatalogResponse, crate::types::DynError> {
+        let (metadata, actions) = self.current_compiled_metadata().await?;
+        Ok(ActionCatalogResponse {
+            revision: metadata.catalog_revision,
+            actions,
         })
     }
 
@@ -184,7 +249,7 @@ impl AppState {
             return Ok(None);
         };
 
-        let (authz, _) = self.current_snapshot().await?;
+        let (authz, tenants) = self.current_snapshot().await?;
         let start = self
             .config
             .feldera
@@ -193,7 +258,21 @@ impl AppState {
                 initial: self.config.feldera.start_initial.clone(),
                 bootstrap_policy: None,
             });
-        let result = sync_authz_pipeline(client, &self.config.feldera, &authz, start).await?;
+        let result =
+            sync_authz_pipeline(client, &self.config.feldera, &authz, &tenants, start).await?;
+
+        Ok(Some(result.status))
+    }
+
+    async fn sync_feldera_after_managed_apply(
+        &self,
+    ) -> Result<Option<String>, crate::types::DynError> {
+        let Some(client) = &self.feldera else {
+            return Ok(None);
+        };
+        let (authz, tenants) = self.current_snapshot().await?;
+        let result =
+            sync_authz_pipeline(client, &self.config.feldera, &authz, &tenants, None).await?;
 
         Ok(Some(result.status))
     }
@@ -395,6 +474,14 @@ async fn managed_apply(
             Ok(applied) => applied,
             Err(err) => return managed_apply_error_response(&err),
         };
+        if let Err(err) = state.sync_feldera_after_managed_apply().await {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!(
+                    "managed apply succeeded but failed to refresh the compiled authz pipeline: {err}"
+                ),
+                "apply_id": applied.apply_id,
+            }));
+        }
         let (catalog_revision, policy_revision) = match revisions_for_managed(&body.managed) {
             Ok(revisions) => revisions,
             Err(err) => {
@@ -654,8 +741,27 @@ async fn login(state: web::Data<AppState>, body: web::Json<LoginRequest>) -> imp
         guard.record_session(session)
     };
 
-    let (authz, tenants) = match state.current_snapshot().await {
-        Ok(snapshot) => snapshot,
+    let metadata = match state.current_compiled_metadata().await {
+        Ok((metadata, _)) => metadata,
+        Err(err) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": err.to_string(),
+            }))
+        }
+    };
+    let grant = match state
+        .find_compiled_effective_grant("direct", &body.subject, &body.tenant, None)
+        .await
+    {
+        Ok(Some(grant)) => grant,
+        Ok(None) => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": format!(
+                    "subject {} has no effective grant in tenant {}",
+                    body.subject, body.tenant
+                ),
+            }))
+        }
         Err(err) => {
             return HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": err.to_string(),
@@ -663,26 +769,35 @@ async fn login(state: web::Data<AppState>, body: web::Json<LoginRequest>) -> imp
         }
     };
 
-    match tenants.issue_direct_token(
-        &authz,
+    let claims = match issue_effective_grant_token(
+        metadata.catalog_revision,
+        metadata.policy_revision,
         &state.config.jwt,
-        &state.signer,
-        &crate::tenants::DirectAccessTokenRequest {
-            subject: body.subject.clone(),
-            tenant: body.tenant.clone(),
-            audience: body.audience.clone(),
-            ttl_seconds: None,
-        },
+        &grant,
+        body.audience.as_deref(),
+        None,
+        None,
     ) {
-        Ok(issued) => HttpResponse::Ok().json(LoginResponse {
-            session_id,
-            token: issued.token,
-            claims: issued.claims,
-        }),
-        Err(err) => HttpResponse::BadRequest().json(serde_json::json!({
-            "error": err.to_string(),
-        })),
-    }
+        Ok(claims) => claims,
+        Err(err) => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": err.to_string(),
+            }))
+        }
+    };
+    let token = match state.signer.sign(&claims) {
+        Ok(token) => token,
+        Err(err) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": err.to_string(),
+            }))
+        }
+    };
+    HttpResponse::Ok().json(LoginResponse {
+        session_id,
+        token,
+        claims,
+    })
 }
 
 #[post("/v1/auth/tokens/assume")]
@@ -690,8 +805,32 @@ async fn issue_assumed_access_token(
     state: web::Data<AppState>,
     body: web::Json<AssumeAccessTokenRequest>,
 ) -> impl Responder {
-    let (authz, tenants) = match state.current_snapshot().await {
-        Ok(snapshot) => snapshot,
+    let metadata = match state.current_compiled_metadata().await {
+        Ok((metadata, _)) => metadata,
+        Err(err) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": err.to_string(),
+            }))
+        }
+    };
+    let grant = match state
+        .find_compiled_effective_grant(
+            "assumed",
+            &body.subject,
+            &body.target_tenant,
+            Some(&body.source_tenant),
+        )
+        .await
+    {
+        Ok(Some(grant)) => grant,
+        Ok(None) => {
+            return HttpResponse::Forbidden().json(serde_json::json!({
+                "error": format!(
+                    "subject {} has no assumption grant from {} to {}",
+                    body.subject, body.source_tenant, body.target_tenant
+                ),
+            }))
+        }
         Err(err) => {
             return HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": err.to_string(),
@@ -699,9 +838,32 @@ async fn issue_assumed_access_token(
         }
     };
 
-    match tenants.issue_assumed_token(&authz, &state.config.jwt, &state.signer, &body.0) {
-        Ok(token) => HttpResponse::Ok().json(token),
-        Err(err) => HttpResponse::Forbidden().json(serde_json::json!({
+    let claims = match issue_effective_grant_token(
+        metadata.catalog_revision,
+        metadata.policy_revision,
+        &state.config.jwt,
+        &grant,
+        body.audience.as_deref(),
+        None,
+        Some(conclave_relying_auth::ActorChainClaim {
+            sub: body.subject.clone(),
+            tid: body.source_tenant.clone(),
+        }),
+    ) {
+        Ok(claims) => claims,
+        Err(err) => {
+            return HttpResponse::Forbidden().json(serde_json::json!({
+                "error": err.to_string(),
+            }))
+        }
+    };
+    match state.signer.sign(&claims) {
+        Ok(token) => HttpResponse::Ok().json(crate::tenants::AccessTokenResponse {
+            token,
+            claims,
+            mode: "assumed".to_owned(),
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(serde_json::json!({
             "error": err.to_string(),
         })),
     }
@@ -712,8 +874,8 @@ async fn validate_access_token(
     state: web::Data<AppState>,
     body: web::Json<ValidateAccessTokenRequest>,
 ) -> impl Responder {
-    let (authz, tenants) = match state.current_snapshot().await {
-        Ok(snapshot) => snapshot,
+    let (metadata, actions) = match state.current_compiled_metadata().await {
+        Ok(compiled) => compiled,
         Err(err) => {
             return HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": err.to_string(),
@@ -721,7 +883,14 @@ async fn validate_access_token(
         }
     };
 
-    match tenants.validate_access_token(&authz, &state.config.jwt, &state.verifier, &body.0) {
+    match validate_access_token_with_current_metadata(
+        &state.config.jwt,
+        &state.verifier,
+        &body.0,
+        metadata.catalog_revision,
+        metadata.policy_revision,
+        &actions,
+    ) {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(err) => HttpResponse::BadRequest().json(serde_json::json!({
             "error": err.to_string(),
@@ -732,10 +901,10 @@ async fn validate_access_token(
 #[get("/v1/revisions")]
 // r[depends item.controlplane-api.subject-and-relying-dtos]
 async fn current_revisions(state: web::Data<AppState>) -> impl Responder {
-    match state.current_snapshot().await {
-        Ok((authz, tenants)) => HttpResponse::Ok().json(CurrentRevisionsResponse {
-            catalog_revision: authz.catalog_revision,
-            policy_revision: tenants.policy_revision,
+    match state.current_compiled_metadata().await {
+        Ok((metadata, _)) => HttpResponse::Ok().json(CurrentRevisionsResponse {
+            catalog_revision: metadata.catalog_revision,
+            policy_revision: metadata.policy_revision,
         }),
         Err(err) => HttpResponse::InternalServerError().json(serde_json::json!({
             "error": err.to_string(),
@@ -1359,6 +1528,262 @@ catalog {
         assert!(seen.pipeline_creates >= 1);
         assert!(seen.query_calls >= 3);
         assert!(seen.ingress_calls >= 1);
+    }
+
+    #[actix_web::test]
+    async fn reads_compiled_authz_metadata_and_grants_from_feldera_pipeline() {
+        use actix_web::{patch, HttpResponse};
+        use std::collections::BTreeMap;
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        #[derive(Default, Clone)]
+        struct Seen {
+            pipelines: BTreeMap<String, crate::feldera::PipelineRecord>,
+        }
+
+        #[get("/v0/pipelines/{name}")]
+        async fn get_pipeline(
+            path: web::Path<String>,
+            seen: web::Data<Arc<Mutex<Seen>>>,
+        ) -> impl Responder {
+            if let Some(pipeline) = seen
+                .lock()
+                .expect("seen lock")
+                .pipelines
+                .get(path.as_str())
+                .cloned()
+            {
+                HttpResponse::Ok().json(pipeline)
+            } else {
+                HttpResponse::NotFound().finish()
+            }
+        }
+
+        #[post("/v0/pipelines")]
+        async fn create_pipeline(
+            seen: web::Data<Arc<Mutex<Seen>>>,
+            body: web::Json<crate::feldera::DesiredPipeline>,
+        ) -> impl Responder {
+            let record = crate::feldera::PipelineRecord {
+                name: body.name.clone(),
+                description: Some(body.description.clone()),
+                program_code: Some(body.program_code.clone()),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: body.program_config.clone(),
+            };
+            seen.lock()
+                .expect("seen lock")
+                .pipelines
+                .insert(record.name.clone(), record.clone());
+            HttpResponse::Ok().json(record)
+        }
+
+        #[patch("/v0/pipelines/{name}")]
+        async fn patch_pipeline(
+            body: web::Json<serde_json::Value>,
+            path: web::Path<String>,
+            seen: web::Data<Arc<Mutex<Seen>>>,
+        ) -> impl Responder {
+            let record = crate::feldera::PipelineRecord {
+                name: path.into_inner(),
+                description: body
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                program_code: body
+                    .get("program_code")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: serde_json::from_value(
+                    body.get("program_config")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                )
+                .ok(),
+            };
+            seen.lock()
+                .expect("seen lock")
+                .pipelines
+                .insert(record.name.clone(), record.clone());
+            HttpResponse::Ok().json(record)
+        }
+
+        #[post("/v0/pipelines/{name}/start")]
+        async fn start_pipeline() -> impl Responder {
+            HttpResponse::Ok().finish()
+        }
+
+        #[get("/v0/pipelines/{name}/query")]
+        async fn query_pipeline(request: HttpRequest) -> impl Responder {
+            let sql = request
+                .query_string()
+                .split('&')
+                .find_map(|entry| entry.strip_prefix("sql="))
+                .unwrap_or_default()
+                .replace('+', " ")
+                .replace("%20", " ")
+                .replace("%28", "(")
+                .replace("%29", ")")
+                .replace("%2A", "*");
+            let path = request.path();
+
+            if sql.contains("COUNT(*)") {
+                HttpResponse::Ok().body(r#"[{"count":0}]"#)
+            } else if sql.contains("FROM current_invite")
+                || sql.contains("FROM current_subject_credential")
+                || sql.contains("FROM current_session")
+                || sql.contains("FROM current_tenant")
+                || sql.contains("FROM current_subject")
+                || sql.contains("FROM current_membership")
+                || sql.contains("FROM current_assumption_grant")
+                || sql.contains("FROM current_template")
+                || sql.contains("FROM current_role")
+                || sql.contains("FROM current_action")
+            {
+                HttpResponse::Ok().body("[]")
+            } else if path.contains("_authz/query") && sql.contains("FROM compiled_authz_metadata")
+            {
+                HttpResponse::Ok().body(r#"[{"catalog_revision":77,"policy_revision":99}]"#)
+            } else if path.contains("_authz/query") && sql.contains("FROM action_catalog") {
+                HttpResponse::Ok().body(r#"[{"name":"tenant:user:read","bit":0}]"#)
+            } else if path.contains("_authz/query") && sql.contains("FROM effective_grants") {
+                HttpResponse::Ok().body(
+                    r#"[{
+                        "grant_kind":"direct",
+                        "subject_id":"doctor-1",
+                        "source_tenant_id":"",
+                        "source_tenant_state":"",
+                        "target_tenant_id":"tenant-a",
+                        "target_tenant_state":"active",
+                        "facts_json":"{\"department\":\"general\"}",
+                        "ttl_seconds":null
+                    }]"#,
+                )
+            } else if path.contains("_authz/query") && sql.contains("FROM effective_grant_actions")
+            {
+                HttpResponse::Ok().body(
+                    r#"[{
+                        "scope_kind":"",
+                        "scope_id":"",
+                        "bit_index":0
+                    },{
+                        "scope_kind":"",
+                        "scope_id":"",
+                        "bit_index":1
+                    },{
+                        "scope_kind":"",
+                        "scope_id":"",
+                        "bit_index":2
+                    },{
+                        "scope_kind":"clinic",
+                        "scope_id":"west",
+                        "bit_index":1
+                    }]"#,
+                )
+            } else {
+                HttpResponse::Ok().body("[]")
+            }
+        }
+
+        #[post("/v0/pipelines/{name}/ingress/{table}")]
+        async fn ingress_rows() -> impl Responder {
+            HttpResponse::Ok().json(serde_json::json!({ "completion_token": "done-1" }))
+        }
+
+        #[get("/v0/pipelines/{name}/completion_status")]
+        async fn completion_status() -> impl Responder {
+            HttpResponse::Ok().json(serde_json::json!({ "completed": true }))
+        }
+
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("listener should have local addr");
+        let server_seen = seen.clone();
+        let server = actix_web::HttpServer::new(move || {
+            App::new()
+                .app_data(web::Data::new(server_seen.clone()))
+                .service(get_pipeline)
+                .service(create_pipeline)
+                .service(patch_pipeline)
+                .service(start_pipeline)
+                .service(query_pipeline)
+                .service(ingress_rows)
+                .service(completion_status)
+        })
+        .listen(listener)
+        .expect("server should listen")
+        .run();
+        let handle = server.handle();
+        actix_web::rt::spawn(server);
+        actix_web::rt::time::sleep(Duration::from_millis(25)).await;
+
+        let mut loaded = LoadedConfig {
+            config: AppConfig::default(),
+            managed_dir: std::path::PathBuf::from("config"),
+            source: "test".to_owned(),
+        };
+        loaded.config.feldera.enabled = true;
+        loaded.config.feldera.base_url = format!("http://{}", addr);
+        let managed = conclave_managed_config::LoadedManagedConfig {
+            managed: ManagedConfig::load_from_str(
+                r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+    )
+}
+"#,
+            )
+            .expect("managed config should parse"),
+            source: "test-managed".to_owned(),
+        };
+        let signer = JwtSigner::from_seed(
+            loaded.config.jwt.signing_key_id.clone(),
+            loaded
+                .config
+                .jwt
+                .signing_seed_bytes()
+                .expect("seed should decode"),
+        );
+        let verifier = signer.verifier();
+        let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
+            .await
+            .expect("state should build");
+
+        let (metadata, actions) = state
+            .current_compiled_metadata()
+            .await
+            .expect("compiled metadata should load");
+        let grant = state
+            .find_compiled_effective_grant("direct", "doctor-1", "tenant-a", None)
+            .await
+            .expect("effective grant query should succeed")
+            .expect("effective grant should exist");
+
+        handle.stop(true).await;
+        assert_eq!(metadata.catalog_revision, 77);
+        assert_eq!(metadata.policy_revision, 99);
+        assert_eq!(actions[0].name, "tenant:user:read");
+        assert_eq!(grant.tenant_bits_hex, "7");
+        assert_eq!(grant.scoped_entries.len(), 1);
+        assert_eq!(grant.scoped_entries[0].kind, "clinic");
+        assert_eq!(grant.scoped_entries[0].id.as_deref(), Some("west"));
+        assert_eq!(grant.scoped_entries[0].bits_hex, "2");
+        assert_eq!(
+            grant.facts.get("department"),
+            Some(&serde_json::Value::String("general".to_owned()))
+        );
     }
 
     // r[verify authn.session.persisted-history]

@@ -8,8 +8,8 @@ use crate::authz::CompiledAuthzModel;
 use crate::types::{DynError, PolicyRevision, RoleKey, TenantId};
 
 use super::model::{
-    CompiledAssumptionGrant, CompiledMembership, CompiledScopeGrant, CompiledSubject,
-    CompiledTenant, CompiledTenantModel,
+    CompiledAssumptionGrant, CompiledEffectiveGrant, CompiledMembership, CompiledScopeGrant,
+    CompiledSubject, CompiledTenant, CompiledTenantModel,
 };
 
 pub(crate) const DEFAULT_ASSUMPTION_TTL_SECONDS: u64 = 900;
@@ -98,6 +98,8 @@ pub fn compile_managed_tenants(
     let subjects = compile_subjects(config)?;
     let memberships = compile_memberships(config, &tenants, &subjects, authz)?;
     let assumption_grants = compile_assumption_grants(config, &tenants, &memberships, authz)?;
+    let effective_grants =
+        compile_effective_grants(&tenants, &memberships, &assumption_grants, authz)?;
     let policy_revision =
         compute_policy_revision(authz, &tenants, &memberships, &assumption_grants);
 
@@ -108,6 +110,7 @@ pub fn compile_managed_tenants(
         subjects,
         memberships,
         assumption_grants,
+        effective_grants,
     })
 }
 
@@ -434,6 +437,83 @@ fn compile_facts(facts: &[PortableFactConfig]) -> Result<BTreeMap<String, Value>
     }
 
     Ok(compiled)
+}
+
+fn compile_effective_grants(
+    tenants: &[CompiledTenant],
+    memberships: &[CompiledMembership],
+    assumption_grants: &[CompiledAssumptionGrant],
+    authz: &CompiledAuthzModel,
+) -> Result<Vec<CompiledEffectiveGrant>, DynError> {
+    let tenant_index = tenants
+        .iter()
+        .map(|tenant| (tenant.id.as_str(), tenant))
+        .collect::<HashMap<_, _>>();
+    let membership_index = memberships
+        .iter()
+        .map(|membership| {
+            (
+                (membership.subject.as_str(), membership.tenant.as_str()),
+                membership,
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let mut effective_grants = Vec::with_capacity(memberships.len() + assumption_grants.len());
+
+    for membership in memberships {
+        let target_tenant = tenant_index
+            .get(membership.tenant.as_str())
+            .expect("compiled membership tenant should exist");
+        effective_grants.push(CompiledEffectiveGrant {
+            grant_kind: "direct".to_owned(),
+            subject: membership.subject.clone(),
+            source_tenant: None,
+            source_tenant_state: None,
+            target_tenant: membership.tenant.clone(),
+            target_tenant_state: target_tenant.state.clone(),
+            tenant_bits_hex: membership.tenant_bits_hex.clone(),
+            scoped_entries: membership.scoped_entries.clone(),
+            facts: membership.facts.clone(),
+            ttl_seconds: None,
+        });
+    }
+
+    for grant in assumption_grants {
+        let source_membership = membership_index
+            .get(&(grant.subject.as_str(), grant.source_tenant.as_str()))
+            .expect("compiled assumption source membership should exist");
+        let source_tenant = tenant_index
+            .get(grant.source_tenant.as_str())
+            .expect("compiled source tenant should exist");
+        let target_tenant = tenant_index
+            .get(grant.target_tenant.as_str())
+            .expect("compiled target tenant should exist");
+        let (tenant_bits_hex, scoped_entries) =
+            compile_entitlements(&grant.target_tenant, &grant.target_role_keys, authz)?;
+
+        effective_grants.push(CompiledEffectiveGrant {
+            grant_kind: "assumed".to_owned(),
+            subject: grant.subject.clone(),
+            source_tenant: Some(grant.source_tenant.clone()),
+            source_tenant_state: Some(source_tenant.state.clone()),
+            target_tenant: grant.target_tenant.clone(),
+            target_tenant_state: target_tenant.state.clone(),
+            tenant_bits_hex,
+            scoped_entries,
+            facts: source_membership.facts.clone(),
+            ttl_seconds: Some(grant.ttl_seconds),
+        });
+    }
+
+    effective_grants.sort_by(|left, right| {
+        left.subject
+            .cmp(&right.subject)
+            .then_with(|| left.target_tenant.cmp(&right.target_tenant))
+            .then_with(|| left.source_tenant.cmp(&right.source_tenant))
+            .then_with(|| left.grant_kind.cmp(&right.grant_kind))
+    });
+
+    Ok(effective_grants)
 }
 
 // r[impl authz.assignment.multiple]

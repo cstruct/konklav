@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 use conclave_relying_auth::{AccessDecision, AccessTokenClaims};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 
-use crate::types::{CatalogRevision, PolicyRevision, RoleKey, SubjectId, TenantId};
+use crate::types::{PolicyRevision, RoleKey, SubjectId, TenantId};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct CompiledTenantModel {
@@ -14,6 +14,7 @@ pub struct CompiledTenantModel {
     pub subjects: Vec<CompiledSubject>,
     pub memberships: Vec<CompiledMembership>,
     pub assumption_grants: Vec<CompiledAssumptionGrant>,
+    pub effective_grants: Vec<CompiledEffectiveGrant>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -41,7 +42,7 @@ pub struct CompiledMembership {
     pub facts: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct CompiledScopeGrant {
     pub kind: crate::types::ScopeKind,
     pub id: Option<crate::types::ScopeId>,
@@ -55,6 +56,20 @@ pub struct CompiledAssumptionGrant {
     pub target_tenant: TenantId,
     pub target_role_keys: Vec<RoleKey>,
     pub ttl_seconds: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct CompiledEffectiveGrant {
+    pub grant_kind: String,
+    pub subject: SubjectId,
+    pub source_tenant: Option<TenantId>,
+    pub source_tenant_state: Option<String>,
+    pub target_tenant: TenantId,
+    pub target_tenant_state: String,
+    pub tenant_bits_hex: String,
+    pub scoped_entries: Vec<CompiledScopeGrant>,
+    pub facts: BTreeMap<String, Value>,
+    pub ttl_seconds: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -115,6 +130,32 @@ impl CompiledTenantModel {
         self.assumption_grants.iter().find(|entry| {
             entry.subject == subject
                 && entry.source_tenant == source_tenant
+                && entry.target_tenant == target_tenant
+        })
+    }
+
+    pub fn find_direct_effective_grant(
+        &self,
+        subject: &str,
+        target_tenant: &str,
+    ) -> Option<&CompiledEffectiveGrant> {
+        self.effective_grants.iter().find(|entry| {
+            entry.grant_kind == "direct"
+                && entry.subject == subject
+                && entry.target_tenant == target_tenant
+        })
+    }
+
+    pub fn find_assumed_effective_grant(
+        &self,
+        subject: &str,
+        source_tenant: &str,
+        target_tenant: &str,
+    ) -> Option<&CompiledEffectiveGrant> {
+        self.effective_grants.iter().find(|entry| {
+            entry.grant_kind == "assumed"
+                && entry.subject == subject
+                && entry.source_tenant.as_deref() == Some(source_tenant)
                 && entry.target_tenant == target_tenant
         })
     }

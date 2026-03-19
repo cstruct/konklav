@@ -51,15 +51,44 @@ This gives the control plane stable persisted semantics for pinned descendants w
 
 ## Current implementation boundary
 
-Task 4 currently spans two layers:
+Task 4 currently spans three layers:
 
 - typed source persistence for templates and roles now preserves ordered inheritance and normalized pinned-source metadata
-- Rust compilation now flattens ordered inheritance and ordered assignment semantics into compiled membership and delegated grant snapshots
+- Rust compilation still produces compiled roles, memberships, delegated grants, and role-action effects
+- the dedicated Feldera authz pipeline now derives `effective_grants` and `effective_grant_actions` from typed compiled source tables and runtime token issuance or validation reads that derived surface when it is available
 
-The remaining Feldera-specific work is to replace these Rust-compiled grant snapshots with materialized compiled views, culminating in an authoritative `effective_grants` surface for token issuance and validation.
+The important shift in the current slice is that `effective_grants` is no longer published as a precomputed row with serialized bitsets. Instead, the authz pipeline now persists:
+
+- `compiled_authz_metadata`
+- `action_catalog`
+- `compiled_role_action_effects`
+- `effective_grant_identity`
+- `effective_grant_role_assignment`
+
+Feldera materialized views then derive:
+
+- `effective_grants`
+- `effective_grant_action_candidates`
+- `effective_grant_action_max_order`
+- `effective_grant_action_precedence`
+- `effective_grant_actions`
+
+At read time, the server reconstructs the runtime `CompiledEffectiveGrant` shape from the derived Feldera rows. This moves grant derivation and assignment-order precedence into Feldera even though selector expansion, template lineage expansion, and final role policy compilation still begin in Rust.
+
+## Runtime read boundary
+
+When Feldera is enabled:
+
+- startup and managed apply refresh the dedicated authz pipeline from the current managed snapshot
+- direct token issuance reads one `effective_grants` identity row and the corresponding `effective_grant_actions` rows for the subject and target tenant
+- delegated assumption token issuance reads one `effective_grants` identity row and the corresponding `effective_grant_actions` rows for the subject, source tenant, and target tenant
+- token validation and relying-surface revision or catalog reads use `compiled_authz_metadata` and `action_catalog`
+
+If the authz pipeline has not been populated yet, the server currently falls back to recomputing the compiled snapshot from the managed store. That fallback keeps the transitional implementation robust across bootstrap and test flows, but it is not the intended end state.
 
 ## Open questions
 
 - Should managed plan and apply responses eventually return a structured normalized managed bundle or patch, instead of surfacing normalization only through persisted state and change summaries?
 - Should the final `effective_grants` surface live entirely in the main control-plane pipeline, or should a dedicated authorization compilation pipeline remain part of the design?
 - How much of selector expansion and precedence explanation should be queryable directly from Feldera views versus reconstructed in bounded server-side explanation helpers?
+- When the authz pipeline refresh path is reliable enough, should the snapshot fallback be removed entirely so Feldera becomes the only compiled-grant read surface in Feldera mode?
