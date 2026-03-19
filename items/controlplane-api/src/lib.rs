@@ -107,8 +107,8 @@ pub struct ActionCatalogResponse {
 
 #[cfg(test)]
 mod tests {
-    use conclave_relying_auth::{ActionCatalogEntry, AuthorizationSnapshotClaim};
     use conclave_managed_config::ManagedConfig;
+    use conclave_relying_auth::{ActionCatalogEntry, AuthorizationSnapshotClaim};
     use serde_json::Map;
 
     use super::{

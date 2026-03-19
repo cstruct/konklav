@@ -8,7 +8,7 @@ use conclave_managed_config::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::authz::{compile_managed_authz, CompiledAuthzModel};
+use crate::authz::{compile_managed_authz, normalize_managed_authz, CompiledAuthzModel};
 use crate::tenants::{compile_managed_tenants, CompiledTenantModel};
 use crate::types::DynError;
 
@@ -352,8 +352,9 @@ impl ControlPlaneState {
     }
 
     pub fn snapshot_from_managed(managed: &ManagedConfig) -> Result<StateSnapshot, DynError> {
-        let authz = compile_managed_authz(managed)?;
-        let tenants = compile_managed_tenants(managed, &authz)?;
+        let normalized = normalize_managed_authz(managed)?;
+        let authz = compile_managed_authz(&normalized)?;
+        let tenants = compile_managed_tenants(&normalized, &authz)?;
 
         Ok(StateSnapshot { authz, tenants })
     }
@@ -361,9 +362,17 @@ impl ControlPlaneState {
     pub fn validate(managed: &ManagedConfig) -> Vec<String> {
         let mut issues = Vec::new();
 
-        match compile_managed_authz(managed) {
+        let normalized = match normalize_managed_authz(managed) {
+            Ok(normalized) => normalized,
+            Err(err) => {
+                issues.push(err.to_string());
+                return issues;
+            }
+        };
+
+        match compile_managed_authz(&normalized) {
             Ok(authz) => {
-                if let Err(err) = compile_managed_tenants(managed, &authz) {
+                if let Err(err) = compile_managed_tenants(&normalized, &authz) {
                     issues.push(err.to_string());
                 }
             }
@@ -381,7 +390,8 @@ impl ControlPlaneState {
         current: &ManagedConfig,
         managed: &ManagedConfig,
     ) -> Result<ManagedPlanResponse, DynError> {
-        let issues = Self::validate(managed);
+        let normalized = normalize_managed_authz(managed)?;
+        let issues = Self::validate(&normalized);
         if !issues.is_empty() {
             return Err(Box::<std::io::Error>::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -389,9 +399,9 @@ impl ControlPlaneState {
             )));
         }
 
-        let changes = diff_managed(current, managed);
-        let authz = compile_managed_authz(managed)?;
-        let tenants = compile_managed_tenants(managed, &authz)?;
+        let changes = diff_managed(current, &normalized);
+        let authz = compile_managed_authz(&normalized)?;
+        let tenants = compile_managed_tenants(&normalized, &authz)?;
 
         Ok(ManagedPlanResponse {
             noop: changes.is_empty(),
@@ -411,7 +421,8 @@ impl ControlPlaneState {
         managed: ManagedConfig,
         apply_id: Option<String>,
     ) -> Result<ManagedPlanResponse, DynError> {
-        let plan = self.plan(&managed)?;
+        let normalized = normalize_managed_authz(&managed)?;
+        let plan = self.plan(&normalized)?;
         self.apply_counter += 1;
         self.apply_seq += 1;
         self.last_apply_id = apply_id.unwrap_or_else(|| format!("apply-{:06}", self.apply_counter));
@@ -420,7 +431,7 @@ impl ControlPlaneState {
         sync_versioned(
             &mut self.history.tenants,
             &self.managed.tenants,
-            &managed.tenants,
+            &normalized.tenants,
             self.apply_seq,
             &apply_id,
             |entry| entry.id.clone(),
@@ -431,7 +442,7 @@ impl ControlPlaneState {
         sync_versioned(
             &mut self.history.subjects,
             &self.managed.subjects,
-            &managed.subjects,
+            &normalized.subjects,
             self.apply_seq,
             &apply_id,
             |entry| entry.id.clone(),
@@ -442,7 +453,7 @@ impl ControlPlaneState {
         sync_versioned(
             &mut self.history.memberships,
             &self.managed.memberships,
-            &managed.memberships,
+            &normalized.memberships,
             self.apply_seq,
             &apply_id,
             |entry| format!("{}@{}", entry.subject, entry.tenant),
@@ -453,7 +464,7 @@ impl ControlPlaneState {
         sync_versioned(
             &mut self.history.assumption_grants,
             &self.managed.assumption_grants,
-            &managed.assumption_grants,
+            &normalized.assumption_grants,
             self.apply_seq,
             &apply_id,
             |entry| {
@@ -469,7 +480,7 @@ impl ControlPlaneState {
         sync_versioned(
             &mut self.history.templates,
             &self.managed.templates,
-            &managed.templates,
+            &normalized.templates,
             self.apply_seq,
             &apply_id,
             |entry| format!("{}:{}", entry.tenant, entry.key),
@@ -480,7 +491,7 @@ impl ControlPlaneState {
         sync_versioned(
             &mut self.history.roles,
             &self.managed.roles,
-            &managed.roles,
+            &normalized.roles,
             self.apply_seq,
             &apply_id,
             |entry| format!("{}:{}", entry.tenant, entry.key),
@@ -491,7 +502,7 @@ impl ControlPlaneState {
         sync_versioned(
             &mut self.history.catalog_actions,
             &self.managed.catalog.actions,
-            &managed.catalog.actions,
+            &normalized.catalog.actions,
             self.apply_seq,
             &apply_id,
             |entry| entry.name.clone(),
@@ -500,7 +511,7 @@ impl ControlPlaneState {
             "catalog_actions",
         );
 
-        self.managed = managed;
+        self.managed = normalized;
         Ok(plan)
     }
 }
@@ -738,5 +749,48 @@ subjects (
             .subjects
             .iter()
             .any(|subject| subject.id == "doctor-1"));
+    }
+
+    // r[verify config.managed.authz-pinned-template-normalization]
+    #[test]
+    fn stores_normalized_pinned_template_revisions_on_apply() {
+        let mut state = ControlPlaneState::empty();
+        let managed = ManagedConfig::load_from_str(
+            r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+    )
+}
+templates (
+    {
+        tenant "root",
+        key "doctor",
+        policies (
+            {effect allow, action "tenant:user:read"}
+        )
+    }
+    {
+        tenant "tenant-a",
+        key "doctor",
+        source {tenant "root", key "doctor", mode "pinned", pin "latest"}
+    }
+)
+"#,
+        )
+        .expect("managed config should parse");
+
+        state.apply(managed).expect("apply should succeed");
+
+        let source = state
+            .managed()
+            .templates
+            .iter()
+            .find(|template| template.tenant == "tenant-a" && template.key == "doctor")
+            .and_then(|template| template.source.as_ref())
+            .expect("normalized source should exist");
+
+        assert_eq!(source.mode, "pinned");
+        assert!(source.pin.as_deref().is_some_and(|pin| pin != "latest"));
     }
 }

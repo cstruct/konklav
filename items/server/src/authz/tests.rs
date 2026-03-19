@@ -1,6 +1,6 @@
 use conclave_managed_config::ManagedConfig;
 
-use super::compile_managed_authz;
+use super::{compile_managed_authz, normalize_managed_authz};
 
 // r[verify config.managed.authz-template-resources]
 // r[verify config.managed.authz-intent-not-revisions]
@@ -234,6 +234,118 @@ roles ()
     assert!(result.is_err());
 }
 
+// r[verify authz.role.template.sync-modes]
+// r[verify authz.role.template.versioned]
+// r[verify config.managed.authz-pinned-template-normalization]
+#[test]
+fn normalizes_pinned_latest_templates_to_concrete_source_revisions() {
+    let config = ManagedConfig::load_from_str(
+        r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+    )
+}
+templates (
+    {
+        tenant "root",
+        key "doctor",
+        policies (
+            {effect allow, action "tenant:user:read"}
+        )
+    }
+    {
+        tenant "tenant-a",
+        key "doctor",
+        source {tenant "root", key "doctor", mode "pinned", pin "latest"}
+    }
+)
+roles ()
+"#,
+    )
+    .expect("bundle should parse");
+
+    let normalized = normalize_managed_authz(&config).expect("bundle should normalize");
+    let compiled = compile_managed_authz(&config).expect("bundle should compile");
+    let root = compiled
+        .templates
+        .iter()
+        .find(|template| template.tenant == "root" && template.key == "doctor")
+        .expect("root template should exist");
+    let derived = compiled
+        .templates
+        .iter()
+        .find(|template| template.tenant == "tenant-a" && template.key == "doctor")
+        .expect("derived template should exist");
+    let normalized_source = normalized
+        .templates
+        .iter()
+        .find(|template| template.tenant == "tenant-a" && template.key == "doctor")
+        .and_then(|template| template.source.as_ref())
+        .expect("normalized source should exist");
+    let root_revision = root.revision.to_string();
+
+    assert_eq!(
+        normalized_source.pin.as_deref(),
+        Some(root_revision.as_str())
+    );
+    assert_eq!(derived.source_revision, Some(root.revision));
+    assert_eq!(
+        derived
+            .source
+            .as_ref()
+            .and_then(|source| source.pin.as_deref()),
+        Some(root_revision.as_str())
+    );
+}
+
+// r[verify authz.role.inheritance.dag]
+// r[verify authz.role.inheritance.priority]
+#[test]
+fn compiles_ordered_role_inheritance() {
+    let config = ManagedConfig::load_from_str(
+        r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+    )
+}
+templates ()
+roles (
+    {
+        tenant "tenant-a",
+        key "reader"
+        policies (
+            {effect allow, action "tenant:user:read"}
+        )
+    }
+    {
+        tenant "tenant-a",
+        key "blocker"
+        policies (
+            {effect deny, action "tenant:user:read"}
+        )
+    }
+    {
+        tenant "tenant-a",
+        key "doctor"
+        inherits ("reader" "blocker")
+    }
+)
+"#,
+    )
+    .expect("bundle should parse");
+
+    let compiled = compile_managed_authz(&config).expect("bundle should compile");
+    let role = compiled
+        .find_role("tenant-a", "doctor")
+        .expect("doctor role should exist");
+
+    assert_eq!(role.inherits, vec!["reader", "blocker"]);
+    assert_eq!(role.tenant_allow_bits_hex, "0");
+    assert_eq!(role.tenant_deny_bits_hex, "1");
+}
+
 #[test]
 fn emits_feldera_sql_program() {
     let config = ManagedConfig::load_from_str(
@@ -270,5 +382,7 @@ roles (
     assert!(sql.contains("CREATE TABLE action_catalog"));
     assert!(sql.contains("INSERT INTO managed_role_templates"));
     assert!(sql.contains("INSERT INTO managed_roles"));
+    assert!(sql.contains("source_revision BIGINT"));
+    assert!(sql.contains("inherits_json STRING NOT NULL"));
     assert!(sql.contains("compiled_role_policies"));
 }

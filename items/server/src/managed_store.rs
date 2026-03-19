@@ -10,6 +10,7 @@ use conclave_managed_config::{
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use crate::authz::normalize_managed_authz;
 use crate::config::FelderaConfig;
 use crate::feldera::{DesiredPipeline, FelderaClient, PipelineProgramConfig};
 use crate::state::{
@@ -624,6 +625,8 @@ struct TemplateRow {
     source_template_key: Option<String>,
     #[serde(alias = "SOURCE_MODE")]
     source_mode: Option<String>,
+    #[serde(alias = "SOURCE_PIN")]
+    source_pin: Option<String>,
     #[serde(alias = "POLICIES_JSON")]
     policies_json: String,
     #[serde(alias = "APPLY_ID")]
@@ -644,7 +647,7 @@ impl TemplateRow {
         valid_from: u64,
         deleted: bool,
     ) -> Self {
-        let (source_tenant_id, source_template_key, source_mode) = template
+        let (source_tenant_id, source_template_key, source_mode, source_pin) = template
             .source
             .as_ref()
             .map(|source| {
@@ -652,9 +655,10 @@ impl TemplateRow {
                     Some(source.tenant.clone()),
                     Some(source.key.clone()),
                     Some(source.mode.clone()),
+                    source.pin.clone(),
                 )
             })
-            .unwrap_or((None, None, None));
+            .unwrap_or((None, None, None, None));
 
         Self {
             tenant_id: template.tenant.clone(),
@@ -662,6 +666,7 @@ impl TemplateRow {
             source_tenant_id,
             source_template_key,
             source_mode,
+            source_pin,
             policies_json: serialize_json(&template.policies),
             apply_id,
             row_version,
@@ -675,17 +680,21 @@ impl TemplateRow {
             self.source_tenant_id,
             self.source_template_key,
             self.source_mode,
+            self.source_pin,
         ) {
-            (Some(tenant), Some(key), Some(mode)) => {
-                Some(TemplateSourceConfig { tenant, key, mode })
-            }
-            (None, None, None) => None,
-            (tenant, key, mode) => {
+            (Some(tenant), Some(key), Some(mode), pin) => Some(TemplateSourceConfig {
+                tenant,
+                key,
+                mode,
+                pin,
+            }),
+            (None, None, None, None) => None,
+            (tenant, key, mode, pin) => {
                 return Err(Box::<std::io::Error>::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!(
-                        "template {} has incomplete source columns tenant={tenant:?} key={key:?} mode={mode:?}",
-                        self.template_key
+                        "template {} has incomplete source columns tenant={tenant:?} key={key:?} mode={mode:?} pin={pin:?}",
+                        self.template_key,
                     ),
                 )));
             }
@@ -708,6 +717,8 @@ struct RoleRow {
     role_key: String,
     #[serde(alias = "TEMPLATE_KEY")]
     template_key: Option<String>,
+    #[serde(alias = "INHERITS_JSON")]
+    inherits_json: String,
     #[serde(alias = "POLICIES_JSON")]
     policies_json: String,
     #[serde(alias = "APPLY_ID")]
@@ -732,6 +743,7 @@ impl RoleRow {
             tenant_id: role.tenant.clone(),
             role_key: role.key.clone(),
             template_key: role.template.clone(),
+            inherits_json: serialize_json(&role.inherits),
             policies_json: serialize_json(&role.policies),
             apply_id,
             row_version,
@@ -745,6 +757,7 @@ impl RoleRow {
             tenant: self.tenant_id,
             key: self.role_key,
             template: self.template_key,
+            inherits: serde_json::from_str(&self.inherits_json)?,
             policies: serde_json::from_str::<Vec<PolicySpec>>(&self.policies_json)?,
         })
     }
@@ -1446,7 +1459,8 @@ LIMIT 1
         &self,
         desired: &ManagedConfig,
     ) -> Result<ManagedApplyPlan, DynError> {
-        let issues = ControlPlaneState::validate(desired);
+        let normalized = normalize_managed_authz(desired)?;
+        let issues = ControlPlaneState::validate(&normalized);
         if !issues.is_empty() {
             return Err(Box::<std::io::Error>::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -1467,28 +1481,28 @@ LIMIT 1
         let tenant_plan = plan_entity_changes(
             "tenant",
             &current.tenants,
-            &desired.tenants,
+            &normalized.tenants,
             &ownership,
             |entry| entry.id.clone(),
         );
         let subject_plan = plan_entity_changes(
             "subject",
             &current.subjects,
-            &desired.subjects,
+            &normalized.subjects,
             &ownership,
             |entry| entry.id.clone(),
         );
         let membership_plan = plan_entity_changes(
             "membership",
             &current.memberships,
-            &desired.memberships,
+            &normalized.memberships,
             &ownership,
             |entry| format!("{}@{}", entry.subject, entry.tenant),
         );
         let assumption_grant_plan = plan_entity_changes(
             "assumption_grant",
             &current.assumption_grants,
-            &desired.assumption_grants,
+            &normalized.assumption_grants,
             &ownership,
             |entry| {
                 format!(
@@ -1500,21 +1514,21 @@ LIMIT 1
         let action_plan = plan_entity_changes(
             "action",
             &current.catalog.actions,
-            &desired.catalog.actions,
+            &normalized.catalog.actions,
             &ownership,
             |entry| entry.name.clone(),
         );
         let template_plan = plan_entity_changes(
             "template",
             &current.templates,
-            &desired.templates,
+            &normalized.templates,
             &ownership,
             |entry| format!("{}:{}", entry.tenant, entry.key),
         );
         let role_plan = plan_entity_changes(
             "role",
             &current.roles,
-            &desired.roles,
+            &normalized.roles,
             &ownership,
             |entry| format!("{}:{}", entry.tenant, entry.key),
         );
@@ -1550,7 +1564,7 @@ LIMIT 1
             .chain(template_plan.ownership.into_iter())
             .chain(role_plan.ownership.into_iter())
             .collect::<Vec<_>>();
-        let desired_bundle_json = serialize_json(desired);
+        let desired_bundle_json = serialize_json(&normalized);
         let noop = changes.is_empty() && ownership_mutations.is_empty();
 
         Ok(ManagedApplyPlan {
@@ -2188,6 +2202,7 @@ CREATE TABLE template (
     source_tenant_id VARCHAR,
     source_template_key VARCHAR,
     source_mode VARCHAR,
+    source_pin VARCHAR,
     policies_json VARCHAR NOT NULL,
     apply_id VARCHAR NOT NULL,
     row_version BIGINT NOT NULL,
@@ -2202,6 +2217,7 @@ CREATE TABLE role (
     tenant_id VARCHAR NOT NULL,
     role_key VARCHAR NOT NULL,
     template_key VARCHAR,
+    inherits_json VARCHAR NOT NULL,
     policies_json VARCHAR NOT NULL,
     apply_id VARCHAR NOT NULL,
     row_version BIGINT NOT NULL,

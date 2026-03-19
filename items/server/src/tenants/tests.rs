@@ -225,6 +225,161 @@ fn compiles_memberships_and_assumption_grants() {
     assert_eq!(grant.target_role_keys, vec!["doctor"]);
 }
 
+// r[verify authz.assignment.multiple]
+// r[verify authz.assignment.priority]
+#[test]
+fn later_role_assignments_override_earlier_assignments() {
+    let authz = compile_managed_authz(
+        &ManagedConfig::load_from_str(
+            r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+    )
+}
+templates ()
+roles (
+    {
+        tenant "tenant-a",
+        key "reader"
+        policies (
+            {effect allow, action "tenant:user:read"}
+        )
+    }
+    {
+        tenant "tenant-a",
+        key "blocker"
+        policies (
+            {effect deny, action "tenant:user:read"}
+        )
+    }
+)
+"#,
+        )
+        .expect("managed authz config should parse"),
+    )
+    .expect("authz bundle should compile");
+
+    let denied = tenant_model(
+        r#"
+tenants (
+    {id "tenant-a"}
+)
+subjects (
+    {id "doctor-1"}
+)
+memberships (
+    {
+        subject "doctor-1"
+        tenant "tenant-a"
+        roles ("reader" "blocker")
+    }
+)
+"#,
+        &authz,
+    );
+    let allowed = tenant_model(
+        r#"
+tenants (
+    {id "tenant-a"}
+)
+subjects (
+    {id "doctor-1"}
+)
+memberships (
+    {
+        subject "doctor-1"
+        tenant "tenant-a"
+        roles ("blocker" "reader")
+    }
+)
+"#,
+        &authz,
+    );
+
+    assert_eq!(
+        denied
+            .find_membership("doctor-1", "tenant-a")
+            .expect("denied membership should exist")
+            .tenant_bits_hex,
+        "0"
+    );
+    assert_eq!(
+        allowed
+            .find_membership("doctor-1", "tenant-a")
+            .expect("allowed membership should exist")
+            .tenant_bits_hex,
+        "1"
+    );
+}
+
+// r[verify authz.role.inheritance.dag]
+// r[verify authz.compile.effective-grants]
+#[test]
+fn flattens_inherited_role_order_into_membership_entitlements() {
+    let authz = compile_managed_authz(
+        &ManagedConfig::load_from_str(
+            r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+    )
+}
+templates ()
+roles (
+    {
+        tenant "tenant-a",
+        key "reader"
+        policies (
+            {effect allow, action "tenant:user:read"}
+        )
+    }
+    {
+        tenant "tenant-a",
+        key "blocker"
+        policies (
+            {effect deny, action "tenant:user:read"}
+        )
+    }
+    {
+        tenant "tenant-a",
+        key "doctor"
+        inherits ("reader" "blocker")
+    }
+)
+"#,
+        )
+        .expect("managed authz config should parse"),
+    )
+    .expect("authz bundle should compile");
+    let tenants = tenant_model(
+        r#"
+tenants (
+    {id "tenant-a"}
+)
+subjects (
+    {id "doctor-1"}
+)
+memberships (
+    {
+        subject "doctor-1"
+        tenant "tenant-a"
+        roles ("doctor")
+    }
+)
+"#,
+        &authz,
+    );
+
+    assert_eq!(
+        tenants
+            .find_membership("doctor-1", "tenant-a")
+            .expect("membership should exist")
+            .tenant_bits_hex,
+        "0"
+    );
+}
+
 // r[verify tenant.lifecycle.state-machine]
 #[test]
 fn blocks_tokens_for_suspended_tenants() {

@@ -18,8 +18,21 @@ struct ResolvedTemplate {
     revision: u64,
     lineage: Vec<String>,
     inherited_from: Option<TemplateSourceConfig>,
+    source_revision: Option<u64>,
     sync_mode: String,
     policies: Vec<PolicySpec>,
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedRole {
+    revision: u64,
+    policies: Vec<PolicySpec>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PinTarget {
+    Latest,
+    Revision(u64),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,6 +70,7 @@ impl fmt::Display for AuthzError {
 
 impl std::error::Error for AuthzError {}
 
+// r[impl config.managed.authz-template-resources]
 pub fn compile_managed_authz(config: &ManagedConfig) -> Result<CompiledAuthzModel, DynError> {
     let compiled_actions = compile_actions(&config.catalog)?;
     let catalog_revision = compute_catalog_revision(&config.catalog);
@@ -71,6 +85,27 @@ pub fn compile_managed_authz(config: &ManagedConfig) -> Result<CompiledAuthzMode
         templates: compiled_templates,
         roles: compiled_roles,
     })
+}
+
+// r[impl config.managed.authz-intent-not-revisions]
+// r[impl config.managed.authz-pinned-template-normalization]
+pub fn normalize_managed_authz(config: &ManagedConfig) -> Result<ManagedConfig, DynError> {
+    let compiled = compile_managed_authz(config)?;
+    let template_sources = compiled
+        .templates
+        .into_iter()
+        .map(|template| ((template.tenant, template.key), template.source))
+        .collect::<HashMap<_, _>>();
+    let mut normalized = config.clone();
+
+    for template in &mut normalized.templates {
+        if let Some(source) = template_sources.get(&(template.tenant.clone(), template.key.clone()))
+        {
+            template.source = source.clone();
+        }
+    }
+
+    Ok(normalized)
 }
 
 // r[impl authz.action.catalog.versioned]
@@ -184,6 +219,7 @@ fn resolve_template(
     let mut lineage = vec![identity.clone()];
     let mut policies = Vec::new();
     let mut inherited_from = None;
+    let mut source_revision = None;
     let mut sync_mode = "local".to_owned();
 
     if let Some(source) = &template.source {
@@ -198,20 +234,51 @@ fn resolve_template(
             })?;
         let parent =
             resolve_template(source_index, templates, index_by_identity, states, resolved)?;
+        let pin_target = parse_pin_target(source.pin.as_deref())?;
+        let mut normalized_source = source.clone();
+
+        if source.mode == "pinned" {
+            match pin_target {
+                PinTarget::Latest => {
+                    source_revision = Some(parent.revision);
+                    normalized_source.pin = Some(parent.revision.to_string());
+                }
+                PinTarget::Revision(revision) if revision == parent.revision => {
+                    source_revision = Some(revision);
+                    normalized_source.pin = Some(revision.to_string());
+                }
+                PinTarget::Revision(revision) => {
+                    return Err(Box::new(AuthzError::new(format!(
+                        "template {identity} pins {} to revision {revision}, but only current revision {} is available in the compile-time snapshot",
+                        source_identity, parent.revision
+                    ))));
+                }
+            }
+        } else {
+            source_revision = Some(parent.revision);
+            normalized_source.pin = None;
+        }
 
         lineage = parent.lineage.clone();
         lineage.push(identity.clone());
         policies = parent.policies.clone();
-        inherited_from = Some(source.clone());
-        sync_mode = source.mode.clone();
+        sync_mode = normalized_source.mode.clone();
+        inherited_from = Some(normalized_source);
     }
 
     apply_policy_overrides(&mut policies, &template.policies);
 
     let resolved_template = ResolvedTemplate {
-        revision: compute_template_revision(template, &lineage, &policies),
+        revision: compute_template_revision(
+            template,
+            inherited_from.as_ref(),
+            source_revision,
+            &lineage,
+            &policies,
+        ),
         lineage,
         inherited_from,
+        source_revision,
         sync_mode,
         policies,
     };
@@ -231,7 +298,6 @@ fn compile_roles(
     actions: &[CompiledAction],
 ) -> Result<Vec<CompiledRole>, DynError> {
     let mut seen = HashSet::new();
-    let mut compiled = Vec::with_capacity(roles.len());
 
     for role in roles {
         validate_role_shape(role)?;
@@ -243,32 +309,35 @@ fn compile_roles(
                 "duplicate role identity: {identity}"
             ))));
         }
+    }
 
-        let mut effective_policies = role
-            .template
-            .as_ref()
-            .map(|template_key| {
-                resolved_templates
-                    .get(&format!("{}:{template_key}", role.tenant))
-                    .map(|template| template.policies.clone())
-                    .ok_or_else(|| {
-                        Box::new(AuthzError::new(format!(
-                            "role {identity} references unknown local template {}:{}",
-                            role.tenant, template_key
-                        ))) as DynError
-                    })
-            })
-            .transpose()?
-            .unwrap_or_default();
+    let index_by_identity = roles
+        .iter()
+        .enumerate()
+        .map(|(index, role)| (role_identity(role), index))
+        .collect::<HashMap<_, _>>();
+    let mut states = HashMap::new();
+    let mut resolved = HashMap::new();
+    let mut compiled = Vec::with_capacity(roles.len());
 
-        apply_policy_overrides(&mut effective_policies, &role.policies);
-        let bundle = compile_policy_bundle(&effective_policies, actions)?;
+    for index in 0..roles.len() {
+        let role = &roles[index];
+        let resolved_role = resolve_role(
+            index,
+            roles,
+            resolved_templates,
+            &index_by_identity,
+            &mut states,
+            &mut resolved,
+        )?;
+        let bundle = compile_policy_bundle(&resolved_role.policies, actions)?;
 
         compiled.push(CompiledRole {
             tenant: role.tenant.clone(),
             key: role.key.clone(),
-            revision: compute_role_revision(role, &effective_policies),
+            revision: resolved_role.revision,
             template: role.template.clone(),
+            inherits: role.inherits.clone(),
             tenant_allow_bits_hex: bundle.tenant_allow_bits_hex,
             tenant_deny_bits_hex: bundle.tenant_deny_bits_hex,
             scoped_entries: bundle.scoped_entries,
@@ -285,6 +354,79 @@ fn compile_roles(
     Ok(compiled)
 }
 
+// r[impl authz.role.inheritance.dag]
+// r[impl authz.role.inheritance.priority]
+// r[impl authz.role.inheritance.tenant-boundary]
+fn resolve_role(
+    index: usize,
+    roles: &[RoleConfig],
+    resolved_templates: &HashMap<String, ResolvedTemplate>,
+    index_by_identity: &HashMap<String, usize>,
+    states: &mut HashMap<usize, VisitState>,
+    resolved: &mut HashMap<String, ResolvedRole>,
+) -> Result<ResolvedRole, DynError> {
+    let identity = role_identity(&roles[index]);
+
+    if let Some(existing) = resolved.get(&identity) {
+        return Ok(existing.clone());
+    }
+
+    if matches!(states.get(&index), Some(VisitState::Visiting)) {
+        return Err(Box::new(AuthzError::new(format!(
+            "cycle detected while resolving role inheritance for {identity}"
+        ))));
+    }
+
+    states.insert(index, VisitState::Visiting);
+    let role = &roles[index];
+    let mut policies = Vec::new();
+
+    for parent_key in &role.inherits {
+        let parent_identity = format!("{}:{parent_key}", role.tenant);
+        let parent_index = index_by_identity
+            .get(&parent_identity)
+            .copied()
+            .ok_or_else(|| {
+                Box::new(AuthzError::new(format!(
+                    "role {identity} references unknown inherited role {parent_identity}"
+                ))) as DynError
+            })?;
+        let parent = resolve_role(
+            parent_index,
+            roles,
+            resolved_templates,
+            index_by_identity,
+            states,
+            resolved,
+        )?;
+        apply_policy_overrides(&mut policies, &parent.policies);
+    }
+
+    if let Some(template_key) = role.template.as_ref() {
+        let template = resolved_templates
+            .get(&format!("{}:{template_key}", role.tenant))
+            .ok_or_else(|| {
+                Box::new(AuthzError::new(format!(
+                    "role {identity} references unknown local template {}:{}",
+                    role.tenant, template_key
+                ))) as DynError
+            })?;
+        apply_policy_overrides(&mut policies, &template.policies);
+    }
+
+    apply_policy_overrides(&mut policies, &role.policies);
+
+    let resolved_role = ResolvedRole {
+        revision: compute_role_revision(role, &policies),
+        policies,
+    };
+
+    states.insert(index, VisitState::Visited);
+    resolved.insert(identity, resolved_role.clone());
+
+    Ok(resolved_role)
+}
+
 fn build_compiled_template(
     template: &TemplateConfig,
     resolved: &ResolvedTemplate,
@@ -298,6 +440,7 @@ fn build_compiled_template(
         revision: resolved.revision,
         sync_mode: resolved.sync_mode.clone(),
         source: resolved.inherited_from.clone(),
+        source_revision: resolved.source_revision,
         lineage: resolved.lineage.clone(),
         tenant_allow_bits_hex: bundle.tenant_allow_bits_hex,
         tenant_deny_bits_hex: bundle.tenant_deny_bits_hex,
@@ -310,28 +453,29 @@ fn compile_policy_bundle(
     policies: &[PolicySpec],
     actions: &[CompiledAction],
 ) -> Result<CompiledPolicyBundle, DynError> {
-    let mut tenant_allow = Bitset::new(actions.len());
-    let mut tenant_deny = Bitset::new(actions.len());
-    let mut scoped = BTreeMap::<(ScopeKind, Option<ScopeId>), (Bitset, Bitset)>::new();
+    let action_bits = actions
+        .iter()
+        .map(|action| (action.name.as_str(), action.bit))
+        .collect::<HashMap<_, _>>();
+    let mut tenant_effects = BTreeMap::<String, String>::new();
+    let mut scoped_effects =
+        BTreeMap::<(ScopeKind, Option<ScopeId>), BTreeMap<String, String>>::new();
     let mut compiled_policies = Vec::with_capacity(policies.len());
 
     for policy in policies {
         let compiled_policy = compile_policy(policy, actions)?;
 
         if let Some(scope_kind) = &policy.scope_kind {
-            let entry = scoped
+            let entry = scoped_effects
                 .entry((scope_kind.clone(), policy.scope_id.clone()))
-                .or_insert_with(|| (Bitset::new(actions.len()), Bitset::new(actions.len())));
-
-            if policy.effect == "allow" {
-                entry.0.union_with(&compiled_policy.bits);
-            } else {
-                entry.1.union_with(&compiled_policy.bits);
+                .or_default();
+            for action in &compiled_policy.expanded_actions {
+                entry.insert(action.clone(), policy.effect.clone());
             }
-        } else if policy.effect == "allow" {
-            tenant_allow.union_with(&compiled_policy.bits);
         } else {
-            tenant_deny.union_with(&compiled_policy.bits);
+            for action in &compiled_policy.expanded_actions {
+                tenant_effects.insert(action.clone(), policy.effect.clone());
+            }
         }
 
         compiled_policies.push(CompiledPolicy {
@@ -344,16 +488,19 @@ fn compile_policy_bundle(
         });
     }
 
-    let scoped_entries = scoped
+    let (tenant_allow, tenant_deny) =
+        effect_maps_to_bitsets(&tenant_effects, &action_bits, actions.len());
+    let scoped_entries = scoped_effects
         .into_iter()
-        .map(
-            |((scope_kind, scope_id), (allow, deny))| CompiledScopeEntry {
+        .map(|((scope_kind, scope_id), effects)| {
+            let (allow, deny) = effect_maps_to_bitsets(&effects, &action_bits, actions.len());
+            CompiledScopeEntry {
                 scope_kind,
                 scope_id,
                 allow_bits_hex: allow.to_hex(),
                 deny_bits_hex: deny.to_hex(),
-            },
-        )
+            }
+        })
         .collect();
 
     Ok(CompiledPolicyBundle {
@@ -362,6 +509,28 @@ fn compile_policy_bundle(
         scoped_entries,
         policies: compiled_policies,
     })
+}
+
+fn effect_maps_to_bitsets(
+    effects: &BTreeMap<String, String>,
+    action_bits: &HashMap<&str, usize>,
+    action_count: usize,
+) -> (Bitset, Bitset) {
+    let mut allow = Bitset::new(action_count);
+    let mut deny = Bitset::new(action_count);
+
+    for (action, effect) in effects {
+        let Some(bit) = action_bits.get(action.as_str()) else {
+            continue;
+        };
+        if effect == "allow" {
+            allow.insert(*bit);
+        } else {
+            deny.insert(*bit);
+        }
+    }
+
+    (allow, deny)
 }
 
 fn compile_policy(
@@ -385,6 +554,7 @@ fn compile_policy(
     })
 }
 
+// r[impl authz.role.template.sync-modes]
 fn validate_template_shape(template: &TemplateConfig) -> Result<(), DynError> {
     if template.source.is_none() && template.policies.is_empty() {
         return Err(Box::new(AuthzError::new(format!(
@@ -395,13 +565,17 @@ fn validate_template_shape(template: &TemplateConfig) -> Result<(), DynError> {
 
     if let Some(source) = &template.source {
         match source.mode.as_str() {
-            "tracking" => {}
-            "pinned" => {
-                return Err(Box::new(AuthzError::new(format!(
-                    "template {} uses pinned mode, which requires managed apply state and is not available in the compile-only playground",
-                    template_identity(template)
-                ))));
+            "tracking" => {
+                if source.pin.is_some() {
+                    return Err(Box::new(AuthzError::new(format!(
+                        "template {} cannot set pin while using tracking mode",
+                        template_identity(template)
+                    ))));
+                }
             }
+            "pinned" => match parse_pin_target(source.pin.as_deref())? {
+                PinTarget::Latest | PinTarget::Revision(_) => {}
+            },
             other => {
                 return Err(Box::new(AuthzError::new(format!(
                     "template {} has unsupported sync mode {other}",
@@ -422,14 +596,25 @@ fn validate_template_shape(template: &TemplateConfig) -> Result<(), DynError> {
 }
 
 fn validate_role_shape(role: &RoleConfig) -> Result<(), DynError> {
-    if role.template.is_none() && role.policies.is_empty() {
+    if role.template.is_none() && role.inherits.is_empty() && role.policies.is_empty() {
         return Err(Box::new(AuthzError::new(format!(
-            "role {} must declare policies or reference a local template",
+            "role {} must declare policies, inherit roles, or reference a local template",
             role_identity(role)
         ))));
     }
 
     Ok(())
+}
+
+fn parse_pin_target(pin: Option<&str>) -> Result<PinTarget, DynError> {
+    match pin.unwrap_or("latest") {
+        "latest" => Ok(PinTarget::Latest),
+        value => value.parse::<u64>().map(PinTarget::Revision).map_err(|_| {
+            Box::new(AuthzError::new(format!(
+                "unsupported pinned template revision {value}; use `latest` or an unsigned integer revision"
+            ))) as DynError
+        }),
+    }
 }
 
 fn validate_unique_policy_selectors(policies: &[PolicySpec], owner: &str) -> Result<(), DynError> {
@@ -610,8 +795,12 @@ fn compute_catalog_revision(catalog: &ActionCatalogConfig) -> u32 {
     revision as u32
 }
 
+// r[impl authz.role.template.versioned]
+// r[impl config.managed.authz-revision-bump]
 fn compute_template_revision(
     template: &TemplateConfig,
+    resolved_source: Option<&TemplateSourceConfig>,
+    source_revision: Option<u64>,
     lineage: &[String],
     policies: &[PolicySpec],
 ) -> u64 {
@@ -624,17 +813,23 @@ fn compute_template_revision(
         data.push(0xfe);
     }
 
-    if let Some(source) = &template.source {
+    if let Some(source) = resolved_source.or(template.source.as_ref()) {
         data.extend_from_slice(template_source_identity(source).as_bytes());
         data.push(0xfd);
         data.extend_from_slice(source.mode.as_bytes());
         data.push(0xfc);
+        data.extend_from_slice(source.pin.as_deref().unwrap_or("").as_bytes());
+        data.push(0xfb);
     }
+
+    data.extend_from_slice(source_revision.unwrap_or_default().to_string().as_bytes());
+    data.push(0xfa);
 
     append_policies_to_hash(&mut data, policies);
     fnv1a64(&data)
 }
 
+// r[impl config.managed.authz-revision-bump]
 fn compute_role_revision(role: &RoleConfig, policies: &[PolicySpec]) -> u64 {
     let mut data = Vec::new();
     data.extend_from_slice(role_identity(role).as_bytes());
@@ -643,6 +838,11 @@ fn compute_role_revision(role: &RoleConfig, policies: &[PolicySpec]) -> u64 {
     if let Some(template) = role.template.as_deref() {
         data.extend_from_slice(template.as_bytes());
         data.push(0xfe);
+    }
+
+    for inherited in &role.inherits {
+        data.extend_from_slice(inherited.as_bytes());
+        data.push(0xfd);
     }
 
     append_policies_to_hash(&mut data, policies);
@@ -695,12 +895,6 @@ impl Bitset {
         let word = bit / 64;
         let offset = bit % 64;
         self.words[word] |= 1_u64 << offset;
-    }
-
-    fn union_with(&mut self, other: &Self) {
-        for (word, other_word) in self.words.iter_mut().zip(&other.words) {
-            *word |= other_word;
-        }
     }
 
     fn to_hex(&self) -> String {

@@ -107,7 +107,10 @@ r[config.managed.authz-template-resources]
 Managed role templates, tenant-local roles, template lineage settings, and action-catalog entries MUST be representable as declarative managed resources.
 
 r[config.managed.authz-intent-not-revisions]
-Desired managed authorization configuration MUST express intended policy state without requiring operators to author system revision numbers for action catalogs, templates, or roles.
+Desired managed authorization configuration MUST express intended policy state without requiring operators to author system revision numbers for action catalogs, templates, or roles, except that a pinned template source MAY record a concrete upstream template revision once plan or apply resolves a `latest` shorthand.
+
+r[config.managed.authz-pinned-template-normalization]
+If managed authorization configuration allows a pinned template source to reference `latest`, plan and apply MUST resolve that shorthand into a concrete upstream template revision and surface the normalized pinned value back to the operator.
 
 r[config.managed.authz-system-revisions]
 Applying managed authorization configuration MUST mint or update immutable system-managed revisions for catalog, template, and role state whenever the effective authored state changes.

@@ -252,6 +252,43 @@ tenants (
         assert!(error.to_string().contains("catalog block"));
     }
 
+    #[test]
+    fn parses_ordered_role_inheritance_and_pinned_template_sources() {
+        let managed = ManagedConfig::load_from_str(
+            r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+    )
+}
+templates (
+    {
+        tenant "tenant-a",
+        key "doctor",
+        source {tenant "root", key "doctor", mode "pinned", pin "latest"}
+    }
+)
+roles (
+    {
+        tenant "tenant-a",
+        key "doctor"
+        inherits ("reader" "auditor")
+    }
+)
+"#,
+        )
+        .expect("managed config should parse");
+
+        assert_eq!(
+            managed.templates[0]
+                .source
+                .as_ref()
+                .and_then(|source| source.pin.as_deref()),
+            Some("latest")
+        );
+        assert_eq!(managed.roles[0].inherits, vec!["reader", "auditor"]);
+    }
+
     fn temp_dir(prefix: &str) -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)

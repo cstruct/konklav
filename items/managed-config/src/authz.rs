@@ -28,6 +28,8 @@ pub struct RoleConfig {
     pub key: RoleKey,
     pub template: Option<TemplateKey>,
     #[facet(default)]
+    pub inherits: Vec<RoleKey>,
+    #[facet(default)]
     pub policies: Vec<PolicySpec>,
 }
 
@@ -37,6 +39,7 @@ pub struct TemplateSourceConfig {
     pub key: TemplateKey,
     #[facet(default = default_sync_mode())]
     pub mode: String,
+    pub pin: Option<String>,
 }
 
 #[derive(Clone, Debug, Facet, PartialEq, Eq, Serialize, Deserialize)]

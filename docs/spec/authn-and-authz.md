@@ -109,7 +109,7 @@ r[authz.role.inheritance.dag]
 Roles MAY inherit from parent roles through an acyclic graph.
 
 r[authz.role.inheritance.priority]
-Role inheritance edges MUST be able to contribute explicit priority values to compiled authorization precedence.
+Role inheritance edges MUST contribute deterministic authored order to compiled authorization precedence.
 
 r[authz.role.inheritance.tenant-boundary]
 Role inheritance MUST NOT cross tenant boundaries.
@@ -118,13 +118,13 @@ r[authz.assignment.multiple]
 Subjects MUST be able to hold multiple role assignments within the same tenant.
 
 r[authz.assignment.priority]
-Role assignments MUST be able to contribute explicit priority values to compiled authorization precedence.
+Role assignments MUST contribute deterministic authored order to compiled authorization precedence.
 
 r[authz.decision.precedence]
-The authorization engine MUST resolve overlapping matching policies deterministically using scope specificity, effective compiled priority, and effect.
+The authorization engine MUST resolve overlapping matching policies deterministically using scope specificity, effective compiled order, and effect.
 
 r[authz.decision.deny-equal-precedence]
-When matching policies have equal scope specificity and equal effective priority, `deny` MUST override `allow`.
+When matching policies have equal scope specificity and equal effective compiled order, `deny` MUST override `allow`.
 
 r[authz.compile.effective-grants]
 The platform MUST precompute effective grants from assignments, role inheritance, wildcard expansion, and conflict rules so request-time evaluation avoids recursive role expansion.

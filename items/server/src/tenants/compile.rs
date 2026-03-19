@@ -57,48 +57,10 @@ impl Bitset {
         }
     }
 
-    pub(crate) fn from_hex(value: &str, bit_count: usize) -> Result<Self, DynError> {
-        let word_count = bit_count.div_ceil(64).max(1);
-        let trimmed = value.trim();
-        let normalized = if trimmed.is_empty() {
-            "0".to_owned()
-        } else {
-            trimmed.to_owned()
-        };
-        let padded_len = normalized.len().div_ceil(16) * 16;
-        let padded = format!("{normalized:0>width$}", width = padded_len.max(16));
-        let mut words = vec![0_u64; word_count];
-
-        for (index, chunk) in padded.as_bytes().rchunks(16).enumerate() {
-            if index >= words.len() {
-                break;
-            }
-
-            let chunk = std::str::from_utf8(chunk)?;
-            words[index] = u64::from_str_radix(chunk, 16)?;
-        }
-
-        Ok(Self { words })
-    }
-
-    pub(crate) fn contains(&self, bit: usize) -> bool {
+    pub(crate) fn insert(&mut self, bit: usize) {
         let word = bit / 64;
         let offset = bit % 64;
-        self.words
-            .get(word)
-            .is_some_and(|value| (value & (1_u64 << offset)) != 0)
-    }
-
-    pub(crate) fn union_with(&mut self, other: &Self) {
-        for (word, other_word) in self.words.iter_mut().zip(&other.words) {
-            *word |= other_word;
-        }
-    }
-
-    pub(crate) fn remove_with(&mut self, other: &Self) {
-        for (word, other_word) in self.words.iter_mut().zip(&other.words) {
-            *word &= !other_word;
-        }
+        self.words[word] |= 1_u64 << offset;
     }
 
     pub(crate) fn to_hex(&self) -> String {
@@ -474,16 +436,24 @@ fn compile_facts(facts: &[PortableFactConfig]) -> Result<BTreeMap<String, Value>
     Ok(compiled)
 }
 
+// r[impl authz.assignment.multiple]
+// r[impl authz.assignment.priority]
+// r[impl authz.decision.precedence]
+// r[impl authz.decision.deny-equal-precedence]
 pub(crate) fn compile_entitlements(
     tenant_id: &str,
     role_keys: &[RoleKey],
     authz: &CompiledAuthzModel,
 ) -> Result<(String, Vec<CompiledScopeGrant>), DynError> {
-    let mut tenant_allow = Bitset::new(authz.action_count);
-    let mut tenant_deny = Bitset::new(authz.action_count);
-    let mut scoped = BTreeMap::<
+    let action_bits = authz
+        .actions
+        .iter()
+        .map(|action| (action.name.as_str(), action.bit))
+        .collect::<HashMap<_, _>>();
+    let mut tenant_effects = BTreeMap::<String, String>::new();
+    let mut scoped_effects = BTreeMap::<
         (crate::types::ScopeKind, Option<crate::types::ScopeId>),
-        (Bitset, Bitset),
+        BTreeMap<String, String>,
     >::new();
 
     for role_key in role_keys {
@@ -494,39 +464,27 @@ pub(crate) fn compile_entitlements(
             ))) as DynError
         })?;
 
-        tenant_allow.union_with(&Bitset::from_hex(
-            &role.tenant_allow_bits_hex,
-            authz.action_count,
-        )?);
-        tenant_deny.union_with(&Bitset::from_hex(
-            &role.tenant_deny_bits_hex,
-            authz.action_count,
-        )?);
-
-        for entry in &role.scoped_entries {
-            let scoped_entry = scoped
-                .entry((entry.scope_kind.clone(), entry.scope_id.clone()))
-                .or_insert_with(|| {
-                    (
-                        Bitset::new(authz.action_count),
-                        Bitset::new(authz.action_count),
-                    )
-                });
-            scoped_entry.0.union_with(&Bitset::from_hex(
-                &entry.allow_bits_hex,
-                authz.action_count,
-            )?);
-            scoped_entry
-                .1
-                .union_with(&Bitset::from_hex(&entry.deny_bits_hex, authz.action_count)?);
+        for policy in &role.policies {
+            if let Some(scope_kind) = &policy.scope_kind {
+                let effects = scoped_effects
+                    .entry((scope_kind.clone(), policy.scope_id.clone()))
+                    .or_default();
+                for action in &policy.expanded_actions {
+                    effects.insert(action.clone(), policy.effect.clone());
+                }
+            } else {
+                for action in &policy.expanded_actions {
+                    tenant_effects.insert(action.clone(), policy.effect.clone());
+                }
+            }
         }
     }
 
-    tenant_allow.remove_with(&tenant_deny);
-    let scoped_entries = scoped
+    let tenant_bits = effect_map_to_bits(&tenant_effects, &action_bits, authz.action_count);
+    let scoped_entries = scoped_effects
         .into_iter()
-        .map(|((kind, id), (mut allow, deny))| {
-            allow.remove_with(&deny);
+        .map(|((kind, id), effects)| {
+            let allow = effect_map_to_bits(&effects, &action_bits, authz.action_count);
             CompiledScopeGrant {
                 kind,
                 id,
@@ -535,7 +493,28 @@ pub(crate) fn compile_entitlements(
         })
         .collect();
 
-    Ok((tenant_allow.to_hex(), scoped_entries))
+    Ok((tenant_bits.to_hex(), scoped_entries))
+}
+
+fn effect_map_to_bits(
+    effects: &BTreeMap<String, String>,
+    action_bits: &HashMap<&str, usize>,
+    action_count: usize,
+) -> Bitset {
+    let mut bits = Bitset::new(action_count);
+
+    for (action, effect) in effects {
+        if effect != "allow" {
+            continue;
+        }
+
+        let Some(bit) = action_bits.get(action.as_str()) else {
+            continue;
+        };
+        bits.insert(*bit);
+    }
+
+    bits
 }
 
 fn validate_tenant_state(state: &str) -> Result<(), DynError> {
@@ -551,6 +530,7 @@ pub(crate) fn tenant_is_descendant_of(target: &CompiledTenant, source_tenant: &s
     target.id != source_tenant && target.lineage.iter().any(|tenant| tenant == source_tenant)
 }
 
+// r[impl config.managed.authz-revision-bump]
 fn compute_policy_revision(
     authz: &CompiledAuthzModel,
     tenants: &[CompiledTenant],

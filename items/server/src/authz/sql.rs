@@ -21,14 +21,17 @@ impl CompiledAuthzModel {
             "  template_revision BIGINT NOT NULL,".to_owned(),
             "  sync_mode STRING NOT NULL,".to_owned(),
             "  source_tenant STRING,".to_owned(),
-            "  source_key STRING".to_owned(),
+            "  source_key STRING,".to_owned(),
+            "  source_pin STRING,".to_owned(),
+            "  source_revision BIGINT".to_owned(),
             ");".to_owned(),
             "".to_owned(),
             "CREATE TABLE managed_roles (".to_owned(),
             "  tenant_id STRING NOT NULL,".to_owned(),
             "  role_key STRING NOT NULL,".to_owned(),
             "  role_revision BIGINT NOT NULL,".to_owned(),
-            "  template_key STRING".to_owned(),
+            "  template_key STRING,".to_owned(),
+            "  inherits_json STRING NOT NULL".to_owned(),
             ");".to_owned(),
             "".to_owned(),
             "CREATE TABLE compiled_template_policies (".to_owned(),
@@ -76,25 +79,36 @@ impl CompiledAuthzModel {
         lines.push(String::new());
 
         for template in &self.templates {
-            let (source_tenant, source_key) = template
+            let (source_tenant, source_key, source_pin) = template
                 .source
                 .as_ref()
                 .map(|source| {
                     (
                         format!("'{}'", sql_escape(&source.tenant)),
                         format!("'{}'", sql_escape(&source.key)),
+                        source
+                            .pin
+                            .as_deref()
+                            .map(|value| format!("'{}'", sql_escape(value)))
+                            .unwrap_or_else(|| "NULL".to_owned()),
                     )
                 })
-                .unwrap_or_else(|| ("NULL".to_owned(), "NULL".to_owned()));
+                .unwrap_or_else(|| ("NULL".to_owned(), "NULL".to_owned(), "NULL".to_owned()));
+            let source_revision = template
+                .source_revision
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "NULL".to_owned());
 
             lines.push(format!(
-                "INSERT INTO managed_role_templates VALUES ('{}', '{}', {}, '{}', {}, {});",
+                "INSERT INTO managed_role_templates VALUES ('{}', '{}', {}, '{}', {}, {}, {}, {});",
                 sql_escape(&template.tenant),
                 sql_escape(&template.key),
                 template.revision,
                 sql_escape(&template.sync_mode),
                 source_tenant,
-                source_key
+                source_key,
+                source_pin,
+                source_revision
             ));
 
             for policy in &template.policies {
@@ -130,13 +144,21 @@ impl CompiledAuthzModel {
                 .as_deref()
                 .map(|value| format!("'{}'", sql_escape(value)))
                 .unwrap_or_else(|| "NULL".to_owned());
+            let inherits_json = format!(
+                "'{}'",
+                sql_escape(
+                    &serde_json::to_string(&role.inherits)
+                        .expect("compiled role inheritance should serialize",)
+                )
+            );
 
             lines.push(format!(
-                "INSERT INTO managed_roles VALUES ('{}', '{}', {}, {});",
+                "INSERT INTO managed_roles VALUES ('{}', '{}', {}, {}, {});",
                 sql_escape(&role.tenant),
                 sql_escape(&role.key),
                 role.revision,
-                template_key
+                template_key,
+                inherits_json
             ));
 
             for policy in &role.policies {
