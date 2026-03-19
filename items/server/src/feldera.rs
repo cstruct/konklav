@@ -111,6 +111,27 @@ struct IngressResponse {
     token: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub struct PipelineStats {
+    #[serde(default)]
+    pub global_metrics: PipelineGlobalMetrics,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+pub struct PipelineGlobalMetrics {
+    #[serde(default)]
+    pub transaction_status: Option<String>,
+    #[serde(default)]
+    pub transaction_id: Option<u64>,
+    #[serde(default)]
+    pub bootstrap_in_progress: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub struct TransactionStartResponse {
+    pub transaction_id: u64,
+}
+
 #[derive(Debug)]
 struct FelderaError {
     message: String,
@@ -234,6 +255,58 @@ impl FelderaClient {
         Ok(())
     }
 
+    pub async fn stop_pipeline(&self, name: &str, force: bool) -> Result<(), DynError> {
+        let url = format!("{}/v0/pipelines/{name}/stop", self.base_url);
+        self.request(Method::POST, url)
+            .query(&[("force", force)])
+            .send()
+            .await?
+            .error_for_status()?;
+
+        Ok(())
+    }
+
+    pub async fn get_pipeline_stats(&self, pipeline_name: &str) -> Result<PipelineStats, DynError> {
+        let url = format!("{}/v0/pipelines/{pipeline_name}/stats", self.base_url);
+        Ok(self
+            .request(Method::GET, url)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?)
+    }
+
+    pub async fn start_transaction(
+        &self,
+        pipeline_name: &str,
+    ) -> Result<TransactionStartResponse, DynError> {
+        let url = format!(
+            "{}/v0/pipelines/{pipeline_name}/start_transaction",
+            self.base_url
+        );
+        Ok(self
+            .request(Method::POST, url)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?)
+    }
+
+    pub async fn commit_transaction(&self, pipeline_name: &str) -> Result<(), DynError> {
+        let url = format!(
+            "{}/v0/pipelines/{pipeline_name}/commit_transaction",
+            self.base_url
+        );
+        self.request(Method::POST, url)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        Ok(())
+    }
+
     pub async fn query_json<T>(&self, pipeline_name: &str, sql: &str) -> Result<Vec<T>, DynError>
     where
         T: DeserializeOwned,
@@ -289,6 +362,21 @@ impl FelderaClient {
         }
 
         Ok(())
+    }
+
+    pub async fn wait_for_no_transaction(&self, pipeline_name: &str) -> Result<(), DynError> {
+        for _ in 0..120 {
+            let stats = self.get_pipeline_stats(pipeline_name).await?;
+            if stats.global_metrics.transaction_status.as_deref() == Some("NoTransaction") {
+                return Ok(());
+            }
+
+            actix_web::rt::time::sleep(Duration::from_millis(250)).await;
+        }
+
+        Err(Box::new(FelderaError::new(format!(
+            "timed out waiting for pipeline {pipeline_name} to leave transactional state"
+        ))))
     }
 }
 
@@ -559,13 +647,19 @@ mod tests {
     use conclave_managed_config::ManagedConfig;
     use serde::Deserialize;
     use serde_json::json;
+    use std::net::TcpListener;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    };
 
     use crate::authz::compile_managed_authz;
     use crate::config::FelderaConfig;
 
     use super::{
-        changed_fields, parse_json_rows, DesiredPipeline, PipelineProgramConfig, PipelineRecord,
-        PipelineSummary, PipelineSyncAction, PipelineSyncPlan,
+        changed_fields, parse_json_rows, DesiredPipeline, FelderaClient, PipelineGlobalMetrics,
+        PipelineProgramConfig, PipelineRecord, PipelineStats, PipelineSummary, PipelineSyncAction,
+        PipelineSyncPlan,
     };
 
     #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -717,5 +811,130 @@ roles ()
             parse_json_rows("{\"id\":1}\n{\"id\":2}\n").expect("rows should parse");
 
         assert_eq!(rows, vec![QueryRow { id: 1 }, QueryRow { id: 2 }]);
+    }
+
+    #[test]
+    fn deserializes_pipeline_stats_with_transaction_fields() {
+        let stats: PipelineStats = serde_json::from_value(json!({
+            "global_metrics": {
+                "transaction_status": "CommitInProgress",
+                "transaction_id": 7,
+                "bootstrap_in_progress": true
+            }
+        }))
+        .expect("stats should deserialize");
+
+        assert_eq!(
+            stats.global_metrics,
+            PipelineGlobalMetrics {
+                transaction_status: Some("CommitInProgress".to_owned()),
+                transaction_id: Some(7),
+                bootstrap_in_progress: Some(true),
+            }
+        );
+    }
+
+    #[actix_web::test]
+    async fn starts_commits_and_recovers_transactional_pipeline_primitives() {
+        use actix_web::{get, post, web, App, HttpRequest, HttpResponse, Responder};
+
+        #[derive(Default)]
+        struct Seen {
+            stop_forces: Vec<bool>,
+            starts: usize,
+            commits: usize,
+        }
+
+        #[post("/v0/pipelines/{name}/start_transaction")]
+        async fn start_transaction(seen: web::Data<Arc<Mutex<Seen>>>) -> impl Responder {
+            seen.lock().expect("seen lock").starts += 1;
+            HttpResponse::Ok().json(json!({ "transaction_id": 42 }))
+        }
+
+        #[post("/v0/pipelines/{name}/commit_transaction")]
+        async fn commit_transaction(seen: web::Data<Arc<Mutex<Seen>>>) -> impl Responder {
+            seen.lock().expect("seen lock").commits += 1;
+            HttpResponse::Ok().body("Transaction commit initiated")
+        }
+
+        #[post("/v0/pipelines/{name}/stop")]
+        async fn stop_pipeline(
+            request: HttpRequest,
+            seen: web::Data<Arc<Mutex<Seen>>>,
+        ) -> impl Responder {
+            let force = request.query_string().contains("force=true");
+            seen.lock().expect("seen lock").stop_forces.push(force);
+            HttpResponse::Accepted().finish()
+        }
+
+        #[get("/v0/pipelines/{name}/stats")]
+        async fn get_stats(calls: web::Data<Arc<AtomicUsize>>) -> impl Responder {
+            let call = calls.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                HttpResponse::Ok().json(json!({
+                    "global_metrics": {
+                        "transaction_status": "CommitInProgress",
+                        "transaction_id": 42
+                    }
+                }))
+            } else {
+                HttpResponse::Ok().json(json!({
+                    "global_metrics": {
+                        "transaction_status": "NoTransaction",
+                        "transaction_id": 0
+                    }
+                }))
+            }
+        }
+
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let stats_calls = Arc::new(AtomicUsize::new(0));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("listener should expose address");
+        let server_seen = seen.clone();
+        let server_calls = stats_calls.clone();
+        let server = actix_web::HttpServer::new(move || {
+            App::new()
+                .app_data(web::Data::new(server_seen.clone()))
+                .app_data(web::Data::new(server_calls.clone()))
+                .service(start_transaction)
+                .service(commit_transaction)
+                .service(stop_pipeline)
+                .service(get_stats)
+        })
+        .listen(listener)
+        .expect("server should listen")
+        .run();
+        let handle = server.handle();
+        actix_web::rt::spawn(server);
+
+        let client = FelderaClient::new(format!("http://{}", addr), None);
+        let started = client
+            .start_transaction("conclave_controlplane")
+            .await
+            .expect("start transaction should succeed");
+        client
+            .commit_transaction("conclave_controlplane")
+            .await
+            .expect("commit transaction should succeed");
+        client
+            .wait_for_no_transaction("conclave_controlplane")
+            .await
+            .expect("transaction wait should succeed");
+        client
+            .stop_pipeline("conclave_controlplane", false)
+            .await
+            .expect("checkpoint-preserving stop should succeed");
+
+        handle.stop(true).await;
+
+        assert_eq!(started.transaction_id, 42);
+        assert_eq!(stats_calls.load(Ordering::SeqCst), 2);
+        let seen = seen.lock().expect("seen lock");
+        assert_eq!(seen.starts, 1);
+        assert_eq!(seen.commits, 1);
+        assert_eq!(seen.stop_forces, vec![false]);
     }
 }

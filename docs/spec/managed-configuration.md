@@ -66,6 +66,12 @@ The Feldera-backed managed store MUST persist durable `managed_ownership` state 
 r[config.managed.store.entity-fingerprint]
 Managed ownership state MUST record a stable desired-state fingerprint per owned entity so the control plane can detect whether an entity's declarative intent changed across applies.
 
+r[config.managed.store.transactional-apply]
+When Feldera transaction support is enabled for managed apply, Conclave MUST write managed source tables and their compiled managed views within one Feldera transaction boundary so current-state and compiled-state readers observe all-or-nothing visibility at transaction commit.
+
+r[config.managed.store.transactional-recovery]
+If Conclave relies on Feldera transactions for managed apply atomicity, the pipeline configuration for that path MUST support checkpoint-and-resume recovery so failed transaction handling can recover to a known durable point before the transaction began.
+
 r[config.managed.store.runtime-provenance]
 Runtime-auth temporal rows such as invites, linked credentials, and sessions MUST use a runtime change provenance marker that is distinct from managed `apply_id`.
 
