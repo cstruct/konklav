@@ -1,9 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
 use conclave_managed_config::{
-    ActionSpec, AssumptionGrantConfig, ManagedConfig, MembershipConfig, RoleConfig, SubjectConfig,
-    TemplateConfig, TenantConfig,
+    ActionSpec, AssumptionGrantConfig, ManagedConfig, MembershipConfig, PolicySpec,
+    PortableFactConfig, RoleConfig, SubjectConfig, TemplateConfig, TemplateSourceConfig,
+    TenantConfig,
 };
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::config::FelderaConfig;
@@ -18,30 +21,116 @@ pub struct FelderaManagedStore {
     config: FelderaConfig,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct ManagedEventRow {
-    #[serde(alias = "RESOURCE_KIND")]
-    resource_kind: String,
-    #[serde(alias = "RESOURCE_KEY")]
-    resource_key: String,
-    #[serde(alias = "SCOPE")]
-    scope: String,
-    #[serde(alias = "APPLY_ID")]
-    apply_id: String,
-    #[serde(alias = "ROW_VERSION")]
-    row_version: u64,
-    #[serde(alias = "VALID_FROM")]
-    valid_from: u64,
-    #[serde(alias = "DELETED")]
-    deleted: bool,
-    #[serde(alias = "PAYLOAD_JSON")]
-    payload_json: Option<String>,
+#[derive(Clone, Copy)]
+struct TemporalViewSpec {
+    table_name: &'static str,
+    versioned_view: &'static str,
+    current_view: &'static str,
+    commit_table: &'static str,
+    provenance_column: &'static str,
+    key_columns: &'static [&'static str],
 }
+
+const MANAGED_VIEW_SPECS: &[TemporalViewSpec] = &[
+    TemporalViewSpec {
+        table_name: "tenant",
+        versioned_view: "versioned_tenant",
+        current_view: "current_tenant",
+        commit_table: "apply_commit",
+        provenance_column: "apply_id",
+        key_columns: &["tenant_id"],
+    },
+    TemporalViewSpec {
+        table_name: "subject",
+        versioned_view: "versioned_subject",
+        current_view: "current_subject",
+        commit_table: "apply_commit",
+        provenance_column: "apply_id",
+        key_columns: &["subject_id"],
+    },
+    TemporalViewSpec {
+        table_name: "membership",
+        versioned_view: "versioned_membership",
+        current_view: "current_membership",
+        commit_table: "apply_commit",
+        provenance_column: "apply_id",
+        key_columns: &["tenant_id", "subject_id"],
+    },
+    TemporalViewSpec {
+        table_name: "assumption_grant",
+        versioned_view: "versioned_assumption_grant",
+        current_view: "current_assumption_grant",
+        commit_table: "apply_commit",
+        provenance_column: "apply_id",
+        key_columns: &["subject_id", "source_tenant_id", "target_tenant_id"],
+    },
+    TemporalViewSpec {
+        table_name: "action",
+        versioned_view: "versioned_action",
+        current_view: "current_action",
+        commit_table: "apply_commit",
+        provenance_column: "apply_id",
+        key_columns: &["action_name"],
+    },
+    TemporalViewSpec {
+        table_name: "template",
+        versioned_view: "versioned_template",
+        current_view: "current_template",
+        commit_table: "apply_commit",
+        provenance_column: "apply_id",
+        key_columns: &["tenant_id", "template_key"],
+    },
+    TemporalViewSpec {
+        table_name: "role",
+        versioned_view: "versioned_role",
+        current_view: "current_role",
+        commit_table: "apply_commit",
+        provenance_column: "apply_id",
+        key_columns: &["tenant_id", "role_key"],
+    },
+];
+
+const RUNTIME_VIEW_SPECS: &[TemporalViewSpec] = &[
+    TemporalViewSpec {
+        table_name: "invite",
+        versioned_view: "versioned_invite",
+        current_view: "current_invite",
+        commit_table: "auth_runtime_commit",
+        provenance_column: "change_id",
+        key_columns: &["invite_id"],
+    },
+    TemporalViewSpec {
+        table_name: "subject_credential",
+        versioned_view: "versioned_subject_credential",
+        current_view: "current_subject_credential",
+        commit_table: "auth_runtime_commit",
+        provenance_column: "change_id",
+        key_columns: &["subject_id"],
+    },
+    TemporalViewSpec {
+        table_name: "session_state",
+        versioned_view: "versioned_session",
+        current_view: "current_session",
+        commit_table: "auth_runtime_commit",
+        provenance_column: "change_id",
+        key_columns: &["session_id"],
+    },
+];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ApplyCommitRow {
     #[serde(alias = "APPLY_ID")]
     apply_id: String,
+    #[serde(alias = "COMMITTED_AT")]
+    committed_at: u64,
+    #[serde(alias = "COMMITTED")]
+    committed: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct AuthRuntimeCommitRow {
+    #[serde(alias = "CHANGE_ID")]
+    change_id: String,
     #[serde(alias = "COMMITTED_AT")]
     committed_at: u64,
     #[serde(alias = "COMMITTED")]
@@ -61,13 +150,395 @@ struct LatestApplyRow {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct RuntimeAuthEventRow {
-    #[serde(alias = "RESOURCE_KIND")]
-    resource_kind: String,
-    #[serde(alias = "RESOURCE_KEY")]
-    resource_key: String,
-    #[serde(alias = "SCOPE")]
-    scope: String,
+struct TenantRow {
+    #[serde(alias = "TENANT_ID")]
+    tenant_id: String,
+    #[serde(alias = "DISPLAY_NAME")]
+    display_name: Option<String>,
+    #[serde(alias = "PARENT_TENANT_ID")]
+    parent_tenant_id: Option<String>,
+    #[serde(alias = "STATE")]
+    state: String,
+    #[serde(alias = "APPLY_ID")]
+    apply_id: String,
+    #[serde(alias = "ROW_VERSION")]
+    row_version: u64,
+    #[serde(alias = "VALID_FROM")]
+    valid_from: u64,
+    #[serde(alias = "DELETED")]
+    deleted: bool,
+}
+
+impl TenantRow {
+    fn from_config(
+        tenant: &TenantConfig,
+        apply_id: String,
+        row_version: u64,
+        valid_from: u64,
+        deleted: bool,
+    ) -> Self {
+        Self {
+            tenant_id: tenant.id.clone(),
+            display_name: tenant.display_name.clone(),
+            parent_tenant_id: tenant.parent.clone(),
+            state: tenant.state.clone(),
+            apply_id,
+            row_version,
+            valid_from,
+            deleted,
+        }
+    }
+
+    fn into_config(self) -> TenantConfig {
+        TenantConfig {
+            id: self.tenant_id,
+            display_name: self.display_name,
+            parent: self.parent_tenant_id,
+            state: self.state,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SubjectRow {
+    #[serde(alias = "SUBJECT_ID")]
+    subject_id: String,
+    #[serde(alias = "DISPLAY_NAME")]
+    display_name: Option<String>,
+    #[serde(alias = "APPLY_ID")]
+    apply_id: String,
+    #[serde(alias = "ROW_VERSION")]
+    row_version: u64,
+    #[serde(alias = "VALID_FROM")]
+    valid_from: u64,
+    #[serde(alias = "DELETED")]
+    deleted: bool,
+}
+
+impl SubjectRow {
+    fn from_config(
+        subject: &SubjectConfig,
+        apply_id: String,
+        row_version: u64,
+        valid_from: u64,
+        deleted: bool,
+    ) -> Self {
+        Self {
+            subject_id: subject.id.clone(),
+            display_name: subject.display_name.clone(),
+            apply_id,
+            row_version,
+            valid_from,
+            deleted,
+        }
+    }
+
+    fn into_config(self) -> SubjectConfig {
+        SubjectConfig {
+            id: self.subject_id,
+            display_name: self.display_name,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MembershipRow {
+    #[serde(alias = "TENANT_ID")]
+    tenant_id: String,
+    #[serde(alias = "SUBJECT_ID")]
+    subject_id: String,
+    #[serde(alias = "ROLES_JSON")]
+    roles_json: String,
+    #[serde(alias = "FACTS_JSON")]
+    facts_json: String,
+    #[serde(alias = "APPLY_ID")]
+    apply_id: String,
+    #[serde(alias = "ROW_VERSION")]
+    row_version: u64,
+    #[serde(alias = "VALID_FROM")]
+    valid_from: u64,
+    #[serde(alias = "DELETED")]
+    deleted: bool,
+}
+
+impl MembershipRow {
+    fn from_config(
+        membership: &MembershipConfig,
+        apply_id: String,
+        row_version: u64,
+        valid_from: u64,
+        deleted: bool,
+    ) -> Self {
+        Self {
+            tenant_id: membership.tenant.clone(),
+            subject_id: membership.subject.clone(),
+            roles_json: serialize_json(&membership.roles),
+            facts_json: serialize_json(&membership.facts),
+            apply_id,
+            row_version,
+            valid_from,
+            deleted,
+        }
+    }
+
+    fn into_config(self) -> Result<MembershipConfig, DynError> {
+        Ok(MembershipConfig {
+            subject: self.subject_id,
+            tenant: self.tenant_id,
+            roles: serde_json::from_str(&self.roles_json)?,
+            facts: serde_json::from_str::<Vec<PortableFactConfig>>(&self.facts_json)?,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct AssumptionGrantRow {
+    #[serde(alias = "SUBJECT_ID")]
+    subject_id: String,
+    #[serde(alias = "SOURCE_TENANT_ID")]
+    source_tenant_id: String,
+    #[serde(alias = "TARGET_TENANT_ID")]
+    target_tenant_id: String,
+    #[serde(alias = "TARGET_ROLES_JSON")]
+    target_roles_json: String,
+    #[serde(alias = "TTL_SECONDS")]
+    ttl_seconds: Option<u64>,
+    #[serde(alias = "APPLY_ID")]
+    apply_id: String,
+    #[serde(alias = "ROW_VERSION")]
+    row_version: u64,
+    #[serde(alias = "VALID_FROM")]
+    valid_from: u64,
+    #[serde(alias = "DELETED")]
+    deleted: bool,
+}
+
+impl AssumptionGrantRow {
+    fn from_config(
+        grant: &AssumptionGrantConfig,
+        apply_id: String,
+        row_version: u64,
+        valid_from: u64,
+        deleted: bool,
+    ) -> Self {
+        Self {
+            subject_id: grant.subject.clone(),
+            source_tenant_id: grant.source_tenant.clone(),
+            target_tenant_id: grant.target_tenant.clone(),
+            target_roles_json: serialize_json(&grant.target_roles),
+            ttl_seconds: grant.ttl_seconds,
+            apply_id,
+            row_version,
+            valid_from,
+            deleted,
+        }
+    }
+
+    fn into_config(self) -> Result<AssumptionGrantConfig, DynError> {
+        Ok(AssumptionGrantConfig {
+            subject: self.subject_id,
+            source_tenant: self.source_tenant_id,
+            target_tenant: self.target_tenant_id,
+            target_roles: serde_json::from_str(&self.target_roles_json)?,
+            ttl_seconds: self.ttl_seconds,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ActionRow {
+    #[serde(alias = "ACTION_NAME")]
+    action_name: String,
+    #[serde(alias = "DESCRIPTION")]
+    description: Option<String>,
+    #[serde(alias = "APPLY_ID")]
+    apply_id: String,
+    #[serde(alias = "ROW_VERSION")]
+    row_version: u64,
+    #[serde(alias = "VALID_FROM")]
+    valid_from: u64,
+    #[serde(alias = "DELETED")]
+    deleted: bool,
+}
+
+impl ActionRow {
+    fn from_config(
+        action: &ActionSpec,
+        apply_id: String,
+        row_version: u64,
+        valid_from: u64,
+        deleted: bool,
+    ) -> Self {
+        Self {
+            action_name: action.name.clone(),
+            description: action.description.clone(),
+            apply_id,
+            row_version,
+            valid_from,
+            deleted,
+        }
+    }
+
+    fn into_config(self) -> ActionSpec {
+        ActionSpec {
+            name: self.action_name,
+            description: self.description,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct TemplateRow {
+    #[serde(alias = "TENANT_ID")]
+    tenant_id: String,
+    #[serde(alias = "TEMPLATE_KEY")]
+    template_key: String,
+    #[serde(alias = "SOURCE_TENANT_ID")]
+    source_tenant_id: Option<String>,
+    #[serde(alias = "SOURCE_TEMPLATE_KEY")]
+    source_template_key: Option<String>,
+    #[serde(alias = "SOURCE_MODE")]
+    source_mode: Option<String>,
+    #[serde(alias = "POLICIES_JSON")]
+    policies_json: String,
+    #[serde(alias = "APPLY_ID")]
+    apply_id: String,
+    #[serde(alias = "ROW_VERSION")]
+    row_version: u64,
+    #[serde(alias = "VALID_FROM")]
+    valid_from: u64,
+    #[serde(alias = "DELETED")]
+    deleted: bool,
+}
+
+impl TemplateRow {
+    fn from_config(
+        template: &TemplateConfig,
+        apply_id: String,
+        row_version: u64,
+        valid_from: u64,
+        deleted: bool,
+    ) -> Self {
+        let (source_tenant_id, source_template_key, source_mode) = template
+            .source
+            .as_ref()
+            .map(|source| {
+                (
+                    Some(source.tenant.clone()),
+                    Some(source.key.clone()),
+                    Some(source.mode.clone()),
+                )
+            })
+            .unwrap_or((None, None, None));
+
+        Self {
+            tenant_id: template.tenant.clone(),
+            template_key: template.key.clone(),
+            source_tenant_id,
+            source_template_key,
+            source_mode,
+            policies_json: serialize_json(&template.policies),
+            apply_id,
+            row_version,
+            valid_from,
+            deleted,
+        }
+    }
+
+    fn into_config(self) -> Result<TemplateConfig, DynError> {
+        let source = match (
+            self.source_tenant_id,
+            self.source_template_key,
+            self.source_mode,
+        ) {
+            (Some(tenant), Some(key), Some(mode)) => {
+                Some(TemplateSourceConfig { tenant, key, mode })
+            }
+            (None, None, None) => None,
+            (tenant, key, mode) => {
+                return Err(Box::<std::io::Error>::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "template {} has incomplete source columns tenant={tenant:?} key={key:?} mode={mode:?}",
+                        self.template_key
+                    ),
+                )));
+            }
+        };
+
+        Ok(TemplateConfig {
+            tenant: self.tenant_id,
+            key: self.template_key,
+            source,
+            policies: serde_json::from_str::<Vec<PolicySpec>>(&self.policies_json)?,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RoleRow {
+    #[serde(alias = "TENANT_ID")]
+    tenant_id: String,
+    #[serde(alias = "ROLE_KEY")]
+    role_key: String,
+    #[serde(alias = "TEMPLATE_KEY")]
+    template_key: Option<String>,
+    #[serde(alias = "POLICIES_JSON")]
+    policies_json: String,
+    #[serde(alias = "APPLY_ID")]
+    apply_id: String,
+    #[serde(alias = "ROW_VERSION")]
+    row_version: u64,
+    #[serde(alias = "VALID_FROM")]
+    valid_from: u64,
+    #[serde(alias = "DELETED")]
+    deleted: bool,
+}
+
+impl RoleRow {
+    fn from_config(
+        role: &RoleConfig,
+        apply_id: String,
+        row_version: u64,
+        valid_from: u64,
+        deleted: bool,
+    ) -> Self {
+        Self {
+            tenant_id: role.tenant.clone(),
+            role_key: role.key.clone(),
+            template_key: role.template.clone(),
+            policies_json: serialize_json(&role.policies),
+            apply_id,
+            row_version,
+            valid_from,
+            deleted,
+        }
+    }
+
+    fn into_config(self) -> Result<RoleConfig, DynError> {
+        Ok(RoleConfig {
+            tenant: self.tenant_id,
+            key: self.role_key,
+            template: self.template_key,
+            policies: serde_json::from_str::<Vec<PolicySpec>>(&self.policies_json)?,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct InviteRow {
+    #[serde(alias = "INVITE_ID")]
+    invite_id: String,
+    #[serde(alias = "SUBJECT_ID")]
+    subject_id: String,
+    #[serde(alias = "REDEEM_CODE_HASH")]
+    redeem_code_hash: String,
+    #[serde(alias = "CREATED_AT")]
+    created_at: u64,
+    #[serde(alias = "EXPIRES_AT")]
+    expires_at: u64,
+    #[serde(alias = "REDEEMED_AT")]
+    redeemed_at: Option<u64>,
     #[serde(alias = "CHANGE_ID")]
     change_id: String,
     #[serde(alias = "ROW_VERSION")]
@@ -76,18 +547,136 @@ struct RuntimeAuthEventRow {
     valid_from: u64,
     #[serde(alias = "DELETED")]
     deleted: bool,
-    #[serde(alias = "PAYLOAD_JSON")]
-    payload_json: Option<String>,
+}
+
+impl InviteRow {
+    fn from_record(invite: &InviteRecord, change_id: String, deleted: bool) -> Self {
+        Self {
+            invite_id: invite.invite_id.clone(),
+            subject_id: invite.subject.clone(),
+            redeem_code_hash: invite.redeem_code_hash.clone(),
+            created_at: invite.created_at,
+            expires_at: invite.expires_at,
+            redeemed_at: invite.redeemed_at,
+            change_id,
+            row_version: invite.row_version,
+            valid_from: invite.valid_from,
+            deleted,
+        }
+    }
+
+    fn into_record(self) -> InviteRecord {
+        InviteRecord {
+            invite_id: self.invite_id,
+            subject: self.subject_id,
+            redeem_code_hash: self.redeem_code_hash,
+            created_at: self.created_at,
+            expires_at: self.expires_at,
+            redeemed_at: self.redeemed_at,
+            valid_from: self.valid_from,
+            row_version: self.row_version,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct RuntimeAuthCommitRow {
+struct SubjectCredentialRow {
+    #[serde(alias = "SUBJECT_ID")]
+    subject_id: String,
+    #[serde(alias = "SALT")]
+    salt: String,
+    #[serde(alias = "PASSWORD_HASH")]
+    password_hash: String,
+    #[serde(alias = "CREDENTIAL_VALID_TO")]
+    credential_valid_to: Option<u64>,
     #[serde(alias = "CHANGE_ID")]
     change_id: String,
-    #[serde(alias = "COMMITTED_AT")]
-    committed_at: u64,
-    #[serde(alias = "COMMITTED")]
-    committed: bool,
+    #[serde(alias = "ROW_VERSION")]
+    row_version: u64,
+    #[serde(alias = "VALID_FROM")]
+    valid_from: u64,
+    #[serde(alias = "DELETED")]
+    deleted: bool,
+}
+
+impl SubjectCredentialRow {
+    fn from_record(credential: &CredentialRecord, change_id: String, deleted: bool) -> Self {
+        Self {
+            subject_id: credential.subject.clone(),
+            salt: credential.salt.clone(),
+            password_hash: credential.password_hash.clone(),
+            credential_valid_to: credential.valid_to,
+            change_id,
+            row_version: credential.row_version,
+            valid_from: credential.valid_from,
+            deleted,
+        }
+    }
+
+    fn into_record(self) -> CredentialRecord {
+        CredentialRecord {
+            subject: self.subject_id,
+            salt: self.salt,
+            password_hash: self.password_hash,
+            valid_from: self.valid_from,
+            valid_to: self.credential_valid_to,
+            row_version: self.row_version,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SessionRow {
+    #[serde(alias = "SESSION_ID")]
+    session_id: String,
+    #[serde(alias = "SUBJECT_ID")]
+    subject_id: String,
+    #[serde(alias = "TENANT_ID")]
+    tenant_id: String,
+    #[serde(alias = "CREATED_AT")]
+    created_at: u64,
+    #[serde(alias = "LAST_SEEN_AT")]
+    last_seen_at: u64,
+    #[serde(alias = "SESSION_VALID_TO")]
+    session_valid_to: Option<u64>,
+    #[serde(alias = "CHANGE_ID")]
+    change_id: String,
+    #[serde(alias = "ROW_VERSION")]
+    row_version: u64,
+    #[serde(alias = "VALID_FROM")]
+    valid_from: u64,
+    #[serde(alias = "DELETED")]
+    deleted: bool,
+}
+
+impl SessionRow {
+    fn from_record(session: &SessionRecord, change_id: String, deleted: bool) -> Self {
+        Self {
+            session_id: session.session_id.clone(),
+            subject_id: session.subject.clone(),
+            tenant_id: session.tenant.clone(),
+            created_at: session.created_at,
+            last_seen_at: session.last_seen_at,
+            session_valid_to: session.valid_to,
+            change_id,
+            row_version: session.row_version,
+            valid_from: session.valid_from,
+            deleted,
+        }
+    }
+
+    fn into_record(self) -> SessionRecord {
+        SessionRecord {
+            session_id: self.session_id,
+            subject: self.subject_id,
+            tenant: self.tenant_id,
+            created_at: self.created_at,
+            last_seen_at: self.last_seen_at,
+            valid_from: self.valid_from,
+            valid_to: self.session_valid_to,
+            row_version: self.row_version,
+        }
+    }
 }
 
 impl FelderaManagedStore {
@@ -99,6 +688,7 @@ impl FelderaManagedStore {
         }
     }
 
+    // r[impl config.managed.feldera-authoritative-store]
     pub async fn ensure_pipeline(&self) -> Result<(), DynError> {
         let desired = DesiredPipeline {
             name: self.pipeline_name.clone(),
@@ -134,18 +724,14 @@ impl FelderaManagedStore {
             }
         }
 
+        self.wait_for_queryable_pipeline().await?;
+
         Ok(())
     }
 
     pub async fn bootstrap_if_empty(&self, managed: &ManagedConfig) -> Result<bool, DynError> {
         self.ensure_pipeline().await?;
-        let rows: Vec<CountRow> = self
-            .client
-            .query_json(
-                &self.pipeline_name,
-                "SELECT CAST(COUNT(*) AS BIGINT) AS count FROM APPLY_COMMIT WHERE committed = TRUE",
-            )
-            .await?;
+        let rows = self.query_apply_commit_count().await?;
 
         if rows.first().map(|row| row.count).unwrap_or(0) == 0 {
             self.apply(managed).await?;
@@ -155,40 +741,52 @@ impl FelderaManagedStore {
         }
     }
 
+    // r[impl config.managed.store.current-state-views]
     pub async fn load_managed(&self) -> Result<ManagedConfig, DynError> {
         self.ensure_pipeline().await?;
-        let rows: Vec<ManagedEventRow> = self
-            .client
-            .query_json(
-                &self.pipeline_name,
-                "SELECT resource_kind, resource_key, scope, apply_id, row_version, valid_from, deleted, payload_json FROM CURRENT_MANAGED_EVENT WHERE deleted = FALSE",
-            )
-            .await?;
 
-        let mut catalog = Vec::new();
-        let mut templates = Vec::new();
-        let mut roles = Vec::new();
-        let mut tenants = Vec::new();
-        let mut subjects = Vec::new();
+        let mut tenants = self
+            .load_current_rows::<TenantRow>("current_tenant")
+            .await?
+            .into_iter()
+            .map(TenantRow::into_config)
+            .collect::<Vec<_>>();
+        let mut subjects = self
+            .load_current_rows::<SubjectRow>("current_subject")
+            .await?
+            .into_iter()
+            .map(SubjectRow::into_config)
+            .collect::<Vec<_>>();
         let mut memberships = Vec::new();
+        for row in self
+            .load_current_rows::<MembershipRow>("current_membership")
+            .await?
+        {
+            memberships.push(row.into_config()?);
+        }
         let mut assumption_grants = Vec::new();
-
-        for row in rows {
-            let payload = row.payload_json.unwrap_or_default();
-            match row.resource_kind.as_str() {
-                "action" => catalog.push(serde_json::from_str::<ActionSpec>(&payload)?),
-                "template" => templates.push(serde_json::from_str::<TemplateConfig>(&payload)?),
-                "role" => roles.push(serde_json::from_str::<RoleConfig>(&payload)?),
-                "tenant" => tenants.push(serde_json::from_str::<TenantConfig>(&payload)?),
-                "subject" => subjects.push(serde_json::from_str::<SubjectConfig>(&payload)?),
-                "membership" => {
-                    memberships.push(serde_json::from_str::<MembershipConfig>(&payload)?)
-                }
-                "assumption_grant" => {
-                    assumption_grants.push(serde_json::from_str::<AssumptionGrantConfig>(&payload)?)
-                }
-                _ => {}
-            }
+        for row in self
+            .load_current_rows::<AssumptionGrantRow>("current_assumption_grant")
+            .await?
+        {
+            assumption_grants.push(row.into_config()?);
+        }
+        let mut catalog = self
+            .load_current_rows::<ActionRow>("current_action")
+            .await?
+            .into_iter()
+            .map(ActionRow::into_config)
+            .collect::<Vec<_>>();
+        let mut templates = Vec::new();
+        for row in self
+            .load_current_rows::<TemplateRow>("current_template")
+            .await?
+        {
+            templates.push(row.into_config()?);
+        }
+        let mut roles = Vec::new();
+        for row in self.load_current_rows::<RoleRow>("current_role").await? {
+            roles.push(row.into_config()?);
         }
 
         tenants.sort_by(|left, right| left.id.cmp(&right.id));
@@ -233,40 +831,37 @@ impl FelderaManagedStore {
             .client
             .query_json(
                 &self.pipeline_name,
-                "SELECT apply_id FROM APPLY_COMMIT WHERE committed = TRUE ORDER BY committed_at DESC LIMIT 1",
+                "SELECT apply_id FROM apply_commit WHERE committed = TRUE ORDER BY committed_at DESC LIMIT 1",
             )
             .await?;
 
         Ok(rows.into_iter().next().map(|row| row.apply_id))
     }
 
+    // r[impl config.managed.store.runtime-provenance]
     pub async fn load_runtime_auth_state(
         &self,
     ) -> Result<(Vec<InviteRecord>, Vec<CredentialRecord>, Vec<SessionRecord>), DynError> {
         self.ensure_pipeline().await?;
-        let rows: Vec<RuntimeAuthEventRow> = self
-            .client
-            .query_json(
-                &self.pipeline_name,
-                "SELECT resource_kind, resource_key, scope, change_id, row_version, valid_from, deleted, payload_json FROM CURRENT_AUTH_RUNTIME_EVENT WHERE deleted = FALSE",
-            )
-            .await?;
 
-        let mut invites = Vec::new();
-        let mut credentials = Vec::new();
-        let mut sessions = Vec::new();
-
-        for row in rows {
-            let payload = row.payload_json.unwrap_or_default();
-            match row.resource_kind.as_str() {
-                "invite" => invites.push(serde_json::from_str::<InviteRecord>(&payload)?),
-                "credential" => {
-                    credentials.push(serde_json::from_str::<CredentialRecord>(&payload)?)
-                }
-                "session" => sessions.push(serde_json::from_str::<SessionRecord>(&payload)?),
-                _ => {}
-            }
-        }
+        let mut invites = self
+            .load_current_rows::<InviteRow>("current_invite")
+            .await?
+            .into_iter()
+            .map(InviteRow::into_record)
+            .collect::<Vec<_>>();
+        let mut credentials = self
+            .load_current_rows::<SubjectCredentialRow>("current_subject_credential")
+            .await?
+            .into_iter()
+            .map(SubjectCredentialRow::into_record)
+            .collect::<Vec<_>>();
+        let mut sessions = self
+            .load_current_rows::<SessionRow>("current_session")
+            .await?
+            .into_iter()
+            .map(SessionRow::into_record)
+            .collect::<Vec<_>>();
 
         invites.sort_by(|left, right| left.invite_id.cmp(&right.invite_id));
         credentials.sort_by(|left, right| left.subject.cmp(&right.subject));
@@ -279,6 +874,9 @@ impl FelderaManagedStore {
         Ok((invites, credentials, sessions))
     }
 
+    // r[impl config.managed.versioned-history]
+    // r[impl config.managed.store.typed-entity-tables]
+    // r[impl config.managed.store.apply-provenance]
     pub async fn apply(&self, desired: &ManagedConfig) -> Result<String, DynError> {
         self.ensure_pipeline().await?;
         let current = self
@@ -293,31 +891,191 @@ impl FelderaManagedStore {
             &digest_hex(&format!("{nonce}:{}", serde_json::to_string(desired)?))[0..12]
         );
         let valid_from = now_unix_seconds()?;
-        let changes = diff_rows(&current, desired);
 
-        for change in changes {
+        for change in collect_changes(&current.tenants, &desired.tenants, |entry| entry.id.clone())
+        {
             let row_version = self
-                .next_row_version(&change.resource_kind, &change.scope)
+                .next_row_version("tenant", &[("tenant_id", change.value.id.clone())])
                 .await?;
-            let event = ManagedEventRow {
-                resource_kind: change.resource_kind,
-                resource_key: change.resource_key,
-                scope: change.scope,
-                apply_id: apply_id.clone(),
-                row_version,
-                valid_from,
-                deleted: change.deleted,
-                payload_json: change.payload_json,
-            };
             self.client
-                .insert_json_rows(&self.pipeline_name, "MANAGED_EVENT", vec![event])
+                .insert_json_rows(
+                    &self.pipeline_name,
+                    "tenant",
+                    vec![TenantRow::from_config(
+                        &change.value,
+                        apply_id.clone(),
+                        row_version,
+                        valid_from,
+                        change.deleted,
+                    )],
+                )
+                .await?;
+        }
+
+        for change in collect_changes(&current.subjects, &desired.subjects, |entry| {
+            entry.id.clone()
+        }) {
+            let row_version = self
+                .next_row_version("subject", &[("subject_id", change.value.id.clone())])
+                .await?;
+            self.client
+                .insert_json_rows(
+                    &self.pipeline_name,
+                    "subject",
+                    vec![SubjectRow::from_config(
+                        &change.value,
+                        apply_id.clone(),
+                        row_version,
+                        valid_from,
+                        change.deleted,
+                    )],
+                )
+                .await?;
+        }
+
+        for change in collect_changes(&current.memberships, &desired.memberships, |entry| {
+            format!("{}@{}", entry.subject, entry.tenant)
+        }) {
+            let row_version = self
+                .next_row_version(
+                    "membership",
+                    &[
+                        ("tenant_id", change.value.tenant.clone()),
+                        ("subject_id", change.value.subject.clone()),
+                    ],
+                )
+                .await?;
+            self.client
+                .insert_json_rows(
+                    &self.pipeline_name,
+                    "membership",
+                    vec![MembershipRow::from_config(
+                        &change.value,
+                        apply_id.clone(),
+                        row_version,
+                        valid_from,
+                        change.deleted,
+                    )],
+                )
+                .await?;
+        }
+
+        for change in collect_changes(
+            &current.assumption_grants,
+            &desired.assumption_grants,
+            |entry| {
+                format!(
+                    "{}:{}:{}",
+                    entry.subject, entry.source_tenant, entry.target_tenant
+                )
+            },
+        ) {
+            let row_version = self
+                .next_row_version(
+                    "assumption_grant",
+                    &[
+                        ("subject_id", change.value.subject.clone()),
+                        ("source_tenant_id", change.value.source_tenant.clone()),
+                        ("target_tenant_id", change.value.target_tenant.clone()),
+                    ],
+                )
+                .await?;
+            self.client
+                .insert_json_rows(
+                    &self.pipeline_name,
+                    "assumption_grant",
+                    vec![AssumptionGrantRow::from_config(
+                        &change.value,
+                        apply_id.clone(),
+                        row_version,
+                        valid_from,
+                        change.deleted,
+                    )],
+                )
+                .await?;
+        }
+
+        for change in collect_changes(
+            &current.catalog.actions,
+            &desired.catalog.actions,
+            |entry| entry.name.clone(),
+        ) {
+            let row_version = self
+                .next_row_version("action", &[("action_name", change.value.name.clone())])
+                .await?;
+            self.client
+                .insert_json_rows(
+                    &self.pipeline_name,
+                    "action",
+                    vec![ActionRow::from_config(
+                        &change.value,
+                        apply_id.clone(),
+                        row_version,
+                        valid_from,
+                        change.deleted,
+                    )],
+                )
+                .await?;
+        }
+
+        for change in collect_changes(&current.templates, &desired.templates, |entry| {
+            format!("{}:{}", entry.tenant, entry.key)
+        }) {
+            let row_version = self
+                .next_row_version(
+                    "template",
+                    &[
+                        ("tenant_id", change.value.tenant.clone()),
+                        ("template_key", change.value.key.clone()),
+                    ],
+                )
+                .await?;
+            self.client
+                .insert_json_rows(
+                    &self.pipeline_name,
+                    "template",
+                    vec![TemplateRow::from_config(
+                        &change.value,
+                        apply_id.clone(),
+                        row_version,
+                        valid_from,
+                        change.deleted,
+                    )],
+                )
+                .await?;
+        }
+
+        for change in collect_changes(&current.roles, &desired.roles, |entry| {
+            format!("{}:{}", entry.tenant, entry.key)
+        }) {
+            let row_version = self
+                .next_row_version(
+                    "role",
+                    &[
+                        ("tenant_id", change.value.tenant.clone()),
+                        ("role_key", change.value.key.clone()),
+                    ],
+                )
+                .await?;
+            self.client
+                .insert_json_rows(
+                    &self.pipeline_name,
+                    "role",
+                    vec![RoleRow::from_config(
+                        &change.value,
+                        apply_id.clone(),
+                        row_version,
+                        valid_from,
+                        change.deleted,
+                    )],
+                )
                 .await?;
         }
 
         self.client
             .insert_json_rows(
                 &self.pipeline_name,
-                "APPLY_COMMIT",
+                "apply_commit",
                 vec![ApplyCommitRow {
                     apply_id: apply_id.clone(),
                     committed_at: valid_from,
@@ -331,14 +1089,8 @@ impl FelderaManagedStore {
 
     // r[impl identity.subject.invite.audit-history]
     pub async fn persist_invite(&self, invite: &InviteRecord) -> Result<(), DynError> {
-        self.persist_runtime_auth_changes(vec![RuntimeAuthChange {
-            resource_kind: "invite".to_owned(),
-            resource_key: invite.invite_id.clone(),
-            scope: "global".to_owned(),
-            row_version: invite.row_version,
-            payload_json: serde_json::to_string(invite)?,
-        }])
-        .await
+        self.persist_runtime_auth_changes(vec![RuntimeAuthChange::Invite(invite.clone())])
+            .await
     }
 
     // r[impl identity.subject.linked-credentials.versioned-history]
@@ -368,46 +1120,38 @@ impl FelderaManagedStore {
         }
 
         self.persist_runtime_auth_changes(vec![
-            RuntimeAuthChange {
-                resource_kind: "invite".to_owned(),
-                resource_key: invite.invite_id.clone(),
-                scope: "global".to_owned(),
-                row_version: invite.row_version,
-                payload_json: serde_json::to_string(invite)?,
-            },
-            RuntimeAuthChange {
-                resource_kind: "credential".to_owned(),
-                resource_key: credential.subject.clone(),
-                scope: "global".to_owned(),
-                row_version: credential.row_version,
-                payload_json: serde_json::to_string(credential)?,
-            },
+            RuntimeAuthChange::Invite(invite.clone()),
+            RuntimeAuthChange::SubjectCredential(credential.clone()),
         ])
         .await
     }
 
     // r[impl authn.session.persisted-history]
     pub async fn persist_session(&self, session: &SessionRecord) -> Result<(), DynError> {
-        self.persist_runtime_auth_changes(vec![RuntimeAuthChange {
-            resource_kind: "session".to_owned(),
-            resource_key: session.session_id.clone(),
-            scope: session.tenant.clone(),
-            row_version: session.row_version,
-            payload_json: serde_json::to_string(session)?,
-        }])
-        .await
+        self.persist_runtime_auth_changes(vec![RuntimeAuthChange::Session(session.clone())])
+            .await
     }
 
-    async fn next_row_version(&self, resource_kind: &str, scope: &str) -> Result<u64, DynError> {
-        let sql = format!(
-            "SELECT CAST(COALESCE(MAX(row_version), 0) AS BIGINT) AS count FROM MANAGED_EVENT WHERE resource_kind = '{}' AND scope = '{}'",
-            escape_sql(resource_kind),
-            escape_sql(scope)
-        );
+    async fn load_current_rows<T>(&self, view_name: &str) -> Result<Vec<T>, DynError>
+    where
+        T: DeserializeOwned,
+    {
+        let sql = select_current_sql(view_name);
+        self.client.query_json(&self.pipeline_name, &sql).await
+    }
+
+    // r[impl config.managed.store.row-version-per-entity]
+    async fn next_row_version(
+        &self,
+        table_name: &str,
+        key_filters: &[(&str, String)],
+    ) -> Result<u64, DynError> {
+        let sql = select_max_row_version_sql(table_name, key_filters);
         let rows: Vec<CountRow> = self.client.query_json(&self.pipeline_name, &sql).await?;
         Ok(rows.first().map(|row| row.count).unwrap_or(0) + 1)
     }
 
+    // r[impl config.managed.store.runtime-provenance]
     async fn persist_runtime_auth_changes(
         &self,
         changes: Vec<RuntimeAuthChange>,
@@ -427,29 +1171,46 @@ impl FelderaManagedStore {
         );
 
         for change in changes {
-            self.client
-                .insert_json_rows(
-                    &self.pipeline_name,
-                    "AUTH_RUNTIME_EVENT",
-                    vec![RuntimeAuthEventRow {
-                        resource_kind: change.resource_kind,
-                        resource_key: change.resource_key,
-                        scope: change.scope,
-                        change_id: change_id.clone(),
-                        row_version: change.row_version,
-                        valid_from,
-                        deleted: false,
-                        payload_json: Some(change.payload_json),
-                    }],
-                )
-                .await?;
+            match change {
+                RuntimeAuthChange::Invite(invite) => {
+                    self.client
+                        .insert_json_rows(
+                            &self.pipeline_name,
+                            "invite",
+                            vec![InviteRow::from_record(&invite, change_id.clone(), false)],
+                        )
+                        .await?;
+                }
+                RuntimeAuthChange::SubjectCredential(credential) => {
+                    self.client
+                        .insert_json_rows(
+                            &self.pipeline_name,
+                            "subject_credential",
+                            vec![SubjectCredentialRow::from_record(
+                                &credential,
+                                change_id.clone(),
+                                false,
+                            )],
+                        )
+                        .await?;
+                }
+                RuntimeAuthChange::Session(session) => {
+                    self.client
+                        .insert_json_rows(
+                            &self.pipeline_name,
+                            "session_state",
+                            vec![SessionRow::from_record(&session, change_id.clone(), false)],
+                        )
+                        .await?;
+                }
+            }
         }
 
         self.client
             .insert_json_rows(
                 &self.pipeline_name,
-                "AUTH_RUNTIME_COMMIT",
-                vec![RuntimeAuthCommitRow {
+                "auth_runtime_commit",
+                vec![AuthRuntimeCommitRow {
                     change_id,
                     committed_at: valid_from,
                     committed: true,
@@ -459,103 +1220,72 @@ impl FelderaManagedStore {
 
         Ok(())
     }
+
+    async fn wait_for_queryable_pipeline(&self) -> Result<(), DynError> {
+        for _ in 0..600 {
+            if let Some(pipeline) = self.client.get_pipeline(&self.pipeline_name, "all").await? {
+                match pipeline.program_status.as_deref() {
+                    Some("Success") | Some("SqlCompiled") => {
+                        if self.query_apply_commit_count().await.is_ok() {
+                            return Ok(());
+                        }
+                    }
+                    Some(status)
+                        if status.contains("Error")
+                            || status == "SqlError"
+                            || status == "RustError" =>
+                    {
+                        return Err(Box::<std::io::Error>::new(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!(
+                                "pipeline {} is not queryable because compilation ended in {status}",
+                                self.pipeline_name
+                            ),
+                        )));
+                    }
+                    _ => {}
+                }
+            }
+
+            actix_web::rt::time::sleep(Duration::from_secs(1)).await;
+        }
+
+        Err(Box::<std::io::Error>::new(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!(
+                "timed out waiting for pipeline {} to become queryable",
+                self.pipeline_name
+            ),
+        )))
+    }
+
+    async fn query_apply_commit_count(&self) -> Result<Vec<CountRow>, DynError> {
+        self.client
+            .query_json(
+                &self.pipeline_name,
+                "SELECT CAST(COUNT(*) AS BIGINT) AS count FROM apply_commit WHERE committed = TRUE",
+            )
+            .await
+    }
 }
 
 #[derive(Clone)]
-struct ChangeRow {
-    resource_kind: String,
-    resource_key: String,
-    scope: String,
+struct EntityChange<T> {
+    value: T,
     deleted: bool,
-    payload_json: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
-struct RuntimeAuthChange {
-    resource_kind: String,
-    resource_key: String,
-    scope: String,
-    row_version: u64,
-    payload_json: String,
+enum RuntimeAuthChange {
+    Invite(InviteRecord),
+    SubjectCredential(CredentialRecord),
+    Session(SessionRecord),
 }
 
-fn diff_rows(current: &ManagedConfig, desired: &ManagedConfig) -> Vec<ChangeRow> {
-    let mut changes = Vec::new();
-    append_changes(
-        &mut changes,
-        "tenant",
-        &current.tenants,
-        &desired.tenants,
-        |entry| entry.id.clone(),
-        |entry| entry.parent.clone().unwrap_or_else(|| "root".to_owned()),
-    );
-    append_changes(
-        &mut changes,
-        "subject",
-        &current.subjects,
-        &desired.subjects,
-        |entry| entry.id.clone(),
-        |_| "global".to_owned(),
-    );
-    append_changes(
-        &mut changes,
-        "membership",
-        &current.memberships,
-        &desired.memberships,
-        |entry| format!("{}@{}", entry.subject, entry.tenant),
-        |entry| entry.tenant.clone(),
-    );
-    append_changes(
-        &mut changes,
-        "assumption_grant",
-        &current.assumption_grants,
-        &desired.assumption_grants,
-        |entry| {
-            format!(
-                "{}:{}:{}",
-                entry.subject, entry.source_tenant, entry.target_tenant
-            )
-        },
-        |entry| entry.source_tenant.clone(),
-    );
-    append_changes(
-        &mut changes,
-        "template",
-        &current.templates,
-        &desired.templates,
-        |entry| format!("{}:{}", entry.tenant, entry.key),
-        |entry| entry.tenant.clone(),
-    );
-    append_changes(
-        &mut changes,
-        "role",
-        &current.roles,
-        &desired.roles,
-        |entry| format!("{}:{}", entry.tenant, entry.key),
-        |entry| entry.tenant.clone(),
-    );
-    append_changes(
-        &mut changes,
-        "action",
-        &current.catalog.actions,
-        &desired.catalog.actions,
-        |entry| entry.name.clone(),
-        |_| "global".to_owned(),
-    );
-    changes
-}
-
-fn append_changes<T, K, S>(
-    changes: &mut Vec<ChangeRow>,
-    kind: &str,
-    current: &[T],
-    desired: &[T],
-    key: K,
-    scope: S,
-) where
-    T: Clone + PartialEq + Serialize,
+fn collect_changes<T, K>(current: &[T], desired: &[T], key: K) -> Vec<EntityChange<T>>
+where
+    T: Clone + PartialEq,
     K: Fn(&T) -> String,
-    S: Fn(&T) -> String,
 {
     let current_map: BTreeMap<String, &T> =
         current.iter().map(|entry| (key(entry), entry)).collect();
@@ -566,138 +1296,277 @@ fn append_changes<T, K, S>(
         .chain(desired_map.keys())
         .cloned()
         .collect();
+    let mut changes = Vec::new();
 
-    for resource_key in keys {
-        match (
-            current_map.get(&resource_key),
-            desired_map.get(&resource_key),
-        ) {
+    for entity_key in keys {
+        match (current_map.get(&entity_key), desired_map.get(&entity_key)) {
             (Some(left), Some(right)) if *left == *right => {}
-            (_, Some(value)) => changes.push(ChangeRow {
-                resource_kind: kind.to_owned(),
-                resource_key,
-                scope: scope(value),
+            (_, Some(value)) => changes.push(EntityChange {
+                value: (*value).clone(),
                 deleted: false,
-                payload_json: Some(serde_json::to_string(value).expect("payload should serialize")),
             }),
-            (Some(value), None) => changes.push(ChangeRow {
-                resource_kind: kind.to_owned(),
-                resource_key,
-                scope: scope(value),
+            (Some(value), None) => changes.push(EntityChange {
+                value: (*value).clone(),
                 deleted: true,
-                payload_json: None,
             }),
             _ => {}
         }
     }
+
+    changes
 }
 
+// r[impl config.managed.store.sql-lower-snake-case]
 fn managed_store_sql() -> String {
-    r#"
-CREATE TABLE APPLY_COMMIT (
+    let mut statements = vec![
+        r#"
+CREATE TABLE apply_commit (
     apply_id VARCHAR NOT NULL,
     committed_at BIGINT NOT NULL,
     committed BOOLEAN NOT NULL
 ) WITH ('materialized' = 'true');
-
-CREATE TABLE MANAGED_EVENT (
-    resource_kind VARCHAR NOT NULL,
-    resource_key VARCHAR NOT NULL,
-    scope VARCHAR NOT NULL,
-    apply_id VARCHAR NOT NULL,
-    row_version BIGINT NOT NULL,
-    valid_from BIGINT NOT NULL,
-    deleted BOOLEAN NOT NULL,
-    payload_json VARCHAR
-) WITH ('materialized' = 'true');
-
-CREATE TABLE AUTH_RUNTIME_COMMIT (
-    change_id VARCHAR NOT NULL,
-    committed_at BIGINT NOT NULL,
-    committed BOOLEAN NOT NULL
-) WITH ('materialized' = 'true');
-
-CREATE TABLE AUTH_RUNTIME_EVENT (
-    resource_kind VARCHAR NOT NULL,
-    resource_key VARCHAR NOT NULL,
-    scope VARCHAR NOT NULL,
-    change_id VARCHAR NOT NULL,
-    row_version BIGINT NOT NULL,
-    valid_from BIGINT NOT NULL,
-    deleted BOOLEAN NOT NULL,
-    payload_json VARCHAR
-) WITH ('materialized' = 'true');
-
-CREATE MATERIALIZED VIEW VERSIONED_MANAGED_EVENT AS
-SELECT
-    e.resource_kind,
-    e.resource_key,
-    e.scope,
-    e.apply_id,
-    e.row_version,
-    e.valid_from,
-    (
-        SELECT MIN(e2.valid_from)
-        FROM MANAGED_EVENT e2
-        JOIN APPLY_COMMIT c2 ON e2.apply_id = c2.apply_id AND c2.committed = TRUE
-        WHERE e2.resource_kind = e.resource_kind
-          AND e2.resource_key = e.resource_key
-          AND e2.row_version > e.row_version
-    ) AS valid_to,
-    e.deleted,
-    e.payload_json
-FROM MANAGED_EVENT e
-JOIN APPLY_COMMIT c ON e.apply_id = c.apply_id AND c.committed = TRUE;
-
-CREATE MATERIALIZED VIEW CURRENT_MANAGED_EVENT AS
-SELECT
-    resource_kind,
-    resource_key,
-    scope,
-    apply_id,
-    row_version,
-    valid_from,
-    deleted,
-    payload_json
-FROM VERSIONED_MANAGED_EVENT
-WHERE valid_to IS NULL;
-
-CREATE MATERIALIZED VIEW VERSIONED_AUTH_RUNTIME_EVENT AS
-SELECT
-    e.resource_kind,
-    e.resource_key,
-    e.scope,
-    e.change_id,
-    e.row_version,
-    e.valid_from,
-    (
-        SELECT MIN(e2.valid_from)
-        FROM AUTH_RUNTIME_EVENT e2
-        JOIN AUTH_RUNTIME_COMMIT c2 ON e2.change_id = c2.change_id AND c2.committed = TRUE
-        WHERE e2.resource_kind = e.resource_kind
-          AND e2.resource_key = e.resource_key
-          AND e2.row_version > e.row_version
-    ) AS valid_to,
-    e.deleted,
-    e.payload_json
-FROM AUTH_RUNTIME_EVENT e
-JOIN AUTH_RUNTIME_COMMIT c ON e.change_id = c.change_id AND c.committed = TRUE;
-
-CREATE MATERIALIZED VIEW CURRENT_AUTH_RUNTIME_EVENT AS
-SELECT
-    resource_kind,
-    resource_key,
-    scope,
-    change_id,
-    row_version,
-    valid_from,
-    deleted,
-    payload_json
-FROM VERSIONED_AUTH_RUNTIME_EVENT
-WHERE valid_to IS NULL;
 "#
+        .trim()
+        .to_owned(),
+        r#"
+CREATE TABLE tenant (
+    tenant_id VARCHAR NOT NULL,
+    display_name VARCHAR,
+    parent_tenant_id VARCHAR,
+    state VARCHAR NOT NULL,
+    apply_id VARCHAR NOT NULL,
+    row_version BIGINT NOT NULL,
+    valid_from BIGINT NOT NULL,
+    deleted BOOLEAN NOT NULL
+) WITH ('materialized' = 'true');
+"#
+        .trim()
+        .to_owned(),
+        r#"
+CREATE TABLE subject (
+    subject_id VARCHAR NOT NULL,
+    display_name VARCHAR,
+    apply_id VARCHAR NOT NULL,
+    row_version BIGINT NOT NULL,
+    valid_from BIGINT NOT NULL,
+    deleted BOOLEAN NOT NULL
+) WITH ('materialized' = 'true');
+"#
+        .trim()
+        .to_owned(),
+        r#"
+CREATE TABLE membership (
+    tenant_id VARCHAR NOT NULL,
+    subject_id VARCHAR NOT NULL,
+    roles_json VARCHAR NOT NULL,
+    facts_json VARCHAR NOT NULL,
+    apply_id VARCHAR NOT NULL,
+    row_version BIGINT NOT NULL,
+    valid_from BIGINT NOT NULL,
+    deleted BOOLEAN NOT NULL
+) WITH ('materialized' = 'true');
+"#
+        .trim()
+        .to_owned(),
+        r#"
+CREATE TABLE assumption_grant (
+    subject_id VARCHAR NOT NULL,
+    source_tenant_id VARCHAR NOT NULL,
+    target_tenant_id VARCHAR NOT NULL,
+    target_roles_json VARCHAR NOT NULL,
+    ttl_seconds BIGINT,
+    apply_id VARCHAR NOT NULL,
+    row_version BIGINT NOT NULL,
+    valid_from BIGINT NOT NULL,
+    deleted BOOLEAN NOT NULL
+) WITH ('materialized' = 'true');
+"#
+        .trim()
+        .to_owned(),
+        r#"
+CREATE TABLE action (
+    action_name VARCHAR NOT NULL,
+    description VARCHAR,
+    apply_id VARCHAR NOT NULL,
+    row_version BIGINT NOT NULL,
+    valid_from BIGINT NOT NULL,
+    deleted BOOLEAN NOT NULL
+) WITH ('materialized' = 'true');
+"#
+        .trim()
+        .to_owned(),
+        r#"
+CREATE TABLE template (
+    tenant_id VARCHAR NOT NULL,
+    template_key VARCHAR NOT NULL,
+    source_tenant_id VARCHAR,
+    source_template_key VARCHAR,
+    source_mode VARCHAR,
+    policies_json VARCHAR NOT NULL,
+    apply_id VARCHAR NOT NULL,
+    row_version BIGINT NOT NULL,
+    valid_from BIGINT NOT NULL,
+    deleted BOOLEAN NOT NULL
+) WITH ('materialized' = 'true');
+"#
+        .trim()
+        .to_owned(),
+        r#"
+CREATE TABLE role (
+    tenant_id VARCHAR NOT NULL,
+    role_key VARCHAR NOT NULL,
+    template_key VARCHAR,
+    policies_json VARCHAR NOT NULL,
+    apply_id VARCHAR NOT NULL,
+    row_version BIGINT NOT NULL,
+    valid_from BIGINT NOT NULL,
+    deleted BOOLEAN NOT NULL
+) WITH ('materialized' = 'true');
+"#
+        .trim()
+        .to_owned(),
+        r#"
+CREATE TABLE auth_runtime_commit (
+    change_id VARCHAR NOT NULL,
+    committed_at BIGINT NOT NULL,
+    committed BOOLEAN NOT NULL
+) WITH ('materialized' = 'true');
+"#
+        .trim()
+        .to_owned(),
+        r#"
+CREATE TABLE invite (
+    invite_id VARCHAR NOT NULL,
+    subject_id VARCHAR NOT NULL,
+    redeem_code_hash VARCHAR NOT NULL,
+    created_at BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    redeemed_at BIGINT,
+    change_id VARCHAR NOT NULL,
+    row_version BIGINT NOT NULL,
+    valid_from BIGINT NOT NULL,
+    deleted BOOLEAN NOT NULL
+) WITH ('materialized' = 'true');
+"#
+        .trim()
+        .to_owned(),
+        r#"
+CREATE TABLE subject_credential (
+    subject_id VARCHAR NOT NULL,
+    salt VARCHAR NOT NULL,
+    password_hash VARCHAR NOT NULL,
+    credential_valid_to BIGINT,
+    change_id VARCHAR NOT NULL,
+    row_version BIGINT NOT NULL,
+    valid_from BIGINT NOT NULL,
+    deleted BOOLEAN NOT NULL
+) WITH ('materialized' = 'true');
+"#
+        .trim()
+        .to_owned(),
+        r#"
+CREATE TABLE session_state (
+    session_id VARCHAR NOT NULL,
+    subject_id VARCHAR NOT NULL,
+    tenant_id VARCHAR NOT NULL,
+    created_at BIGINT NOT NULL,
+    last_seen_at BIGINT NOT NULL,
+    session_valid_to BIGINT,
+    change_id VARCHAR NOT NULL,
+    row_version BIGINT NOT NULL,
+    valid_from BIGINT NOT NULL,
+    deleted BOOLEAN NOT NULL
+) WITH ('materialized' = 'true');
+"#
+        .trim()
+        .to_owned(),
+    ];
+
+    for spec in MANAGED_VIEW_SPECS.iter().chain(RUNTIME_VIEW_SPECS.iter()) {
+        statements.push(versioned_view_sql(*spec));
+        statements.push(current_view_sql(*spec));
+    }
+
+    statements.join("\n\n")
+}
+
+fn versioned_view_sql(spec: TemporalViewSpec) -> String {
+    let source_table = spec.table_name;
+    let key_predicates = spec
+        .key_columns
+        .iter()
+        .map(|column| format!("t2.{column} = t1.{column}"))
+        .collect::<Vec<_>>()
+        .join("\n          AND ");
+
+    format!(
+        r#"
+CREATE MATERIALIZED VIEW {versioned_view} AS
+SELECT
+    t1.*,
+    (
+        SELECT MIN(t2.valid_from)
+        FROM {source_table} t2
+        JOIN {commit_table} c2
+          ON t2.{provenance_column} = c2.{provenance_column}
+         AND c2.committed = TRUE
+        WHERE {key_predicates}
+          AND t2.row_version > t1.row_version
+    ) AS valid_to
+FROM {source_table} t1
+JOIN {commit_table} c
+  ON t1.{provenance_column} = c.{provenance_column}
+ AND c.committed = TRUE;
+"#,
+        versioned_view = spec.versioned_view,
+        source_table = source_table,
+        commit_table = spec.commit_table,
+        provenance_column = spec.provenance_column,
+        key_predicates = key_predicates,
+    )
     .trim()
     .to_owned()
+}
+
+fn current_view_sql(spec: TemporalViewSpec) -> String {
+    format!(
+        r#"
+CREATE MATERIALIZED VIEW {current_view} AS
+SELECT *
+FROM {versioned_view}
+WHERE valid_to IS NULL
+  AND deleted = FALSE;
+"#,
+        current_view = spec.current_view,
+        versioned_view = spec.versioned_view,
+    )
+    .trim()
+    .to_owned()
+}
+
+fn select_current_sql(view_name: &str) -> String {
+    format!("SELECT * FROM {view_name}")
+}
+
+#[cfg(test)]
+fn select_history_sql(view_name: &str, key_filters: &[(&str, String)]) -> String {
+    let predicates = equality_predicates(key_filters);
+    format!("SELECT * FROM {view_name} WHERE {predicates} ORDER BY row_version")
+}
+
+fn select_max_row_version_sql(table_name: &str, key_filters: &[(&str, String)]) -> String {
+    let predicates = equality_predicates(key_filters);
+    format!(
+        "SELECT CAST(COALESCE(MAX(row_version), 0) AS BIGINT) AS count FROM {table_name} WHERE {predicates}"
+    )
+}
+
+fn equality_predicates(key_filters: &[(&str, String)]) -> String {
+    key_filters
+        .iter()
+        .map(|(column, value)| format!("{column} = '{}'", escape_sql(value)))
+        .collect::<Vec<_>>()
+        .join(" AND ")
 }
 
 fn empty_managed_config() -> ManagedConfig {
@@ -709,28 +1578,96 @@ fn escape_sql(input: &str) -> String {
     input.replace('\'', "''")
 }
 
+fn serialize_json<T>(value: &T) -> String
+where
+    T: Serialize,
+{
+    serde_json::to_string(value).expect("row payload should serialize")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{diff_rows, managed_store_sql, ApplyCommitRow, ManagedEventRow};
+    use super::{
+        collect_changes, managed_store_sql, select_current_sql, select_history_sql,
+        select_max_row_version_sql, ApplyCommitRow, InviteRow, TenantRow,
+    };
     use conclave_managed_config::ManagedConfig;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
+    // r[verify config.managed.store.typed-entity-tables]
+    // r[verify config.managed.store.apply-provenance]
+    // r[verify config.managed.store.runtime-provenance]
+    // r[verify config.managed.store.sql-lower-snake-case]
     #[test]
-    fn generates_store_sql_with_materialized_current_view() {
+    fn generates_store_sql_with_typed_tables_and_views() {
         let sql = managed_store_sql();
 
-        assert!(sql.contains("CREATE TABLE APPLY_COMMIT"));
-        assert!(sql.contains("CREATE TABLE MANAGED_EVENT"));
-        assert!(sql.contains("CREATE TABLE AUTH_RUNTIME_COMMIT"));
-        assert!(sql.contains("CREATE TABLE AUTH_RUNTIME_EVENT"));
-        assert!(sql.contains("CREATE MATERIALIZED VIEW VERSIONED_MANAGED_EVENT"));
-        assert!(sql.contains("CREATE MATERIALIZED VIEW CURRENT_MANAGED_EVENT"));
-        assert!(sql.contains("CREATE MATERIALIZED VIEW VERSIONED_AUTH_RUNTIME_EVENT"));
-        assert!(sql.contains("CREATE MATERIALIZED VIEW CURRENT_AUTH_RUNTIME_EVENT"));
-        assert!(sql.contains("valid_to"));
+        assert!(sql.contains("CREATE TABLE apply_commit"));
+        assert!(sql.contains("CREATE TABLE tenant"));
+        assert!(sql.contains("CREATE TABLE subject"));
+        assert!(sql.contains("CREATE TABLE membership"));
+        assert!(sql.contains("CREATE TABLE assumption_grant"));
+        assert!(sql.contains("CREATE TABLE action"));
+        assert!(sql.contains("CREATE TABLE template"));
+        assert!(sql.contains("CREATE TABLE role"));
+        assert!(sql.contains("CREATE TABLE invite"));
+        assert!(sql.contains("CREATE TABLE subject_credential"));
+        assert!(sql.contains("CREATE TABLE session_state"));
+        assert!(sql.contains("CREATE MATERIALIZED VIEW versioned_tenant"));
+        assert!(sql.contains("CREATE MATERIALIZED VIEW current_tenant"));
+        assert!(sql.contains("CREATE MATERIALIZED VIEW versioned_invite"));
+        assert!(sql.contains("CREATE MATERIALIZED VIEW current_session"));
+        assert!(!sql.contains("MANAGED_EVENT"));
+        assert!(!sql.contains("CURRENT_MANAGED_EVENT"));
+    }
+
+    // r[verify config.managed.store.current-state-views]
+    #[test]
+    fn builds_current_and_history_queries_for_typed_views() {
+        assert_eq!(
+            select_current_sql("current_tenant"),
+            "SELECT * FROM current_tenant"
+        );
+
+        let history_sql = select_history_sql(
+            "versioned_membership",
+            &[
+                ("tenant_id", "tenant-a".to_owned()),
+                ("subject_id", "subject-a".to_owned()),
+            ],
+        );
+
+        assert_eq!(
+            history_sql,
+            "SELECT * FROM versioned_membership WHERE tenant_id = 'tenant-a' AND subject_id = 'subject-a' ORDER BY row_version"
+        );
+    }
+
+    // r[verify config.managed.store.row-version-per-entity]
+    #[test]
+    fn scopes_row_version_queries_to_logical_entity_keys() {
+        let membership_sql = select_max_row_version_sql(
+            "membership",
+            &[
+                ("tenant_id", "tenant-a".to_owned()),
+                ("subject_id", "subject-a".to_owned()),
+            ],
+        );
+        let action_sql =
+            select_max_row_version_sql("action", &[("action_name", "tenant:user:read".to_owned())]);
+
+        assert_eq!(
+            membership_sql,
+            "SELECT CAST(COALESCE(MAX(row_version), 0) AS BIGINT) AS count FROM membership WHERE tenant_id = 'tenant-a' AND subject_id = 'subject-a'"
+        );
+        assert_eq!(
+            action_sql,
+            "SELECT CAST(COALESCE(MAX(row_version), 0) AS BIGINT) AS count FROM action WHERE action_name = 'tenant:user:read'"
+        );
     }
 
     #[test]
-    fn diffs_managed_resources_into_event_rows() {
+    fn diffs_managed_resources_into_typed_changes() {
         let current = ManagedConfig::load_from_str(
             r#"
 catalog { actions ({name "tenant:user:read"}) }
@@ -746,39 +1683,124 @@ tenants ({id "tenant-b"})
         )
         .expect("desired should parse");
 
-        let changes = diff_rows(&current, &desired);
+        let tenant_changes =
+            collect_changes(&current.tenants, &desired.tenants, |entry| entry.id.clone());
+        let action_changes = collect_changes(
+            &current.catalog.actions,
+            &desired.catalog.actions,
+            |entry| entry.name.clone(),
+        );
 
-        assert!(changes
+        assert!(tenant_changes
             .iter()
-            .any(|change| change.resource_key == "tenant-a" && change.deleted));
-        assert!(changes
+            .any(|change| change.value.id == "tenant-a" && change.deleted));
+        assert!(tenant_changes
             .iter()
-            .any(|change| change.resource_key == "tenant-b" && !change.deleted));
-        assert!(changes
+            .any(|change| change.value.id == "tenant-b" && !change.deleted));
+        assert!(action_changes
             .iter()
-            .any(|change| change.resource_key == "tenant:user:write"));
+            .any(|change| change.value.name == "tenant:user:write" && !change.deleted));
     }
 
     #[test]
-    fn deserializes_uppercase_query_rows() {
-        let event: ManagedEventRow = serde_json::from_str(
+    fn deserializes_uppercase_query_rows_for_typed_schema() {
+        let tenant: TenantRow = serde_json::from_str(
             r#"{
-                "RESOURCE_KIND":"tenant",
-                "RESOURCE_KEY":"tenant-a",
-                "SCOPE":"root",
+                "TENANT_ID":"tenant-a",
+                "DISPLAY_NAME":"Tenant A",
+                "PARENT_TENANT_ID":"root",
+                "STATE":"active",
                 "APPLY_ID":"apply-1",
                 "ROW_VERSION":1,
                 "VALID_FROM":1,
-                "DELETED":false,
-                "PAYLOAD_JSON":"{\"id\":\"tenant-a\"}"
+                "DELETED":false
             }"#,
         )
-        .expect("event row should deserialize");
+        .expect("tenant row should deserialize");
+        let invite: InviteRow = serde_json::from_str(
+            r#"{
+                "INVITE_ID":"invite-1",
+                "SUBJECT_ID":"subject-1",
+                "REDEEM_CODE_HASH":"hash",
+                "CREATED_AT":1,
+                "EXPIRES_AT":2,
+                "REDEEMED_AT":null,
+                "CHANGE_ID":"change-1",
+                "ROW_VERSION":1,
+                "VALID_FROM":1,
+                "DELETED":false
+            }"#,
+        )
+        .expect("invite row should deserialize");
         let commit: ApplyCommitRow =
             serde_json::from_str(r#"{"APPLY_ID":"apply-1","COMMITTED_AT":1,"COMMITTED":true}"#)
                 .expect("commit row should deserialize");
 
-        assert_eq!(event.resource_key, "tenant-a");
+        assert_eq!(tenant.tenant_id, "tenant-a");
+        assert_eq!(invite.invite_id, "invite-1");
         assert!(commit.committed);
+    }
+
+    #[actix_web::test]
+    #[ignore = "requires a running Feldera manager via CONCLAVE_COMPONENT_FELDERA_URL"]
+    async fn bootstraps_typed_temporal_store_against_live_feldera_manager() {
+        let base_url = std::env::var("CONCLAVE_COMPONENT_FELDERA_URL")
+            .expect("set CONCLAVE_COMPONENT_FELDERA_URL to run this test");
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should be monotonic enough")
+            .as_nanos();
+        let pipeline_prefix = format!("component-store-{nonce}");
+        let client = crate::feldera::FelderaClient::new(base_url.clone(), None);
+        let store = super::FelderaManagedStore::new(
+            client,
+            crate::config::FelderaConfig {
+                enabled: true,
+                base_url,
+                pipeline_prefix,
+                readiness_probe: false,
+                api_key: None,
+                compile_profile: "dev".to_owned(),
+                auto_start: false,
+                start_initial: "paused".to_owned(),
+            },
+        );
+        let managed = ManagedConfig::load_from_str(
+            r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+    )
+}
+tenants (
+    {id "root"}
+    {id "tenant-a", parent "root"}
+)
+"#,
+        )
+        .expect("managed config should parse");
+
+        let bootstrapped = store
+            .bootstrap_if_empty(&managed)
+            .await
+            .expect("typed store bootstrap should succeed");
+        let loaded = store
+            .load_managed()
+            .await
+            .expect("typed store load should succeed");
+        let latest_apply_id = store
+            .load_latest_apply_id()
+            .await
+            .expect("typed store should expose an apply id");
+
+        assert!(bootstrapped);
+        assert!(latest_apply_id.is_some());
+        assert!(loaded
+            .catalog
+            .actions
+            .iter()
+            .any(|action| action.name == "tenant:user:read"));
+        assert!(loaded.tenants.iter().any(|tenant| tenant.id == "root"));
+        assert!(loaded.tenants.iter().any(|tenant| tenant.id == "tenant-a"));
     }
 }

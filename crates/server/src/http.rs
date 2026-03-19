@@ -696,6 +696,7 @@ memberships (
     #[actix_web::test]
     async fn syncs_authz_pipeline_against_a_manager_endpoint() {
         use actix_web::patch;
+        use std::collections::BTreeMap;
         use std::sync::{Arc, Mutex};
         use std::{net::TcpListener, time::Duration};
 
@@ -703,12 +704,21 @@ memberships (
         struct Seen {
             gets: usize,
             creates: usize,
+            pipelines: BTreeMap<String, crate::feldera::PipelineRecord>,
         }
 
         #[get("/v0/pipelines/{name}")]
-        async fn get_pipeline(seen: web::Data<Arc<Mutex<Seen>>>) -> impl Responder {
-            seen.lock().expect("seen lock").gets += 1;
-            HttpResponse::NotFound().finish()
+        async fn get_pipeline(
+            path: web::Path<String>,
+            seen: web::Data<Arc<Mutex<Seen>>>,
+        ) -> impl Responder {
+            let mut seen = seen.lock().expect("seen lock");
+            seen.gets += 1;
+            if let Some(pipeline) = seen.pipelines.get(path.as_str()).cloned() {
+                HttpResponse::Ok().json(pipeline)
+            } else {
+                HttpResponse::NotFound().finish()
+            }
         }
 
         #[post("/v0/pipelines")]
@@ -716,8 +726,7 @@ memberships (
             seen: web::Data<Arc<Mutex<Seen>>>,
             body: web::Json<crate::feldera::DesiredPipeline>,
         ) -> impl Responder {
-            seen.lock().expect("seen lock").creates += 1;
-            HttpResponse::Ok().json(crate::feldera::PipelineRecord {
+            let record = crate::feldera::PipelineRecord {
                 name: body.name.clone(),
                 description: Some(body.description.clone()),
                 program_code: Some(body.program_code.clone()),
@@ -726,15 +735,20 @@ memberships (
                 deployment_resources_status: None,
                 deployment_runtime_status: None,
                 program_config: body.program_config.clone(),
-            })
+            };
+            let mut seen = seen.lock().expect("seen lock");
+            seen.creates += 1;
+            seen.pipelines.insert(record.name.clone(), record.clone());
+            HttpResponse::Ok().json(record)
         }
 
         #[patch("/v0/pipelines/{name}")]
         async fn patch_pipeline(
             body: web::Json<serde_json::Value>,
             path: web::Path<String>,
+            seen: web::Data<Arc<Mutex<Seen>>>,
         ) -> impl Responder {
-            HttpResponse::Ok().json(crate::feldera::PipelineRecord {
+            let record = crate::feldera::PipelineRecord {
                 name: path.into_inner(),
                 description: body
                     .get("description")
@@ -754,7 +768,12 @@ memberships (
                         .unwrap_or(serde_json::Value::Null),
                 )
                 .ok(),
-            })
+            };
+            seen.lock()
+                .expect("seen lock")
+                .pipelines
+                .insert(record.name.clone(), record.clone());
+            HttpResponse::Ok().json(record)
         }
 
         #[post("/v0/pipelines/{name}/start")]
@@ -779,23 +798,32 @@ memberships (
                 HttpResponse::Ok().body(r#"[{"count":0}]"#)
             } else if sql.contains("ORDER BY committed_at DESC") {
                 HttpResponse::Ok().body(r#"[{"apply_id":"apply-bootstrap"}]"#)
-            } else if sql.contains("CURRENT_AUTH_RUNTIME_EVENT") {
-                HttpResponse::Ok().body("[]")
-            } else {
+            } else if sql.contains("FROM current_action") {
                 HttpResponse::Ok().body(
                     r#"[
                         {
-                            "resource_kind":"action",
-                            "resource_key":"tenant:user:read",
-                            "scope":"global",
+                            "action_name":"tenant:user:read",
+                            "description":null,
                             "apply_id":"apply-bootstrap",
                             "row_version":1,
                             "valid_from":1,
-                            "deleted":false,
-                            "payload_json":"{\"name\":\"tenant:user:read\"}"
+                            "deleted":false
                         }
                     ]"#,
                 )
+            } else if sql.contains("FROM current_invite")
+                || sql.contains("FROM current_subject_credential")
+                || sql.contains("FROM current_session")
+                || sql.contains("FROM current_tenant")
+                || sql.contains("FROM current_subject")
+                || sql.contains("FROM current_membership")
+                || sql.contains("FROM current_assumption_grant")
+                || sql.contains("FROM current_template")
+                || sql.contains("FROM current_role")
+            {
+                HttpResponse::Ok().body("[]")
+            } else {
+                HttpResponse::Ok().body("[]")
             }
         }
 
@@ -872,7 +900,10 @@ catalog {
             .expect("startup sync should succeed");
 
         handle.stop(true).await;
-        assert_eq!(result.as_deref(), Some("created"));
+        assert!(matches!(
+            result.as_deref(),
+            Some("created") | Some("updated")
+        ));
         let seen = seen.lock().expect("seen lock");
         assert!(seen.gets >= 2);
         assert!(seen.creates >= 2);
@@ -882,6 +913,7 @@ catalog {
     #[actix_web::test]
     async fn bootstraps_managed_state_from_feldera_when_enabled() {
         use actix_web::{patch, HttpResponse};
+        use std::collections::BTreeMap;
         use std::net::TcpListener;
         use std::sync::{Arc, Mutex};
         use std::time::Duration;
@@ -892,13 +924,21 @@ catalog {
             pipeline_creates: usize,
             query_calls: usize,
             ingress_calls: usize,
+            pipelines: BTreeMap<String, crate::feldera::PipelineRecord>,
         }
 
         #[get("/v0/pipelines/{name}")]
-        async fn get_pipeline(seen: web::Data<Arc<Mutex<Seen>>>) -> impl Responder {
+        async fn get_pipeline(
+            path: web::Path<String>,
+            seen: web::Data<Arc<Mutex<Seen>>>,
+        ) -> impl Responder {
             let mut seen = seen.lock().expect("seen lock");
             seen.pipeline_gets += 1;
-            HttpResponse::NotFound().finish()
+            if let Some(pipeline) = seen.pipelines.get(path.as_str()).cloned() {
+                HttpResponse::Ok().json(pipeline)
+            } else {
+                HttpResponse::NotFound().finish()
+            }
         }
 
         #[post("/v0/pipelines")]
@@ -906,8 +946,7 @@ catalog {
             seen: web::Data<Arc<Mutex<Seen>>>,
             body: web::Json<crate::feldera::DesiredPipeline>,
         ) -> impl Responder {
-            seen.lock().expect("seen lock").pipeline_creates += 1;
-            HttpResponse::Ok().json(crate::feldera::PipelineRecord {
+            let record = crate::feldera::PipelineRecord {
                 name: body.name.clone(),
                 description: Some(body.description.clone()),
                 program_code: Some(body.program_code.clone()),
@@ -916,7 +955,11 @@ catalog {
                 deployment_resources_status: Some("Stopped".to_owned()),
                 deployment_runtime_status: None,
                 program_config: body.program_config.clone(),
-            })
+            };
+            let mut seen = seen.lock().expect("seen lock");
+            seen.pipeline_creates += 1;
+            seen.pipelines.insert(record.name.clone(), record.clone());
+            HttpResponse::Ok().json(record)
         }
 
         #[post("/v0/pipelines/{name}/start")]
@@ -928,8 +971,9 @@ catalog {
         async fn patch_pipeline(
             body: web::Json<serde_json::Value>,
             path: web::Path<String>,
+            seen: web::Data<Arc<Mutex<Seen>>>,
         ) -> impl Responder {
-            HttpResponse::Ok().json(crate::feldera::PipelineRecord {
+            let record = crate::feldera::PipelineRecord {
                 name: path.into_inner(),
                 description: body
                     .get("description")
@@ -949,7 +993,12 @@ catalog {
                         .unwrap_or(serde_json::Value::Null),
                 )
                 .ok(),
-            })
+            };
+            seen.lock()
+                .expect("seen lock")
+                .pipelines
+                .insert(record.name.clone(), record.clone());
+            HttpResponse::Ok().json(record)
         }
 
         #[get("/v0/pipelines/{name}/query")]
@@ -973,23 +1022,32 @@ catalog {
                 HttpResponse::Ok().body(r#"[{"count":0}]"#)
             } else if sql.contains("ORDER BY committed_at DESC") {
                 HttpResponse::Ok().body(r#"[{"apply_id":"apply-bootstrap"}]"#)
-            } else if sql.contains("CURRENT_AUTH_RUNTIME_EVENT") {
-                HttpResponse::Ok().body("[]")
-            } else {
+            } else if sql.contains("FROM current_action") {
                 HttpResponse::Ok().body(
                     r#"[
                         {
-                            "resource_kind":"action",
-                            "resource_key":"tenant:user:read",
-                            "scope":"global",
+                            "action_name":"tenant:user:read",
+                            "description":null,
                             "apply_id":"apply-bootstrap",
                             "row_version":1,
                             "valid_from":1,
-                            "deleted":false,
-                            "payload_json":"{\"name\":\"tenant:user:read\"}"
+                            "deleted":false
                         }
                     ]"#,
                 )
+            } else if sql.contains("FROM current_invite")
+                || sql.contains("FROM current_subject_credential")
+                || sql.contains("FROM current_session")
+                || sql.contains("FROM current_tenant")
+                || sql.contains("FROM current_subject")
+                || sql.contains("FROM current_membership")
+                || sql.contains("FROM current_assumption_grant")
+                || sql.contains("FROM current_template")
+                || sql.contains("FROM current_role")
+            {
+                HttpResponse::Ok().body("[]")
+            } else {
+                HttpResponse::Ok().body("[]")
             }
         }
 
@@ -1086,10 +1144,7 @@ catalog {
         struct FakeStore {
             pipelines_created: usize,
             pipeline: Option<crate::feldera::PipelineRecord>,
-            managed_events: Vec<Value>,
-            apply_commits: Vec<Value>,
-            auth_runtime_events: Vec<Value>,
-            auth_runtime_commits: Vec<Value>,
+            tables: BTreeMap<String, Vec<Value>>,
         }
 
         fn decode_sql(request: &HttpRequest) -> String {
@@ -1105,28 +1160,84 @@ catalog {
                 .replace("%2A", "*")
         }
 
-        fn latest_rows(rows: &[Value]) -> Vec<Value> {
-            let mut latest = BTreeMap::<(String, String), Value>::new();
+        fn table_key_columns(name: &str) -> &'static [&'static str] {
+            match name {
+                "tenant" | "versioned_tenant" | "current_tenant" => &["tenant_id"],
+                "subject" | "versioned_subject" | "current_subject" => &["subject_id"],
+                "membership" | "versioned_membership" | "current_membership" => {
+                    &["tenant_id", "subject_id"]
+                }
+                "assumption_grant" | "versioned_assumption_grant" | "current_assumption_grant" => {
+                    &["subject_id", "source_tenant_id", "target_tenant_id"]
+                }
+                "action" | "versioned_action" | "current_action" => &["action_name"],
+                "template" | "versioned_template" | "current_template" => {
+                    &["tenant_id", "template_key"]
+                }
+                "role" | "versioned_role" | "current_role" => &["tenant_id", "role_key"],
+                "invite" | "versioned_invite" | "current_invite" => &["invite_id"],
+                "subject_credential"
+                | "versioned_subject_credential"
+                | "current_subject_credential" => &["subject_id"],
+                "session_state" => &["session_id"],
+                "session" | "versioned_session" | "current_session" => &["session_id"],
+                _ => &[],
+            }
+        }
+
+        fn backing_table_name(name: &str) -> &str {
+            match name {
+                "session" | "versioned_session" | "current_session" => "session_state",
+                _ => name,
+            }
+        }
+
+        fn table_name_from_sql(sql: &str) -> Option<&str> {
+            sql.split("FROM ")
+                .nth(1)
+                .and_then(|part| part.split_whitespace().next())
+        }
+
+        fn sql_filters(sql: &str) -> Vec<(String, String)> {
+            let Some(where_clause) = sql.split(" WHERE ").nth(1) else {
+                return Vec::new();
+            };
+            let predicate_segment = where_clause
+                .split(" ORDER BY ")
+                .next()
+                .unwrap_or(where_clause);
+
+            predicate_segment
+                .split(" AND ")
+                .filter_map(|predicate| {
+                    let (column, rest) = predicate.split_once(" = '")?;
+                    let value = rest.strip_suffix('\'')?.replace("''", "'");
+                    Some((column.to_owned(), value))
+                })
+                .collect()
+        }
+
+        fn latest_rows(rows: &[Value], key_columns: &[&str]) -> Vec<Value> {
+            let mut latest = BTreeMap::<Vec<String>, Value>::new();
 
             for row in rows {
-                let kind = row
-                    .get("resource_kind")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned();
-                let key = row
-                    .get("resource_key")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned();
+                let key = key_columns
+                    .iter()
+                    .map(|column| {
+                        row.get(*column)
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned()
+                    })
+                    .collect::<Vec<_>>();
                 let row_version = row.get("row_version").and_then(Value::as_u64).unwrap_or(0);
                 let replace = latest
-                    .get(&(kind.clone(), key.clone()))
+                    .get(&key)
                     .and_then(|current| current.get("row_version").and_then(Value::as_u64))
                     .map(|current| row_version >= current)
                     .unwrap_or(true);
                 if replace {
-                    latest.insert((kind, key), row.clone());
+                    latest.insert(key, row.clone());
                 }
             }
 
@@ -1211,13 +1322,11 @@ catalog {
         ) -> impl Responder {
             let table = &path.1;
             let mut store = store.lock().expect("store lock");
-            match table.as_str() {
-                "MANAGED_EVENT" => store.managed_events.extend(body.into_inner()),
-                "APPLY_COMMIT" => store.apply_commits.extend(body.into_inner()),
-                "AUTH_RUNTIME_EVENT" => store.auth_runtime_events.extend(body.into_inner()),
-                "AUTH_RUNTIME_COMMIT" => store.auth_runtime_commits.extend(body.into_inner()),
-                _ => {}
-            }
+            store
+                .tables
+                .entry(table.to_owned())
+                .or_default()
+                .extend(body.into_inner());
 
             HttpResponse::Ok().json(serde_json::json!({ "completion_token": "done-1" }))
         }
@@ -1235,48 +1344,59 @@ catalog {
             let sql = decode_sql(&request);
             let store = store.lock().expect("store lock");
 
-            if sql.contains("FROM APPLY_COMMIT") && sql.contains("COUNT(*)") {
+            if sql.contains("FROM apply_commit") && sql.contains("COUNT(*)") {
                 let count = store
-                    .apply_commits
+                    .tables
+                    .get("apply_commit")
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
                     .iter()
                     .filter(|row| row.get("committed").and_then(Value::as_bool) == Some(true))
                     .count();
                 HttpResponse::Ok().json(vec![serde_json::json!({ "count": count })])
             } else if sql.contains("ORDER BY committed_at DESC") {
                 let apply_id = store
-                    .apply_commits
+                    .tables
+                    .get("apply_commit")
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
                     .iter()
                     .filter(|row| row.get("committed").and_then(Value::as_bool) == Some(true))
                     .max_by_key(|row| row.get("committed_at").and_then(Value::as_u64).unwrap_or(0))
                     .and_then(|row| row.get("apply_id").and_then(Value::as_str))
                     .unwrap_or("apply-bootstrap");
                 HttpResponse::Ok().json(vec![serde_json::json!({ "apply_id": apply_id })])
-            } else if sql.contains("FROM CURRENT_MANAGED_EVENT") {
-                HttpResponse::Ok().json(latest_rows(&store.managed_events))
-            } else if sql.contains("FROM CURRENT_AUTH_RUNTIME_EVENT") {
-                HttpResponse::Ok().json(latest_rows(&store.auth_runtime_events))
-            } else if sql.contains("FROM MANAGED_EVENT") && sql.contains("MAX(row_version)") {
-                let resource_kind = sql
-                    .split("resource_kind = '")
-                    .nth(1)
-                    .and_then(|part| part.split('\'').next())
-                    .unwrap_or_default();
-                let scope = sql
-                    .split("scope = '")
-                    .nth(1)
-                    .and_then(|part| part.split('\'').next())
-                    .unwrap_or_default();
+            } else if sql.contains("MAX(row_version)") {
+                let table_name = table_name_from_sql(&sql).unwrap_or_default();
+                let filters = sql_filters(&sql);
                 let max = store
-                    .managed_events
+                    .tables
+                    .get(table_name)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
                     .iter()
                     .filter(|row| {
-                        row.get("resource_kind").and_then(Value::as_str) == Some(resource_kind)
-                            && row.get("scope").and_then(Value::as_str) == Some(scope)
+                        filters.iter().all(|(column, expected)| {
+                            row.get(column)
+                                .and_then(Value::as_str)
+                                .map(|value| value == expected)
+                                .unwrap_or(false)
+                        })
                     })
                     .filter_map(|row| row.get("row_version").and_then(Value::as_u64))
                     .max()
                     .unwrap_or(0);
                 HttpResponse::Ok().json(vec![serde_json::json!({ "count": max })])
+            } else if let Some(view_name) = table_name_from_sql(&sql) {
+                let table_name =
+                    backing_table_name(view_name.strip_prefix("current_").unwrap_or(view_name));
+                let key_columns = table_key_columns(view_name);
+                let rows = store
+                    .tables
+                    .get(table_name)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                HttpResponse::Ok().json(latest_rows(rows, key_columns))
             } else {
                 HttpResponse::Ok().json(Vec::<Value>::new())
             }
@@ -1446,7 +1566,14 @@ memberships (
         handle.stop(true).await;
         assert_eq!(login_response.claims.sub, "doctor-1");
         let store = store.lock().expect("store lock");
-        assert!(store.auth_runtime_events.len() >= 3);
+        let runtime_row_count = store.tables.get("invite").map(Vec::len).unwrap_or(0)
+            + store
+                .tables
+                .get("subject_credential")
+                .map(Vec::len)
+                .unwrap_or(0)
+            + store.tables.get("session_state").map(Vec::len).unwrap_or(0);
+        assert!(runtime_row_count >= 3);
     }
 
     #[actix_web::test]

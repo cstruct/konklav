@@ -39,6 +39,24 @@ Persisted managed control-plane state MUST preserve introspectible temporal hist
 r[config.managed.feldera-authoritative-store]
 For the Feldera-backed control-plane phase, Feldera MUST be able to act as the authoritative persisted store for managed control-plane state, with server-local state limited to runtime caching or derived projections.
 
+r[config.managed.store.typed-entity-tables]
+The Feldera-backed managed store MUST persist each managed entity kind in its own typed temporal table rather than one generic multi-kind event bucket.
+
+r[config.managed.store.current-state-views]
+The Feldera-backed managed store MUST expose typed current-state views per entity kind so read paths do not depend on generic resource-kind filtering.
+
+r[config.managed.store.row-version-per-entity]
+Each typed temporal table MUST advance `row_version` within the stable key of that table's logical entity rather than within a shared cross-entity stream.
+
+r[config.managed.store.apply-provenance]
+Managed typed temporal rows MUST record the `apply_id` of the managed apply that produced them.
+
+r[config.managed.store.runtime-provenance]
+Runtime-auth temporal rows such as invites, linked credentials, and sessions MUST use a runtime change provenance marker that is distinct from managed `apply_id`.
+
+r[config.managed.store.sql-lower-snake-case]
+Typed Feldera SQL objects for the control-plane store MUST use `lower_snake_case` identifiers, with a documented fallback that preserves the same spelling via quoted identifiers where possible and uses a stable `lower_snake_case` disambiguator when a reserved word still collides.
+
 ## Apply semantics
 
 r[config.managed.apply-operation]
