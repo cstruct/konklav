@@ -14,7 +14,7 @@ use crate::authz::CompiledAuthzModel;
 use crate::config::{AppConfig, LoadedConfig};
 use crate::feldera::{sync_authz_pipeline, FelderaClient, StartPipelineRequest};
 use crate::managed_store::{FelderaManagedStore, ManagedApplyFailure};
-use crate::state::ControlPlaneState;
+use crate::state::{ControlPlaneState, RuntimeAuthState};
 use crate::tenants::{AssumeAccessTokenRequest, CompiledTenantModel, ValidateAccessTokenRequest};
 
 #[derive(Clone)]
@@ -22,7 +22,8 @@ pub struct AppState {
     config: Arc<AppConfig>,
     config_source: Arc<String>,
     managed_source: Arc<String>,
-    state: Arc<RwLock<ControlPlaneState>>,
+    runtime_auth: Arc<RwLock<RuntimeAuthState>>,
+    in_memory_managed: Option<Arc<RwLock<ControlPlaneState>>>,
     signer: Arc<JwtSigner>,
     verifier: Arc<JwtVerifier>,
     feldera: Option<FelderaClient>,
@@ -72,33 +73,34 @@ impl AppState {
                 loaded.config.feldera.clone(),
             ))
         });
-        let (state, managed_source) = if let Some(store) = &managed_store {
+        let (runtime_auth, in_memory_managed, managed_source) = if let Some(store) = &managed_store
+        {
             store.bootstrap_if_empty(&managed.managed).await?;
-            let durable_apply_id = store.load_latest_apply_id().await?;
             let (invites, credentials, sessions) = store.load_runtime_auth_state().await?;
-            let mut state = ControlPlaneState::empty();
-            if let Some(apply_id) = durable_apply_id {
-                state.set_last_apply_id(apply_id);
-            }
-            state.replace_runtime_auth_state(invites, credentials, sessions);
+            let mut runtime_auth = RuntimeAuthState::empty();
+            runtime_auth.replace_runtime_auth_state(invites, credentials, sessions);
             (
-                state,
+                runtime_auth,
+                None,
                 format!(
                     "feldera:{} (bootstrap seed {})",
                     loaded.config.feldera.pipeline_prefix, managed.source
                 ),
             )
         } else {
-            let mut state = ControlPlaneState::empty();
-            state.bootstrap_from_managed_if_empty(managed.managed)?;
-            (state, managed.source)
+            (
+                RuntimeAuthState::empty(),
+                Some(ControlPlaneState::new(managed.managed)?),
+                managed.source,
+            )
         };
 
         Ok(Self {
             config: Arc::new(loaded.config),
             config_source: Arc::new(loaded.source),
             managed_source: Arc::new(managed_source),
-            state: Arc::new(RwLock::new(state)),
+            runtime_auth: Arc::new(RwLock::new(runtime_auth)),
+            in_memory_managed: in_memory_managed.map(|state| Arc::new(RwLock::new(state))),
             signer: Arc::new(signer),
             verifier: Arc::new(verifier),
             feldera,
@@ -122,7 +124,12 @@ impl AppState {
         match &self.managed_store {
             Some(store) => store.load_managed().await,
             None => {
-                let guard = self.state.read().expect("state lock should not poison");
+                let guard = self
+                    .in_memory_managed
+                    .as_ref()
+                    .expect("in-memory managed state should exist when Feldera is disabled")
+                    .read()
+                    .expect("managed state lock should not poison");
                 Ok(guard.managed().clone())
             }
         }
@@ -135,7 +142,12 @@ impl AppState {
                 .await?
                 .unwrap_or_else(|| "apply-000000".to_owned())),
             None => {
-                let guard = self.state.read().expect("state lock should not poison");
+                let guard = self
+                    .in_memory_managed
+                    .as_ref()
+                    .expect("in-memory managed state should exist when Feldera is disabled")
+                    .read()
+                    .expect("managed state lock should not poison");
                 Ok(guard.last_apply_id.clone())
             }
         }
@@ -391,8 +403,6 @@ async fn managed_apply(
                 }))
             }
         };
-        let mut guard = state.state.write().expect("state lock should not poison");
-        guard.set_last_apply_id(applied.apply_id.clone());
         HttpResponse::Ok().json(ManagedApplyResponse {
             applied: true,
             apply_id: applied.apply_id,
@@ -418,7 +428,12 @@ async fn managed_apply(
             }
         };
 
-        let mut guard = state.state.write().expect("state lock should not poison");
+        let mut guard = state
+            .in_memory_managed
+            .as_ref()
+            .expect("in-memory managed state should exist when Feldera is disabled")
+            .write()
+            .expect("managed state lock should not poison");
         match guard.apply_with_id(body.managed.clone(), None) {
             Ok(plan) => HttpResponse::Ok().json(ManagedApplyResponse {
                 applied: true,
@@ -507,7 +522,10 @@ async fn create_invite(
     };
 
     let planned = {
-        let guard = state.state.read().expect("state lock should not poison");
+        let guard = state
+            .runtime_auth
+            .read()
+            .expect("runtime auth lock should not poison");
         match guard.plan_invite_with_managed(
             &managed,
             &body.subject,
@@ -530,7 +548,10 @@ async fn create_invite(
         }
     }
 
-    let mut guard = state.state.write().expect("state lock should not poison");
+    let mut guard = state
+        .runtime_auth
+        .write()
+        .expect("runtime auth lock should not poison");
     let invite_id = planned.invite.invite_id.clone();
     let expires_at = planned.invite.expires_at;
     let redeem_code = planned.redeem_code.clone();
@@ -550,7 +571,10 @@ async fn redeem_invite(
     body: web::Json<RedeemInviteRequest>,
 ) -> impl Responder {
     let planned = {
-        let guard = state.state.write().expect("state lock should not poison");
+        let guard = state
+            .runtime_auth
+            .write()
+            .expect("runtime auth lock should not poison");
         match guard.plan_redeem_invite(&body.redeem_code, &body.password) {
             Ok(planned) => planned,
             Err(err) => {
@@ -576,7 +600,10 @@ async fn redeem_invite(
         }
     }
 
-    let mut guard = state.state.write().expect("state lock should not poison");
+    let mut guard = state
+        .runtime_auth
+        .write()
+        .expect("runtime auth lock should not poison");
     let subject = guard.apply_redeemed_invite(planned);
     HttpResponse::Ok().json(RedeemInviteResponse {
         subject,
@@ -597,7 +624,10 @@ async fn login(state: web::Data<AppState>, body: web::Json<LoginRequest>) -> imp
     };
 
     let session = {
-        let guard = state.state.read().expect("state lock should not poison");
+        let guard = state
+            .runtime_auth
+            .read()
+            .expect("runtime auth lock should not poison");
         match guard.plan_login_with_managed(&managed, &body.subject, &body.password, &body.tenant) {
             Ok(session) => session,
             Err(err) => {
@@ -617,7 +647,10 @@ async fn login(state: web::Data<AppState>, body: web::Json<LoginRequest>) -> imp
     }
 
     let session_id = {
-        let mut guard = state.state.write().expect("state lock should not poison");
+        let mut guard = state
+            .runtime_auth
+            .write()
+            .expect("runtime auth lock should not poison");
         guard.record_session(session)
     };
 
