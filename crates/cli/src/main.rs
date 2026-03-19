@@ -36,14 +36,23 @@ enum Commands {
     },
 }
 
+// r[depends item.managed-config.root-bundle]
+// r[depends item.managed-config.directory-assembly]
+fn load_managed_from_cwd() -> Result<ManagedConfig, Box<dyn std::error::Error + Send + Sync>> {
+    Ok(ManagedConfig::load_from_dir(".")?.managed)
+}
+
 #[tokio::main]
+// r[depends item.controlplane-api.shared-dto-boundary]
+// r[depends item.controlplane-api.managed-ops-payloads]
+// r[depends item.controlplane-api.subject-and-relying-dtos]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cli = Cli::parse();
     let client = reqwest::Client::new();
 
     match cli.command {
         Commands::Validate => {
-            let managed = ManagedConfig::load_from_dir(".")?.managed;
+            let managed = load_managed_from_cwd()?;
             let response = client
                 .post(format!("{}/v1/managed/validate", cli.control_plane_url))
                 .bearer_auth(&cli.bootstrap_token)
@@ -53,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             println!("{}", response.text().await?);
         }
         Commands::Plan => {
-            let managed = ManagedConfig::load_from_dir(".")?.managed;
+            let managed = load_managed_from_cwd()?;
             let response = client
                 .post(format!("{}/v1/managed/plan", cli.control_plane_url))
                 .bearer_auth(&cli.bootstrap_token)
@@ -63,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             println!("{}", response.text().await?);
         }
         Commands::Apply => {
-            let managed = ManagedConfig::load_from_dir(".")?.managed;
+            let managed = load_managed_from_cwd()?;
             let response = client
                 .post(format!("{}/v1/managed/apply", cli.control_plane_url))
                 .bearer_auth(&cli.bootstrap_token)

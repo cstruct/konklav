@@ -242,6 +242,8 @@ async fn meta(state: web::Data<AppState>) -> impl Responder {
 }
 
 #[post("/v1/managed/validate")]
+// r[depends item.controlplane-api.shared-dto-boundary]
+// r[depends item.controlplane-api.managed-ops-payloads]
 async fn managed_validate(
     state: web::Data<AppState>,
     request: HttpRequest,
@@ -324,6 +326,7 @@ async fn managed_apply(
 }
 
 #[post("/v1/invites")]
+// r[depends item.controlplane-api.subject-and-relying-dtos]
 async fn create_invite(
     state: web::Data<AppState>,
     request: HttpRequest,
@@ -408,6 +411,7 @@ async fn redeem_invite(
 }
 
 #[post("/v1/login")]
+// r[depends item.controlplane-api.subject-and-relying-dtos]
 async fn login(state: web::Data<AppState>, body: web::Json<LoginRequest>) -> impl Responder {
     let session = {
         let guard = state.state.write().expect("state lock should not poison");
@@ -510,6 +514,7 @@ async fn validate_access_token(
 }
 
 #[get("/v1/revisions")]
+// r[depends item.controlplane-api.subject-and-relying-dtos]
 async fn current_revisions(state: web::Data<AppState>) -> impl Responder {
     match state.current_snapshot() {
         Ok((authz, tenants)) => HttpResponse::Ok().json(CurrentRevisionsResponse {
@@ -523,6 +528,7 @@ async fn current_revisions(state: web::Data<AppState>) -> impl Responder {
 }
 
 #[get("/v1/authz/catalog")]
+// r[depends item.controlplane-api.subject-and-relying-dtos]
 async fn action_catalog(state: web::Data<AppState>) -> impl Responder {
     match state.current_catalog() {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -533,6 +539,7 @@ async fn action_catalog(state: web::Data<AppState>) -> impl Responder {
 }
 
 #[get("/.well-known/jwks.json")]
+// r[depends item.relying-auth.ed25519-jwt-boundary]
 async fn jwks(state: web::Data<AppState>) -> impl Responder {
     HttpResponse::Ok().json(JwkSet {
         keys: vec![state.signer.jwk()],

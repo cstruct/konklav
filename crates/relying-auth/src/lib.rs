@@ -140,6 +140,7 @@ impl JwtSigner {
         &self.kid
     }
 
+    // r[impl item.relying-auth.ed25519-jwt-boundary]
     pub fn jwk(&self) -> Jwk {
         let public = self.signing_key.verifying_key();
 
@@ -160,6 +161,7 @@ impl JwtSigner {
         .expect("signer should produce a valid verifier")
     }
 
+    // r[impl item.relying-auth.ed25519-jwt-boundary]
     pub fn sign(&self, claims: &AccessTokenClaims) -> Result<String, DynError> {
         let header = JwtHeader {
             alg: "EdDSA",
@@ -181,6 +183,7 @@ impl JwtSigner {
 }
 
 impl JwtVerifier {
+    // r[impl item.relying-auth.ed25519-jwt-boundary]
     pub fn from_jwks(jwks: &JwkSet) -> Result<Self, DynError> {
         let mut keys = BTreeMap::new();
 
@@ -204,6 +207,8 @@ impl JwtVerifier {
         Ok(Self { keys })
     }
 
+    // r[impl item.relying-auth.validation-options]
+    // r[impl item.relying-auth.offline-decision-evaluation]
     pub fn verify(
         &self,
         token: &str,
@@ -415,6 +420,9 @@ mod tests {
 
     use super::*;
 
+    // r[verify item.relying-auth.ed25519-jwt-boundary]
+    // r[verify item.relying-auth.validation-options]
+    // r[verify item.relying-auth.offline-decision-evaluation]
     #[test]
     fn signs_and_verifies_ed25519_tokens() {
         let signer = JwtSigner::from_seed("kid-1", [7; 32]);

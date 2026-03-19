@@ -44,6 +44,8 @@ These docs answer questions such as:
 
 In the current repository, a crate README may be enough for many software items. If a software item grows stable contracts that deserve normative language, add a dedicated implementation doc rather than overloading the README.
 
+Use [software-item implementation specs](software-item-specs.md) for the current proposed layering, ownership, and repository shape.
+
 ### Design notes
 
 Use `docs/architecture/` for rationale, tradeoffs, decomposition notes, migration plans, and evolving architectural decisions that are important but not yet stable enough to become normative requirements.

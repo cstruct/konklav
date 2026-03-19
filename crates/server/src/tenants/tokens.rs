@@ -129,6 +129,8 @@ impl CompiledTenantModel {
 
     // r[impl token.access.use.offline-evaluation]
     // r[impl token.access.use.staleness-bounds]
+    // r[depends item.relying-auth.validation-options]
+    // r[depends item.relying-auth.offline-decision-evaluation]
     pub fn validate_access_token(
         &self,
         authz: &CompiledAuthzModel,

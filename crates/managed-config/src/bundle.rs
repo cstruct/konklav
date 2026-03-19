@@ -15,6 +15,7 @@ pub struct LoadedManagedConfig {
     pub source: String,
 }
 
+// r[impl item.managed-config.root-bundle]
 #[derive(Clone, Debug, Facet, PartialEq, Serialize, Deserialize)]
 pub struct ManagedConfig {
     pub catalog: ActionCatalogConfig,
@@ -59,6 +60,7 @@ impl ManagedConfig {
         facet_styx::schema_from_type::<Self>()
     }
 
+    // r[impl item.managed-config.directory-assembly]
     // r[impl config.managed.bundle-interface]
     // r[impl config.managed.fragment-assembly]
     pub fn load_from_dir(path: impl AsRef<Path>) -> Result<LoadedManagedConfig, DynError> {
@@ -99,6 +101,7 @@ impl ManagedConfigFragment {
         self.assumption_grants.extend(other.assumption_grants);
     }
 
+    // r[impl item.managed-config.required-catalog]
     fn into_managed_config(self) -> Result<ManagedConfig, DynError> {
         let catalog = self.catalog.ok_or_else(|| {
             Box::new(io::Error::new(
@@ -161,6 +164,8 @@ mod tests {
 
     use super::ManagedConfig;
 
+    // r[verify item.managed-config.root-bundle]
+    // r[verify item.managed-config.directory-assembly]
     // r[verify config.managed.bundle-interface]
     // r[verify config.managed.fragment-assembly]
     #[test]
@@ -228,6 +233,25 @@ server {
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
 
+    // r[verify item.managed-config.required-catalog]
+    #[test]
+    fn rejects_managed_bundle_without_a_catalog_block() {
+        let error = ManagedConfig::load_from_dir(write_files(
+            "managed-config-missing-catalog",
+            &[(
+                "10-tenants.styx",
+                r#"
+tenants (
+    {id "tenant-a"}
+)
+"#,
+            )],
+        ))
+        .expect_err("managed config should require a catalog block");
+
+        assert!(error.to_string().contains("catalog block"));
+    }
+
     fn temp_dir(prefix: &str) -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -235,6 +259,14 @@ server {
             .as_nanos();
         let dir = std::env::temp_dir().join(format!("{prefix}-{unique}"));
         fs::create_dir_all(&dir).expect("temp dir should create");
+        dir
+    }
+
+    fn write_files(prefix: &str, files: &[(&str, &str)]) -> PathBuf {
+        let dir = temp_dir(prefix);
+        for (name, contents) in files {
+            fs::write(dir.join(name), contents).expect("test file should write");
+        }
         dir
     }
 }

@@ -19,6 +19,7 @@ use crate::config::AppConfig;
 use crate::http::AppState;
 
 // r[impl platform.server.bootstrap]
+// r[depends item.relying-auth.ed25519-jwt-boundary]
 #[actix_web::main]
 async fn main() -> io::Result<()> {
     initialize_tracing();
