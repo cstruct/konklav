@@ -10,7 +10,7 @@ Use `software item` as the default architecture and traceability boundary for re
 
 A software item is any identifiable part of a larger software product or subsystem that is important enough to track as a design, dependency, or traceability boundary.
 
-In the current repository, a Rust crate will often be the first concrete software item. That is a convenience, not a rule. Future software items may be services, CLIs, SDKs, UIs, workers, or integrations that are not Rust crates.
+In this repository, a Rust crate will often be the first concrete software item. That is a convenience, not a rule. Future software items may be services, CLIs, SDKs, UIs, workers, or integrations that are not Rust crates.
 
 Use `crate` only when the Rust-specific packaging boundary is the point.
 
@@ -42,9 +42,9 @@ These docs answer questions such as:
 - which dependencies and interfaces are part of its stable contract
 - which cross-item assumptions should stay visible even if code is reorganized
 
-In the current repository, a crate README may be enough for many software items. If a software item grows stable contracts that deserve normative language, add a dedicated implementation doc rather than overloading the README.
+In this repository, a crate README may be enough for many software items. If a software item grows stable contracts that deserve normative language, add a dedicated implementation doc rather than overloading the README.
 
-Use [software-item implementation specs](software-item-specs.md) for the current proposed layering, ownership, and repository shape.
+Use [software-item implementation specs](software-item-specs.md) for the repository's layering, ownership, and repository shape.
 
 ### Design notes
 

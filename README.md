@@ -10,18 +10,18 @@ Conclave is a spec-driven identity and access management monorepo aimed at a fed
 - Authorization data that can travel in JWTs or similar artifacts so downstream services can make decisions without a round-trip to a central policy engine for every request.
 - A repo structure that stays workable as the project moves from hobby code to production concerns.
 
-## Working model
+## Repository shape
 
-This repo is set up to be driven by Tracey specifications:
+This repo is organized around Tracey specifications:
 
 - Specs live in `docs/spec/`.
 - Shared terminology lives in `docs/nomenclature.md`.
 - Rust implementation code lives in `crates/`.
 - Tracey configuration lives in `.config/tracey/config.styx`.
 
-The current scaffold is intentionally thin. The first implementation target is a Rust server component in `crates/server`, while the specifications establish the initial problem boundaries before deeper design and code land.
+The repository keeps normative requirements in specs, shared vocabulary in nomenclature, and implementation code in workspace crates.
 
-## Initial spec map
+## Spec map
 
 - `docs/nomenclature.md`: shared project terminology for subjects, operators, service principals, and relying systems.
 - `docs/spec/platform.md`: repo shape, traceability, and server bootstrap.
@@ -31,15 +31,15 @@ The current scaffold is intentionally thin. The first implementation target is a
 - `docs/spec/tokens-and-claims.md`: JWT shape, authorization snapshots, and downstream token usage.
 - `docs/spec/federation-and-protocols.md`: brokered identity, directory sync, OIDC, and SAML.
 
-## Server sandbox
+## Server
 
-The first server slice now uses:
+The server uses:
 
 - `actix-web` as the HTTP framework
 - `Styx` for typed local config in `config/server.styx`
 - `Feldera` as an external incremental-compute dependency accessed over HTTP
 
-This is deliberate. Feldera looks more like a control-plane managed dataflow engine than an embedded Rust database, so the server starts with a thin client boundary instead of coupling the app to assumptions that are likely wrong.
+This keeps the server on a thin client boundary to Feldera rather than coupling the control plane to embedded-database assumptions.
 
 To run the server:
 
@@ -47,7 +47,7 @@ To run the server:
 cargo run -p conclave-server
 ```
 
-The current server exposes three HTTP surfaces:
+The server exposes three HTTP surfaces:
 
 - control-plane surface
   - health and readiness
@@ -60,7 +60,7 @@ The current server exposes three HTTP surfaces:
   - tenant assumption token issuance
   - token validation
 - relying-system surface
-  - current revision discovery
+  - revision discovery
   - action-catalog lookup
   - JWKS publication
 
@@ -80,7 +80,7 @@ Representative endpoints:
 - `GET /v1/revisions`
 - `GET /v1/authz/catalog`
 
-See [crates/server/src/http.rs](crates/server/src/http.rs) for the current route definitions and how they are split across the three surfaces.
+See [crates/server/src/http.rs](crates/server/src/http.rs) for the route definitions and how they are split across the three surfaces.
 
 Config defaults live in `config/server.styx`, and the managed playground data lives in the adjacent managed-config directory. Common local overrides include:
 
@@ -109,9 +109,9 @@ Config defaults live in `config/server.styx`, and the managed playground data li
 - `CONCLAVE_FELDERA_AUTO_START`
 - `CONCLAVE_FELDERA_START_INITIAL`
 
-See [crates/server/src/config.rs](crates/server/src/config.rs) for the current full set of startup overrides and default values.
+See [crates/server/src/config.rs](crates/server/src/config.rs) for the full set of startup overrides and default values.
 
-The current playground is intentionally compile-first:
+The local development model is compile-first:
 
 - the action catalog gets a system-managed revision and stable bit positions from config content
 - export templates and assignable local roles are modeled separately
@@ -139,10 +139,3 @@ The sample bundles to look at are:
 
 - `config/authz.styx`: action catalog, export templates, and tenant-local roles
 - `config/tenants.styx`: root tenant, child tenants, memberships, and delegated assumption grants
-
-## Suggested next steps
-
-1. Add plan/apply semantics for the tenant bundle instead of treating it as static bootstrap data.
-2. Push compiled tenant grants into Feldera the same way the authz catalog, templates, and roles are now projected.
-3. Replace raw role-key membership assignment with explicit role/assignment storage once the runtime model settles.
-4. Extend the token model into actual issuer keys and JWKS instead of the current development HS256 secret.

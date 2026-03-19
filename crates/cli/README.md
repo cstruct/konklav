@@ -35,7 +35,7 @@ Command overview:
 - `invite-create`
   - Call `/v1/invites` for one subject and optional expiry.
 
-See [`src/main.rs`](src/main.rs) for the current command surface.
+See [`src/main.rs`](src/main.rs) for the command surface.
 
 ## Relationships
 
@@ -96,7 +96,7 @@ cargo test -p conclave-cli
 Coverage shape:
 
 - Direct coverage
-  - This crate currently has no crate-local test cases.
+  - This crate has no crate-local test cases.
   - Its own logic is intentionally thin around argument parsing, managed-config loading, and outbound request dispatch.
 - Indirect coverage
   - `conclave-server` and `conclave-controlplane-api` tests exercise the server-side behavior this CLI drives.

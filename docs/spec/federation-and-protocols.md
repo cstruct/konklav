@@ -1,6 +1,6 @@
 # Federation And Protocols
 
-This file defines the initial placeholder requirements for external identity providers and protocol support.
+This file defines requirements for external identity providers and protocol support.
 
 ## Federation
 
@@ -22,10 +22,10 @@ Federation support MUST allow both on-demand attribute hydration and scheduled s
 ## Protocols
 
 r[protocol.oidc.broker-support]
-The initial protocol roadmap MUST include OpenID Connect support for acting as or brokering against modern identity providers and applications.
+The platform MUST include OpenID Connect support for acting as or brokering against modern identity providers and applications.
 
 r[protocol.saml.broker-support]
-The initial protocol roadmap MUST include SAML support for interoperability with enterprise identity providers and service providers that have not moved to OIDC.
+The platform MUST include SAML support for interoperability with enterprise identity providers and service providers that have not moved to OIDC.
 
 r[protocol.logout.propagation]
 Single logout behavior MUST define how local session termination and upstream federation logout requests are propagated across participating systems.

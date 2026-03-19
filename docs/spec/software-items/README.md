@@ -27,7 +27,7 @@ Consumer `r[depends ...]` references are optional.
 
 Add them sparingly when a consuming software item clearly relies on the producer-owned contract in a way that would matter during future review or refactoring.
 
-Current pilot files:
+Software-item specs in this directory include:
 
 - `managed-config.md`
 - `relying-auth.md`

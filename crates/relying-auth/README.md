@@ -2,7 +2,7 @@
 
 `conclave-relying-auth` is the Rust crate that lets relying systems work with Conclave-issued JWTs and token-carried authorization snapshots.
 
-It defines the current claims model, signs tokens for server-side issuance paths, publishes JWKS data, and verifies tokens against current issuer, audience, tenant, revision, action, and scope expectations.
+It defines the claims model, signs tokens for server-side issuance paths, publishes JWKS data, and verifies tokens against issuer, audience, tenant, revision, action, and scope expectations.
 
 ## Responsibilities
 
@@ -43,7 +43,7 @@ Interface overview:
   - `Jwk`
   - `JwkSet`
 
-See [`src/lib.rs`](src/lib.rs) for the current public API.
+See [`src/lib.rs`](src/lib.rs) for the public API.
 
 ## Relationships
 

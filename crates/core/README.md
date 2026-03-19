@@ -2,7 +2,7 @@
 
 `conclave-core` is the Rust crate that holds the smallest stable set of shared Conclave value types.
 
-Today it is intentionally tiny: it provides common aliases for identifiers, keys, revisions, and a shared error type so the rest of the workspace can share basic vocabulary without collapsing into one large catch-all model crate.
+It is intentionally tiny: it provides common aliases for identifiers, keys, revisions, and a shared error type so the rest of the workspace can share basic vocabulary without collapsing into one large catch-all model crate.
 
 ## Responsibilities
 
@@ -23,7 +23,7 @@ Primary entry point:
 - `src/lib.rs`
   - Defines the shared type aliases exported by this crate.
 
-Current shared aliases include:
+Shared aliases include:
 
 - `DynError`
 - `ActionName`
@@ -36,7 +36,7 @@ Current shared aliases include:
 - `TemplateKey`
 - `TenantId`
 
-See [`src/lib.rs`](src/lib.rs) for the current alias set.
+See [`src/lib.rs`](src/lib.rs) for the alias set.
 
 ## Relationships
 
@@ -83,7 +83,7 @@ cargo test -p conclave-core
 Coverage shape:
 
 - Direct coverage
-  - This crate currently has no crate-local test cases.
+  - This crate has no crate-local test cases.
   - Its surface is intentionally limited to shared type aliases.
 - Indirect coverage
   - Every downstream workspace crate compiles and exercises these aliases as part of its own tests and runtime paths.

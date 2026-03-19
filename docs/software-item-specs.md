@@ -1,6 +1,6 @@
 # Software-Item Implementation Specs
 
-This note defines the proposed approach for software-item implementation specs in Conclave.
+This note defines the approach for software-item implementation specs in Conclave.
 
 The goal is to capture stable implementation-contract obligations that matter below the product-spec layer without turning every crate detail into a Tracey rule.
 
@@ -125,7 +125,7 @@ Examples in this repository:
 
 - `conclave-managed-config` owns the canonical managed-config bundle and directory-assembly behavior
 - `conclave-relying-auth` owns the JWT signing, verification, JWKS, and offline evaluation boundary
-- `conclave-controlplane-api` owns the shared Rust DTO boundary for current control-plane operations
+- `conclave-controlplane-api` owns the shared Rust DTO boundary for control-plane operations
 
 ## Repository shape
 
@@ -177,28 +177,4 @@ Do not add a software-item rule when most of the following are true:
 - a local code comment or design note communicates it well enough
 - no other software item or long-lived boundary really depends on it
 
-## Pilot selection
-
-Start with software items that are shared boundaries rather than thin wrappers.
-
-Recommended first pilots:
-
-- `conclave-managed-config`
-- `conclave-relying-auth`
-- `conclave-controlplane-api`
-
-Why these:
-
-- they have clear producer-owned contracts
-- they have multiple dependents
-- they are easier to specify cleanly than the server, which already carries a lot of product-spec behavior
-
-## Current pilot rules
-
-The first pilot files live under `docs/spec/software-items/`:
-
-- `managed-config.md`
-- `relying-auth.md`
-- `controlplane-api.md`
-
-These should be treated as a starting point for discussion, naming, and scope, not as a sign that every crate now needs its own implementation spec immediately.
+Shared-boundary software items such as `conclave-managed-config`, `conclave-relying-auth`, and `conclave-controlplane-api` are often good fits for this layer because they own contracts that multiple consumers depend on.

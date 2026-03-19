@@ -6,7 +6,7 @@ Shared terminology is defined in `../nomenclature.md` and should be treated as t
 
 Rules are defined with standalone `r[...]` markers. Implementation and tests can then reference the same rule IDs from code comments using `r[impl ...]` and `r[verify ...]`.
 
-The main product-spec files establish the initial vocabulary and domain boundaries:
+The main product-spec files establish the repository's vocabulary and domain boundaries:
 
 - platform
 - managed configuration

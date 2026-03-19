@@ -1,12 +1,12 @@
 # Control-Plane API
 
-`conclave-controlplane-api` is the Rust crate and shared API surface for the current Conclave control-plane HTTP contract.
+`conclave-controlplane-api` is the Rust crate and shared API surface for the Conclave control-plane HTTP contract.
 
 It gives the server and its clients one common serialization boundary for managed-configuration operations, invite and login flows, revision discovery, and action-catalog lookup.
 
 ## Responsibilities
 
-- Define the current request and response DTOs for the Conclave control-plane contract.
+- Define the request and response DTOs for the Conclave control-plane contract.
 - Keep managed-config request and response shapes stable across the client/server boundary.
 - Reuse shared token and catalog response types where relying-system behavior overlaps with control-plane flows.
 
@@ -37,7 +37,7 @@ Interface overview:
   - `CurrentRevisionsResponse`
   - `ActionCatalogResponse`
 
-See [`src/lib.rs`](src/lib.rs) for the current DTO set.
+See [`src/lib.rs`](src/lib.rs) for the DTO set.
 
 ## Relationships
 
@@ -54,7 +54,7 @@ See [`src/lib.rs`](src/lib.rs) for the current DTO set.
 | Software item | Relationship |
 | --- | --- |
 | `conclave-cli` | Uses these DTOs when calling the control-plane surface. |
-| `conclave-server` | Uses these DTOs as the current HTTP contract for request parsing and response serialization. |
+| `conclave-server` | Uses these DTOs as the HTTP contract for request parsing and response serialization. |
 
 ## Usage
 

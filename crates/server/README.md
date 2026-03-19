@@ -2,7 +2,7 @@
 
 `conclave-server` is the server that runs the Conclave control plane.
 
-It loads server and managed configuration, bootstraps runtime state, exposes the control-plane, subject-facing, and relying-system HTTP surfaces, and coordinates the current managed-state and runtime-auth flows.
+It loads server and managed configuration, bootstraps runtime state, exposes the control-plane, subject-facing, and relying-system HTTP surfaces, and coordinates managed-state and runtime-auth flows.
 
 ## Responsibilities
 
@@ -29,7 +29,7 @@ Primary entry points:
 - `src/config.rs`
   - Defines the typed server config, startup overrides, and schema generation for server config.
 - `src/http.rs`
-  - Defines the current HTTP routes and splits them across the three server surfaces.
+  - Defines the HTTP routes and splits them across the three server surfaces.
 
 HTTP surface overview:
 
@@ -44,7 +44,7 @@ HTTP surface overview:
   - assumed tenant token issuance
   - token validation
 - Relying-system surface
-  - current revision discovery
+  - revision discovery
   - action-catalog lookup
   - JWKS publication
 
@@ -65,7 +65,7 @@ Representative endpoints:
 - `GET /v1/authz/catalog`
 - `GET /.well-known/jwks.json`
 
-See [`src/http.rs`](src/http.rs) for the current route definitions.
+See [`src/http.rs`](src/http.rs) for the route definitions.
 
 ## Relationships
 
@@ -126,7 +126,7 @@ Common startup overrides:
 - `CONCLAVE_FELDERA_AUTO_START`
 - `CONCLAVE_FELDERA_START_INITIAL`
 
-See [`src/config.rs`](src/config.rs) for the current full set of startup overrides and default values.
+See [`src/config.rs`](src/config.rs) for the full set of startup overrides and default values.
 
 ## Testing
 
