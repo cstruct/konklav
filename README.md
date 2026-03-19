@@ -47,50 +47,69 @@ To run the server:
 cargo run -p conclave-server
 ```
 
-Useful endpoints:
+The current server exposes three HTTP surfaces:
+
+- control-plane surface
+  - health and readiness
+  - runtime metadata
+  - managed configuration validate, plan, and apply
+  - invite creation
+- subject-facing surface
+  - invite redemption
+  - direct login
+  - tenant assumption token issuance
+  - token validation
+- relying-system surface
+  - current revision discovery
+  - action-catalog lookup
+  - JWKS publication
+
+Representative endpoints:
 
 - `GET /healthz`
 - `GET /readyz`
 - `GET /v1/meta`
-- `GET /v1/meta/config-schema`
-- `GET /v1/meta/authz-schema`
-- `GET /v1/meta/tenant-schema`
-- `GET /v1/authz/catalog`
-- `GET /v1/authz/managed`
-- `GET /v1/authz/templates`
-- `GET /v1/authz/roles`
-- `GET /v1/conclave/capabilities`
-- `GET /v1/tenants`
-- `GET /v1/tenants/managed`
-- `GET /v1/tenants/memberships`
-- `GET /v1/tenants/assumptions`
-- `POST /v1/auth/tokens/direct`
+- `POST /v1/managed/validate`
+- `POST /v1/managed/plan`
+- `POST /v1/managed/apply`
+- `POST /v1/invites`
+- `POST /v1/invites/redeem`
+- `POST /v1/login`
 - `POST /v1/auth/tokens/assume`
 - `POST /v1/auth/tokens/validate`
-- `GET /v1/feldera/sql/authz`
-- `GET /v1/feldera/authz/plan`
-- `GET /v1/feldera/authz/status`
-- `POST /v1/feldera/authz/sync`
-- `POST /v1/feldera/authz/start`
-- `GET /v1/feldera/pipelines`
+- `GET /v1/revisions`
+- `GET /v1/authz/catalog`
 
-Config defaults live in `config/server.styx`, and the managed authz playground data lives in `config/authz.styx`. For local overrides, set:
+See [crates/server/src/http.rs](crates/server/src/http.rs) for the current route definitions and how they are split across the three surfaces.
+
+Config defaults live in `config/server.styx`, and the managed playground data lives in the adjacent managed-config directory. Common local overrides include:
 
 - `CONCLAVE_CONFIG`
-- `CONCLAVE_SERVER_HOST`
-- `CONCLAVE_SERVER_PORT`
+- `CONCLAVE_MANAGED_DIR`
+- `CONCLAVE_CONTROL_PLANE_HOST`
+- `CONCLAVE_CONTROL_PLANE_PORT`
+- `CONCLAVE_SUBJECT_HOST`
+- `CONCLAVE_SUBJECT_PORT`
+- `CONCLAVE_RELYING_HOST`
+- `CONCLAVE_RELYING_PORT`
+- `CONCLAVE_BOOTSTRAP_SUBJECT`
+- `CONCLAVE_BOOTSTRAP_TOKEN`
+- `CONCLAVE_BOOTSTRAP_DISPLAY_NAME`
 - `CONCLAVE_JWT_ISSUER`
 - `CONCLAVE_JWT_DEFAULT_AUDIENCE`
-- `CONCLAVE_JWT_SIGNING_SECRET`
+- `CONCLAVE_JWT_SIGNING_KEY_ID`
+- `CONCLAVE_JWT_SIGNING_SEED`
 - `CONCLAVE_JWT_TTL_SECONDS`
-- `CONCLAVE_AUTHZ_CONFIG`
-- `CONCLAVE_TENANTS_CONFIG`
 - `CONCLAVE_FELDERA_ENABLED`
 - `CONCLAVE_FELDERA_BASE_URL`
+- `CONCLAVE_FELDERA_PIPELINE_PREFIX`
+- `CONCLAVE_FELDERA_READINESS_PROBE`
 - `CONCLAVE_FELDERA_API_KEY`
 - `CONCLAVE_FELDERA_COMPILE_PROFILE`
 - `CONCLAVE_FELDERA_AUTO_START`
 - `CONCLAVE_FELDERA_START_INITIAL`
+
+See [crates/server/src/config.rs](crates/server/src/config.rs) for the current full set of startup overrides and default values.
 
 The current playground is intentionally compile-first:
 

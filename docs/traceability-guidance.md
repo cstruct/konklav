@@ -63,6 +63,8 @@ They should help a contributor answer:
 - which nearby crates or specs matter most
 - how to build, test, or safely change it
 
+Use [software-item README guidance](software-item-readmes.md) as the default format for new or substantially rewritten READMEs.
+
 READMEs may link to specs, design notes, and software-item docs, but they should not become the only home of stable requirements.
 
 ### Local code comments
