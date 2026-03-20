@@ -338,6 +338,7 @@ fn compile_roles(
             revision: resolved_role.revision,
             template: role.template.clone(),
             inherits: role.inherits.clone(),
+            local_policies: compile_policy_bundle(&role.policies, actions)?.policies,
             tenant_allow_bits_hex: bundle.tenant_allow_bits_hex,
             tenant_deny_bits_hex: bundle.tenant_deny_bits_hex,
             scoped_entries: bundle.scoped_entries,

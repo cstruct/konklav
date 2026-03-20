@@ -46,6 +46,7 @@ pub struct CompiledRole {
     pub revision: u64,
     pub template: Option<TemplateKey>,
     pub inherits: Vec<RoleKey>,
+    pub local_policies: Vec<CompiledPolicy>,
     pub tenant_allow_bits_hex: String,
     pub tenant_deny_bits_hex: String,
     pub scoped_entries: Vec<CompiledScopeEntry>,

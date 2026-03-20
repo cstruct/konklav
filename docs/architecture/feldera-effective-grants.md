@@ -54,8 +54,8 @@ This gives the control plane stable persisted semantics for pinned descendants w
 Task 4 currently spans three layers:
 
 - typed source persistence for templates and roles now preserves ordered inheritance and normalized pinned-source metadata
-- Rust compilation still produces compiled roles, memberships, delegated grants, and role-action effects
-- the dedicated Feldera authz pipeline now derives `effective_grants` and `effective_grant_actions` from typed compiled source tables and runtime token issuance or validation reads that derived surface when it is available
+- Rust compilation still produces memberships and delegated-grant source rows for the authz pipeline
+- the dedicated Feldera authz pipeline now derives template lineage, final role policies, `effective_grants`, and `effective_grant_actions` from typed source tables and runtime token issuance or validation reads that derived surface when it is available
 
 The important shift in the current slice is that `effective_grants` is no longer published as a precomputed row with serialized bitsets. Instead, the authz pipeline now persists:
 
@@ -64,12 +64,15 @@ The important shift in the current slice is that `effective_grants` is no longer
 - `template_policy_overrides`
 - `resolved_template_metadata`
 - `template_lineage`
+- `role_inheritance_edges`
+- `role_policy_overrides`
 - `effective_grant_identity`
 - `effective_grant_role_assignment`
 
 Feldera materialized views then derive:
 
 - `compiled_template_policies`
+- `compiled_role_policies`
 - `compiled_role_action_effects`
 - `effective_grants`
 - `effective_grant_action_candidates`

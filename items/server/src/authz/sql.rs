@@ -115,6 +115,23 @@ impl CompiledAuthzModel {
             "  inherits_json STRING NOT NULL".to_owned(),
             ");".to_owned(),
             "".to_owned(),
+            "CREATE TABLE role_inheritance_edges (".to_owned(),
+            "  tenant_id STRING NOT NULL,".to_owned(),
+            "  role_key STRING NOT NULL,".to_owned(),
+            "  parent_role_key STRING NOT NULL,".to_owned(),
+            "  inheritance_order INT NOT NULL".to_owned(),
+            ");".to_owned(),
+            "".to_owned(),
+            "CREATE TABLE role_policy_overrides (".to_owned(),
+            "  tenant_id STRING NOT NULL,".to_owned(),
+            "  role_key STRING NOT NULL,".to_owned(),
+            "  effect STRING NOT NULL,".to_owned(),
+            "  selector STRING NOT NULL,".to_owned(),
+            "  bits_hex STRING NOT NULL,".to_owned(),
+            "  scope_kind STRING,".to_owned(),
+            "  scope_id STRING".to_owned(),
+            ");".to_owned(),
+            "".to_owned(),
             "CREATE TABLE compiled_role_policies (".to_owned(),
             "  tenant_id STRING NOT NULL,".to_owned(),
             "  role_key STRING NOT NULL,".to_owned(),
@@ -382,7 +399,17 @@ impl CompiledAuthzModel {
                 inherits_json
             ));
 
-            for policy in &role.policies {
+            for (inheritance_order, parent_role_key) in role.inherits.iter().enumerate() {
+                lines.push(format!(
+                    "INSERT INTO role_inheritance_edges VALUES ('{}', '{}', '{}', {});",
+                    sql_escape(&role.tenant),
+                    sql_escape(&role.key),
+                    sql_escape(parent_role_key),
+                    inheritance_order,
+                ));
+            }
+
+            for policy in &role.local_policies {
                 let scope_kind = policy
                     .scope_kind
                     .as_deref()
@@ -395,7 +422,7 @@ impl CompiledAuthzModel {
                     .unwrap_or_else(|| "NULL".to_owned());
 
                 lines.push(format!(
-                    "INSERT INTO compiled_role_policies VALUES ('{}', '{}', '{}', '{}', '{}', {}, {});",
+                    "INSERT INTO role_policy_overrides VALUES ('{}', '{}', '{}', '{}', '{}', {}, {});",
                     sql_escape(&role.tenant),
                     sql_escape(&role.key),
                     sql_escape(&policy.effect),
@@ -405,6 +432,11 @@ impl CompiledAuthzModel {
                     scope_id
                 ));
             }
+        }
+
+        lines.push(String::new());
+        for role in ordered_roles_for_sql(self) {
+            lines.extend(role_resolution_sql(role));
         }
 
         lines.push(String::new());
@@ -599,6 +631,89 @@ WHERE tenant_id = '{}' AND template_key = '{}';",
 
 fn template_sql_identity(template: &CompiledTemplate) -> String {
     format!("{}:{}", template.tenant, template.key)
+}
+
+fn ordered_roles_for_sql<'a>(authz: &'a CompiledAuthzModel) -> Vec<&'a super::model::CompiledRole> {
+    let by_identity = authz
+        .roles
+        .iter()
+        .map(|role| (role_sql_identity(role), role))
+        .collect::<HashMap<_, _>>();
+    let mut ordered = Vec::with_capacity(authz.roles.len());
+    let mut visited = HashSet::new();
+
+    for role in &authz.roles {
+        visit_role_for_sql(role, &by_identity, &mut visited, &mut ordered);
+    }
+
+    ordered
+}
+
+fn visit_role_for_sql<'a>(
+    role: &'a super::model::CompiledRole,
+    by_identity: &HashMap<String, &'a super::model::CompiledRole>,
+    visited: &mut HashSet<String>,
+    ordered: &mut Vec<&'a super::model::CompiledRole>,
+) {
+    let identity = role_sql_identity(role);
+    if !visited.insert(identity) {
+        return;
+    }
+
+    for parent in &role.inherits {
+        if let Some(parent_role) = by_identity.get(&format!("{}:{parent}", role.tenant)) {
+            visit_role_for_sql(parent_role, by_identity, visited, ordered);
+        }
+    }
+
+    ordered.push(role);
+}
+
+fn role_resolution_sql(role: &super::model::CompiledRole) -> Vec<String> {
+    let tenant = sql_escape(&role.tenant);
+    let key = sql_escape(&role.key);
+    let template_candidates = format!(
+        "SELECT template.effect, template.selector, template.bits_hex, COALESCE(template.scope_kind, '') AS scope_kind, COALESCE(template.scope_id, '') AS scope_id, \
+COALESCE((SELECT MAX(inheritance_order) + 1 FROM role_inheritance_edges WHERE tenant_id = '{tenant}' AND role_key = '{key}'), 0) AS precedence \
+FROM managed_roles AS role \
+JOIN compiled_template_policies AS template \
+  ON template.tenant_id = role.tenant_id \
+ AND template.template_key = role.template_key \
+WHERE role.tenant_id = '{tenant}' AND role.role_key = '{key}' AND role.template_key IS NOT NULL"
+    );
+    let local_candidates = format!(
+        "SELECT local.effect, local.selector, local.bits_hex, COALESCE(local.scope_kind, '') AS scope_kind, COALESCE(local.scope_id, '') AS scope_id, \
+COALESCE((SELECT MAX(inheritance_order) + 1 FROM role_inheritance_edges WHERE tenant_id = '{tenant}' AND role_key = '{key}'), 0) + \
+CASE WHEN EXISTS(SELECT 1 FROM managed_roles WHERE tenant_id = '{tenant}' AND role_key = '{key}' AND template_key IS NOT NULL) THEN 1 ELSE 0 END AS precedence \
+FROM role_policy_overrides AS local \
+WHERE local.tenant_id = '{tenant}' AND local.role_key = '{key}'"
+    );
+    let inherited_candidates = format!(
+        "SELECT inherited.effect, inherited.selector, inherited.bits_hex, COALESCE(inherited.scope_kind, '') AS scope_kind, COALESCE(inherited.scope_id, '') AS scope_id, edges.inheritance_order AS precedence \
+FROM role_inheritance_edges AS edges \
+JOIN compiled_role_policies AS inherited \
+  ON inherited.tenant_id = edges.tenant_id \
+ AND inherited.role_key = edges.parent_role_key \
+WHERE edges.tenant_id = '{tenant}' AND edges.role_key = '{key}'"
+    );
+    let candidate_union = format!(
+        "{inherited_candidates} UNION ALL {template_candidates} UNION ALL {local_candidates}"
+    );
+
+    vec![format!(
+        "INSERT INTO compiled_role_policies \
+SELECT '{tenant}', '{key}', candidates.effect, candidates.selector, candidates.bits_hex, NULLIF(candidates.scope_kind, ''), NULLIF(candidates.scope_id, '') \
+FROM ({candidate_union}) AS candidates \
+JOIN (SELECT selector, scope_kind, scope_id, MAX(precedence) AS precedence FROM ({candidate_union}) AS grouped_candidates GROUP BY selector, scope_kind, scope_id) AS max_precedence \
+  ON max_precedence.selector = candidates.selector \
+ AND max_precedence.scope_kind = candidates.scope_kind \
+ AND max_precedence.scope_id = candidates.scope_id \
+ AND max_precedence.precedence = candidates.precedence;"
+    )]
+}
+
+fn role_sql_identity(role: &super::model::CompiledRole) -> String {
+    format!("{}:{}", role.tenant, role.key)
 }
 
 fn sql_escape(value: &str) -> String {

@@ -347,6 +347,61 @@ roles ()
     assert!(sql.contains("INSERT INTO template_policy_overrides VALUES ('tenant-a', 'doctor', 'deny', 'tenant:user:write'"));
 }
 
+#[test]
+fn emits_role_policy_resolution_in_feldera_sql() {
+    let config = ManagedConfig::load_from_str(
+        r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+        {name "tenant:user:write"}
+        {name "tenant:clinic:read"}
+    )
+}
+templates (
+    {
+        tenant "tenant-a",
+        key "doctor",
+        policies (
+            {effect allow, action "tenant:user:read"}
+        )
+    }
+)
+roles (
+    {
+        tenant "tenant-a",
+        key "reader"
+        policies (
+            {effect allow, action "tenant:user:read"}
+        )
+    }
+    {
+        tenant "tenant-a",
+        key "doctor"
+        inherits ("reader")
+        template "doctor"
+        policies (
+            {effect deny, action "tenant:user:write"}
+            {effect allow, action "tenant:clinic:read", scope_kind "clinic"}
+        )
+    }
+)
+"#,
+    )
+    .expect("bundle should parse");
+
+    let compiled = compile_managed_authz(&config).expect("bundle should compile");
+    let tenants = compile_managed_tenants(&config, &compiled).expect("tenants should compile");
+    let sql = compiled.feldera_sql("conclave", &tenants);
+
+    assert!(sql.contains("CREATE TABLE role_inheritance_edges"));
+    assert!(sql.contains("CREATE TABLE role_policy_overrides"));
+    assert!(sql.contains("INSERT INTO role_inheritance_edges VALUES ('tenant-a', 'doctor', 'reader', 0);"));
+    assert!(sql.contains("INSERT INTO role_policy_overrides VALUES ('tenant-a', 'doctor', 'deny', 'tenant:user:write'"));
+    assert!(sql.contains("INSERT INTO compiled_role_policies SELECT 'tenant-a', 'doctor'"));
+    assert!(!sql.contains("INSERT INTO compiled_role_policies VALUES ('tenant-a', 'doctor'"));
+}
+
 // r[verify authz.role.inheritance.dag]
 // r[verify authz.role.inheritance.priority]
 #[test]
@@ -445,11 +500,14 @@ roles (
     assert!(sql.contains("CREATE TABLE resolved_template_metadata"));
     assert!(sql.contains("CREATE TABLE template_lineage"));
     assert!(sql.contains("CREATE MATERIALIZED VIEW compiled_template_policies AS"));
+    assert!(sql.contains("CREATE TABLE role_inheritance_edges"));
+    assert!(sql.contains("CREATE TABLE role_policy_overrides"));
     assert!(sql.contains("CREATE MATERIALIZED VIEW compiled_role_action_effects AS"));
     assert!(sql.contains("LIKE REPLACE(policies.selector, '*', '%')"));
     assert!(!sql.contains("INSERT INTO compiled_role_action_effects"));
     assert!(!sql.contains("CREATE TABLE compiled_template_policies"));
     assert!(!sql.contains("INSERT INTO compiled_template_policies"));
+    assert!(!sql.contains("INSERT INTO compiled_role_policies VALUES"));
     assert!(sql.contains("inherits_json STRING NOT NULL"));
     assert!(sql.contains("compiled_role_policies"));
 }
