@@ -9,6 +9,7 @@ use conclave_core::{
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 
 pub type DynError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -129,11 +130,11 @@ impl fmt::Display for JwtError {
 impl std::error::Error for JwtError {}
 
 impl JwtSigner {
-    pub fn from_seed(kid: impl Into<String>, seed: [u8; 32]) -> Self {
-        Self {
-            kid: kid.into(),
-            signing_key: SigningKey::from_bytes(&seed),
-        }
+    pub fn from_seed(seed: [u8; 32]) -> Self {
+        let signing_key = SigningKey::from_bytes(&seed);
+        let kid = derive_kid(&signing_key.verifying_key());
+
+        Self { kid, signing_key }
     }
 
     pub fn kid(&self) -> &str {
@@ -180,6 +181,11 @@ impl JwtSigner {
             URL_SAFE_NO_PAD.encode(signature.to_bytes())
         ))
     }
+}
+
+fn derive_kid(public: &VerifyingKey) -> String {
+    let digest = Sha256::digest(public.as_bytes());
+    URL_SAFE_NO_PAD.encode(digest)
 }
 
 impl JwtVerifier {
@@ -425,7 +431,7 @@ mod tests {
     // r[verify item.relying-auth.offline-decision-evaluation]
     #[test]
     fn signs_and_verifies_ed25519_tokens() {
-        let signer = JwtSigner::from_seed("kid-1", [7; 32]);
+        let signer = JwtSigner::from_seed([7; 32]);
         let verifier = signer.verifier();
         let claims = AccessTokenClaims {
             iss: "https://conclave.test".to_owned(),
@@ -485,5 +491,15 @@ mod tests {
                 matched_scope: Some("clinic:clinic-1".to_owned()),
             })
         );
+    }
+
+    #[test]
+    fn derives_stable_kids_from_public_key_material() {
+        let first = JwtSigner::from_seed([7; 32]);
+        let same = JwtSigner::from_seed([7; 32]);
+        let different = JwtSigner::from_seed([8; 32]);
+
+        assert_eq!(first.kid(), same.kid());
+        assert_ne!(first.kid(), different.kid());
     }
 }

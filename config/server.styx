@@ -22,8 +22,7 @@ bootstrap {
 jwt {
     issuer "http://127.0.0.1:8082"
     default_audience "conclave-dev"
-    signing_key_id "dev-key-1"
-    signing_seed "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+    signing_private_key "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
     ttl_seconds 900
 }
 

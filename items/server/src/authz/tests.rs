@@ -343,7 +343,8 @@ roles ()
     assert!(sql.contains("CREATE TABLE template_policy_overrides"));
     assert!(sql.contains("CREATE MATERIALIZED VIEW compiled_template_policies AS"));
     assert!(sql.contains("INSERT INTO resolved_template_metadata SELECT 'tenant-a', 'doctor'"));
-    assert!(sql.contains("INSERT INTO template_lineage SELECT 'tenant-a', 'doctor', ancestor_tenant_id"));
+    assert!(sql
+        .contains("INSERT INTO template_lineage SELECT 'tenant-a', 'doctor', ancestor_tenant_id"));
     assert!(sql.contains("INSERT INTO template_policy_overrides VALUES ('tenant-a', 'doctor', 'deny', 'tenant:user:write'"));
 }
 
@@ -396,7 +397,9 @@ roles (
 
     assert!(sql.contains("CREATE TABLE role_inheritance_edges"));
     assert!(sql.contains("CREATE TABLE role_policy_overrides"));
-    assert!(sql.contains("INSERT INTO role_inheritance_edges VALUES ('tenant-a', 'doctor', 'reader', 0);"));
+    assert!(sql.contains(
+        "INSERT INTO role_inheritance_edges VALUES ('tenant-a', 'doctor', 'reader', 0);"
+    ));
     assert!(sql.contains("INSERT INTO role_policy_overrides VALUES ('tenant-a', 'doctor', 'deny', 'tenant:user:write'"));
     assert!(sql.contains("INSERT INTO compiled_role_policies SELECT 'tenant-a', 'doctor'"));
     assert!(!sql.contains("INSERT INTO compiled_role_policies VALUES ('tenant-a', 'doctor'"));

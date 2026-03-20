@@ -104,6 +104,14 @@ const MANAGED_VIEW_SPECS: &[TemporalViewSpec] = &[
 
 const RUNTIME_VIEW_SPECS: &[TemporalViewSpec] = &[
     TemporalViewSpec {
+        table_name: "signing_key",
+        versioned_view: "versioned_signing_key",
+        current_view: "current_signing_key",
+        commit_table: "auth_runtime_commit",
+        provenance_column: "change_id",
+        key_columns: &["kid"],
+    },
+    TemporalViewSpec {
         table_name: "invite",
         versioned_view: "versioned_invite",
         current_view: "current_invite",
@@ -917,6 +925,63 @@ impl SessionRow {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SigningKeyRow {
+    #[serde(alias = "KID")]
+    kid: String,
+    #[serde(alias = "KTY")]
+    kty: String,
+    #[serde(alias = "CRV")]
+    crv: String,
+    #[serde(alias = "ALG")]
+    alg: String,
+    #[serde(alias = "X")]
+    x: String,
+    #[serde(alias = "CREATED_AT")]
+    created_at: u64,
+    #[serde(alias = "CHANGE_ID")]
+    change_id: String,
+    #[serde(alias = "ROW_VERSION")]
+    row_version: u64,
+    #[serde(alias = "VALID_FROM")]
+    valid_from: u64,
+    #[serde(alias = "DELETED")]
+    deleted: bool,
+}
+
+impl SigningKeyRow {
+    fn from_signer(
+        signer: &conclave_relying_auth::JwtSigner,
+        change_id: String,
+        created_at: u64,
+    ) -> Self {
+        let jwk = signer.jwk();
+
+        Self {
+            kid: jwk.kid,
+            kty: jwk.kty,
+            crv: jwk.crv,
+            alg: jwk.alg,
+            x: jwk.x,
+            created_at,
+            change_id,
+            row_version: 1,
+            valid_from: created_at,
+            deleted: false,
+        }
+    }
+
+    fn matches_signer(&self, signer: &conclave_relying_auth::JwtSigner) -> bool {
+        let jwk = signer.jwk();
+        self.kid == jwk.kid
+            && self.kty == jwk.kty
+            && self.crv == jwk.crv
+            && self.alg == jwk.alg
+            && self.x == jwk.x
+            && !self.deleted
+    }
+}
+
 impl FelderaManagedStore {
     pub fn new(client: FelderaClient, config: FelderaConfig) -> Self {
         Self {
@@ -1137,6 +1202,57 @@ LIMIT 1
         });
 
         Ok((invites, credentials, sessions))
+    }
+
+    pub async fn ensure_current_signing_key(
+        &self,
+        signer: &conclave_relying_auth::JwtSigner,
+    ) -> Result<(), DynError> {
+        self.ensure_pipeline().await?;
+
+        let existing = self
+            .load_current_rows::<SigningKeyRow>("current_signing_key")
+            .await?
+            .into_iter()
+            .find(|row| row.kid == signer.kid());
+
+        if let Some(existing) = existing {
+            if existing.matches_signer(signer) {
+                return Ok(());
+            }
+
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "persisted signing key {} does not match configured signer",
+                    signer.kid()
+                ),
+            )));
+        }
+
+        let created_at = now_unix_seconds()?;
+        let change_id = format!(
+            "change-{}",
+            &digest_hex(&format!("{created_at}:signing-key:{}", signer.kid()))[0..12]
+        );
+        let row = SigningKeyRow::from_signer(signer, change_id.clone(), created_at);
+
+        self.client
+            .insert_json_rows(&self.pipeline_name, "signing_key", vec![row])
+            .await?;
+        self.client
+            .insert_json_rows(
+                &self.pipeline_name,
+                "auth_runtime_commit",
+                vec![AuthRuntimeCommitRow {
+                    change_id,
+                    committed_at: created_at,
+                    committed: true,
+                }],
+            )
+            .await?;
+
+        Ok(())
     }
 
     // r[impl config.managed.plan-before-apply]
@@ -2250,6 +2366,22 @@ CREATE TABLE auth_runtime_commit (
         .trim()
         .to_owned(),
         r#"
+CREATE TABLE signing_key (
+    kid VARCHAR NOT NULL,
+    kty VARCHAR NOT NULL,
+    crv VARCHAR NOT NULL,
+    alg VARCHAR NOT NULL,
+    x VARCHAR NOT NULL,
+    created_at BIGINT NOT NULL,
+    change_id VARCHAR NOT NULL,
+    row_version BIGINT NOT NULL,
+    valid_from BIGINT NOT NULL,
+    deleted BOOLEAN NOT NULL
+) WITH ('materialized' = 'true');
+"#
+        .trim()
+        .to_owned(),
+        r#"
 CREATE TABLE invite (
     invite_id VARCHAR NOT NULL,
     subject_id VARCHAR NOT NULL,
@@ -2405,9 +2537,10 @@ mod tests {
     use super::{
         collect_changes, managed_store_sql, plan_entity_changes, select_current_sql,
         select_history_sql, select_max_row_version_sql, ApplyCommitRow, InviteRow,
-        ManagedApplyFailure, ManagedOwnershipRow, TenantRow,
+        ManagedApplyFailure, ManagedOwnershipRow, SigningKeyRow, TenantRow,
     };
     use conclave_managed_config::ManagedConfig;
+    use conclave_relying_auth::JwtSigner;
     use serde_json::Value;
     use std::collections::{BTreeMap, BTreeSet};
     use std::net::TcpListener;
@@ -2432,12 +2565,15 @@ mod tests {
         assert!(sql.contains("CREATE TABLE template"));
         assert!(sql.contains("CREATE TABLE role"));
         assert!(sql.contains("CREATE TABLE managed_ownership"));
+        assert!(sql.contains("CREATE TABLE signing_key"));
         assert!(sql.contains("CREATE TABLE invite"));
         assert!(sql.contains("CREATE TABLE subject_credential"));
         assert!(sql.contains("CREATE TABLE session_state"));
         assert!(sql.contains("CREATE MATERIALIZED VIEW versioned_tenant"));
         assert!(sql.contains("CREATE MATERIALIZED VIEW current_tenant"));
         assert!(sql.contains("CREATE MATERIALIZED VIEW current_managed_ownership"));
+        assert!(sql.contains("CREATE MATERIALIZED VIEW versioned_signing_key"));
+        assert!(sql.contains("CREATE MATERIALIZED VIEW current_signing_key"));
         assert!(sql.contains("CREATE MATERIALIZED VIEW versioned_invite"));
         assert!(sql.contains("CREATE MATERIALIZED VIEW current_session"));
         assert!(!sql.contains("MANAGED_EVENT"));
@@ -2601,10 +2737,437 @@ tenants ({id "tenant-b"})
         let commit: ApplyCommitRow =
             serde_json::from_str(r#"{"APPLY_ID":"apply-1","COMMITTED_AT":1,"COMMITTED":true}"#)
                 .expect("commit row should deserialize");
+        let signing_key: SigningKeyRow = serde_json::from_str(
+            r#"{
+                "KID":"kid-1",
+                "KTY":"OKP",
+                "CRV":"Ed25519",
+                "ALG":"EdDSA",
+                "X":"x-1",
+                "CREATED_AT":1,
+                "CHANGE_ID":"change-1",
+                "ROW_VERSION":1,
+                "VALID_FROM":1,
+                "DELETED":false
+            }"#,
+        )
+        .expect("signing key row should deserialize");
 
         assert_eq!(tenant.tenant_id, "tenant-a");
         assert_eq!(invite.invite_id, "invite-1");
         assert!(commit.committed);
+        assert_eq!(signing_key.kid, "kid-1");
+    }
+
+    #[actix_web::test]
+    async fn persists_current_signing_key_without_duplicate_rows() {
+        use actix_web::{get, post, web, App, HttpRequest, HttpResponse, Responder};
+        use std::time::Duration;
+
+        #[derive(Default)]
+        struct FakeStore {
+            pipeline: Option<crate::feldera::PipelineRecord>,
+            tables: BTreeMap<String, Vec<Value>>,
+        }
+
+        fn decode_sql(request: &HttpRequest) -> String {
+            request
+                .query_string()
+                .split('&')
+                .find_map(|entry| entry.strip_prefix("sql="))
+                .unwrap_or_default()
+                .replace('+', " ")
+                .replace("%20", " ")
+                .replace("%28", "(")
+                .replace("%29", ")")
+                .replace("%2A", "*")
+        }
+
+        fn sql_filters(sql: &str) -> Vec<(String, String)> {
+            let Some(where_clause) = sql.split(" WHERE ").nth(1) else {
+                return Vec::new();
+            };
+
+            where_clause
+                .split(" ORDER BY ")
+                .next()
+                .unwrap_or(where_clause)
+                .split(" AND ")
+                .filter_map(|predicate| {
+                    let (column, rest) = predicate.split_once(" = '")?;
+                    let value = rest.strip_suffix('\'')?.replace("''", "'");
+                    Some((column.to_owned(), value))
+                })
+                .collect()
+        }
+
+        fn latest_signing_keys(rows: &[Value]) -> Vec<Value> {
+            let mut latest = BTreeMap::<String, Value>::new();
+
+            for row in rows {
+                let kid = row
+                    .get("kid")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let row_version = row.get("row_version").and_then(Value::as_u64).unwrap_or(0);
+                let replace = latest
+                    .get(&kid)
+                    .and_then(|current| current.get("row_version").and_then(Value::as_u64))
+                    .map(|current| row_version >= current)
+                    .unwrap_or(true);
+                if replace {
+                    latest.insert(kid, row.clone());
+                }
+            }
+
+            latest
+                .into_values()
+                .filter(|row| !row.get("deleted").and_then(Value::as_bool).unwrap_or(false))
+                .collect()
+        }
+
+        #[get("/v0/pipelines/{name}")]
+        async fn get_pipeline(store: web::Data<Arc<Mutex<FakeStore>>>) -> impl Responder {
+            let pipeline = store.lock().expect("store lock").pipeline.clone();
+            if let Some(pipeline) = pipeline {
+                HttpResponse::Ok().json(pipeline)
+            } else {
+                HttpResponse::NotFound().finish()
+            }
+        }
+
+        #[post("/v0/pipelines")]
+        async fn create_pipeline(
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+            body: web::Json<crate::feldera::DesiredPipeline>,
+        ) -> impl Responder {
+            let record = crate::feldera::PipelineRecord {
+                name: body.name.clone(),
+                description: Some(body.description.clone()),
+                program_code: Some(body.program_code.clone()),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: body.program_config.clone(),
+            };
+            store.lock().expect("store lock").pipeline = Some(record.clone());
+            HttpResponse::Ok().json(record)
+        }
+
+        #[post("/v0/pipelines/{name}/start")]
+        async fn start_pipeline() -> impl Responder {
+            HttpResponse::Ok().finish()
+        }
+
+        #[post("/v0/pipelines/{name}/ingress/{table}")]
+        async fn ingress_rows(
+            path: web::Path<(String, String)>,
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+            body: web::Json<Vec<Value>>,
+        ) -> impl Responder {
+            store
+                .lock()
+                .expect("store lock")
+                .tables
+                .entry(path.1.clone())
+                .or_default()
+                .extend(body.into_inner());
+
+            HttpResponse::Ok().json(serde_json::json!({ "completion_token": "done-1" }))
+        }
+
+        #[get("/v0/pipelines/{name}/completion_status")]
+        async fn completion_status() -> impl Responder {
+            HttpResponse::Ok().json(serde_json::json!({ "completed": true }))
+        }
+
+        #[get("/v0/pipelines/{name}/query")]
+        async fn query_pipeline(
+            request: HttpRequest,
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+        ) -> impl Responder {
+            let sql = decode_sql(&request);
+            let store = store.lock().expect("store lock");
+
+            if sql.contains("MAX(row_version)") {
+                let filters = sql_filters(&sql);
+                let max = store
+                    .tables
+                    .get("signing_key")
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter(|row| {
+                        filters.iter().all(|(column, expected)| {
+                            row.get(column)
+                                .and_then(Value::as_str)
+                                .map(|value| value == expected)
+                                .unwrap_or(false)
+                        })
+                    })
+                    .filter_map(|row| row.get("row_version").and_then(Value::as_u64))
+                    .max()
+                    .unwrap_or(0);
+                HttpResponse::Ok().json(vec![serde_json::json!({ "count": max })])
+            } else if sql.contains("FROM current_signing_key") {
+                HttpResponse::Ok().json(latest_signing_keys(
+                    store
+                        .tables
+                        .get("signing_key")
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]),
+                ))
+            } else {
+                HttpResponse::Ok().json(Vec::<Value>::new())
+            }
+        }
+
+        let store = Arc::new(Mutex::new(FakeStore::default()));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("listener should have local addr");
+        let server_store = store.clone();
+        let server = actix_web::HttpServer::new(move || {
+            App::new()
+                .app_data(web::Data::new(server_store.clone()))
+                .service(get_pipeline)
+                .service(create_pipeline)
+                .service(start_pipeline)
+                .service(ingress_rows)
+                .service(completion_status)
+                .service(query_pipeline)
+        })
+        .listen(listener)
+        .expect("server should listen")
+        .run();
+        let handle = server.handle();
+        actix_web::rt::spawn(server);
+        actix_web::rt::time::sleep(Duration::from_millis(25)).await;
+
+        let client = crate::feldera::FelderaClient::new(format!("http://{}", addr), None);
+        let store_client = super::FelderaManagedStore::new(
+            client,
+            crate::config::FelderaConfig {
+                enabled: true,
+                base_url: format!("http://{}", addr),
+                pipeline_prefix: "task5-signing-key".to_owned(),
+                readiness_probe: false,
+                api_key: None,
+                compile_profile: "dev".to_owned(),
+                auto_start: false,
+                start_initial: "paused".to_owned(),
+            },
+        );
+        let signer = JwtSigner::from_seed([7; 32]);
+
+        store_client
+            .ensure_current_signing_key(&signer)
+            .await
+            .expect("first signing key persist should succeed");
+        store_client
+            .ensure_current_signing_key(&signer)
+            .await
+            .expect("second signing key persist should be a no-op");
+
+        handle.stop(true).await;
+
+        let store = store.lock().expect("store lock");
+        assert_eq!(
+            store.tables.get("signing_key").map(Vec::len).unwrap_or(0),
+            1
+        );
+        assert_eq!(
+            store
+                .tables
+                .get("auth_runtime_commit")
+                .map(Vec::len)
+                .unwrap_or(0),
+            1
+        );
+    }
+
+    #[actix_web::test]
+    async fn rejects_conflicting_persisted_signing_key_rows() {
+        use actix_web::{get, post, web, App, HttpRequest, HttpResponse, Responder};
+        use std::time::Duration;
+
+        #[derive(Default)]
+        struct FakeStore {
+            pipeline: Option<crate::feldera::PipelineRecord>,
+            tables: BTreeMap<String, Vec<Value>>,
+        }
+
+        fn decode_sql(request: &HttpRequest) -> String {
+            request
+                .query_string()
+                .split('&')
+                .find_map(|entry| entry.strip_prefix("sql="))
+                .unwrap_or_default()
+                .replace('+', " ")
+                .replace("%20", " ")
+                .replace("%28", "(")
+                .replace("%29", ")")
+                .replace("%2A", "*")
+        }
+
+        fn latest_signing_keys(rows: &[Value]) -> Vec<Value> {
+            let mut latest = BTreeMap::<String, Value>::new();
+
+            for row in rows {
+                let kid = row
+                    .get("kid")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                latest.insert(kid, row.clone());
+            }
+
+            latest
+                .into_values()
+                .filter(|row| !row.get("deleted").and_then(Value::as_bool).unwrap_or(false))
+                .collect()
+        }
+
+        #[get("/v0/pipelines/{name}")]
+        async fn get_pipeline(store: web::Data<Arc<Mutex<FakeStore>>>) -> impl Responder {
+            let pipeline = store.lock().expect("store lock").pipeline.clone();
+            if let Some(pipeline) = pipeline {
+                HttpResponse::Ok().json(pipeline)
+            } else {
+                HttpResponse::NotFound().finish()
+            }
+        }
+
+        #[post("/v0/pipelines")]
+        async fn create_pipeline(
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+            body: web::Json<crate::feldera::DesiredPipeline>,
+        ) -> impl Responder {
+            let record = crate::feldera::PipelineRecord {
+                name: body.name.clone(),
+                description: Some(body.description.clone()),
+                program_code: Some(body.program_code.clone()),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: body.program_config.clone(),
+            };
+            store.lock().expect("store lock").pipeline = Some(record.clone());
+            HttpResponse::Ok().json(record)
+        }
+
+        #[post("/v0/pipelines/{name}/start")]
+        async fn start_pipeline() -> impl Responder {
+            HttpResponse::Ok().finish()
+        }
+
+        #[post("/v0/pipelines/{name}/ingress/{table}")]
+        async fn ingress_rows(
+            path: web::Path<(String, String)>,
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+            body: web::Json<Vec<Value>>,
+        ) -> impl Responder {
+            store
+                .lock()
+                .expect("store lock")
+                .tables
+                .entry(path.1.clone())
+                .or_default()
+                .extend(body.into_inner());
+
+            HttpResponse::Ok().json(serde_json::json!({ "completion_token": "done-1" }))
+        }
+
+        #[get("/v0/pipelines/{name}/completion_status")]
+        async fn completion_status() -> impl Responder {
+            HttpResponse::Ok().json(serde_json::json!({ "completed": true }))
+        }
+
+        #[get("/v0/pipelines/{name}/query")]
+        async fn query_pipeline(
+            request: HttpRequest,
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+        ) -> impl Responder {
+            let sql = decode_sql(&request);
+            let store = store.lock().expect("store lock");
+
+            if sql.contains("MAX(row_version)") {
+                HttpResponse::Ok().json(vec![serde_json::json!({ "count": 1 })])
+            } else if sql.contains("FROM current_signing_key") {
+                HttpResponse::Ok().json(latest_signing_keys(
+                    store
+                        .tables
+                        .get("signing_key")
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]),
+                ))
+            } else {
+                HttpResponse::Ok().json(Vec::<Value>::new())
+            }
+        }
+
+        let signer = JwtSigner::from_seed([7; 32]);
+        let mut conflicting_row = serde_json::to_value(SigningKeyRow::from_signer(
+            &signer,
+            "change-1".to_owned(),
+            1,
+        ))
+        .expect("row should serialize");
+        conflicting_row["x"] = Value::String("different".to_owned());
+
+        let store = Arc::new(Mutex::new(FakeStore {
+            pipeline: None,
+            tables: BTreeMap::from([("signing_key".to_owned(), vec![conflicting_row])]),
+        }));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("listener should have local addr");
+        let server_store = store.clone();
+        let server = actix_web::HttpServer::new(move || {
+            App::new()
+                .app_data(web::Data::new(server_store.clone()))
+                .service(get_pipeline)
+                .service(create_pipeline)
+                .service(start_pipeline)
+                .service(ingress_rows)
+                .service(completion_status)
+                .service(query_pipeline)
+        })
+        .listen(listener)
+        .expect("server should listen")
+        .run();
+        let handle = server.handle();
+        actix_web::rt::spawn(server);
+        actix_web::rt::time::sleep(Duration::from_millis(25)).await;
+
+        let client = crate::feldera::FelderaClient::new(format!("http://{}", addr), None);
+        let store_client = super::FelderaManagedStore::new(
+            client,
+            crate::config::FelderaConfig {
+                enabled: true,
+                base_url: format!("http://{}", addr),
+                pipeline_prefix: "task5-signing-key-conflict".to_owned(),
+                readiness_probe: false,
+                api_key: None,
+                compile_profile: "dev".to_owned(),
+                auto_start: false,
+                start_initial: "paused".to_owned(),
+            },
+        );
+
+        let err = store_client
+            .ensure_current_signing_key(&signer)
+            .await
+            .expect_err("conflicting persisted signing key should fail");
+
+        handle.stop(true).await;
+
+        assert!(err.to_string().contains("does not match configured signer"));
     }
 
     // r[verify config.managed.apply-operation]

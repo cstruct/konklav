@@ -68,7 +68,7 @@ Use `JwtSigner` and `JwtVerifier` when Conclave or another Rust consumer needs t
 ```rust
 use conclave_relying_auth::{JwtSigner, ValidationOptions};
 
-let signer = JwtSigner::from_seed("kid-1", [7; 32]);
+let signer = JwtSigner::from_seed([7; 32]);
 let verifier = signer.verifier();
 let _options = ValidationOptions::default();
 ```

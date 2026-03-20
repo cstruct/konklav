@@ -27,11 +27,10 @@ async fn main() -> io::Result<()> {
     let loaded = AppConfig::load().map_err(io::Error::other)?;
     let managed = ManagedConfig::load_from_dir(&loaded.managed_dir).map_err(io::Error::other)?;
     let signer = JwtSigner::from_seed(
-        loaded.config.jwt.signing_key_id.clone(),
         loaded
             .config
             .jwt
-            .signing_seed_bytes()
+            .signing_private_key_bytes()
             .map_err(io::Error::other)?,
     );
     let verifier = signer.verifier();

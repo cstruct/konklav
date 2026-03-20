@@ -107,8 +107,8 @@ fn jwt_config() -> JwtConfig {
     JwtConfig {
         issuer: "https://conclave.test".to_owned(),
         default_audience: "conclave-api".to_owned(),
-        signing_key_id: "test-key".to_owned(),
-        signing_seed: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20".to_owned(),
+        signing_private_key: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+            .to_owned(),
         ttl_seconds: 900,
     }
 }
@@ -116,8 +116,8 @@ fn jwt_config() -> JwtConfig {
 fn signer() -> JwtSigner {
     let jwt = jwt_config();
     JwtSigner::from_seed(
-        jwt.signing_key_id.clone(),
-        jwt.signing_seed_bytes().expect("seed should decode"),
+        jwt.signing_private_key_bytes()
+            .expect("private key should decode"),
     )
 }
 

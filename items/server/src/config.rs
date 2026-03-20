@@ -47,8 +47,7 @@ pub struct BootstrapConfig {
 pub struct JwtConfig {
     pub issuer: String,
     pub default_audience: String,
-    pub signing_key_id: String,
-    pub signing_seed: String,
+    pub signing_private_key: String,
     pub ttl_seconds: u64,
 }
 
@@ -87,9 +86,8 @@ impl Default for AppConfig {
             jwt: JwtConfig {
                 issuer: "http://127.0.0.1:8082".to_owned(),
                 default_audience: "conclave-dev".to_owned(),
-                signing_key_id: "dev-key-1".to_owned(),
-                signing_seed: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
-                    .to_owned(),
+                signing_private_key:
+                    "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20".to_owned(),
                 ttl_seconds: 900,
             },
             feldera: FelderaConfig {
@@ -161,12 +159,12 @@ impl ListenerConfig {
 }
 
 impl JwtConfig {
-    pub fn signing_seed_bytes(&self) -> Result<[u8; 32], DynError> {
-        let bytes = decode_hex(&self.signing_seed)?;
+    pub fn signing_private_key_bytes(&self) -> Result<[u8; 32], DynError> {
+        let bytes = decode_hex(&self.signing_private_key)?;
         bytes.try_into().map_err(|_| {
             Box::new(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "jwt signing seed must decode to 32 bytes",
+                "jwt signing private key must decode to 32 bytes",
             )) as DynError
         })
     }
@@ -201,10 +199,8 @@ struct StartupOverrides {
     jwt_issuer: Option<String>,
     #[arg(long, env = "CONCLAVE_JWT_DEFAULT_AUDIENCE")]
     jwt_default_audience: Option<String>,
-    #[arg(long, env = "CONCLAVE_JWT_SIGNING_KEY_ID")]
-    jwt_signing_key_id: Option<String>,
-    #[arg(long, env = "CONCLAVE_JWT_SIGNING_SEED")]
-    jwt_signing_seed: Option<String>,
+    #[arg(long, env = "CONCLAVE_JWT_SIGNING_PRIVATE_KEY")]
+    jwt_signing_private_key: Option<String>,
     #[arg(long, env = "CONCLAVE_JWT_TTL_SECONDS")]
     jwt_ttl_seconds: Option<u64>,
     #[arg(long, env = "CONCLAVE_FELDERA_ENABLED")]
@@ -254,8 +250,10 @@ impl StartupOverrides {
         );
         apply_override(&mut config.jwt.issuer, self.jwt_issuer);
         apply_override(&mut config.jwt.default_audience, self.jwt_default_audience);
-        apply_override(&mut config.jwt.signing_key_id, self.jwt_signing_key_id);
-        apply_override(&mut config.jwt.signing_seed, self.jwt_signing_seed);
+        apply_override(
+            &mut config.jwt.signing_private_key,
+            self.jwt_signing_private_key,
+        );
         apply_override(&mut config.jwt.ttl_seconds, self.jwt_ttl_seconds);
         apply_override(&mut config.feldera.enabled, self.feldera_enabled);
         apply_override(&mut config.feldera.base_url, self.feldera_base_url);
@@ -329,14 +327,9 @@ impl OverrideSources {
                 "CONCLAVE_JWT_DEFAULT_AUDIENCE",
             ),
             (
-                "jwt_signing_key_id",
-                "--jwt-signing-key-id",
-                "CONCLAVE_JWT_SIGNING_KEY_ID",
-            ),
-            (
-                "jwt_signing_seed",
-                "--jwt-signing-seed",
-                "CONCLAVE_JWT_SIGNING_SEED",
+                "jwt_signing_private_key",
+                "--jwt-signing-private-key",
+                "CONCLAVE_JWT_SIGNING_PRIVATE_KEY",
             ),
             (
                 "jwt_ttl_seconds",
@@ -473,8 +466,7 @@ bootstrap {
 jwt {
     issuer "https://conclave.test"
     default_audience "clinic-api"
-    signing_key_id "key-1"
-    signing_seed "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    signing_private_key "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     ttl_seconds 600
 }
 feldera {
@@ -495,7 +487,6 @@ feldera {
         assert_eq!(config.subject.port, 9091);
         assert_eq!(config.relying.port, 9092);
         assert_eq!(config.bootstrap.subject, "root-admin");
-        assert_eq!(config.jwt.signing_key_id, "key-1");
         assert_eq!(config.jwt.ttl_seconds, 600);
         assert!(config.feldera.enabled);
     }
@@ -507,7 +498,7 @@ feldera {
         assert!(schema.contains("subject"));
         assert!(schema.contains("relying"));
         assert!(schema.contains("bootstrap"));
-        assert!(schema.contains("signing_key_id"));
+        assert!(schema.contains("signing_private_key"));
     }
 
     #[test]
@@ -518,13 +509,16 @@ feldera {
             OsString::from("9990"),
             OsString::from("--bootstrap-subject"),
             OsString::from("root-2"),
-            OsString::from("--jwt-signing-key-id"),
-            OsString::from("key-2"),
+            OsString::from("--jwt-signing-private-key"),
+            OsString::from("02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021"),
         ])
         .expect("config should load");
 
         assert_eq!(loaded.config.control_plane.port, 9990);
         assert_eq!(loaded.config.bootstrap.subject, "root-2");
-        assert_eq!(loaded.config.jwt.signing_key_id, "key-2");
+        assert_eq!(
+            loaded.config.jwt.signing_private_key,
+            "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021"
+        );
     }
 }

@@ -255,6 +255,11 @@ impl AppState {
         let Some(client) = &self.feldera else {
             return Ok(None);
         };
+        if let Some(store) = &self.managed_store {
+            store
+                .ensure_current_signing_key(self.signer.as_ref())
+                .await?;
+        }
 
         let (authz, tenants) = self.current_snapshot().await?;
         let start = self
@@ -997,12 +1002,11 @@ memberships (
             source: "test-managed".to_owned(),
         };
         let signer = JwtSigner::from_seed(
-            loaded.config.jwt.signing_key_id.clone(),
             loaded
                 .config
                 .jwt
-                .signing_seed_bytes()
-                .expect("seed should decode"),
+                .signing_private_key_bytes()
+                .expect("private key should decode"),
         );
         let verifier = signer.verifier();
 
@@ -1103,6 +1107,7 @@ memberships (
         struct Seen {
             gets: usize,
             creates: usize,
+            ingressed_tables: Vec<String>,
             pipelines: BTreeMap<String, crate::feldera::PipelineRecord>,
         }
 
@@ -1195,6 +1200,8 @@ memberships (
 
             if sql.contains("COUNT(*)") {
                 HttpResponse::Ok().body(r#"[{"count":0}]"#)
+            } else if sql.contains("MAX(row_version)") {
+                HttpResponse::Ok().body(r#"[{"count":0}]"#)
             } else if sql.contains("ORDER BY committed_at DESC") {
                 HttpResponse::Ok().body(r#"[{"apply_id":"apply-bootstrap"}]"#)
             } else if sql.contains("FROM current_action") {
@@ -1219,6 +1226,7 @@ memberships (
                 || sql.contains("FROM current_assumption_grant")
                 || sql.contains("FROM current_template")
                 || sql.contains("FROM current_role")
+                || sql.contains("FROM current_signing_key")
             {
                 HttpResponse::Ok().body("[]")
             } else {
@@ -1227,7 +1235,14 @@ memberships (
         }
 
         #[post("/v0/pipelines/{name}/ingress/{table}")]
-        async fn ingress_rows() -> impl Responder {
+        async fn ingress_rows(
+            path: web::Path<(String, String)>,
+            seen: web::Data<Arc<Mutex<Seen>>>,
+        ) -> impl Responder {
+            seen.lock()
+                .expect("seen lock")
+                .ingressed_tables
+                .push(path.1.clone());
             HttpResponse::Ok().json(serde_json::json!({ "completion_token": "done-1" }))
         }
 
@@ -1281,12 +1296,11 @@ catalog {
             source: "test-managed".to_owned(),
         };
         let signer = JwtSigner::from_seed(
-            loaded.config.jwt.signing_key_id.clone(),
             loaded
                 .config
                 .jwt
-                .signing_seed_bytes()
-                .expect("seed should decode"),
+                .signing_private_key_bytes()
+                .expect("private key should decode"),
         );
         let verifier = signer.verifier();
         let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
@@ -1306,6 +1320,14 @@ catalog {
         let seen = seen.lock().expect("seen lock");
         assert!(seen.gets >= 2);
         assert!(seen.creates >= 2);
+        assert!(seen
+            .ingressed_tables
+            .iter()
+            .any(|table| table == "signing_key"));
+        assert!(seen
+            .ingressed_tables
+            .iter()
+            .any(|table| table == "auth_runtime_commit"));
     }
 
     // r[verify config.managed.feldera-authoritative-store]
@@ -1508,12 +1530,11 @@ catalog {
             source: "bootstrap-managed".to_owned(),
         };
         let signer = JwtSigner::from_seed(
-            loaded.config.jwt.signing_key_id.clone(),
             loaded
                 .config
                 .jwt
-                .signing_seed_bytes()
-                .expect("seed should decode"),
+                .signing_private_key_bytes()
+                .expect("private key should decode"),
         );
         let verifier = signer.verifier();
         let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
@@ -1761,12 +1782,11 @@ catalog {
             source: "test-managed".to_owned(),
         };
         let signer = JwtSigner::from_seed(
-            loaded.config.jwt.signing_key_id.clone(),
             loaded
                 .config
                 .jwt
-                .signing_seed_bytes()
-                .expect("seed should decode"),
+                .signing_private_key_bytes()
+                .expect("private key should decode"),
         );
         let verifier = signer.verifier();
         let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
@@ -1977,12 +1997,11 @@ catalog {
             source: "test-managed".to_owned(),
         };
         let signer = JwtSigner::from_seed(
-            loaded.config.jwt.signing_key_id.clone(),
             loaded
                 .config
                 .jwt
-                .signing_seed_bytes()
-                .expect("seed should decode"),
+                .signing_private_key_bytes()
+                .expect("private key should decode"),
         );
         let verifier = signer.verifier();
         let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
@@ -2220,12 +2239,11 @@ memberships (
             source: "test-managed".to_owned(),
         };
         let signer = JwtSigner::from_seed(
-            loaded.config.jwt.signing_key_id.clone(),
             loaded
                 .config
                 .jwt
-                .signing_seed_bytes()
-                .expect("seed should decode"),
+                .signing_private_key_bytes()
+                .expect("private key should decode"),
         );
         let verifier = signer.verifier();
         let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
@@ -2503,8 +2521,9 @@ memberships (
                 HttpResponse::Ok().json(vec![serde_json::json!({ "count": max })])
             } else if path.contains("_authz/query") && sql.contains("FROM compiled_authz_metadata")
             {
-                HttpResponse::Ok()
-                    .json(vec![serde_json::json!({ "catalog_revision": 1, "policy_revision": 1 })])
+                HttpResponse::Ok().json(vec![
+                    serde_json::json!({ "catalog_revision": 1, "policy_revision": 1 }),
+                ])
             } else if path.contains("_authz/query") && sql.contains("FROM action_catalog") {
                 HttpResponse::Ok().json(vec![serde_json::json!({
                     "name": "tenant:user:read",
@@ -2623,12 +2642,11 @@ memberships (
 
         let loaded = loaded_config();
         let signer = JwtSigner::from_seed(
-            loaded.config.jwt.signing_key_id.clone(),
             loaded
                 .config
                 .jwt
-                .signing_seed_bytes()
-                .expect("seed should decode"),
+                .signing_private_key_bytes()
+                .expect("private key should decode"),
         );
         let verifier = signer.verifier();
         let state = AppState::from_loaded_config(loaded, managed_config(), signer, verifier)
@@ -2669,12 +2687,11 @@ memberships (
 
         let reloaded_loaded = loaded_config();
         let reloaded_signer = JwtSigner::from_seed(
-            reloaded_loaded.config.jwt.signing_key_id.clone(),
             reloaded_loaded
                 .config
                 .jwt
-                .signing_seed_bytes()
-                .expect("seed should decode"),
+                .signing_private_key_bytes()
+                .expect("private key should decode"),
         );
         let reloaded_verifier = reloaded_signer.verifier();
         let reloaded_state = AppState::from_loaded_config(
@@ -2746,12 +2763,11 @@ catalog { actions () }
             source: "test-managed".to_owned(),
         };
         let signer = JwtSigner::from_seed(
-            loaded.config.jwt.signing_key_id.clone(),
             loaded
                 .config
                 .jwt
-                .signing_seed_bytes()
-                .expect("seed should decode"),
+                .signing_private_key_bytes()
+                .expect("private key should decode"),
         );
         let verifier = signer.verifier();
         let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
