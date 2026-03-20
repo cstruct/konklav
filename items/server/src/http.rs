@@ -1,3 +1,4 @@
+use std::io;
 use std::sync::{Arc, RwLock};
 
 use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
@@ -13,8 +14,9 @@ use serde::Serialize;
 use crate::authz::CompiledAuthzModel;
 use crate::config::{AppConfig, LoadedConfig};
 use crate::feldera::{
-    load_action_catalog_entries, load_compiled_authz_metadata, load_effective_grant,
-    sync_authz_pipeline, CompiledAuthzMetadata, FelderaClient, StartPipelineRequest,
+    authz_pipeline_name, load_action_catalog_entries, load_compiled_authz_metadata,
+    load_effective_grant, sync_authz_pipeline, CompiledAuthzMetadata, FelderaClient,
+    StartPipelineRequest,
 };
 use crate::managed_store::{FelderaManagedStore, ManagedApplyFailure};
 use crate::state::{ControlPlaneState, RuntimeAuthState};
@@ -61,6 +63,16 @@ struct MetaResponse {
 }
 
 impl AppState {
+    fn compiled_authz_unavailable(
+        &self,
+        detail: &str,
+    ) -> Result<(CompiledAuthzMetadata, Vec<ActionCatalogEntry>), crate::types::DynError> {
+        Err(Box::new(io::Error::other(format!(
+            "{detail} unavailable from Feldera authz pipeline {}",
+            authz_pipeline_name(&self.config.feldera)
+        ))))
+    }
+
     // r[impl config.managed.feldera-authoritative-store]
     pub async fn from_loaded_config(
         loaded: LoadedConfig,
@@ -174,14 +186,12 @@ impl AppState {
         &self,
     ) -> Result<(CompiledAuthzMetadata, Vec<ActionCatalogEntry>), crate::types::DynError> {
         if let Some(client) = &self.feldera {
-            if let Some(metadata) =
-                load_compiled_authz_metadata(client, &self.config.feldera).await?
-            {
-                let actions = load_action_catalog_entries(client, &self.config.feldera).await?;
-                if !actions.is_empty() {
-                    return Ok((metadata, actions));
-                }
-            }
+            let Some(metadata) = load_compiled_authz_metadata(client, &self.config.feldera).await?
+            else {
+                return self.compiled_authz_unavailable("compiled authz metadata");
+            };
+            let actions = load_action_catalog_entries(client, &self.config.feldera).await?;
+            return Ok((metadata, actions));
         }
 
         let (authz, tenants) = self.current_snapshot().await?;
@@ -209,7 +219,7 @@ impl AppState {
         source_tenant: Option<&str>,
     ) -> Result<Option<CompiledEffectiveGrant>, crate::types::DynError> {
         if let Some(client) = &self.feldera {
-            let loaded = load_effective_grant(
+            return load_effective_grant(
                 client,
                 &self.config.feldera,
                 grant_kind,
@@ -217,10 +227,7 @@ impl AppState {
                 target_tenant,
                 source_tenant,
             )
-            .await?;
-            if loaded.is_some() {
-                return Ok(loaded);
-            }
+            .await;
         }
 
         let (_, tenants) = self.current_snapshot().await?;
@@ -1512,18 +1519,23 @@ catalog {
         let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
             .await
             .expect("state should build");
-        let catalog = state
-            .current_catalog()
+        let managed = state
+            .load_managed_config()
             .await
-            .expect("catalog should compile");
-        let catalog_again = state
-            .current_catalog()
+            .expect("managed state should load from Feldera");
+        let managed_again = state
+            .load_managed_config()
             .await
-            .expect("catalog should compile again");
+            .expect("managed state should load from Feldera again");
+        let last_apply_id = state
+            .current_last_apply_id()
+            .await
+            .expect("last apply id should load from Feldera");
 
         handle.stop(true).await;
-        assert_eq!(catalog.actions.len(), 1);
-        assert_eq!(catalog_again.actions.len(), 1);
+        assert_eq!(managed.catalog.actions.len(), 1);
+        assert_eq!(managed_again.catalog.actions.len(), 1);
+        assert_eq!(last_apply_id, "apply-bootstrap");
         let seen = seen.lock().expect("seen lock");
         assert!(seen.pipeline_creates >= 1);
         assert!(seen.query_calls >= 3);
@@ -1786,6 +1798,449 @@ catalog {
         );
     }
 
+    #[actix_web::test]
+    async fn requires_compiled_authz_metadata_from_feldera_pipeline() {
+        use actix_web::{patch, HttpResponse};
+        use std::collections::BTreeMap;
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        #[derive(Default, Clone)]
+        struct Seen {
+            pipelines: BTreeMap<String, crate::feldera::PipelineRecord>,
+        }
+
+        #[get("/v0/pipelines/{name}")]
+        async fn get_pipeline(
+            path: web::Path<String>,
+            seen: web::Data<Arc<Mutex<Seen>>>,
+        ) -> impl Responder {
+            if let Some(pipeline) = seen
+                .lock()
+                .expect("seen lock")
+                .pipelines
+                .get(path.as_str())
+                .cloned()
+            {
+                HttpResponse::Ok().json(pipeline)
+            } else {
+                HttpResponse::NotFound().finish()
+            }
+        }
+
+        #[post("/v0/pipelines")]
+        async fn create_pipeline(
+            seen: web::Data<Arc<Mutex<Seen>>>,
+            body: web::Json<crate::feldera::DesiredPipeline>,
+        ) -> impl Responder {
+            let record = crate::feldera::PipelineRecord {
+                name: body.name.clone(),
+                description: Some(body.description.clone()),
+                program_code: Some(body.program_code.clone()),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: body.program_config.clone(),
+            };
+            seen.lock()
+                .expect("seen lock")
+                .pipelines
+                .insert(record.name.clone(), record.clone());
+            HttpResponse::Ok().json(record)
+        }
+
+        #[patch("/v0/pipelines/{name}")]
+        async fn patch_pipeline(
+            body: web::Json<serde_json::Value>,
+            path: web::Path<String>,
+            seen: web::Data<Arc<Mutex<Seen>>>,
+        ) -> impl Responder {
+            let record = crate::feldera::PipelineRecord {
+                name: path.into_inner(),
+                description: body
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                program_code: body
+                    .get("program_code")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: serde_json::from_value(
+                    body.get("program_config")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                )
+                .ok(),
+            };
+            seen.lock()
+                .expect("seen lock")
+                .pipelines
+                .insert(record.name.clone(), record.clone());
+            HttpResponse::Ok().json(record)
+        }
+
+        #[post("/v0/pipelines/{name}/start")]
+        async fn start_pipeline() -> impl Responder {
+            HttpResponse::Ok().finish()
+        }
+
+        #[get("/v0/pipelines/{name}/query")]
+        async fn query_pipeline(request: HttpRequest) -> impl Responder {
+            let sql = request
+                .query_string()
+                .split('&')
+                .find_map(|entry| entry.strip_prefix("sql="))
+                .unwrap_or_default()
+                .replace('+', " ")
+                .replace("%20", " ")
+                .replace("%28", "(")
+                .replace("%29", ")")
+                .replace("%2A", "*");
+
+            if sql.contains("COUNT(*)") {
+                HttpResponse::Ok().body(r#"[{"count":0}]"#)
+            } else if sql.contains("FROM current_invite")
+                || sql.contains("FROM current_subject_credential")
+                || sql.contains("FROM current_session")
+                || sql.contains("FROM current_tenant")
+                || sql.contains("FROM current_subject")
+                || sql.contains("FROM current_membership")
+                || sql.contains("FROM current_assumption_grant")
+                || sql.contains("FROM current_template")
+                || sql.contains("FROM current_role")
+                || sql.contains("FROM current_action")
+            {
+                HttpResponse::Ok().body("[]")
+            } else {
+                HttpResponse::Ok().body("[]")
+            }
+        }
+
+        #[post("/v0/pipelines/{name}/ingress/{table}")]
+        async fn ingress_rows() -> impl Responder {
+            HttpResponse::Ok().json(serde_json::json!({ "completion_token": "done-1" }))
+        }
+
+        #[get("/v0/pipelines/{name}/completion_status")]
+        async fn completion_status() -> impl Responder {
+            HttpResponse::Ok().json(serde_json::json!({ "completed": true }))
+        }
+
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("listener should have local addr");
+        let server_seen = seen.clone();
+        let server = actix_web::HttpServer::new(move || {
+            App::new()
+                .app_data(web::Data::new(server_seen.clone()))
+                .service(get_pipeline)
+                .service(create_pipeline)
+                .service(patch_pipeline)
+                .service(start_pipeline)
+                .service(query_pipeline)
+                .service(ingress_rows)
+                .service(completion_status)
+        })
+        .listen(listener)
+        .expect("server should listen")
+        .run();
+        let handle = server.handle();
+        actix_web::rt::spawn(server);
+        actix_web::rt::time::sleep(Duration::from_millis(25)).await;
+
+        let mut loaded = LoadedConfig {
+            config: AppConfig::default(),
+            managed_dir: std::path::PathBuf::from("config"),
+            source: "test".to_owned(),
+        };
+        loaded.config.feldera.enabled = true;
+        loaded.config.feldera.base_url = format!("http://{}", addr);
+        let managed = conclave_managed_config::LoadedManagedConfig {
+            managed: ManagedConfig::load_from_str(
+                r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+    )
+}
+"#,
+            )
+            .expect("managed config should parse"),
+            source: "test-managed".to_owned(),
+        };
+        let signer = JwtSigner::from_seed(
+            loaded.config.jwt.signing_key_id.clone(),
+            loaded
+                .config
+                .jwt
+                .signing_seed_bytes()
+                .expect("seed should decode"),
+        );
+        let verifier = signer.verifier();
+        let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
+            .await
+            .expect("state should build");
+
+        let err = state
+            .current_compiled_metadata()
+            .await
+            .expect_err("compiled metadata should be required from Feldera");
+
+        handle.stop(true).await;
+        assert!(err
+            .to_string()
+            .contains("compiled authz metadata unavailable from Feldera authz pipeline"));
+    }
+
+    #[actix_web::test]
+    async fn does_not_fallback_to_snapshot_effective_grants_in_feldera_mode() {
+        use actix_web::{patch, HttpResponse};
+        use std::collections::BTreeMap;
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        #[derive(Default, Clone)]
+        struct Seen {
+            pipelines: BTreeMap<String, crate::feldera::PipelineRecord>,
+        }
+
+        #[get("/v0/pipelines/{name}")]
+        async fn get_pipeline(
+            path: web::Path<String>,
+            seen: web::Data<Arc<Mutex<Seen>>>,
+        ) -> impl Responder {
+            if let Some(pipeline) = seen
+                .lock()
+                .expect("seen lock")
+                .pipelines
+                .get(path.as_str())
+                .cloned()
+            {
+                HttpResponse::Ok().json(pipeline)
+            } else {
+                HttpResponse::NotFound().finish()
+            }
+        }
+
+        #[post("/v0/pipelines")]
+        async fn create_pipeline(
+            seen: web::Data<Arc<Mutex<Seen>>>,
+            body: web::Json<crate::feldera::DesiredPipeline>,
+        ) -> impl Responder {
+            let record = crate::feldera::PipelineRecord {
+                name: body.name.clone(),
+                description: Some(body.description.clone()),
+                program_code: Some(body.program_code.clone()),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: body.program_config.clone(),
+            };
+            seen.lock()
+                .expect("seen lock")
+                .pipelines
+                .insert(record.name.clone(), record.clone());
+            HttpResponse::Ok().json(record)
+        }
+
+        #[patch("/v0/pipelines/{name}")]
+        async fn patch_pipeline(
+            body: web::Json<serde_json::Value>,
+            path: web::Path<String>,
+            seen: web::Data<Arc<Mutex<Seen>>>,
+        ) -> impl Responder {
+            let record = crate::feldera::PipelineRecord {
+                name: path.into_inner(),
+                description: body
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                program_code: body
+                    .get("program_code")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: serde_json::from_value(
+                    body.get("program_config")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                )
+                .ok(),
+            };
+            seen.lock()
+                .expect("seen lock")
+                .pipelines
+                .insert(record.name.clone(), record.clone());
+            HttpResponse::Ok().json(record)
+        }
+
+        #[post("/v0/pipelines/{name}/start")]
+        async fn start_pipeline() -> impl Responder {
+            HttpResponse::Ok().finish()
+        }
+
+        #[get("/v0/pipelines/{name}/query")]
+        async fn query_pipeline(request: HttpRequest) -> impl Responder {
+            let sql = request
+                .query_string()
+                .split('&')
+                .find_map(|entry| entry.strip_prefix("sql="))
+                .unwrap_or_default()
+                .replace('+', " ")
+                .replace("%20", " ")
+                .replace("%28", "(")
+                .replace("%29", ")")
+                .replace("%2A", "*");
+            let path = request.path();
+
+            if sql.contains("COUNT(*)") {
+                HttpResponse::Ok().body(r#"[{"count":0}]"#)
+            } else if sql.contains("FROM current_invite")
+                || sql.contains("FROM current_subject_credential")
+                || sql.contains("FROM current_session")
+                || sql.contains("FROM current_tenant")
+                || sql.contains("FROM current_subject")
+                || sql.contains("FROM current_membership")
+                || sql.contains("FROM current_assumption_grant")
+                || sql.contains("FROM current_template")
+                || sql.contains("FROM current_role")
+                || sql.contains("FROM current_action")
+            {
+                HttpResponse::Ok().body("[]")
+            } else if path.contains("_authz/query") && sql.contains("FROM compiled_authz_metadata")
+            {
+                HttpResponse::Ok().body(r#"[{"catalog_revision":77,"policy_revision":99}]"#)
+            } else if path.contains("_authz/query") && sql.contains("FROM action_catalog") {
+                HttpResponse::Ok().body(r#"[{"name":"tenant:user:read","bit":0}]"#)
+            } else if path.contains("_authz/query") && sql.contains("FROM effective_grants") {
+                HttpResponse::Ok().body("[]")
+            } else if path.contains("_authz/query") && sql.contains("FROM effective_grant_actions")
+            {
+                HttpResponse::Ok().body("[]")
+            } else {
+                HttpResponse::Ok().body("[]")
+            }
+        }
+
+        #[post("/v0/pipelines/{name}/ingress/{table}")]
+        async fn ingress_rows() -> impl Responder {
+            HttpResponse::Ok().json(serde_json::json!({ "completion_token": "done-1" }))
+        }
+
+        #[get("/v0/pipelines/{name}/completion_status")]
+        async fn completion_status() -> impl Responder {
+            HttpResponse::Ok().json(serde_json::json!({ "completed": true }))
+        }
+
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("listener should have local addr");
+        let server_seen = seen.clone();
+        let server = actix_web::HttpServer::new(move || {
+            App::new()
+                .app_data(web::Data::new(server_seen.clone()))
+                .service(get_pipeline)
+                .service(create_pipeline)
+                .service(patch_pipeline)
+                .service(start_pipeline)
+                .service(query_pipeline)
+                .service(ingress_rows)
+                .service(completion_status)
+        })
+        .listen(listener)
+        .expect("server should listen")
+        .run();
+        let handle = server.handle();
+        actix_web::rt::spawn(server);
+        actix_web::rt::time::sleep(Duration::from_millis(25)).await;
+
+        let mut loaded = LoadedConfig {
+            config: AppConfig::default(),
+            managed_dir: std::path::PathBuf::from("config"),
+            source: "test".to_owned(),
+        };
+        loaded.config.feldera.enabled = true;
+        loaded.config.feldera.base_url = format!("http://{}", addr);
+        let managed = conclave_managed_config::LoadedManagedConfig {
+            managed: ManagedConfig::load_from_str(
+                r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+    )
+}
+templates (
+    {
+        tenant "tenant-a",
+        key "doctor",
+        policies (
+            {effect allow, action "tenant:user:read"}
+        )
+    }
+)
+roles (
+    {
+        tenant "tenant-a",
+        key "doctor"
+        template "doctor"
+    }
+)
+tenants (
+    {id "root"}
+    {id "tenant-a"}
+)
+subjects (
+    {id "doctor-1", display_name "Doctor One"}
+)
+memberships (
+    {
+        subject "doctor-1"
+        tenant "tenant-a"
+        roles ("doctor")
+    }
+)
+"#,
+            )
+            .expect("managed config should parse"),
+            source: "test-managed".to_owned(),
+        };
+        let signer = JwtSigner::from_seed(
+            loaded.config.jwt.signing_key_id.clone(),
+            loaded
+                .config
+                .jwt
+                .signing_seed_bytes()
+                .expect("seed should decode"),
+        );
+        let verifier = signer.verifier();
+        let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
+            .await
+            .expect("state should build");
+
+        let grant = state
+            .find_compiled_effective_grant("direct", "doctor-1", "tenant-a", None)
+            .await
+            .expect("effective grant query should succeed");
+
+        handle.stop(true).await;
+        assert!(grant.is_none());
+    }
+
     // r[verify authn.session.persisted-history]
     // r[verify identity.subject.linked-credentials.versioned-history]
     // r[verify identity.subject.invite.audit-history]
@@ -2000,6 +2455,7 @@ catalog {
             store: web::Data<Arc<Mutex<FakeStore>>>,
         ) -> impl Responder {
             let sql = decode_sql(&request);
+            let path = request.path();
             let store = store.lock().expect("store lock");
 
             if sql.contains("FROM apply_commit") && sql.contains("COUNT(*)") {
@@ -2045,6 +2501,33 @@ catalog {
                     .max()
                     .unwrap_or(0);
                 HttpResponse::Ok().json(vec![serde_json::json!({ "count": max })])
+            } else if path.contains("_authz/query") && sql.contains("FROM compiled_authz_metadata")
+            {
+                HttpResponse::Ok()
+                    .json(vec![serde_json::json!({ "catalog_revision": 1, "policy_revision": 1 })])
+            } else if path.contains("_authz/query") && sql.contains("FROM action_catalog") {
+                HttpResponse::Ok().json(vec![serde_json::json!({
+                    "name": "tenant:user:read",
+                    "bit": 0
+                })])
+            } else if path.contains("_authz/query") && sql.contains("FROM effective_grants") {
+                HttpResponse::Ok().json(vec![serde_json::json!({
+                    "grant_kind": "direct",
+                    "subject_id": "doctor-1",
+                    "source_tenant_id": "",
+                    "source_tenant_state": "",
+                    "target_tenant_id": "tenant-a",
+                    "target_tenant_state": "active",
+                    "facts_json": "{}",
+                    "ttl_seconds": null
+                })])
+            } else if path.contains("_authz/query") && sql.contains("FROM effective_grant_actions")
+            {
+                HttpResponse::Ok().json(vec![serde_json::json!({
+                    "scope_kind": "",
+                    "scope_id": "",
+                    "bit_index": 0
+                })])
             } else if let Some(view_name) = table_name_from_sql(&sql) {
                 let table_name =
                     backing_table_name(view_name.strip_prefix("current_").unwrap_or(view_name));

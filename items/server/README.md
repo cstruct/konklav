@@ -156,6 +156,7 @@ Coverage shape:
 - The server always binds three separate HTTP surfaces even when they run in one process.
 - Startup loads managed configuration before the runtime begins serving requests.
 - When Feldera-backed managed state is enabled, the server bootstraps the store if empty and then treats Feldera as the authoritative persisted source of managed state.
+- In Feldera-backed mode, relying-system revision metadata, action-catalog reads, and effective-grant reads come from the Feldera authz pipeline and fail closed if that compiled state is unavailable.
 - `readyz` can optionally perform a live Feldera manager reachability check when readiness probing is enabled.
 
 ## Traceability And Related Docs

@@ -31,9 +31,10 @@ Managed control-plane reads use Feldera as the authority when the Feldera-backed
 
 - request-time managed snapshots load from typed `current_*` Feldera views
 - compiled authorization and tenant projections are derived from those loaded rows
+- revision metadata, action-catalog reads, and `effective_grants` reads use the Feldera authz pipeline as the authoritative source once the server has refreshed that pipeline on startup or after managed apply
 - server-local runtime-auth state remains in memory only for invite, credential, and session mutation planning
 - the server does not keep an authoritative in-memory managed mirror in Feldera mode
-- the in-memory managed fallback exists only when Feldera is disabled
+- the in-memory managed fallback exists only when Feldera is disabled, and compiled-authz request paths fail closed rather than rebuilding a Rust snapshot when the Feldera authz pipeline is missing or stale
 
 This keeps the in-process state bounded to the runtime-auth working set while still allowing request handlers to compile the derived models they need. The current implementation does not keep a derived managed snapshot cache in Feldera mode, so managed read freshness comes from read-through loading rather than cache invalidation. If a derived managed snapshot cache is introduced later, it must remain bounded, non-authoritative, and invalidated by the latest committed `apply_id`.
 
