@@ -36,7 +36,7 @@ The repository keeps normative requirements in specs, shared vocabulary in nomen
 The server uses:
 
 - `actix-web` as the HTTP framework
-- `Styx` for typed local config in `config/server.styx`
+- `Styx` for typed local config in `config/server.conf.styx` and `config/server.secrets.styx`
 - `Feldera` as an external incremental-compute dependency accessed over HTTP
 
 This keeps the server on a thin client boundary to Feldera rather than coupling the control plane to embedded-database assumptions.
@@ -82,9 +82,10 @@ Representative endpoints:
 
 See [items/server/src/http.rs](items/server/src/http.rs) for the route definitions and how they are split across the three surfaces.
 
-Config defaults live in `config/server.styx`, and the managed playground data lives in the adjacent managed-config directory. Common local overrides include:
+Config defaults live in `config/server.conf.styx` and `config/server.secrets.styx`, and the managed playground data lives in the public config file's adjacent managed-config directory. Common local overrides include:
 
 - `CONCLAVE_CONFIG`
+- `CONCLAVE_SECRETS`
 - `CONCLAVE_MANAGED_DIR`
 - `CONCLAVE_CONTROL_PLANE_HOST`
 - `CONCLAVE_CONTROL_PLANE_PORT`
@@ -93,20 +94,19 @@ Config defaults live in `config/server.styx`, and the managed playground data li
 - `CONCLAVE_RELYING_HOST`
 - `CONCLAVE_RELYING_PORT`
 - `CONCLAVE_BOOTSTRAP_SUBJECT`
-- `CONCLAVE_BOOTSTRAP_TOKEN`
 - `CONCLAVE_BOOTSTRAP_DISPLAY_NAME`
 - `CONCLAVE_JWT_ISSUER`
 - `CONCLAVE_JWT_DEFAULT_AUDIENCE`
-- `CONCLAVE_JWT_SIGNING_PRIVATE_KEY`
 - `CONCLAVE_JWT_TTL_SECONDS`
 - `CONCLAVE_FELDERA_ENABLED`
 - `CONCLAVE_FELDERA_BASE_URL`
 - `CONCLAVE_FELDERA_PIPELINE_PREFIX`
 - `CONCLAVE_FELDERA_READINESS_PROBE`
-- `CONCLAVE_FELDERA_API_KEY`
 - `CONCLAVE_FELDERA_COMPILE_PROFILE`
 - `CONCLAVE_FELDERA_AUTO_START`
 - `CONCLAVE_FELDERA_START_INITIAL`
+
+Secret-bearing values such as the bootstrap token, JWT signing private key, and optional Feldera API key now live in `config/server.secrets.styx`. Conclave accepts CLI and env overrides for locating that file, but not for supplying those secret values directly.
 
 See [items/server/src/config.rs](items/server/src/config.rs) for the full set of startup overrides and default values.
 

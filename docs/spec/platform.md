@@ -26,3 +26,15 @@ The first server component MUST own the orchestration boundary for tenants, iden
 
 r[platform.server.multi-surface-runtime]
 The first server component MUST support distinct control-plane, subject-facing, and relying-system HTTP surfaces even when they run from one process.
+
+r[platform.server.split-config-files]
+The server MUST load ordinary runtime config and secret-bearing runtime config from separate startup files rather than one combined config document.
+
+r[platform.server.strict-config-secrets-boundary]
+The server MUST reject secret-bearing fields in the ordinary runtime-config file and MUST reject non-secret runtime fields in the secret-bearing config file.
+
+r[platform.server.explicit-secrets-path]
+The server MUST let operators configure the secret-bearing startup-config file path explicitly and independently from the ordinary runtime-config file path.
+
+r[platform.server.secret-file-only-values]
+The server MUST require secret-bearing startup values to come from the secret-bearing config file rather than direct command-line or environment-variable value overrides.

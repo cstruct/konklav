@@ -97,12 +97,14 @@ cargo run -p conclave-server
 
 By default the server loads:
 
-- server config from `config/server.styx`
-- managed configuration from the config file's adjacent managed-config directory, which is `config/` by default
+- public server config from `config/server.conf.styx`
+- secret-bearing server config from `config/server.secrets.styx`
+- managed configuration from the public config file's adjacent managed-config directory, which is `config/` by default
 
 Common startup overrides:
 
 - `CONCLAVE_CONFIG`
+- `CONCLAVE_SECRETS`
 - `CONCLAVE_MANAGED_DIR`
 - `CONCLAVE_CONTROL_PLANE_HOST`
 - `CONCLAVE_CONTROL_PLANE_PORT`
@@ -111,21 +113,20 @@ Common startup overrides:
 - `CONCLAVE_RELYING_HOST`
 - `CONCLAVE_RELYING_PORT`
 - `CONCLAVE_BOOTSTRAP_SUBJECT`
-- `CONCLAVE_BOOTSTRAP_TOKEN`
 - `CONCLAVE_JWT_ISSUER`
 - `CONCLAVE_JWT_DEFAULT_AUDIENCE`
-- `CONCLAVE_JWT_SIGNING_PRIVATE_KEY`
 - `CONCLAVE_JWT_TTL_SECONDS`
 - `CONCLAVE_FELDERA_ENABLED`
 - `CONCLAVE_FELDERA_BASE_URL`
 - `CONCLAVE_FELDERA_PIPELINE_PREFIX`
 - `CONCLAVE_FELDERA_READINESS_PROBE`
-- `CONCLAVE_FELDERA_API_KEY`
 - `CONCLAVE_FELDERA_COMPILE_PROFILE`
 - `CONCLAVE_FELDERA_AUTO_START`
 - `CONCLAVE_FELDERA_START_INITIAL`
 
 See [`src/config.rs`](src/config.rs) for the full set of startup overrides and default values.
+
+`config/server.secrets.styx` currently holds `bootstrap.token`, `jwt.signing_private_key`, and `feldera.api_key`. The server accepts `--secrets` or `CONCLAVE_SECRETS` to locate that file, but it intentionally does not accept direct CLI or environment-variable overrides for those secret values.
 
 ## Testing
 
@@ -164,6 +165,7 @@ Coverage shape:
 - [Platform spec](../../docs/spec/platform.md)
 - [Managed configuration spec](../../docs/spec/managed-configuration.md)
 - [Feldera control-plane architecture](../../docs/architecture/feldera-control-plane.md)
+- [Server config and secrets](../../docs/architecture/server-config-and-secrets.md)
 - [Typed temporal store note](../../docs/architecture/typed-temporal-store.md)
 - [Repository traceability guidance](../../docs/traceability-guidance.md)
 - [Software-item README guidance](../../docs/software-item-readmes.md)
