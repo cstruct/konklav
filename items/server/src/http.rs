@@ -250,6 +250,30 @@ impl AppState {
         })
     }
 
+    async fn current_jwks(&self) -> Result<JwkSet, crate::types::DynError> {
+        if let Some(store) = &self.managed_store {
+            let keys = store.load_current_signing_keys().await?;
+            if keys.is_empty() {
+                return Err(Box::new(io::Error::other(
+                    "persisted signing-key set is empty in Feldera mode",
+                )));
+            }
+            return Ok(JwkSet { keys });
+        }
+
+        Ok(JwkSet {
+            keys: vec![self.signer.jwk()],
+        })
+    }
+
+    async fn current_verifier(&self) -> Result<JwtVerifier, crate::types::DynError> {
+        if self.managed_store.is_some() {
+            return JwtVerifier::from_jwks(&self.current_jwks().await?);
+        }
+
+        Ok((*self.verifier).clone())
+    }
+
     // r[impl config.managed.authz-recompile-before-issuance]
     pub async fn sync_feldera_on_startup(&self) -> Result<Option<String>, crate::types::DynError> {
         let Some(client) = &self.feldera else {
@@ -895,9 +919,19 @@ async fn validate_access_token(
         }
     };
 
+    let verifier = match state.current_verifier().await {
+        Ok(verifier) => verifier,
+        Err(err) => {
+            eprintln!("persisted signing keys unavailable for token validation: {err}");
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "token validation unavailable",
+            }));
+        }
+    };
+
     match validate_access_token_with_current_metadata(
         &state.config.jwt,
-        &state.verifier,
+        &verifier,
         &body.0,
         metadata.catalog_revision,
         metadata.policy_revision,
@@ -938,9 +972,15 @@ async fn action_catalog(state: web::Data<AppState>) -> impl Responder {
 #[get("/.well-known/jwks.json")]
 // r[depends item.relying-auth.ed25519-jwt-boundary]
 async fn jwks(state: web::Data<AppState>) -> impl Responder {
-    HttpResponse::Ok().json(JwkSet {
-        keys: vec![state.signer.jwk()],
-    })
+    match state.current_jwks().await {
+        Ok(jwks) => HttpResponse::Ok().json(jwks),
+        Err(err) => {
+            eprintln!("persisted signing keys unavailable for jwks publication: {err}");
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "jwks unavailable",
+            }))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1073,6 +1113,7 @@ memberships (
     #[actix_web::test]
     async fn relying_surface_exposes_jwks_and_catalog() {
         let state = test_state().await;
+        let expected_jwk = state.signer.jwk();
         let relying = test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
@@ -1085,7 +1126,8 @@ memberships (
             .to_request();
         let jwks_response = test::call_service(&relying, jwks_request).await;
         assert_eq!(jwks_response.status(), StatusCode::OK);
-        let _: JwkSet = test::read_body_json(jwks_response).await;
+        let jwk_set: JwkSet = test::read_body_json(jwks_response).await;
+        assert_eq!(jwk_set.keys, vec![expected_jwk]);
 
         let catalog_request = test::TestRequest::get()
             .uri("/v1/authz/catalog")
@@ -1328,6 +1370,262 @@ catalog {
             .ingressed_tables
             .iter()
             .any(|table| table == "auth_runtime_commit"));
+    }
+
+    #[actix_web::test]
+    async fn fails_closed_when_feldera_signing_keys_are_unavailable() {
+        use actix_web::{patch, HttpResponse};
+        use std::collections::BTreeMap;
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        #[derive(Default)]
+        struct FakeStore {
+            pipeline: Option<crate::feldera::PipelineRecord>,
+            tables: BTreeMap<String, Vec<serde_json::Value>>,
+        }
+
+        fn decode_sql(request: &HttpRequest) -> String {
+            request
+                .query_string()
+                .split('&')
+                .find_map(|entry| entry.strip_prefix("sql="))
+                .unwrap_or_default()
+                .replace('+', " ")
+                .replace("%20", " ")
+                .replace("%28", "(")
+                .replace("%29", ")")
+                .replace("%2A", "*")
+        }
+
+        #[get("/v0/pipelines/{name}")]
+        async fn get_pipeline(store: web::Data<Arc<Mutex<FakeStore>>>) -> impl Responder {
+            let pipeline = store.lock().expect("store lock").pipeline.clone();
+            if let Some(pipeline) = pipeline {
+                HttpResponse::Ok().json(pipeline)
+            } else {
+                HttpResponse::NotFound().finish()
+            }
+        }
+
+        #[post("/v0/pipelines")]
+        async fn create_pipeline(
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+            body: web::Json<crate::feldera::DesiredPipeline>,
+        ) -> impl Responder {
+            let record = crate::feldera::PipelineRecord {
+                name: body.name.clone(),
+                description: Some(body.description.clone()),
+                program_code: Some(body.program_code.clone()),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: body.program_config.clone(),
+            };
+            store.lock().expect("store lock").pipeline = Some(record.clone());
+            HttpResponse::Ok().json(record)
+        }
+
+        #[patch("/v0/pipelines/{name}")]
+        async fn patch_pipeline(
+            body: web::Json<serde_json::Value>,
+            path: web::Path<String>,
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+        ) -> impl Responder {
+            let record = crate::feldera::PipelineRecord {
+                name: path.into_inner(),
+                description: body
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                program_code: body
+                    .get("program_code")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                program_status: Some("SqlCompiled".to_owned()),
+                deployment_status: Some("Stopped".to_owned()),
+                deployment_resources_status: Some("Stopped".to_owned()),
+                deployment_runtime_status: None,
+                program_config: serde_json::from_value(
+                    body.get("program_config")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                )
+                .ok(),
+            };
+            store.lock().expect("store lock").pipeline = Some(record.clone());
+            HttpResponse::Ok().json(record)
+        }
+
+        #[post("/v0/pipelines/{name}/start")]
+        async fn start_pipeline() -> impl Responder {
+            HttpResponse::Ok().finish()
+        }
+
+        #[post("/v0/pipelines/{name}/ingress/{table}")]
+        async fn ingress_rows(
+            path: web::Path<(String, String)>,
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+            body: web::Json<Vec<serde_json::Value>>,
+        ) -> impl Responder {
+            store
+                .lock()
+                .expect("store lock")
+                .tables
+                .entry(path.1.clone())
+                .or_default()
+                .extend(body.into_inner());
+            HttpResponse::Ok().json(serde_json::json!({ "completion_token": "done-1" }))
+        }
+
+        #[get("/v0/pipelines/{name}/completion_status")]
+        async fn completion_status() -> impl Responder {
+            HttpResponse::Ok().json(serde_json::json!({ "completed": true }))
+        }
+
+        #[get("/v0/pipelines/{name}/query")]
+        async fn query_pipeline(
+            request: HttpRequest,
+            store: web::Data<Arc<Mutex<FakeStore>>>,
+        ) -> impl Responder {
+            let sql = decode_sql(&request);
+            let path = request.path();
+            let _store = store.lock().expect("store lock");
+
+            if sql.contains("COUNT(*)") {
+                HttpResponse::Ok().json(vec![serde_json::json!({ "count": 0 })])
+            } else if sql.contains("MAX(row_version)") {
+                HttpResponse::Ok().json(vec![serde_json::json!({ "count": 0 })])
+            } else if path.contains("_authz/query") && sql.contains("FROM compiled_authz_metadata")
+            {
+                HttpResponse::Ok().json(vec![
+                    serde_json::json!({ "catalog_revision": 1, "policy_revision": 1 }),
+                ])
+            } else if path.contains("_authz/query") && sql.contains("FROM action_catalog") {
+                HttpResponse::Ok().json(Vec::<serde_json::Value>::new())
+            } else if sql.contains("FROM current_") {
+                HttpResponse::Ok().json(Vec::<serde_json::Value>::new())
+            } else {
+                HttpResponse::Ok().json(Vec::<serde_json::Value>::new())
+            }
+        }
+
+        let store = Arc::new(Mutex::new(FakeStore::default()));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("listener should have local addr");
+        let server_store = store.clone();
+        let server = actix_web::HttpServer::new(move || {
+            App::new()
+                .app_data(web::Data::new(server_store.clone()))
+                .service(get_pipeline)
+                .service(create_pipeline)
+                .service(patch_pipeline)
+                .service(start_pipeline)
+                .service(ingress_rows)
+                .service(completion_status)
+                .service(query_pipeline)
+        })
+        .listen(listener)
+        .expect("server should listen")
+        .run();
+        let handle = server.handle();
+        actix_web::rt::spawn(server);
+        actix_web::rt::time::sleep(Duration::from_millis(25)).await;
+
+        let mut loaded = LoadedConfig {
+            config: AppConfig::default(),
+            managed_dir: std::path::PathBuf::from("config"),
+            source: "test".to_owned(),
+        };
+        loaded.config.feldera.enabled = true;
+        loaded.config.feldera.base_url = format!("http://{}", addr);
+        let managed = conclave_managed_config::LoadedManagedConfig {
+            managed: ManagedConfig::load_from_str(
+                r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+    )
+}
+"#,
+            )
+            .expect("managed config should parse"),
+            source: "test-managed".to_owned(),
+        };
+        let signer = JwtSigner::from_seed(
+            loaded
+                .config
+                .jwt
+                .signing_private_key_bytes()
+                .expect("private key should decode"),
+        );
+        let token = signer
+            .sign(&conclave_relying_auth::AccessTokenClaims {
+                iss: loaded.config.jwt.issuer.clone(),
+                sub: "doctor-1".to_owned(),
+                aud: "clinic-api".to_owned(),
+                jti: "token-1".to_owned(),
+                iat: 10,
+                exp: 20,
+                tid: "tenant-a".to_owned(),
+                act: None,
+                az: conclave_relying_auth::AuthorizationSnapshotClaim {
+                    catalog_rev: 1,
+                    policy_rev: 1,
+                    tenant_bits: "0".to_owned(),
+                    scopes: Vec::new(),
+                    facts: serde_json::Map::new(),
+                },
+            })
+            .expect("token should sign");
+        let verifier = signer.verifier();
+        let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
+            .await
+            .expect("state should build");
+
+        let subject = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state.clone()))
+                .configure(configure_subject),
+        )
+        .await;
+        let relying = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .configure(configure_relying),
+        )
+        .await;
+
+        let jwks_request = test::TestRequest::get()
+            .uri("/.well-known/jwks.json")
+            .to_request();
+        let jwks_response = test::call_service(&relying, jwks_request).await;
+        assert_eq!(jwks_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let jwks_body: serde_json::Value = test::read_body_json(jwks_response).await;
+        assert_eq!(jwks_body["error"], "jwks unavailable");
+
+        let validate_request = test::TestRequest::post()
+            .uri("/v1/auth/tokens/validate")
+            .set_json(serde_json::json!({
+                "token": token,
+                "expected_tenant": "tenant-a",
+                "audience": "clinic-api",
+                "require_current_revisions": false
+            }))
+            .to_request();
+        let validate_response = test::call_service(&subject, validate_request).await;
+        assert_eq!(
+            validate_response.status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        let validate_body: serde_json::Value = test::read_body_json(validate_response).await;
+        assert_eq!(validate_body["error"], "token validation unavailable");
+
+        handle.stop(true).await;
     }
 
     // r[verify config.managed.feldera-authoritative-store]
@@ -2306,6 +2604,7 @@ memberships (
                     &["tenant_id", "template_key"]
                 }
                 "role" | "versioned_role" | "current_role" => &["tenant_id", "role_key"],
+                "signing_key" | "versioned_signing_key" | "current_signing_key" => &["kid"],
                 "invite" | "versioned_invite" | "current_invite" => &["invite_id"],
                 "subject_credential"
                 | "versioned_subject_credential"
@@ -2648,10 +2947,15 @@ memberships (
                 .signing_private_key_bytes()
                 .expect("private key should decode"),
         );
+        let first_signer_jwk = signer.jwk();
         let verifier = signer.verifier();
         let state = AppState::from_loaded_config(loaded, managed_config(), signer, verifier)
             .await
             .expect("state should build");
+        state
+            .sync_feldera_on_startup()
+            .await
+            .expect("startup sync should persist the first signing key");
         let control = test::init_service(
             App::new()
                 .app_data(web::Data::new(state.clone()))
@@ -2685,7 +2989,21 @@ memberships (
             .to_request();
         let _: RedeemInviteResponse = test::call_and_read_body_json(&subject, redeem_request).await;
 
-        let reloaded_loaded = loaded_config();
+        let first_login_request = test::TestRequest::post()
+            .uri("/v1/login")
+            .set_json(&LoginRequest {
+                subject: "doctor-1".to_owned(),
+                password: "swordfish".to_owned(),
+                tenant: "tenant-a".to_owned(),
+                audience: Some("clinic-api".to_owned()),
+            })
+            .to_request();
+        let first_login_response: LoginResponse =
+            test::call_and_read_body_json(&subject, first_login_request).await;
+
+        let mut reloaded_loaded = loaded_config();
+        reloaded_loaded.config.jwt.signing_private_key =
+            "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021".to_owned();
         let reloaded_signer = JwtSigner::from_seed(
             reloaded_loaded
                 .config
@@ -2693,6 +3011,7 @@ memberships (
                 .signing_private_key_bytes()
                 .expect("private key should decode"),
         );
+        let reloaded_signer_jwk = reloaded_signer.jwk();
         let reloaded_verifier = reloaded_signer.verifier();
         let reloaded_state = AppState::from_loaded_config(
             reloaded_loaded,
@@ -2702,10 +3021,20 @@ memberships (
         )
         .await
         .expect("reloaded state should build");
+        reloaded_state
+            .sync_feldera_on_startup()
+            .await
+            .expect("startup sync should persist the rotated signing key");
         let reloaded_subject = test::init_service(
             App::new()
                 .app_data(web::Data::new(reloaded_state.clone()))
                 .configure(configure_subject),
+        )
+        .await;
+        let reloaded_relying = test::init_service(
+            App::new()
+                .app_data(web::Data::new(reloaded_state.clone()))
+                .configure(configure_relying),
         )
         .await;
 
@@ -2721,8 +3050,31 @@ memberships (
         let login_response: LoginResponse =
             test::call_and_read_body_json(&reloaded_subject, login_request).await;
 
+        let validate_request = test::TestRequest::post()
+            .uri("/v1/auth/tokens/validate")
+            .set_json(serde_json::json!({
+                "token": first_login_response.token,
+                "expected_tenant": "tenant-a",
+                "audience": "clinic-api",
+                "require_current_revisions": false
+            }))
+            .to_request();
+        let validated: crate::tenants::ValidateAccessTokenResponse =
+            test::call_and_read_body_json(&reloaded_subject, validate_request).await;
+
+        let jwks_request = test::TestRequest::get()
+            .uri("/.well-known/jwks.json")
+            .to_request();
+        let jwks_response = test::call_service(&reloaded_relying, jwks_request).await;
+        assert_eq!(jwks_response.status(), StatusCode::OK);
+        let jwk_set: JwkSet = test::read_body_json(jwks_response).await;
+
         handle.stop(true).await;
         assert_eq!(login_response.claims.sub, "doctor-1");
+        assert!(validated.valid);
+        assert!(jwk_set.keys.contains(&first_signer_jwk));
+        assert!(jwk_set.keys.contains(&reloaded_signer_jwk));
+        assert_eq!(jwk_set.keys.len(), 2);
         let store = store.lock().expect("store lock");
         let runtime_row_count = store.tables.get("invite").map(Vec::len).unwrap_or(0)
             + store
@@ -2732,6 +3084,10 @@ memberships (
                 .unwrap_or(0)
             + store.tables.get("session_state").map(Vec::len).unwrap_or(0);
         assert!(runtime_row_count >= 3);
+        assert_eq!(
+            store.tables.get("signing_key").map(Vec::len).unwrap_or(0),
+            2
+        );
     }
 
     #[actix_web::test]

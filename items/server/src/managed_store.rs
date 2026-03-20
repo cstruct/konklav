@@ -7,6 +7,7 @@ use conclave_managed_config::{
     PortableFactConfig, RoleConfig, SubjectConfig, TemplateConfig, TemplateSourceConfig,
     TenantConfig,
 };
+use conclave_relying_auth::Jwk;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -1253,6 +1254,34 @@ LIMIT 1
             .await?;
 
         Ok(())
+    }
+
+    pub async fn load_current_signing_keys(&self) -> Result<Vec<Jwk>, DynError> {
+        self.ensure_pipeline().await?;
+
+        let mut keys = self
+            .load_current_rows::<SigningKeyRow>("current_signing_key")
+            .await?
+            .into_iter()
+            .filter(|row| !row.deleted)
+            .collect::<Vec<_>>();
+        keys.sort_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| left.kid.cmp(&right.kid))
+        });
+
+        Ok(keys
+            .into_iter()
+            .map(|row| Jwk {
+                kty: row.kty,
+                crv: row.crv,
+                kid: row.kid,
+                alg: row.alg,
+                use_: "sig".to_owned(),
+                x: row.x,
+            })
+            .collect())
     }
 
     // r[impl config.managed.plan-before-apply]

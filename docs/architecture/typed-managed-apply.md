@@ -99,5 +99,5 @@ That keeps the “state of last apply” introspectible while preserving idempot
 
 - Should `managed_apply` record transaction identifiers and recovery-attempt metadata, or is failure context in server logs and API responses sufficient?
 - Should `apply_commit` remain an explicit table once Feldera transaction commit becomes the authoritative visibility barrier, or should committed visibility derive from transaction semantics alone?
-- `effective_grants` is in the transaction boundary by decision, but signing-key rotation and JWKS publication are still undecided and need a later architectural call.
+- `effective_grants` is in the transaction boundary by decision, and JWKS publication now reads from persisted signing-key rows in Feldera mode, but explicit publication eligibility, rotation overlap windows, and revocation semantics still need a later architectural call.
 - The exact Feldera runtime/storage configuration that Conclave should require for checkpoint-and-resume safety is still open; the current design assumes this becomes an explicit deployment prerequisite rather than an implicit best effort.

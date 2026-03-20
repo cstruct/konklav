@@ -32,6 +32,7 @@ Managed control-plane reads use Feldera as the authority when the Feldera-backed
 - request-time managed snapshots load from typed `current_*` Feldera views
 - compiled authorization and tenant projections are derived from those loaded rows
 - revision metadata, action-catalog reads, and `effective_grants` reads use the Feldera authz pipeline as the authoritative source once the server has refreshed that pipeline on startup or after managed apply
+- relying-system JWKS publication and server-side JWT validation use persisted `current_signing_key` rows in Feldera mode rather than rebuilding the public-key set from only the active in-memory signer
 - server-local runtime-auth state remains in memory only for invite, credential, and session mutation planning
 - the server does not keep an authoritative in-memory managed mirror in Feldera mode
 - the in-memory managed fallback exists only when Feldera is disabled, and compiled-authz request paths fail closed rather than rebuilding a Rust snapshot when the Feldera authz pipeline is missing or stale
