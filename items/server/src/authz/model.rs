@@ -75,11 +75,4 @@ impl CompiledAuthzModel {
             .iter()
             .find(|role| role.tenant == tenant && role.key == key)
     }
-
-    pub fn action_bit(&self, action: &str) -> Option<usize> {
-        self.actions
-            .iter()
-            .find(|entry| entry.name == action)
-            .map(|entry| entry.bit)
-    }
 }

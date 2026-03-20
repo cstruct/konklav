@@ -390,7 +390,9 @@ roles (
     assert!(sql.contains("CREATE TABLE effective_grant_role_assignment"));
     assert!(sql.contains("CREATE MATERIALIZED VIEW effective_grants"));
     assert!(sql.contains("CREATE MATERIALIZED VIEW effective_grant_actions"));
-    assert!(sql.contains("CREATE TABLE compiled_role_action_effects"));
+    assert!(sql.contains("CREATE MATERIALIZED VIEW compiled_role_action_effects AS"));
+    assert!(sql.contains("LIKE REPLACE(policies.selector, '*', '%')"));
+    assert!(!sql.contains("INSERT INTO compiled_role_action_effects"));
     assert!(sql.contains("source_revision BIGINT"));
     assert!(sql.contains("inherits_json STRING NOT NULL"));
     assert!(sql.contains("compiled_role_policies"));

@@ -66,15 +66,18 @@ impl CompiledAuthzModel {
             "FROM compiled_role_policies".to_owned(),
             "WHERE scope_kind IS NULL;".to_owned(),
             "".to_owned(),
-            "CREATE TABLE compiled_role_action_effects (".to_owned(),
-            "  tenant_id STRING NOT NULL,".to_owned(),
-            "  role_key STRING NOT NULL,".to_owned(),
-            "  scope_kind STRING NOT NULL,".to_owned(),
-            "  scope_id STRING NOT NULL,".to_owned(),
-            "  action_name STRING NOT NULL,".to_owned(),
-            "  bit_index INT NOT NULL,".to_owned(),
-            "  effect STRING NOT NULL".to_owned(),
-            ");".to_owned(),
+            "CREATE MATERIALIZED VIEW compiled_role_action_effects AS".to_owned(),
+            "SELECT".to_owned(),
+            "  policies.tenant_id,".to_owned(),
+            "  policies.role_key,".to_owned(),
+            "  COALESCE(policies.scope_kind, '') AS scope_kind,".to_owned(),
+            "  COALESCE(policies.scope_id, '') AS scope_id,".to_owned(),
+            "  catalog.action_name,".to_owned(),
+            "  catalog.bit_index,".to_owned(),
+            "  policies.effect".to_owned(),
+            "FROM compiled_role_policies AS policies".to_owned(),
+            "JOIN action_catalog AS catalog".to_owned(),
+            "  ON catalog.action_name LIKE REPLACE(policies.selector, '*', '%');".to_owned(),
             "".to_owned(),
             "CREATE TABLE effective_grant_identity (".to_owned(),
             "  grant_kind STRING NOT NULL,".to_owned(),
@@ -338,19 +341,6 @@ impl CompiledAuthzModel {
                     scope_id
                 ));
             }
-
-            for entry in role_action_effect_rows(self, role) {
-                lines.push(format!(
-                    "INSERT INTO compiled_role_action_effects VALUES ('{}', '{}', '{}', '{}', '{}', {}, '{}');",
-                    sql_escape(&role.tenant),
-                    sql_escape(&role.key),
-                    sql_escape(&entry.scope_kind),
-                    sql_escape(&entry.scope_id),
-                    sql_escape(&entry.action_name),
-                    entry.bit_index,
-                    sql_escape(&entry.effect),
-                ));
-            }
         }
 
         lines.push(String::new());
@@ -437,38 +427,6 @@ impl CompiledAuthzModel {
 
         lines.join("\n")
     }
-}
-
-struct RoleActionEffectRow {
-    scope_kind: String,
-    scope_id: String,
-    action_name: String,
-    bit_index: usize,
-    effect: String,
-}
-
-fn role_action_effect_rows(
-    authz: &CompiledAuthzModel,
-    role: &super::model::CompiledRole,
-) -> Vec<RoleActionEffectRow> {
-    let mut rows = Vec::new();
-
-    for policy in &role.policies {
-        for action in &policy.expanded_actions {
-            let bit_index = authz
-                .action_bit(action)
-                .expect("compiled action bit should exist");
-            rows.push(RoleActionEffectRow {
-                scope_kind: policy.scope_kind.clone().unwrap_or_default(),
-                scope_id: policy.scope_id.clone().unwrap_or_default(),
-                action_name: action.clone(),
-                bit_index,
-                effect: policy.effect.clone(),
-            });
-        }
-    }
-
-    rows
 }
 
 fn sql_escape(value: &str) -> String {
