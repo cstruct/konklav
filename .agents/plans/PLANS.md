@@ -87,6 +87,13 @@ Use checklists for:
 - Known gaps
 - Per-task or per-milestone work items
 
+Checklist items in concrete plans should include stable short IDs when the plan is likely to be referenced across multiple sessions or status updates.
+
+- Prefer IDs that are easy to read in conversation, for example `T5.1`, `G2`, or `V3`.
+- IDs should be stable once introduced; do not renumber completed items unless there is a strong reason.
+- Put the ID at the start of the checklist text so humans and agents can cite it directly in chat and progress reports.
+- Apply IDs at least to task and milestone checklists. Use them for progress snapshots or known gaps too when those lists are expected to be referenced frequently.
+
 When a task completes:
 
 1. Mark the relevant checklist items complete.
@@ -182,7 +189,7 @@ Known gaps:
 
 Goal: <goal>
 
-- [ ] ...
+- [ ] T1.1 ...
 
 ## Verification Strategy
 
