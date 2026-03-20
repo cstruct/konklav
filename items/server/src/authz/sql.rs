@@ -1,6 +1,8 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::tenants::CompiledTenantModel;
 
-use super::model::CompiledAuthzModel;
+use super::model::{CompiledAuthzModel, CompiledTemplate};
 
 impl CompiledAuthzModel {
     pub fn feldera_sql(&self, pipeline_prefix: &str, tenants: &CompiledTenantModel) -> String {
@@ -29,19 +31,10 @@ impl CompiledAuthzModel {
             "  sync_mode STRING NOT NULL,".to_owned(),
             "  source_tenant STRING,".to_owned(),
             "  source_key STRING,".to_owned(),
-            "  source_pin STRING,".to_owned(),
-            "  source_revision BIGINT".to_owned(),
+            "  source_pin STRING".to_owned(),
             ");".to_owned(),
             "".to_owned(),
-            "CREATE TABLE managed_roles (".to_owned(),
-            "  tenant_id STRING NOT NULL,".to_owned(),
-            "  role_key STRING NOT NULL,".to_owned(),
-            "  role_revision BIGINT NOT NULL,".to_owned(),
-            "  template_key STRING,".to_owned(),
-            "  inherits_json STRING NOT NULL".to_owned(),
-            ");".to_owned(),
-            "".to_owned(),
-            "CREATE TABLE compiled_template_policies (".to_owned(),
+            "CREATE TABLE template_policy_overrides (".to_owned(),
             "  tenant_id STRING NOT NULL,".to_owned(),
             "  template_key STRING NOT NULL,".to_owned(),
             "  effect STRING NOT NULL,".to_owned(),
@@ -49,6 +42,77 @@ impl CompiledAuthzModel {
             "  bits_hex STRING NOT NULL,".to_owned(),
             "  scope_kind STRING,".to_owned(),
             "  scope_id STRING".to_owned(),
+            ");".to_owned(),
+            "".to_owned(),
+            "CREATE TABLE resolved_template_metadata (".to_owned(),
+            "  tenant_id STRING NOT NULL,".to_owned(),
+            "  template_key STRING NOT NULL,".to_owned(),
+            "  template_revision BIGINT NOT NULL,".to_owned(),
+            "  sync_mode STRING NOT NULL,".to_owned(),
+            "  source_tenant STRING,".to_owned(),
+            "  source_key STRING,".to_owned(),
+            "  source_pin STRING,".to_owned(),
+            "  source_revision BIGINT".to_owned(),
+            ");".to_owned(),
+            "".to_owned(),
+            "CREATE TABLE template_lineage (".to_owned(),
+            "  tenant_id STRING NOT NULL,".to_owned(),
+            "  template_key STRING NOT NULL,".to_owned(),
+            "  ancestor_tenant_id STRING NOT NULL,".to_owned(),
+            "  ancestor_template_key STRING NOT NULL,".to_owned(),
+            "  lineage_order INT NOT NULL".to_owned(),
+            ");".to_owned(),
+            "".to_owned(),
+            "CREATE MATERIALIZED VIEW compiled_template_policy_candidates AS".to_owned(),
+            "SELECT".to_owned(),
+            "  lineage.tenant_id,".to_owned(),
+            "  lineage.template_key,".to_owned(),
+            "  lineage.lineage_order,".to_owned(),
+            "  policies.effect,".to_owned(),
+            "  policies.selector,".to_owned(),
+            "  policies.bits_hex,".to_owned(),
+            "  COALESCE(policies.scope_kind, '') AS scope_kind,".to_owned(),
+            "  COALESCE(policies.scope_id, '') AS scope_id".to_owned(),
+            "FROM template_lineage AS lineage".to_owned(),
+            "JOIN template_policy_overrides AS policies".to_owned(),
+            "  ON policies.tenant_id = lineage.ancestor_tenant_id".to_owned(),
+            " AND policies.template_key = lineage.ancestor_template_key;".to_owned(),
+            "".to_owned(),
+            "CREATE MATERIALIZED VIEW compiled_template_policy_max_order AS".to_owned(),
+            "SELECT".to_owned(),
+            "  tenant_id,".to_owned(),
+            "  template_key,".to_owned(),
+            "  selector,".to_owned(),
+            "  scope_kind,".to_owned(),
+            "  scope_id,".to_owned(),
+            "  MAX(lineage_order) AS lineage_order".to_owned(),
+            "FROM compiled_template_policy_candidates".to_owned(),
+            "GROUP BY tenant_id, template_key, selector, scope_kind, scope_id;".to_owned(),
+            "".to_owned(),
+            "CREATE MATERIALIZED VIEW compiled_template_policies AS".to_owned(),
+            "SELECT".to_owned(),
+            "  candidates.tenant_id,".to_owned(),
+            "  candidates.template_key,".to_owned(),
+            "  candidates.effect,".to_owned(),
+            "  candidates.selector,".to_owned(),
+            "  candidates.bits_hex,".to_owned(),
+            "  candidates.scope_kind,".to_owned(),
+            "  candidates.scope_id".to_owned(),
+            "FROM compiled_template_policy_candidates AS candidates".to_owned(),
+            "JOIN compiled_template_policy_max_order AS max_order".to_owned(),
+            "  ON max_order.tenant_id = candidates.tenant_id".to_owned(),
+            " AND max_order.template_key = candidates.template_key".to_owned(),
+            " AND max_order.selector = candidates.selector".to_owned(),
+            " AND max_order.scope_kind = candidates.scope_kind".to_owned(),
+            " AND max_order.scope_id = candidates.scope_id".to_owned(),
+            " AND max_order.lineage_order = candidates.lineage_order;".to_owned(),
+            "".to_owned(),
+            "CREATE TABLE managed_roles (".to_owned(),
+            "  tenant_id STRING NOT NULL,".to_owned(),
+            "  role_key STRING NOT NULL,".to_owned(),
+            "  role_revision BIGINT NOT NULL,".to_owned(),
+            "  template_key STRING,".to_owned(),
+            "  inherits_json STRING NOT NULL".to_owned(),
             ");".to_owned(),
             "".to_owned(),
             "CREATE TABLE compiled_role_policies (".to_owned(),
@@ -251,13 +315,9 @@ impl CompiledAuthzModel {
                     )
                 })
                 .unwrap_or_else(|| ("NULL".to_owned(), "NULL".to_owned(), "NULL".to_owned()));
-            let source_revision = template
-                .source_revision
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "NULL".to_owned());
 
             lines.push(format!(
-                "INSERT INTO managed_role_templates VALUES ('{}', '{}', {}, '{}', {}, {}, {}, {});",
+                "INSERT INTO managed_role_templates VALUES ('{}', '{}', {}, '{}', {}, {}, {});",
                 sql_escape(&template.tenant),
                 sql_escape(&template.key),
                 template.revision,
@@ -265,10 +325,9 @@ impl CompiledAuthzModel {
                 source_tenant,
                 source_key,
                 source_pin,
-                source_revision
             ));
 
-            for policy in &template.policies {
+            for policy in &template.local_policies {
                 let scope_kind = policy
                     .scope_kind
                     .as_deref()
@@ -281,7 +340,7 @@ impl CompiledAuthzModel {
                     .unwrap_or_else(|| "NULL".to_owned());
 
                 lines.push(format!(
-                    "INSERT INTO compiled_template_policies VALUES ('{}', '{}', '{}', '{}', '{}', {}, {});",
+                    "INSERT INTO template_policy_overrides VALUES ('{}', '{}', '{}', '{}', '{}', {}, {});",
                     sql_escape(&template.tenant),
                     sql_escape(&template.key),
                     sql_escape(&policy.effect),
@@ -291,6 +350,11 @@ impl CompiledAuthzModel {
                     scope_id
                 ));
             }
+        }
+
+        lines.push(String::new());
+        for template in ordered_templates_for_sql(self) {
+            lines.extend(template_resolution_sql(template));
         }
 
         lines.push(String::new());
@@ -427,6 +491,114 @@ impl CompiledAuthzModel {
 
         lines.join("\n")
     }
+}
+
+fn ordered_templates_for_sql<'a>(authz: &'a CompiledAuthzModel) -> Vec<&'a CompiledTemplate> {
+    let by_identity = authz
+        .templates
+        .iter()
+        .map(|template| (template_sql_identity(template), template))
+        .collect::<HashMap<_, _>>();
+    let mut ordered = Vec::with_capacity(authz.templates.len());
+    let mut visited = HashSet::new();
+
+    for template in &authz.templates {
+        visit_template_for_sql(template, &by_identity, &mut visited, &mut ordered);
+    }
+
+    ordered
+}
+
+fn visit_template_for_sql<'a>(
+    template: &'a CompiledTemplate,
+    by_identity: &HashMap<String, &'a CompiledTemplate>,
+    visited: &mut HashSet<String>,
+    ordered: &mut Vec<&'a CompiledTemplate>,
+) {
+    let identity = template_sql_identity(template);
+    if !visited.insert(identity) {
+        return;
+    }
+
+    if let Some(source) = template.source.as_ref() {
+        if let Some(parent) = by_identity.get(&format!("{}:{}", source.tenant, source.key)) {
+            visit_template_for_sql(parent, by_identity, visited, ordered);
+        }
+    }
+
+    ordered.push(template);
+}
+
+fn template_resolution_sql(template: &CompiledTemplate) -> Vec<String> {
+    let tenant = sql_escape(&template.tenant);
+    let key = sql_escape(&template.key);
+
+    match template.source.as_ref() {
+        Some(source) => {
+            let source_tenant = sql_escape(&source.tenant);
+            let source_key = sql_escape(&source.key);
+            let source_pin = source
+                .pin
+                .as_deref()
+                .map(sql_escape)
+                .map(|value| format!("'{value}'"))
+                .unwrap_or_else(|| "NULL".to_owned());
+            let source_revision = if source.mode == "pinned" {
+                source
+                    .pin
+                    .as_deref()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "NULL".to_owned())
+            } else {
+                "parent.template_revision".to_owned()
+            };
+
+            vec![
+                format!(
+                    "INSERT INTO resolved_template_metadata SELECT '{tenant}', '{key}', {}, '{}', '{}', '{}', {}, {} \
+FROM resolved_template_metadata AS parent \
+WHERE parent.tenant_id = '{}' AND parent.template_key = '{}';",
+                    template.revision,
+                    sql_escape(&template.sync_mode),
+                    source_tenant,
+                    source_key,
+                    source_pin,
+                    source_revision,
+                    source_tenant,
+                    source_key,
+                ),
+                format!(
+                    "INSERT INTO template_lineage SELECT '{tenant}', '{key}', ancestor_tenant_id, ancestor_template_key, lineage_order \
+FROM template_lineage \
+WHERE tenant_id = '{}' AND template_key = '{}';",
+                    source_tenant,
+                    source_key,
+                ),
+                format!(
+                    "INSERT INTO template_lineage SELECT '{tenant}', '{key}', '{tenant}', '{key}', COALESCE(MAX(lineage_order), -1) + 1 \
+FROM template_lineage \
+WHERE tenant_id = '{}' AND template_key = '{}';",
+                    source_tenant,
+                    source_key,
+                ),
+            ]
+        }
+        None => vec![
+            format!(
+                "INSERT INTO resolved_template_metadata VALUES ('{tenant}', '{key}', {}, '{}', NULL, NULL, NULL, NULL);",
+                template.revision,
+                sql_escape(&template.sync_mode),
+            ),
+            format!(
+                "INSERT INTO template_lineage VALUES ('{tenant}', '{key}', '{tenant}', '{key}', 0);"
+            ),
+        ],
+    }
+}
+
+fn template_sql_identity(template: &CompiledTemplate) -> String {
+    format!("{}:{}", template.tenant, template.key)
 }
 
 fn sql_escape(value: &str) -> String {

@@ -432,6 +432,7 @@ fn build_compiled_template(
     resolved: &ResolvedTemplate,
     actions: &[CompiledAction],
 ) -> Result<CompiledTemplate, DynError> {
+    let local_bundle = compile_policy_bundle(&template.policies, actions)?;
     let bundle = compile_policy_bundle(&resolved.policies, actions)?;
 
     Ok(CompiledTemplate {
@@ -442,6 +443,7 @@ fn build_compiled_template(
         source: resolved.inherited_from.clone(),
         source_revision: resolved.source_revision,
         lineage: resolved.lineage.clone(),
+        local_policies: local_bundle.policies,
         tenant_allow_bits_hex: bundle.tenant_allow_bits_hex,
         tenant_deny_bits_hex: bundle.tenant_deny_bits_hex,
         scoped_entries: bundle.scoped_entries,

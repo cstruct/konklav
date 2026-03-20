@@ -61,19 +61,23 @@ The important shift in the current slice is that `effective_grants` is no longer
 
 - `compiled_authz_metadata`
 - `action_catalog`
-- `compiled_role_action_effects`
+- `template_policy_overrides`
+- `resolved_template_metadata`
+- `template_lineage`
 - `effective_grant_identity`
 - `effective_grant_role_assignment`
 
 Feldera materialized views then derive:
 
+- `compiled_template_policies`
+- `compiled_role_action_effects`
 - `effective_grants`
 - `effective_grant_action_candidates`
 - `effective_grant_action_max_order`
 - `effective_grant_action_precedence`
 - `effective_grant_actions`
 
-At read time, the server reconstructs the runtime `CompiledEffectiveGrant` shape from the derived Feldera rows. This moves grant derivation and assignment-order precedence into Feldera even though selector expansion, template lineage expansion, and final role policy compilation still begin in Rust.
+At read time, the server reconstructs the runtime `CompiledEffectiveGrant` shape from the derived Feldera rows. This moves selector expansion, template-lineage expansion, grant derivation, and assignment-order precedence into Feldera even though final role policy compilation still begins in Rust.
 
 ## Runtime read boundary
 
@@ -84,7 +88,7 @@ When Feldera is enabled:
 - delegated assumption token issuance reads one `effective_grants` identity row and the corresponding `effective_grant_actions` rows for the subject, source tenant, and target tenant
 - token validation and relying-surface revision or catalog reads use `compiled_authz_metadata` and `action_catalog`
 
-If the authz pipeline has not been populated yet, the server currently falls back to recomputing the compiled snapshot from the managed store. That fallback keeps the transitional implementation robust across bootstrap and test flows, but it is not the intended end state.
+If the authz pipeline has not been populated yet, Feldera-backed compiled-authz reads now fail closed instead of silently rebuilding a Rust snapshot.
 
 ## Open questions
 

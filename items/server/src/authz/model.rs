@@ -32,6 +32,7 @@ pub struct CompiledTemplate {
     pub source: Option<TemplateSourceConfig>,
     pub source_revision: Option<u64>,
     pub lineage: Vec<String>,
+    pub local_policies: Vec<CompiledPolicy>,
     pub tenant_allow_bits_hex: String,
     pub tenant_deny_bits_hex: String,
     pub scoped_entries: Vec<CompiledScopeEntry>,

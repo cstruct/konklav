@@ -301,6 +301,52 @@ roles ()
     );
 }
 
+#[test]
+fn emits_template_lineage_resolution_in_feldera_sql() {
+    let config = ManagedConfig::load_from_str(
+        r#"
+catalog {
+    actions (
+        {name "tenant:user:read"}
+        {name "tenant:user:write"}
+    )
+}
+templates (
+    {
+        tenant "root",
+        key "doctor",
+        policies (
+            {effect allow, action "tenant:user:read"}
+        )
+    }
+    {
+        tenant "tenant-a",
+        key "doctor",
+        source {tenant "root", key "doctor", mode "pinned", pin "latest"}
+        policies (
+            {effect deny, action "tenant:user:write"}
+        )
+    }
+)
+roles ()
+"#,
+    )
+    .expect("bundle should parse");
+
+    let normalized = normalize_managed_authz(&config).expect("bundle should normalize");
+    let compiled = compile_managed_authz(&normalized).expect("bundle should compile");
+    let tenants = compile_managed_tenants(&normalized, &compiled).expect("tenants should compile");
+    let sql = compiled.feldera_sql("conclave", &tenants);
+
+    assert!(sql.contains("CREATE TABLE resolved_template_metadata"));
+    assert!(sql.contains("CREATE TABLE template_lineage"));
+    assert!(sql.contains("CREATE TABLE template_policy_overrides"));
+    assert!(sql.contains("CREATE MATERIALIZED VIEW compiled_template_policies AS"));
+    assert!(sql.contains("INSERT INTO resolved_template_metadata SELECT 'tenant-a', 'doctor'"));
+    assert!(sql.contains("INSERT INTO template_lineage SELECT 'tenant-a', 'doctor', ancestor_tenant_id"));
+    assert!(sql.contains("INSERT INTO template_policy_overrides VALUES ('tenant-a', 'doctor', 'deny', 'tenant:user:write'"));
+}
+
 // r[verify authz.role.inheritance.dag]
 // r[verify authz.role.inheritance.priority]
 #[test]
@@ -366,6 +412,11 @@ templates (
             {effect allow, action "tenant:user:read"}
         )
     }
+    {
+        tenant "tenant-a",
+        key "doctor",
+        source {tenant "root", key "doctor", mode "tracking"}
+    }
 )
 roles (
     {
@@ -390,10 +441,15 @@ roles (
     assert!(sql.contains("CREATE TABLE effective_grant_role_assignment"));
     assert!(sql.contains("CREATE MATERIALIZED VIEW effective_grants"));
     assert!(sql.contains("CREATE MATERIALIZED VIEW effective_grant_actions"));
+    assert!(sql.contains("CREATE TABLE template_policy_overrides"));
+    assert!(sql.contains("CREATE TABLE resolved_template_metadata"));
+    assert!(sql.contains("CREATE TABLE template_lineage"));
+    assert!(sql.contains("CREATE MATERIALIZED VIEW compiled_template_policies AS"));
     assert!(sql.contains("CREATE MATERIALIZED VIEW compiled_role_action_effects AS"));
     assert!(sql.contains("LIKE REPLACE(policies.selector, '*', '%')"));
     assert!(!sql.contains("INSERT INTO compiled_role_action_effects"));
-    assert!(sql.contains("source_revision BIGINT"));
+    assert!(!sql.contains("CREATE TABLE compiled_template_policies"));
+    assert!(!sql.contains("INSERT INTO compiled_template_policies"));
     assert!(sql.contains("inherits_json STRING NOT NULL"));
     assert!(sql.contains("compiled_role_policies"));
 }
