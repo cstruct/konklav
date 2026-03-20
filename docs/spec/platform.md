@@ -37,4 +37,4 @@ r[platform.server.explicit-secrets-path]
 The server MUST let operators configure the secret-bearing startup-config file path explicitly and independently from the ordinary runtime-config file path.
 
 r[platform.server.secret-file-only-values]
-The server MUST require secret-bearing startup values to come from the secret-bearing config file rather than direct command-line or environment-variable value overrides.
+The server MUST require secret-bearing startup material to come from the secret-bearing config file or from referenced secret files rather than direct command-line or environment-variable value overrides.

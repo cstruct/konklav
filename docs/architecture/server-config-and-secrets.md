@@ -9,6 +9,7 @@ The server loads two explicit Styx files at startup:
 - `config/server.conf.styx`
   - ordinary runtime config
   - intended for normal operator review and change management
+  - may contain non-secret paths that point at separate secret files
 - `config/server.secrets.styx`
   - secret-bearing config
   - intended for values that should be handled differently from ordinary runtime settings
@@ -32,7 +33,7 @@ This keeps the boundary meaningful instead of treating the secrets file as a loo
 
 ## Override policy
 
-Conclave accepts CLI and environment-variable overrides for locating the config files, but not for supplying secret values directly. Secret-bearing values must come from `server.secrets.styx`.
+Conclave accepts CLI and environment-variable overrides for locating the config files and referenced secret files, but not for supplying secret values directly. Secret-bearing startup material must come from `server.secrets.styx` or from separately referenced secret files.
 
 The reason for this policy is operator safety. CLI-provided secrets are easy to leak through shell history and process inspection, and environment-provided secrets are easy to over-trust even though they may be visible through host tooling, service-manager introspection, or crash diagnostics.
 

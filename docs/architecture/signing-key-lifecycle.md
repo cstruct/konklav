@@ -6,7 +6,7 @@ This note defines the intended lifecycle for Conclave signing keys and the publi
 
 Conclave uses one configured private signing key at a time.
 
-- the active private signing key is loaded from `server.secrets.styx`
+- the active private signing key is loaded from the PEM file referenced by `jwt.signing_private_key_file` in `server.conf.styx`
 - the server derives the public key and `kid` from that configured private key
 - Feldera persists public signing-key history and publication state
 - relying-system JWKS publication and server-side JWT validation read the persisted public-key set rather than rebuilding history from only the current in-memory signer
@@ -17,7 +17,7 @@ This keeps private signing material local to the server while making verificatio
 
 Normal signing-key rotation is config-driven.
 
-- operators change the configured private signing key in `server.secrets.styx`
+- operators replace the PEM file referenced by `jwt.signing_private_key_file` or repoint that config value at a new PEM file
 - the server derives a new public key and `kid`
 - new tokens are signed with the new key
 - older public keys remain published while they are still eligible to validate active tokens
@@ -47,11 +47,11 @@ Future public contracts use that name consistently:
 
 ## Reload Behavior
 
-Focused signing-key reload should watch or reload `server.secrets.styx`, not the old single-file startup config shape.
+Focused signing-key reload should watch or reload the configured PEM file, not the old single-file startup config shape.
 
 The intended future behavior is:
 
-- when the signing-key portion of `server.secrets.styx` changes, the server reloads that key material specifically
+- when the configured signing-key PEM file changes, the server reloads that key material specifically
 - if the derived key identity changes, the server persists the new public key state and begins signing with it
 - broader runtime config should not require the same reload path just because signing-key rotation does
 

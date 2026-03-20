@@ -533,9 +533,11 @@ dependencies = [
  "conclave-core",
  "conclave-managed-config",
  "conclave-relying-auth",
+ "ed25519-dalek",
  "facet",
  "facet-styx",
  "futures-util",
+ "pkcs8",
  "reqwest",
  "serde",
  "serde_json",
@@ -644,6 +646,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
 dependencies = [
  "const-oid",
+ "pem-rfc7468",
  "zeroize",
 ]
 
@@ -1569,6 +1572,15 @@ dependencies = [
  "redox_syscall",
  "smallvec 1.15.1",
  "windows-link",
+]
+
+[[package]]
+name = "pem-rfc7468"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412"
+dependencies = [
+ "base64ct",
 ]
 
 [[package]]

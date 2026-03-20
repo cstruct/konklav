@@ -41,6 +41,8 @@ The server uses:
 
 This keeps the server on a thin client boundary to Feldera rather than coupling the control plane to embedded-database assumptions.
 
+Before the first local run, generate `config/server.signing-private-key.pem` as described in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 To run the server:
 
 ```bash
@@ -97,6 +99,7 @@ Config defaults live in `config/server.conf.styx` and `config/server.secrets.sty
 - `CONCLAVE_BOOTSTRAP_DISPLAY_NAME`
 - `CONCLAVE_JWT_ISSUER`
 - `CONCLAVE_JWT_DEFAULT_AUDIENCE`
+- `CONCLAVE_JWT_SIGNING_PRIVATE_KEY_FILE`
 - `CONCLAVE_JWT_TTL_SECONDS`
 - `CONCLAVE_FELDERA_ENABLED`
 - `CONCLAVE_FELDERA_BASE_URL`
@@ -106,7 +109,7 @@ Config defaults live in `config/server.conf.styx` and `config/server.secrets.sty
 - `CONCLAVE_FELDERA_AUTO_START`
 - `CONCLAVE_FELDERA_START_INITIAL`
 
-Secret-bearing values such as the bootstrap token, JWT signing private key, and optional Feldera API key now live in `config/server.secrets.styx`. Conclave accepts CLI and env overrides for locating that file, but not for supplying those secret values directly.
+Secret-bearing values such as the bootstrap token and optional Feldera API key live in `config/server.secrets.styx`. The JWT signing key is read from the PEM file referenced by `jwt.signing_private_key_file` in `config/server.conf.styx`. Conclave accepts CLI and env overrides for locating config files and the PEM path, but not for supplying secret values directly.
 
 See [items/server/src/config.rs](items/server/src/config.rs) for the full set of startup overrides and default values.
 

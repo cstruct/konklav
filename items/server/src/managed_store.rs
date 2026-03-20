@@ -4117,7 +4117,7 @@ tenants ({id "tenant-a"})
         let updated = ManagedConfig::load_from_str(
             r#"
 catalog { actions ({name "tenant:user:write"}) }
-tenants ({id "tenant-a", display_name "Tenant A"}) 
+tenants ({id "tenant-a", display_name "Tenant A"})
 "#,
         )
         .expect("updated config should parse");

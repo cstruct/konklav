@@ -21,6 +21,7 @@ bootstrap {
 jwt {
     issuer "http://127.0.0.1:8082"
     default_audience "conclave-dev"
+    signing_private_key_file "server.signing-private-key.pem"
     ttl_seconds 900
 }
 

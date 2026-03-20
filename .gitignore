@@ -1,3 +1,4 @@
 /target
 .agents/plans/*
 !.agents/plans/PLANS.md
+config/server.signing-private-key.pem

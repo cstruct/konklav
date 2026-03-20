@@ -28,8 +28,6 @@ async fn main() -> io::Result<()> {
     let managed = ManagedConfig::load_from_dir(&loaded.managed_dir).map_err(io::Error::other)?;
     let signer = JwtSigner::from_seed(
         loaded
-            .config
-            .jwt
             .signing_private_key_bytes()
             .map_err(io::Error::other)?,
     );

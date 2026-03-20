@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::path::PathBuf;
 
 use conclave_managed_config::ManagedConfig;
 use conclave_relying_auth::JwtSigner;
@@ -107,18 +108,17 @@ fn jwt_config() -> JwtConfig {
     JwtConfig {
         issuer: "https://conclave.test".to_owned(),
         default_audience: "conclave-api".to_owned(),
-        signing_private_key: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
-            .to_owned(),
+        signing_private_key_file: PathBuf::from("unused-test-signing-key.pem"),
         ttl_seconds: 900,
     }
 }
 
 fn signer() -> JwtSigner {
-    let jwt = jwt_config();
-    JwtSigner::from_seed(
-        jwt.signing_private_key_bytes()
-            .expect("private key should decode"),
-    )
+    JwtSigner::from_seed([
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e,
+        0x1f, 0x20,
+    ])
 }
 
 // r[verify tenant.root.bootstrap]

@@ -95,6 +95,8 @@ Run the server with:
 cargo run -p conclave-server
 ```
 
+Before the first local run, generate `config/server.signing-private-key.pem` as described in [CONTRIBUTING.md](../../CONTRIBUTING.md).
+
 By default the server loads:
 
 - public server config from `config/server.conf.styx`
@@ -115,6 +117,7 @@ Common startup overrides:
 - `CONCLAVE_BOOTSTRAP_SUBJECT`
 - `CONCLAVE_JWT_ISSUER`
 - `CONCLAVE_JWT_DEFAULT_AUDIENCE`
+- `CONCLAVE_JWT_SIGNING_PRIVATE_KEY_FILE`
 - `CONCLAVE_JWT_TTL_SECONDS`
 - `CONCLAVE_FELDERA_ENABLED`
 - `CONCLAVE_FELDERA_BASE_URL`
@@ -126,7 +129,7 @@ Common startup overrides:
 
 See [`src/config.rs`](src/config.rs) for the full set of startup overrides and default values.
 
-`config/server.secrets.styx` currently holds `bootstrap.token`, `jwt.signing_private_key`, and `feldera.api_key`. The server accepts `--secrets` or `CONCLAVE_SECRETS` to locate that file, but it intentionally does not accept direct CLI or environment-variable overrides for those secret values.
+`config/server.secrets.styx` currently holds `bootstrap.token` and `feldera.api_key`. The server reads its JWT signing key from the PEM file referenced by `jwt.signing_private_key_file` in `config/server.conf.styx`. The server accepts `--secrets` or `CONCLAVE_SECRETS` to locate the secrets file, and it accepts `--jwt-signing-private-key-file` or `CONCLAVE_JWT_SIGNING_PRIVATE_KEY_FILE` to relocate the PEM path, but it intentionally does not accept direct CLI or environment-variable overrides for secret values.
 
 ## Testing
 

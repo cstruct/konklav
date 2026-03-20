@@ -985,19 +985,65 @@ async fn jwks(state: web::Data<AppState>) -> impl Responder {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use actix_web::{http::StatusCode, test, App};
     use conclave_managed_config::ManagedConfig;
+    use ed25519_dalek::pkcs8::EncodePrivateKey;
+    use pkcs8::LineEnding;
 
     use crate::config::{AppConfig, LoadedConfig};
 
     use super::*;
 
-    async fn test_state() -> AppState {
-        let loaded = LoadedConfig {
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic enough for tests")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("conclave-server-http-{name}-{nonce}"));
+        fs::create_dir_all(&dir).expect("temp test dir should be creatable");
+        dir
+    }
+
+    fn signing_key_seed(fill: u8) -> [u8; 32] {
+        [fill; 32]
+    }
+
+    fn signing_key_pem(seed: [u8; 32]) -> String {
+        ed25519_dalek::SigningKey::from_bytes(&seed)
+            .to_pkcs8_pem(LineEnding::LF)
+            .expect("test signing key should encode to PKCS#8 PEM")
+            .to_string()
+    }
+
+    fn write_signing_key_file(dir: &Path, seed: [u8; 32]) {
+        fs::write(
+            dir.join("server.signing-private-key.pem"),
+            signing_key_pem(seed),
+        )
+        .expect("test signing key file should be writable");
+    }
+
+    fn loaded_config_with_seed(seed: [u8; 32]) -> LoadedConfig {
+        let config_dir = unique_temp_dir("loaded");
+        write_signing_key_file(&config_dir, seed);
+        LoadedConfig {
             config: AppConfig::default(),
-            managed_dir: std::path::PathBuf::from("config"),
+            config_dir: config_dir.clone(),
+            managed_dir: PathBuf::from("config"),
             source: "test".to_owned(),
-        };
+        }
+    }
+
+    fn loaded_config() -> LoadedConfig {
+        loaded_config_with_seed(signing_key_seed(0x01))
+    }
+
+    async fn test_state() -> AppState {
+        let loaded = loaded_config();
         let managed = conclave_managed_config::LoadedManagedConfig {
             managed: ManagedConfig::load_from_str(
                 r#"
@@ -1043,8 +1089,6 @@ memberships (
         };
         let signer = JwtSigner::from_seed(
             loaded
-                .config
-                .jwt
                 .signing_private_key_bytes()
                 .expect("private key should decode"),
         );
@@ -1317,11 +1361,7 @@ memberships (
         actix_web::rt::spawn(server);
         actix_web::rt::time::sleep(Duration::from_millis(25)).await;
 
-        let mut loaded = LoadedConfig {
-            config: AppConfig::default(),
-            managed_dir: std::path::PathBuf::from("config"),
-            source: "test".to_owned(),
-        };
+        let mut loaded = loaded_config();
         loaded.config.feldera.enabled = true;
         loaded.config.feldera.base_url = format!("http://{}", addr);
         let managed = conclave_managed_config::LoadedManagedConfig {
@@ -1339,8 +1379,6 @@ catalog {
         };
         let signer = JwtSigner::from_seed(
             loaded
-                .config
-                .jwt
                 .signing_private_key_bytes()
                 .expect("private key should decode"),
         );
@@ -1536,11 +1574,7 @@ catalog {
         actix_web::rt::spawn(server);
         actix_web::rt::time::sleep(Duration::from_millis(25)).await;
 
-        let mut loaded = LoadedConfig {
-            config: AppConfig::default(),
-            managed_dir: std::path::PathBuf::from("config"),
-            source: "test".to_owned(),
-        };
+        let mut loaded = loaded_config();
         loaded.config.feldera.enabled = true;
         loaded.config.feldera.base_url = format!("http://{}", addr);
         let managed = conclave_managed_config::LoadedManagedConfig {
@@ -1558,8 +1592,6 @@ catalog {
         };
         let signer = JwtSigner::from_seed(
             loaded
-                .config
-                .jwt
                 .signing_private_key_bytes()
                 .expect("private key should decode"),
         );
@@ -1807,11 +1839,7 @@ catalog {
         actix_web::rt::spawn(server);
         actix_web::rt::time::sleep(Duration::from_millis(25)).await;
 
-        let mut loaded = LoadedConfig {
-            config: AppConfig::default(),
-            managed_dir: std::path::PathBuf::from("config"),
-            source: "test".to_owned(),
-        };
+        let mut loaded = loaded_config();
         loaded.config.feldera.enabled = true;
         loaded.config.feldera.base_url = format!("http://{}", addr);
         let managed = conclave_managed_config::LoadedManagedConfig {
@@ -1829,8 +1857,6 @@ catalog {
         };
         let signer = JwtSigner::from_seed(
             loaded
-                .config
-                .jwt
                 .signing_private_key_bytes()
                 .expect("private key should decode"),
         );
@@ -2059,11 +2085,7 @@ catalog {
         actix_web::rt::spawn(server);
         actix_web::rt::time::sleep(Duration::from_millis(25)).await;
 
-        let mut loaded = LoadedConfig {
-            config: AppConfig::default(),
-            managed_dir: std::path::PathBuf::from("config"),
-            source: "test".to_owned(),
-        };
+        let mut loaded = loaded_config();
         loaded.config.feldera.enabled = true;
         loaded.config.feldera.base_url = format!("http://{}", addr);
         let managed = conclave_managed_config::LoadedManagedConfig {
@@ -2081,8 +2103,6 @@ catalog {
         };
         let signer = JwtSigner::from_seed(
             loaded
-                .config
-                .jwt
                 .signing_private_key_bytes()
                 .expect("private key should decode"),
         );
@@ -2274,11 +2294,7 @@ catalog {
         actix_web::rt::spawn(server);
         actix_web::rt::time::sleep(Duration::from_millis(25)).await;
 
-        let mut loaded = LoadedConfig {
-            config: AppConfig::default(),
-            managed_dir: std::path::PathBuf::from("config"),
-            source: "test".to_owned(),
-        };
+        let mut loaded = loaded_config();
         loaded.config.feldera.enabled = true;
         loaded.config.feldera.base_url = format!("http://{}", addr);
         let managed = conclave_managed_config::LoadedManagedConfig {
@@ -2296,8 +2312,6 @@ catalog {
         };
         let signer = JwtSigner::from_seed(
             loaded
-                .config
-                .jwt
                 .signing_private_key_bytes()
                 .expect("private key should decode"),
         );
@@ -2486,11 +2500,7 @@ catalog {
         actix_web::rt::spawn(server);
         actix_web::rt::time::sleep(Duration::from_millis(25)).await;
 
-        let mut loaded = LoadedConfig {
-            config: AppConfig::default(),
-            managed_dir: std::path::PathBuf::from("config"),
-            source: "test".to_owned(),
-        };
+        let mut loaded = loaded_config();
         loaded.config.feldera.enabled = true;
         loaded.config.feldera.base_url = format!("http://{}", addr);
         let managed = conclave_managed_config::LoadedManagedConfig {
@@ -2538,8 +2548,6 @@ memberships (
         };
         let signer = JwtSigner::from_seed(
             loaded
-                .config
-                .jwt
                 .signing_private_key_bytes()
                 .expect("private key should decode"),
         );
@@ -2885,12 +2893,8 @@ memberships (
         actix_web::rt::spawn(server);
         actix_web::rt::time::sleep(Duration::from_millis(25)).await;
 
-        let loaded_config = || {
-            let mut loaded = LoadedConfig {
-                config: AppConfig::default(),
-                managed_dir: std::path::PathBuf::from("config"),
-                source: "test".to_owned(),
-            };
+        let loaded_config = |seed| {
+            let mut loaded = loaded_config_with_seed(seed);
             loaded.config.feldera.enabled = true;
             loaded.config.feldera.base_url = format!("http://{}", addr);
             loaded
@@ -2939,11 +2943,9 @@ memberships (
             source: "test-managed".to_owned(),
         };
 
-        let loaded = loaded_config();
+        let loaded = loaded_config(signing_key_seed(0x01));
         let signer = JwtSigner::from_seed(
             loaded
-                .config
-                .jwt
                 .signing_private_key_bytes()
                 .expect("private key should decode"),
         );
@@ -3001,13 +3003,9 @@ memberships (
         let first_login_response: LoginResponse =
             test::call_and_read_body_json(&subject, first_login_request).await;
 
-        let mut reloaded_loaded = loaded_config();
-        reloaded_loaded.config.jwt.signing_private_key =
-            "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021".to_owned();
+        let reloaded_loaded = loaded_config(signing_key_seed(0x02));
         let reloaded_signer = JwtSigner::from_seed(
             reloaded_loaded
-                .config
-                .jwt
                 .signing_private_key_bytes()
                 .expect("private key should decode"),
         );
@@ -3093,11 +3091,7 @@ memberships (
     #[actix_web::test]
     #[ignore = "requires a running Feldera manager via CONCLAVE_COMPONENT_FELDERA_URL"]
     async fn readyz_checks_a_live_feldera_manager() {
-        let mut loaded = LoadedConfig {
-            config: AppConfig::default(),
-            managed_dir: std::path::PathBuf::from("config"),
-            source: "test".to_owned(),
-        };
+        let mut loaded = loaded_config();
         loaded.config.feldera.enabled = true;
         loaded.config.feldera.readiness_probe = true;
         loaded.config.feldera.pipeline_prefix = format!(
@@ -3120,8 +3114,6 @@ catalog { actions () }
         };
         let signer = JwtSigner::from_seed(
             loaded
-                .config
-                .jwt
                 .signing_private_key_bytes()
                 .expect("private key should decode"),
         );

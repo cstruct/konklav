@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use clap::parser::ValueSource;
 use clap::{CommandFactory, FromArgMatches, Parser};
+use ed25519_dalek::pkcs8::DecodePrivateKey;
 use facet::Facet;
 use serde::Deserialize;
 
@@ -17,6 +18,7 @@ const DEFAULT_SECRETS_PATH: &str = "config/server.secrets.styx";
 #[derive(Clone, Debug)]
 pub struct LoadedConfig {
     pub config: AppConfig,
+    pub config_dir: PathBuf,
     pub managed_dir: PathBuf,
     pub source: String,
 }
@@ -48,7 +50,7 @@ pub struct BootstrapConfig {
 pub struct JwtConfig {
     pub issuer: String,
     pub default_audience: String,
-    pub signing_private_key: String,
+    pub signing_private_key_file: PathBuf,
     pub ttl_seconds: u64,
 }
 
@@ -87,6 +89,7 @@ struct PublicBootstrapConfig {
 struct PublicJwtConfig {
     issuer: String,
     default_audience: String,
+    signing_private_key_file: PathBuf,
     ttl_seconds: u64,
 }
 
@@ -106,7 +109,6 @@ struct PublicFelderaConfig {
 #[serde(deny_unknown_fields)]
 struct SecretAppConfig {
     bootstrap: SecretBootstrapConfig,
-    jwt: SecretJwtConfig,
     feldera: Option<SecretFelderaConfig>,
 }
 
@@ -114,12 +116,6 @@ struct SecretAppConfig {
 #[serde(deny_unknown_fields)]
 struct SecretBootstrapConfig {
     token: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Facet, PartialEq)]
-#[serde(deny_unknown_fields)]
-struct SecretJwtConfig {
-    signing_private_key: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Facet, PartialEq)]
@@ -151,8 +147,7 @@ impl Default for AppConfig {
             jwt: JwtConfig {
                 issuer: "http://127.0.0.1:8082".to_owned(),
                 default_audience: "conclave-dev".to_owned(),
-                signing_private_key:
-                    "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20".to_owned(),
+                signing_private_key_file: PathBuf::from("server.signing-private-key.pem"),
                 ttl_seconds: 900,
             },
             feldera: FelderaConfig {
@@ -195,6 +190,10 @@ impl AppConfig {
             .clone()
             .unwrap_or_else(|| PathBuf::from(DEFAULT_SECRETS_PATH));
         let mut managed_dir = managed_config_dir(&config_path);
+        let config_dir = config_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
         let config_contents = read_required_file(&config_path, "config")?;
         let secrets_contents = read_required_file(&secrets_path, "secrets")?;
         let mut config = Self::from_split_styx(&config_contents, &secrets_contents)?;
@@ -203,6 +202,7 @@ impl AppConfig {
 
         Ok(LoadedConfig {
             config,
+            config_dir,
             managed_dir,
             source: format_source(
                 format!(
@@ -236,6 +236,8 @@ impl AppConfig {
                 "display_name",
                 "issuer",
                 "default_audience",
+                "signing_private_key",
+                "signing_private_key_file",
                 "ttl_seconds",
                 "enabled",
                 "base_url",
@@ -261,7 +263,7 @@ impl AppConfig {
             jwt: JwtConfig {
                 issuer: config.jwt.issuer,
                 default_audience: config.jwt.default_audience,
-                signing_private_key: secrets.jwt.signing_private_key,
+                signing_private_key_file: config.jwt.signing_private_key_file,
                 ttl_seconds: config.jwt.ttl_seconds,
             },
             feldera: FelderaConfig {
@@ -293,14 +295,24 @@ impl ListenerConfig {
 }
 
 impl JwtConfig {
+    pub fn signing_private_key_path(&self, config_dir: &Path) -> PathBuf {
+        if self.signing_private_key_file.is_absolute() {
+            self.signing_private_key_file.clone()
+        } else {
+            config_dir.join(&self.signing_private_key_file)
+        }
+    }
+
+    pub fn signing_private_key_bytes(&self, config_dir: &Path) -> Result<[u8; 32], DynError> {
+        let path = self.signing_private_key_path(config_dir);
+        let pem = read_required_file(&path, "jwt signing private key")?;
+        decode_signing_private_key_pem(&pem, &path)
+    }
+}
+
+impl LoadedConfig {
     pub fn signing_private_key_bytes(&self) -> Result<[u8; 32], DynError> {
-        let bytes = decode_hex(&self.signing_private_key)?;
-        bytes.try_into().map_err(|_| {
-            Box::new(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "jwt signing private key must decode to 32 bytes",
-            )) as DynError
-        })
+        self.config.jwt.signing_private_key_bytes(&self.config_dir)
     }
 }
 
@@ -333,6 +345,8 @@ struct StartupOverrides {
     jwt_issuer: Option<String>,
     #[arg(long, env = "CONCLAVE_JWT_DEFAULT_AUDIENCE")]
     jwt_default_audience: Option<String>,
+    #[arg(long, env = "CONCLAVE_JWT_SIGNING_PRIVATE_KEY_FILE")]
+    jwt_signing_private_key_file: Option<PathBuf>,
     #[arg(long, env = "CONCLAVE_JWT_TTL_SECONDS")]
     jwt_ttl_seconds: Option<u64>,
     #[arg(long, env = "CONCLAVE_FELDERA_ENABLED")]
@@ -379,6 +393,10 @@ impl StartupOverrides {
         );
         apply_override(&mut config.jwt.issuer, self.jwt_issuer);
         apply_override(&mut config.jwt.default_audience, self.jwt_default_audience);
+        apply_override(
+            &mut config.jwt.signing_private_key_file,
+            self.jwt_signing_private_key_file,
+        );
         apply_override(&mut config.jwt.ttl_seconds, self.jwt_ttl_seconds);
         apply_override(&mut config.feldera.enabled, self.feldera_enabled);
         apply_override(&mut config.feldera.base_url, self.feldera_base_url);
@@ -445,6 +463,11 @@ impl OverrideSources {
                 "jwt_default_audience",
                 "--jwt-default-audience",
                 "CONCLAVE_JWT_DEFAULT_AUDIENCE",
+            ),
+            (
+                "jwt_signing_private_key_file",
+                "--jwt-signing-private-key-file",
+                "CONCLAVE_JWT_SIGNING_PRIVATE_KEY_FILE",
             ),
             (
                 "jwt_ttl_seconds",
@@ -558,20 +581,47 @@ fn reject_forbidden_entries(input: &str, label: &str, forbidden: &[&str]) -> Res
     Ok(())
 }
 
-fn decode_hex(input: &str) -> Result<Vec<u8>, DynError> {
-    if input.len() % 2 != 0 {
+fn decode_signing_private_key_pem(input: &str, path: &Path) -> Result<[u8; 32], DynError> {
+    let trimmed = input.trim();
+    let display = path.display();
+
+    if trimmed.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----") {
         return Err(Box::new(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "hex input must have even length",
+            format!(
+                "jwt signing private key file {display} must contain unencrypted PKCS#8 Ed25519 PEM, not OpenSSH private key data"
+            ),
         )));
     }
 
-    let mut bytes = Vec::with_capacity(input.len() / 2);
-    for chunk in input.as_bytes().chunks(2) {
-        let pair = std::str::from_utf8(chunk)?;
-        bytes.push(u8::from_str_radix(pair, 16)?);
+    if trimmed.starts_with("-----BEGIN ENCRYPTED PRIVATE KEY-----") {
+        return Err(Box::new(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "jwt signing private key file {display} must contain unencrypted PKCS#8 Ed25519 PEM"
+            ),
+        )));
     }
-    Ok(bytes)
+
+    if !trimmed.starts_with("-----BEGIN PRIVATE KEY-----") {
+        return Err(Box::new(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "jwt signing private key file {display} must contain unencrypted PKCS#8 Ed25519 PEM"
+            ),
+        )));
+    }
+
+    let signing_key = ed25519_dalek::SigningKey::from_pkcs8_pem(trimmed).map_err(|err| {
+        Box::new(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "jwt signing private key file {display} must contain a valid unencrypted PKCS#8 Ed25519 private key: {err}"
+            ),
+        )) as DynError
+    })?;
+
+    Ok(signing_key.to_bytes())
 }
 
 #[cfg(test)]
@@ -582,7 +632,10 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::AppConfig;
+    use ed25519_dalek::pkcs8::EncodePrivateKey;
+    use pkcs8::LineEnding;
+
+    use super::{AppConfig, LoadedConfig};
 
     fn public_config_styx() -> &'static str {
         r#"
@@ -605,6 +658,7 @@ bootstrap {
 jwt {
     issuer "https://conclave.test"
     default_audience "clinic-api"
+    signing_private_key_file "server.signing-private-key.pem"
     ttl_seconds 600
 }
 feldera {
@@ -623,9 +677,6 @@ feldera {
         r#"
 bootstrap {
     token "bootstrap-secret"
-}
-jwt {
-    signing_private_key "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 }
 feldera {
     api_key "secret"
@@ -652,6 +703,36 @@ feldera {
         fs::write(path, contents).expect("test file should be writable");
     }
 
+    fn signing_key_seed(fill: u8) -> [u8; 32] {
+        [fill; 32]
+    }
+
+    fn signing_key_pem(seed: [u8; 32]) -> String {
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+        signing_key
+            .to_pkcs8_pem(LineEnding::LF)
+            .expect("test signing key should encode to PKCS#8 PEM")
+            .to_string()
+    }
+
+    fn write_signing_key_file(dir: &Path, seed: [u8; 32]) {
+        write_file(
+            &dir.join("server.signing-private-key.pem"),
+            &signing_key_pem(seed),
+        );
+    }
+
+    fn load_split_config_with_key(config_path: &Path, secrets_path: &Path) -> LoadedConfig {
+        AppConfig::load_from([
+            OsString::from("conclave-server"),
+            OsString::from("--config"),
+            config_path.as_os_str().to_os_string(),
+            OsString::from("--secrets"),
+            secrets_path.as_os_str().to_os_string(),
+        ])
+        .expect("config should load")
+    }
+
     #[test]
     // r[verify platform.server.split-config-files]
     fn parses_split_styx_config() {
@@ -665,8 +746,8 @@ feldera {
         assert_eq!(config.bootstrap.token, "bootstrap-secret");
         assert_eq!(config.jwt.ttl_seconds, 600);
         assert_eq!(
-            config.jwt.signing_private_key,
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            config.jwt.signing_private_key_file,
+            PathBuf::from("server.signing-private-key.pem")
         );
         assert!(config.feldera.enabled);
         assert_eq!(config.feldera.api_key.as_deref(), Some("secret"));
@@ -680,15 +761,16 @@ feldera {
         assert!(public_schema.contains("relying"));
         assert!(public_schema.contains("bootstrap"));
         assert!(public_schema.contains("ttl_seconds"));
-        assert!(!public_schema.contains("signing_private_key"));
+        assert!(public_schema.contains("signing_private_key_file"));
+        assert!(!public_schema.contains("signing_private_key "));
         assert!(!public_schema.contains("api_key"));
 
         let secrets_schema = AppConfig::secrets_schema();
-        assert!(secrets_schema.contains("signing_private_key"));
         assert!(secrets_schema.contains("api_key"));
         assert!(secrets_schema.contains("token"));
         assert!(!secrets_schema.contains("control_plane"));
         assert!(!secrets_schema.contains("ttl_seconds"));
+        assert!(!secrets_schema.contains("signing_private_key_file"));
     }
 
     #[test]
@@ -699,6 +781,7 @@ feldera {
         let secrets_path = temp_dir.join("custom-server.secrets.styx");
         write_file(&config_path, public_config_styx());
         write_file(&secrets_path, secrets_config_styx());
+        write_signing_key_file(&temp_dir, signing_key_seed(0xAA));
 
         let loaded = AppConfig::load_from([
             OsString::from("conclave-server"),
@@ -716,8 +799,8 @@ feldera {
         assert_eq!(loaded.config.control_plane.port, 9990);
         assert_eq!(loaded.config.bootstrap.subject, "root-2");
         assert_eq!(
-            loaded.config.jwt.signing_private_key,
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            loaded.config.jwt.signing_private_key_file,
+            PathBuf::from("server.signing-private-key.pem")
         );
         assert!(loaded.source.contains("--secrets"));
         fs::remove_dir_all(&temp_dir).expect("temp test dir should be removable");
@@ -732,6 +815,7 @@ feldera {
         let secrets_path = temp_dir.join("env-server.secrets.styx");
         write_file(&config_path, public_config_styx());
         write_file(&secrets_path, secrets_config_styx());
+        write_signing_key_file(&temp_dir, signing_key_seed(0xAB));
 
         std::env::set_var("CONCLAVE_CONFIG", &config_path);
         std::env::set_var("CONCLAVE_SECRETS", &secrets_path);
@@ -741,8 +825,8 @@ feldera {
 
         assert_eq!(loaded.config.control_plane.port, 9991);
         assert_eq!(
-            loaded.config.jwt.signing_private_key,
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            loaded.config.jwt.signing_private_key_file,
+            PathBuf::from("server.signing-private-key.pem")
         );
         assert!(loaded.source.contains("CONCLAVE_SECRETS"));
 
@@ -779,6 +863,7 @@ jwt {
     issuer "https://conclave.test"
     default_audience "clinic-api"
     signing_private_key "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    signing_private_key_file "server.signing-private-key.pem"
     ttl_seconds 600
 }
 feldera {
@@ -813,7 +898,7 @@ bootstrap {
     subject "should-not-be-here"
 }
 jwt {
-    signing_private_key "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    signing_private_key_file "server.signing-private-key.pem"
     ttl_seconds 600
 }
 "#,
@@ -830,6 +915,7 @@ jwt {
         let config_path = temp_dir.join("server.conf.styx");
         let secrets_path = temp_dir.join("server.secrets.styx");
         write_file(&config_path, public_config_styx());
+        write_signing_key_file(&temp_dir, signing_key_seed(0xAC));
 
         let err = AppConfig::load_from([
             OsString::from("conclave-server"),
@@ -847,11 +933,7 @@ jwt {
     #[test]
     // r[verify platform.server.secret-file-only-values]
     fn rejects_removed_secret_flags() {
-        for flag in [
-            "--bootstrap-token",
-            "--jwt-signing-private-key",
-            "--feldera-api-key",
-        ] {
+        for flag in ["--bootstrap-token", "--feldera-api-key"] {
             let err = AppConfig::load_from([
                 OsString::from("conclave-server"),
                 OsString::from(flag),
@@ -865,6 +947,71 @@ jwt {
 
     #[test]
     // r[verify platform.server.secret-file-only-values]
+    fn applies_signing_key_file_flag_override() {
+        let temp_dir = unique_temp_dir("signing-key-flag");
+        let config_path = temp_dir.join("server.conf.styx");
+        let secrets_path = temp_dir.join("server.secrets.styx");
+        let override_key_path = temp_dir.join("override-signing-key.pem");
+        write_file(&config_path, public_config_styx());
+        write_file(&secrets_path, secrets_config_styx());
+        write_signing_key_file(&temp_dir, signing_key_seed(0xAD));
+        write_file(&override_key_path, &signing_key_pem(signing_key_seed(0xBC)));
+
+        let loaded = AppConfig::load_from([
+            OsString::from("conclave-server"),
+            OsString::from("--config"),
+            config_path.into_os_string(),
+            OsString::from("--secrets"),
+            secrets_path.into_os_string(),
+            OsString::from("--jwt-signing-private-key-file"),
+            override_key_path.into_os_string(),
+        ])
+        .expect("config should load");
+
+        let bytes = loaded
+            .signing_private_key_bytes()
+            .expect("overridden signing key should parse");
+        assert_eq!(bytes, signing_key_seed(0xBC));
+        assert!(loaded.source.contains("--jwt-signing-private-key-file"));
+        fs::remove_dir_all(&temp_dir).expect("temp test dir should be removable");
+    }
+
+    #[test]
+    // r[verify platform.server.secret-file-only-values]
+    fn applies_signing_key_file_env_override() {
+        let _guard = env_lock().lock().expect("env lock should be acquirable");
+        let temp_dir = unique_temp_dir("signing-key-env");
+        let config_path = temp_dir.join("server.conf.styx");
+        let secrets_path = temp_dir.join("server.secrets.styx");
+        let override_key_path = temp_dir.join("env-signing-key.pem");
+        write_file(&config_path, public_config_styx());
+        write_file(&secrets_path, secrets_config_styx());
+        write_signing_key_file(&temp_dir, signing_key_seed(0xAE));
+        write_file(&override_key_path, &signing_key_pem(signing_key_seed(0xBD)));
+
+        std::env::set_var("CONCLAVE_CONFIG", &config_path);
+        std::env::set_var("CONCLAVE_SECRETS", &secrets_path);
+        std::env::set_var("CONCLAVE_JWT_SIGNING_PRIVATE_KEY_FILE", &override_key_path);
+
+        let loaded =
+            AppConfig::load_from([OsString::from("conclave-server")]).expect("config should load");
+
+        let bytes = loaded
+            .signing_private_key_bytes()
+            .expect("overridden signing key should parse");
+        assert_eq!(bytes, signing_key_seed(0xBD));
+        assert!(loaded
+            .source
+            .contains("CONCLAVE_JWT_SIGNING_PRIVATE_KEY_FILE"));
+
+        std::env::remove_var("CONCLAVE_CONFIG");
+        std::env::remove_var("CONCLAVE_SECRETS");
+        std::env::remove_var("CONCLAVE_JWT_SIGNING_PRIVATE_KEY_FILE");
+        fs::remove_dir_all(&temp_dir).expect("temp test dir should be removable");
+    }
+
+    #[test]
+    // r[verify platform.server.secret-file-only-values]
     fn ignores_removed_secret_env_overrides() {
         let _guard = env_lock().lock().expect("env lock should be acquirable");
         let temp_dir = unique_temp_dir("secret-env");
@@ -872,43 +1019,149 @@ jwt {
         let secrets_path = temp_dir.join("server.secrets.styx");
         write_file(&config_path, public_config_styx());
         write_file(&secrets_path, secrets_config_styx());
+        write_signing_key_file(&temp_dir, signing_key_seed(0xAF));
 
         std::env::set_var("CONCLAVE_CONFIG", &config_path);
         std::env::set_var("CONCLAVE_SECRETS", &secrets_path);
         std::env::set_var("CONCLAVE_BOOTSTRAP_TOKEN", "ignored-bootstrap");
-        std::env::set_var(
-            "CONCLAVE_JWT_SIGNING_PRIVATE_KEY",
-            "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021",
-        );
         std::env::set_var("CONCLAVE_FELDERA_API_KEY", "ignored-api-key");
         let loaded = AppConfig::load_from([OsString::from("conclave-server")])
             .expect("config should ignore removed secret env overrides");
 
         assert_eq!(loaded.config.bootstrap.token, "bootstrap-secret");
         assert_eq!(
-            loaded.config.jwt.signing_private_key,
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            loaded.config.jwt.signing_private_key_file,
+            PathBuf::from("server.signing-private-key.pem")
         );
         assert_eq!(loaded.config.feldera.api_key.as_deref(), Some("secret"));
 
         std::env::remove_var("CONCLAVE_CONFIG");
         std::env::remove_var("CONCLAVE_SECRETS");
         std::env::remove_var("CONCLAVE_BOOTSTRAP_TOKEN");
-        std::env::remove_var("CONCLAVE_JWT_SIGNING_PRIVATE_KEY");
         std::env::remove_var("CONCLAVE_FELDERA_API_KEY");
         fs::remove_dir_all(&temp_dir).expect("temp test dir should be removable");
     }
 
     #[test]
     fn loaded_split_config_still_builds_signer_inputs() {
-        let config = AppConfig::from_split_styx(public_config_styx(), secrets_config_styx())
-            .expect("split styx config should parse");
+        let temp_dir = unique_temp_dir("signing-key-load");
+        let config_path = temp_dir.join("server.conf.styx");
+        let secrets_path = temp_dir.join("server.secrets.styx");
+        write_file(&config_path, public_config_styx());
+        write_file(&secrets_path, secrets_config_styx());
+        write_signing_key_file(&temp_dir, signing_key_seed(0xBE));
 
-        let bytes = config
-            .jwt
+        let loaded = load_split_config_with_key(&config_path, &secrets_path);
+        let bytes = loaded
             .signing_private_key_bytes()
             .expect("signing key should decode");
 
         assert_eq!(bytes.len(), 32);
+        assert_eq!(bytes, signing_key_seed(0xBE));
+        fs::remove_dir_all(&temp_dir).expect("temp test dir should be removable");
+    }
+
+    #[test]
+    fn signing_key_path_is_resolved_relative_to_public_config() {
+        let temp_dir = unique_temp_dir("relative-signing-key");
+        let config_path = temp_dir.join("nested").join("server.conf.styx");
+        let secrets_path = temp_dir.join("server.secrets.styx");
+        fs::create_dir_all(
+            config_path
+                .parent()
+                .expect("nested config dir should exist"),
+        )
+        .expect("nested config dir should be creatable");
+        write_file(
+            &config_path,
+            &public_config_styx().replace(
+                "server.signing-private-key.pem",
+                "keys/relative-signing-key.pem",
+            ),
+        );
+        write_file(&secrets_path, secrets_config_styx());
+        let key_dir = config_path
+            .parent()
+            .expect("config path should have parent")
+            .join("keys");
+        fs::create_dir_all(&key_dir).expect("key dir should be creatable");
+        write_file(
+            &key_dir.join("relative-signing-key.pem"),
+            &signing_key_pem(signing_key_seed(0xBF)),
+        );
+
+        let loaded = load_split_config_with_key(&config_path, &secrets_path);
+        let bytes = loaded
+            .signing_private_key_bytes()
+            .expect("relative signing key should parse");
+
+        assert_eq!(bytes, signing_key_seed(0xBF));
+        fs::remove_dir_all(&temp_dir).expect("temp test dir should be removable");
+    }
+
+    #[test]
+    fn missing_signing_key_file_fails_clearly() {
+        let temp_dir = unique_temp_dir("missing-signing-key");
+        let config_path = temp_dir.join("server.conf.styx");
+        let secrets_path = temp_dir.join("server.secrets.styx");
+        write_file(&config_path, public_config_styx());
+        write_file(&secrets_path, secrets_config_styx());
+
+        let loaded = load_split_config_with_key(&config_path, &secrets_path);
+        let err = loaded
+            .signing_private_key_bytes()
+            .expect_err("missing signing key file should fail");
+
+        assert!(err
+            .to_string()
+            .contains("failed to read jwt signing private key file"));
+        fs::remove_dir_all(&temp_dir).expect("temp test dir should be removable");
+    }
+
+    #[test]
+    fn rejects_invalid_signing_key_formats() {
+        let temp_dir = unique_temp_dir("invalid-signing-key");
+        let config_path = temp_dir.join("server.conf.styx");
+        let secrets_path = temp_dir.join("server.secrets.styx");
+        write_file(&config_path, public_config_styx());
+        write_file(&secrets_path, secrets_config_styx());
+
+        for (name, contents, expected) in [
+            ("raw-hex.pem", "01020304", "PKCS#8 Ed25519 PEM"),
+            (
+                "openssh.pem",
+                "-----BEGIN OPENSSH PRIVATE KEY-----\nZm9v\n-----END OPENSSH PRIVATE KEY-----\n",
+                "OpenSSH private key data",
+            ),
+            (
+                "encrypted.pem",
+                "-----BEGIN ENCRYPTED PRIVATE KEY-----\nZm9v\n-----END ENCRYPTED PRIVATE KEY-----\n",
+                "unencrypted PKCS#8 Ed25519 PEM",
+            ),
+            (
+                "rsa.pem",
+                "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQD4+F58N7p6RJJi\nmVg86aLRTF44S36Jv6fdxM7qQaP7Mu7apORdzdrIW6DCeU44yWiNysGEKMluSleq\n9jwELyhl725LLJoPLD114F8CbnMD4HzyBbs6k8ZZrVSu2Ce279b9Ec/WWEDuJeay\nZT6X0hgqP/d9vywgq6Z9erjRzCQXDpUe1koXSPo6e7iLF730cdpShUMHbOWcZH/5\nnYI8aAizI0s5momkMumZ5qX6Ch12yvDqOiiMHDL/95B2S/bRMyCV2wAPOQgpdnXl\n16rYPD+s/COM24kTx5cDIeEJD7BqXc9E+u6KDAdAm8YGtS+wGGyRyvE4s46HoPaz\n/gkGEXLFAgMBAAECggEABToYtL6vhfVqlhK/SXxPxq8np5xpoE2mR7BfrpsbR9f7\nDmqDveoxu48UUfZo0Sy0RKZ77N8BINU3CFAaj6MqFmoVoeAQMtk0iA0WIMRqjYOE\nTP0TO+GfY+3CX6XcncxZV8oPZxC25fRT5tne342XQIjd/OQvPsvBLnBxGZ+rsoAh\nm6q+UpBAkLTlaX2UjsFvdcGaVbL50DJBSSTXobHxPPH/FkOFjvFsRQAt2bQVWwtD\nY9ycYzaO+VxDRKCVh0b07XHtcwPa5RW2XnwI75E+BGzb62LF8A3+yQUwSWOSJyjt\ncmBHQYaWV7k/akdUSHh3D1ynjUTduVdJN9WewtG/XQKBgQD+R5c+3F4iAfDdc0AG\n/7uWGINuD/7++UZ5EONosFVJeFt3PcTJS3BM4tiTqcKoy0eZZ+j9RnBbTK1ZBOqV\nakiobP6KyHR+Y6SY+4PSJVpaz6RtWLpmjHtkobaN6D+PfYZ7R6pujISiFDUFxIr2\nle3NbS1Ry6j8TDIrS9KuX3sI5QKBgQD5cjox96D65gis6pZeRAEIJ5zsxFrqOeEf\nzY4xXHzkwmo7aX6ixkmKuuNHYsYvwP82LPgAvFp8ZUBKbjsgg7sWXBJgp7wa9u0J\npKnz03Wx/89ZbduCMsZ/HXXIQK5vCk1vZEBtcHTTX3e8DqRLVQjaxAg/P6MqxsVX\npYWh05rq6wKBgQDXxpv8uKXuX4nHCqB6f+GO6zkRgZNpmjQe7YQDdyCjTiMQuuLH\nfoalGexiLRNvKcJsteVEh9UpAJZciV06P88eaJEqn3Ejj6inUeJ8V+RaHcRUW2KI\nMzFxLpy0X58F3RrgPf63eNbUsVTNff7kwh28ykVfoCkb0z7LxyzKDn5X7QKBgDya\nL7sRKqzZo4PMBVXgS5aXoaZySUdkGFUTkOcJCIZy9FHn5Vf3L7hIwrKyYVJZZzK9\nedvurIWBLL8GMDIS9ZhDJW60Agw7P3cu6UytzszbmWzxubUoil58x2oyS9MhUlCT\nVkOITkkpFmS6r30YIOCQM7DDDeWGPAHDLcGRIDcRAoGAfNruM3aMcMBXNIN1qNbf\nWf9eKJeNEqXWiwxupCSvJzpuG1HsRvN7kYM/qfNwCuWHa3gwxM/H2ymlk/wEYBLET\nFcpnSUsctNk6heAQ7EzxKJ0C5EvhczHxVn9Yx8RJWb1x1o1t4bm/FvGV8eK3opgDd\nYqKqRR3YKHyCuXapnwXCfJ0=\n-----END PRIVATE KEY-----\n",
+                "Ed25519 private key",
+            ),
+        ] {
+            write_file(&temp_dir.join(name), contents);
+            let loaded = AppConfig::load_from([
+                OsString::from("conclave-server"),
+                OsString::from("--config"),
+                config_path.as_os_str().to_os_string(),
+                OsString::from("--secrets"),
+                secrets_path.as_os_str().to_os_string(),
+                OsString::from("--jwt-signing-private-key-file"),
+                temp_dir.join(name).into_os_string(),
+            ])
+            .expect("config should load");
+
+            let err = loaded
+                .signing_private_key_bytes()
+                .expect_err("invalid signing key format should fail");
+            assert!(err.to_string().contains(expected), "{name}: {err}");
+        }
+
+        fs::remove_dir_all(&temp_dir).expect("temp test dir should be removable");
     }
 }
