@@ -147,6 +147,15 @@ Issued tokens MUST be able to carry enough authorization context for downstream 
 r[authz.token.revocation-story]
 The authorization model MUST define how token-carried claims are constrained by expiry, rotation, revocation, or versioning so decentralized decisions remain bounded in time.
 
+r[authz.token.signing-key.rotation-overlap]
+The signing-key model MUST distinguish planned signing-key rotation from emergency revocation so previously issued tokens can remain verifiable during normal rotation overlap.
+
+r[authz.token.signing-key.break-glass-revocation]
+The active configured signing key MUST be revokable as break-glass behavior even if that temporarily prevents the platform from issuing new tokens.
+
+r[authz.token.signing-key.revocation-blocks-issuance]
+If the active configured signing key has been revoked and no replacement key is configured, token issuance MUST remain blocked until a new signing key is loaded.
+
 r[authz.offline.relying-system-library]
 Relying systems MUST be able to validate Conclave-issued JWTs and evaluate token-carried authorization snapshots offline through a stable library boundary.
 

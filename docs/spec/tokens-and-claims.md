@@ -13,6 +13,9 @@ Access tokens MUST identify the target tenant context in a dedicated claim so re
 r[token.access.context.actor-chain]
 When a token represents delegated or assumed access, it MUST carry the originating actor chain, including the source subject and source tenant, in a structured claim.
 
+r[token.access.jwt.jwks-generation]
+Access tokens intended for relying-system validation MUST carry a top-level `jwks_generation` claim identifying the verification-key publication generation in effect when the token was issued.
+
 ## Authorization snapshot
 
 r[token.access.authz.snapshot-claim]
@@ -44,6 +47,9 @@ Relying systems validating an access token MUST combine token signature validati
 r[token.access.use.staleness-bounds]
 Offline authorization decisions based on token-carried entitlements MUST be bounded by token expiry and by a defined strategy for catalog or policy revision invalidation.
 
+r[token.access.use.jwks-refresh-generation]
+Relying-system refresh behavior for verification keys MUST be able to use JWKS publication generation independently from authorization catalog or policy revisions.
+
 r[token.access.jwt.asymmetric-signing]
 Access tokens intended for relying-system validation MUST support asymmetric signing so verification keys can be distributed without sharing signing secrets.
 
@@ -62,6 +68,7 @@ The initial claim layout can follow a structure like this:
   "jti": "019cfbe5-efde-7923-9bdf-564233276fe9",
   "iat": 1773752676,
   "exp": 1773754476,
+  "jwks_generation": 14,
   "tid": "tenant-root-child-123",
   "act": {
     "sub": "019c2950-612b-71a0-ba14-eb8ea9cd37dc",

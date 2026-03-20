@@ -12,3 +12,6 @@ The shared DTO boundary for managed validate, plan, and apply operations MUST ca
 
 r[item.controlplane-api.subject-and-relying-dtos]
 The `conclave-controlplane-api` crate MUST define shared DTOs for the current invite, login, revision-discovery, and action-catalog operations used across the control-plane and relying-system surfaces.
+
+r[item.controlplane-api.revision-discovery-jwks-generation]
+The shared revision-discovery DTO boundary MUST include `jwks_generation` alongside authorization revision metadata.
