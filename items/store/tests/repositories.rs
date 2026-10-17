@@ -407,7 +407,10 @@ async fn configured_keys_rotate_and_can_be_revoked() {
 
     let kinds = event_kinds(&mut conn).await;
     assert_eq!(
-        kinds.iter().filter(|k| *k == "signing_keys.changed").count(),
+        kinds
+            .iter()
+            .filter(|k| *k == "signing_keys.changed")
+            .count(),
         4,
         "publish k1, publish k2, rotate, revoke; the no-op sync emits nothing"
     );
