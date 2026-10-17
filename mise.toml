@@ -1,6 +1,6 @@
 [tools]
 # The Rust toolchain, installed through rustup.
-rust = { version = "1.99.0", components = "rustfmt,clippy" }
+rust = { version = "1.99.0", components = "rustfmt,clippy,rust-analyzer,rust-src" }
 # Tracks the spec in docs/spec against the code, from its GitHub releases.
 "github:bearcove/tracey" = "1.4.0"
 # Diesel's CLI for migrations and schema.rs. libpq is compiled in, so no

@@ -1,0 +1,16 @@
+// Folder-specific settings
+//
+// For a full list of overridable settings, and general information on folder-specific settings,
+// see the documentation: https://zed.dev/docs/configuring-zed#settings-files
+{
+  "lsp": {
+    "rust-analyzer": {
+      // Run rust-analyzer through mise, so it uses the toolchain pinned in
+      // mise.toml (and its rustfmt and clippy) with the project's environment.
+      "binary": {
+        "path": "mise",
+        "arguments": ["exec", "--", "rust-analyzer"]
+      }
+    }
+  }
+}
