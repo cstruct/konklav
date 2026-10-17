@@ -1,0 +1,24 @@
+name: conclave-dev
+
+services:
+  postgres:
+    image: postgres:18.6-trixie
+    environment:
+      POSTGRES_USER: conclave
+      POSTGRES_PASSWORD: conclave
+      POSTGRES_DB: conclave
+    ports:
+      - "${CONCLAVE_DEV_PG_PORT:-55432}:5432"
+    # Postgres 18 images keep data in a versioned directory below
+    # /var/lib/postgresql, so the volume is mounted there instead of at
+    # .../data. That also lets future major upgrades live side by side.
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U conclave -d conclave"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  postgres-data:

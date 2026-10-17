@@ -32,6 +32,28 @@ backed by Feldera, is preserved at tag `v1`.
 - `items/`: software items (Rust crates and bindings), added from M1.
 - `.agents/`: agent skills and the planning standard.
 
+## Development environment
+
+[mise](https://mise.jdx.dev) manages the toolchain, the environment and the
+local services. It covers Rust, Tracey and Diesel's CLI (which bundles libpq,
+so no system Postgres client is needed).
+
+```sh
+mise trust && mise install
+mise run db:up      # Postgres 18 in Docker on localhost:55432, waits until healthy
+```
+
+mise sets `DATABASE_URL` for the local database. Other database tasks:
+
+- `db:down` stops Postgres and keeps its data.
+- `db:reset` stops it and deletes the data.
+- `db:status` shows its status.
+- `db:logs` follows its logs.
+- `db:psql` opens psql inside the container.
+
+To use another port, set `CONCLAVE_DEV_PG_PORT`, for example in an untracked
+`mise.local.toml`.
+
 ## Stack
 
 - Rust, axum, tokio
