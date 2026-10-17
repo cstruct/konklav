@@ -13,7 +13,8 @@ Access tokens MUST carry `iss`, `sub`, `aud`, `jti`, `iat` and `exp`.
 r[token.access.session-claims]
 Access tokens MUST carry the session id (`sid`), the session version they
 were issued at (`sv`), the authentication methods (`amr`) and the
-authentication time (`auth_time`).
+authentication time (`auth_time`). They MAY carry the credential the
+session was established with (`cid`).
 
 r[token.access.kind]
 Access tokens MUST carry a token kind matching the login stage (`partial`,

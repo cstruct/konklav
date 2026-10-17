@@ -41,6 +41,9 @@ pub struct AccessClaims {
     pub exp: i64,
     pub knd: TokenKind,
     pub sid: SessionId,
+    /// The credential the session was established with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cid: Option<conclave_core::CredentialId>,
     /// The session version the token was issued at.
     pub sv: i64,
     pub amr: Vec<String>,

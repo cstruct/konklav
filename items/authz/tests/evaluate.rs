@@ -18,6 +18,7 @@ fn claims(kind: TokenKind, flags: &[&str], amr: &[&str], auth_age: i64) -> Acces
         exp: NOW + 900,
         knd: kind,
         sid: SessionId::new_v7(),
+        cid: None,
         sv: 1,
         amr: amr.iter().map(|m| (*m).to_owned()).collect(),
         auth_time: NOW - auth_age,

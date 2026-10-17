@@ -57,6 +57,7 @@ impl Fixture {
             exp: now + 900,
             knd: TokenKind::Tenant,
             sid: self.session,
+            cid: None,
             sv: version,
             amr: vec!["pwd".into()],
             auth_time: now,

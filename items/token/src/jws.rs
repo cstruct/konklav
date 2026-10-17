@@ -195,6 +195,7 @@ mod tests {
             exp: now + 900,
             knd: TokenKind::Identity,
             sid: SessionId::new_v7(),
+            cid: None,
             sv: 1,
             amr: vec!["pwd".into()],
             auth_time: now,
