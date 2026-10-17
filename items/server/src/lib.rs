@@ -5,6 +5,7 @@ pub mod config;
 mod control_api;
 mod control_authz;
 pub mod error;
+pub mod feed;
 pub mod health;
 mod issue;
 pub mod keys;
@@ -25,6 +26,7 @@ use conclave_token::Signer;
 pub struct AppState {
     pub pool: Pool,
     pub auth: Arc<AuthContext>,
+    pub feed: Arc<feed::FeedHub>,
 }
 
 /// Settings and keys for authentication, built once at startup.

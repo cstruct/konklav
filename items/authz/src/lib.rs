@@ -11,4 +11,6 @@ mod model;
 
 pub use compile::compile;
 pub use evaluate::{Decision, DenyReason, Requirements, ScopeRequirement, StepUp, evaluate};
-pub use model::{Assignment, Catalog, Effect, Entitlements, Group, Level, Policy, Scope};
+pub use model::{
+    Assignment, Catalog, Effect, EntitlementSet, Entitlements, Group, Level, Policy, Scope,
+};

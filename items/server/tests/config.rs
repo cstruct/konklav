@@ -81,7 +81,7 @@ fn environment_overrides_the_config_file() {
         &[("CONCLAVE__LISTEN__CONTROL", "0.0.0.0:9000")],
     )
     .unwrap();
-    let (listen, database, log, tokens, browser, control) = loaded;
+    let (listen, database, log, tokens, browser, control, feed) = loaded;
     assert_eq!(listen.listen.control, "0.0.0.0:9000".parse().unwrap());
     assert_eq!(listen.listen.subject, "127.0.0.1:8080".parse().unwrap());
     assert_eq!(database.database.password, "from-secrets");
@@ -91,6 +91,11 @@ fn environment_overrides_the_config_file() {
     assert_eq!(tokens.tokens.published_key_files, Vec::<String>::new());
     assert_eq!(browser.browser, None);
     assert_eq!(control.control.bootstrap_token, "t");
+    assert_eq!(
+        feed.retention(),
+        chrono::Duration::hours(168),
+        "default applies"
+    );
 }
 
 // r[verify platform.config.secrets-separate]
@@ -163,7 +168,7 @@ fn reports_every_problem_at_once() {
 #[test]
 fn the_dev_config_loads() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config");
-    let (_, database, _, _, browser, _) =
+    let (_, database, _, _, browser, _, _) =
         load(&root.join("dev.styx"), &root.join("dev.secrets.styx"), &[]).unwrap();
     assert_eq!(database.database.port, 55432);
     assert!(!browser.browser.unwrap().secure_cookies);

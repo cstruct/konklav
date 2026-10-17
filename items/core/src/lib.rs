@@ -4,6 +4,7 @@
 //! on belong here.
 
 mod cursor;
+pub mod feed;
 mod id;
 
 pub use cursor::Cursor;

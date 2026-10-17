@@ -12,13 +12,14 @@ chrono.workspace = true
 clap.workspace = true
 conclave-authn.workspace = true
 conclave-authz.workspace = true
-conclave-core.workspace = true
+conclave-core = { workspace = true, features = ["generate"] }
 conclave-store.workspace = true
 conclave-token.workspace = true
 diesel.workspace = true
 diesel-async.workspace = true
 ed25519-dalek.workspace = true
 facet.workspace = true
+futures-util.workspace = true
 ordna-core.workspace = true
 ordna-source-env.workspace = true
 ordna-source-file.workspace = true
@@ -29,11 +30,13 @@ serde_json.workspace = true
 subtle.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-postgres.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["v7"] }
 
 [dev-dependencies]
+reqwest.workspace = true
 chrono.workspace = true
 conclave-authz.workspace = true
 base64.workspace = true

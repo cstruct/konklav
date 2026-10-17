@@ -1,0 +1,22 @@
+[package]
+name = "conclave-relying"
+description = "The sans-I/O relying core: token verification, entitlement and session caches, change-feed state, decisions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+conclave-authz.workspace = true
+conclave-core.workspace = true
+conclave-token.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+conclave-core = { workspace = true, features = ["generate"] }
+ed25519-dalek.workspace = true
+
+[lints]
+workspace = true

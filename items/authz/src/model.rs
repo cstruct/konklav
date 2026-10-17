@@ -121,6 +121,21 @@ impl Entitlements {
     }
 }
 
+/// An entitlement set as the relying surface serves it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntitlementSet {
+    pub subject_id: conclave_core::SubjectId,
+    /// `None` for global-only sets (tokens without a tenant).
+    pub tenant_id: Option<conclave_core::TenantId>,
+    /// The change-feed cursor the set was compiled at.
+    pub revision: conclave_core::Cursor,
+    #[serde(flatten)]
+    pub entitlements: Entitlements,
+    /// Restrictive session flags from the catalog, so the set can be
+    /// evaluated without another lookup.
+    pub restrictive_flags: BTreeSet<String>,
+}
+
 /// Scoped entitlements serialize as a list, since JSON keys must be strings.
 mod scoped_entries {
     use std::collections::{BTreeMap, BTreeSet};

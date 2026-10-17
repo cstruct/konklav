@@ -114,6 +114,37 @@ config_tree! {
     }
 }
 
+config_tree! {
+    /// The change feed.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct FeedConfig {
+        pub feed: Option<pub struct Feed {
+            /// How long events stay in the outbox.
+            #[facet(default = 168)]
+            pub retention_hours: u32,
+            /// How often streams poll when no notification arrives.
+            #[facet(default = 2000)]
+            pub poll_interval_ms: u32,
+        }>,
+    }
+}
+
+impl FeedConfig {
+    #[must_use]
+    pub fn retention(&self) -> chrono::Duration {
+        chrono::Duration::hours(i64::from(
+            self.feed.as_ref().map_or(168, |f| f.retention_hours),
+        ))
+    }
+
+    #[must_use]
+    pub fn poll_interval(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(u64::from(
+            self.feed.as_ref().map_or(2000, |f| f.poll_interval_ms),
+        ))
+    }
+}
+
 config_contexts!(
     pub ServerContexts = [
         ListenConfig,
@@ -122,6 +153,7 @@ config_contexts!(
         TokensConfig,
         BrowserConfig,
         ControlConfig,
+        FeedConfig,
     ]
 );
 
@@ -133,6 +165,7 @@ pub type ServeContexts = (
     TokensConfig,
     BrowserConfig,
     ControlConfig,
+    FeedConfig,
 );
 
 /// The contexts `migrate` needs: no listeners.

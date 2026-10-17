@@ -7,11 +7,12 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+conclave-core.workspace = true
 conclave-token.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
-conclave-core.workspace = true
+conclave-core = { workspace = true, features = ["generate"] }
 serde_json.workspace = true
 
 [lints]

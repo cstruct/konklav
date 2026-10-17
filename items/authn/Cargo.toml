@@ -7,7 +7,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-conclave-core.workspace = true
+conclave-core = { workspace = true, features = ["generate"] }
 argon2.workspace = true
 base64.workspace = true
 getrandom.workspace = true

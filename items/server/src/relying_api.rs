@@ -1,14 +1,12 @@
 //! The relying surface's authorization endpoints: entitlement sets and the
 //! central check API. Callers authenticate as service principals.
 
-use std::collections::BTreeSet;
-
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
-use conclave_authz::{Decision, Entitlements, Requirements, compile, evaluate};
+use conclave_authz::{Decision, EntitlementSet, Requirements, compile, evaluate};
 use conclave_core::{Cursor, SubjectId, TenantId};
 use conclave_store::subjects::{self, SubjectKind};
 use conclave_store::{Connection, compile_input, tenants};
@@ -26,7 +24,7 @@ pub fn routes() -> Router<AppState> {
 }
 
 /// Only service principals may use the relying surface.
-async fn require_service(
+pub(crate) async fn require_service(
     state: &AppState,
     conn: &mut Connection,
     headers: &HeaderMap,
@@ -43,17 +41,6 @@ async fn require_service(
     }
 }
 
-#[derive(Serialize)]
-struct EntitlementSet {
-    subject: SubjectId,
-    tenant: Option<TenantId>,
-    revision: Cursor,
-    #[serde(flatten)]
-    entitlements: Entitlements,
-    /// Restrictive session flags, so callers can evaluate locally.
-    restrictive_flags: BTreeSet<String>,
-}
-
 async fn compile_for(
     conn: &mut Connection,
     subject: SubjectId,
@@ -61,8 +48,8 @@ async fn compile_for(
 ) -> Result<EntitlementSet, ApiError> {
     let input = compile_input::load(conn, subject, tenant).await?;
     Ok(EntitlementSet {
-        subject,
-        tenant,
+        subject_id: subject,
+        tenant_id: tenant,
         revision: input.revision,
         entitlements: compile(&input.catalog, &input.assignments),
         restrictive_flags: input.document.restrictive_flags(),

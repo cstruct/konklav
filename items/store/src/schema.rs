@@ -60,6 +60,13 @@ diesel::table! {
 }
 
 diesel::table! {
+    feed_watermark (singleton) {
+        singleton -> Bool,
+        pruned_through -> Int8,
+    }
+}
+
+diesel::table! {
     login_attempt (id) {
         id -> Int8,
         kind -> Text,
@@ -224,6 +231,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     catalog_session_flag,
     credential,
     event,
+    feed_watermark,
     login_attempt,
     membership,
     role,

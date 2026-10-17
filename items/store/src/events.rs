@@ -4,7 +4,7 @@ use conclave_core::Cursor;
 use diesel::prelude::*;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
 
-use crate::schema::event;
+use crate::schema::{event, feed_watermark};
 
 /// Appends an event and returns its cursor. Call it inside the transaction
 /// that makes the change, so the change and its event commit together.
@@ -73,4 +73,39 @@ pub async fn head(conn: &mut AsyncPgConnection) -> QueryResult<Cursor> {
         .get_result::<Option<i64>>(conn)
         .await
         .map(|cursor| cursor.map_or(Cursor::START, Cursor::new))
+}
+
+/// The highest cursor retention has pruned. Resuming from below it would
+/// miss events.
+// r[impl feed.retention]
+pub async fn pruned_through(conn: &mut AsyncPgConnection) -> QueryResult<Cursor> {
+    feed_watermark::table
+        .select(feed_watermark::pruned_through)
+        .first::<i64>(conn)
+        .await
+        .map(Cursor::new)
+}
+
+/// Deletes events created before `cutoff` and advances the watermark.
+/// Returns the new watermark.
+pub async fn prune_before(
+    conn: &mut AsyncPgConnection,
+    cutoff: chrono::DateTime<chrono::Utc>,
+) -> QueryResult<Cursor> {
+    use diesel_async::AsyncConnection;
+    conn.transaction(async |conn| {
+        let deleted = diesel::delete(event::table.filter(event::created_at.lt(cutoff)))
+            .returning(event::cursor)
+            .get_results::<i64>(conn)
+            .await?;
+        if let Some(highest) = deleted.into_iter().max() {
+            diesel::update(feed_watermark::table)
+                .filter(feed_watermark::pruned_through.lt(highest))
+                .set(feed_watermark::pruned_through.eq(highest))
+                .execute(conn)
+                .await?;
+        }
+        pruned_through(conn).await
+    })
+    .await
 }

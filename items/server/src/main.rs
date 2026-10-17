@@ -5,9 +5,10 @@ use clap::{Parser, Subcommand};
 use conclave_server::AppState;
 use conclave_server::AuthContext;
 use conclave_server::config::{
-    self, BrowserConfig, ControlConfig, DatabaseConfig, ListenConfig, LogConfig, MigrateContexts,
-    ServeContexts, ServerContexts, TokensConfig,
+    self, BrowserConfig, ControlConfig, DatabaseConfig, FeedConfig, ListenConfig, LogConfig,
+    MigrateContexts, ServeContexts, ServerContexts, TokensConfig,
 };
+use conclave_server::feed::FeedHub;
 use conclave_server::keys::ConfiguredKeys;
 use conclave_server::serve::{BoundServer, shutdown_signal};
 use ordna_core::ConfigContexts;
@@ -45,9 +46,9 @@ async fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Serve => match load::<ServeContexts>(&cli) {
-            Ok((listen, database, log, tokens, browser, control)) => {
+            Ok((listen, database, log, tokens, browser, control, feed)) => {
                 init_tracing(&log);
-                serve(listen, database, tokens, browser, control).await
+                serve(listen, database, tokens, browser, control, feed).await
             }
             Err(code) => return code,
         },
@@ -101,6 +102,7 @@ async fn serve(
     tokens: TokensConfig,
     browser: BrowserConfig,
     control: ControlConfig,
+    feed: FeedConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tokens = tokens.tokens;
     let keys = ConfiguredKeys::load(
@@ -126,9 +128,16 @@ async fn serve(
         &control.control,
         keys.signer,
     );
+    let hub = Arc::new(FeedHub::new(feed.poll_interval()));
+    tokio::spawn(conclave_server::feed::listen(
+        database.database.connect_options().url,
+        hub.clone(),
+    ));
+    tokio::spawn(conclave_server::feed::prune(pool.clone(), feed.retention()));
     let state = AppState {
         pool,
         auth: Arc::new(auth),
+        feed: hub,
     };
     let server = BoundServer::bind(&listen.listen, state).await?;
     server.run(shutdown_signal()).await?;

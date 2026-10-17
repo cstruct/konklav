@@ -51,6 +51,7 @@ description = "Check formatting, lints and spec traceability"
 run = [
     "cargo fmt --all --check",
     "cargo clippy --workspace --all-targets -- -D warnings",
+    "cargo build -q -p conclave-relying --target wasm32-unknown-unknown",
     "tracey query validate",
 ]
 

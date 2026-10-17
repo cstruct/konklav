@@ -13,6 +13,7 @@ macro_rules! define_id {
 
         impl $name {
             /// Generates a new time-ordered (UUID v7) identifier.
+            #[cfg(feature = "generate")]
             #[must_use]
             pub fn new_v7() -> Self {
                 Self(Uuid::now_v7())
@@ -80,7 +81,7 @@ define_id!(
     CredentialId
 );
 
-#[cfg(test)]
+#[cfg(all(test, feature = "generate"))]
 mod tests {
     use super::*;
 

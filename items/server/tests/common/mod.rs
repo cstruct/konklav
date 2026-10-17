@@ -9,6 +9,7 @@ use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use chrono::Duration;
 use conclave_authn::PasswordHasher;
+use conclave_server::feed::FeedHub;
 use conclave_server::keys::ConfiguredKeys;
 use conclave_server::surface::{self, Surface};
 use conclave_server::{AppState, AuthContext, BrowserSettings};
@@ -84,6 +85,7 @@ impl TestApp {
         let state = AppState {
             pool: db.pool().clone(),
             auth: Arc::new(auth_context(keys.signer)),
+            feed: Arc::new(FeedHub::new(std::time::Duration::from_millis(100))),
         };
         let router = surface::router(&Surface::ALL, state.clone());
         Self { db, state, router }
@@ -192,6 +194,7 @@ pub fn state(pool: conclave_store::Pool) -> AppState {
     AppState {
         pool,
         auth: Arc::new(auth_context(Signer::new(SigningKey::from_bytes(&[1; 32])))),
+        feed: Arc::new(FeedHub::new(std::time::Duration::from_millis(100))),
     }
 }
 
@@ -225,5 +228,56 @@ impl TestApp {
             )
             .await;
         login.body["access_token"].as_str().unwrap().to_owned()
+    }
+}
+
+/// A running server on ephemeral ports, stopped on drop.
+pub struct Running {
+    pub subject: std::net::SocketAddr,
+    pub relying: std::net::SocketAddr,
+    pub control: std::net::SocketAddr,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+    }
+}
+
+impl TestApp {
+    /// Serves this app's state over real sockets, waking feeds through a
+    /// Postgres listener like production does.
+    pub async fn serve(&self) -> Running {
+        use conclave_server::config::Listen;
+        use conclave_server::serve::BoundServer;
+        let any = "127.0.0.1:0".parse().unwrap();
+        let listen = Listen {
+            subject: any,
+            relying: any,
+            control: any,
+        };
+        let server = BoundServer::bind(&listen, self.state.clone())
+            .await
+            .unwrap();
+        let addrs = server.local_addrs().unwrap();
+        let addr_of =
+            |surface: Surface| addrs.iter().find(|(_, s)| s.contains(&surface)).unwrap().0;
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        tokio::spawn(conclave_server::feed::listen(
+            self.db.url().to_owned(),
+            self.state.feed.clone(),
+        ));
+        tokio::spawn(server.run(async move {
+            let _ = stopped.await;
+        }));
+        Running {
+            subject: addr_of(Surface::Subject),
+            relying: addr_of(Surface::Relying),
+            control: addr_of(Surface::Control),
+            stop: Some(stop),
+        }
     }
 }

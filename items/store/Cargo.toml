@@ -9,7 +9,7 @@ publish.workspace = true
 [dependencies]
 chrono.workspace = true
 conclave-authz.workspace = true
-conclave-core.workspace = true
+conclave-core = { workspace = true, features = ["generate"] }
 diesel.workspace = true
 diesel-async.workspace = true
 diesel_migrations.workspace = true
@@ -18,7 +18,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["v7"] }
 
 [lints]
 workspace = true
@@ -26,6 +26,5 @@ workspace = true
 [dev-dependencies]
 conclave-test-support.workspace = true
 chrono.workspace = true
-conclave-core.workspace = true
 serde_json.workspace = true
 conclave-authz.workspace = true

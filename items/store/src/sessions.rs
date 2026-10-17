@@ -155,7 +155,7 @@ async fn changed(conn: &mut AsyncPgConnection, session: &Session) -> QueryResult
             "subject": session.subject_id,
             "version": session.version,
             "revoked": session.revoked_at.is_some(),
-            "expires_at": session.expires_at,
+            "expires_at": session.expires_at.timestamp(),
         }),
     )
     .await
