@@ -156,6 +156,11 @@ r[authn.invite.redeem]
 Redeeming an invite MUST link a credential to a new or existing subject and
 MUST activate any membership the invite targets.
 
+r[authn.invite.membership-id]
+An invite to a tenant MAY name the id of the membership its redemption
+creates. Redemption by a subject that already has a different active
+membership in that tenant MUST fail with a typed conflict.
+
 r[authn.reset-password]
 Password reset MUST go through a challenge, and completing it MUST revoke
 the subject's other sessions.

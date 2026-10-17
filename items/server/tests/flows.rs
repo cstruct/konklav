@@ -515,6 +515,64 @@ async fn invites_create_accounts_with_memberships() {
     );
 }
 
+// r[verify authn.invite.membership-id]
+#[tokio::test(flavor = "multi_thread")]
+async fn invites_can_name_the_membership_they_create() {
+    let app = TestApp::new().await;
+    let mailer = mailer(&app).await;
+    let tenant = uuid::Uuid::now_v7();
+    app.control(
+        Method::PUT,
+        &format!("/v1/tenants/{tenant}"),
+        Some(json!({})),
+    )
+    .await;
+    let membership = uuid::Uuid::now_v7();
+    let invite = app
+        .control(
+            Method::POST,
+            "/v1/invites",
+            Some(json!({"email": "named@example.com", "tenant": tenant, "membership": membership})),
+        )
+        .await;
+    assert_eq!(invite.status, StatusCode::CREATED, "{:?}", invite.body);
+    let link = delivered(&app, &mailer, "named@example.com").await["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let redeemed = app
+        .post(
+            "/v1/invites/redeem",
+            json!({"token": link, "password": "my new password"}),
+        )
+        .await;
+    assert_eq!(redeemed.status, StatusCode::OK, "{:?}", redeemed.body);
+    let created = app
+        .control(Method::GET, &format!("/v1/memberships/{membership}"), None)
+        .await;
+    assert_eq!(created.status, StatusCode::OK, "{:?}", created.body);
+    assert_eq!(created.body["tenant_id"], json!(tenant));
+
+    // A second invite naming another membership in the same tenant conflicts.
+    app.control(
+        Method::POST,
+        "/v1/invites",
+        Some(json!({"email": "named@example.com", "tenant": tenant, "membership": uuid::Uuid::now_v7()})),
+    )
+    .await;
+    let link = delivered(&app, &mailer, "named@example.com").await["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let conflicting = app
+        .post(
+            "/v1/invites/redeem",
+            json!({"token": link, "password": "my new password"}),
+        )
+        .await;
+    assert_eq!(conflicting.code(), "CONFLICT");
+}
+
 // r[verify authn.impersonation.actor-chain]
 // r[verify authn.impersonation.time-bounded]
 // r[verify token.access.actor-chain]

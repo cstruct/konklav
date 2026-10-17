@@ -43,6 +43,8 @@ struct InviteDetails {
     roles: Vec<String>,
     #[serde(default = "empty_object")]
     facts: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    membership: Option<MembershipId>,
 }
 
 fn empty_object() -> serde_json::Value {
@@ -60,6 +62,9 @@ struct CreateInvite {
     /// Membership facts.
     #[serde(default = "empty_object")]
     facts: serde_json::Value,
+    /// The id of the membership redemption creates, so a relying system's
+    /// own record of the pending member keeps its id.
+    membership: Option<MembershipId>,
     #[serde(default = "default_hours")]
     expires_in_hours: i64,
 }
@@ -84,8 +89,10 @@ async fn create_invite(
     if !body.email.contains('@') {
         return Err(ApiError::invalid_request("email must be an email address"));
     }
-    if body.roles.iter().any(|_| body.tenant.is_none()) {
-        return Err(ApiError::invalid_request("roles need a tenant"));
+    if (!body.roles.is_empty() || body.membership.is_some()) && body.tenant.is_none() {
+        return Err(ApiError::invalid_request(
+            "roles and memberships need a tenant",
+        ));
     }
     let mut conn = state.pool.get().await?;
     let id = uuid::Uuid::now_v7();
@@ -110,6 +117,7 @@ async fn create_invite(
                 tenant: body.tenant.clone(),
                 roles: body.roles.clone(),
                 facts: body.facts.clone(),
+                membership: body.membership,
             };
             challenges::create(
                 conn,
@@ -255,21 +263,30 @@ async fn redeem_invite(
             };
             if let Some(reference) = &details.tenant {
                 let tenant = tenants::parse_reference(reference).ok_or_else(invalid_invite)?;
-                let membership =
-                    match memberships::find_active(conn, credential.subject_id, tenant).await? {
-                        Some(membership) => membership,
-                        None => {
-                            memberships::create(
-                                conn,
-                                MembershipId::new_v7(),
-                                credential.subject_id,
-                                tenant,
-                                &details.facts,
-                            )
-                            .await?
-                            .0
-                        }
-                    };
+                // r[impl authn.invite.membership-id]
+                let membership = match (
+                    details.membership,
+                    memberships::find_active(conn, credential.subject_id, tenant).await?,
+                ) {
+                    (Some(named), Some(active)) if named != active.id => {
+                        return Err(ApiError::new(
+                            ErrorCode::Conflict,
+                            "the subject is already a member of the invited tenant",
+                        ));
+                    }
+                    (_, Some(active)) => active,
+                    (named, None) => {
+                        memberships::create(
+                            conn,
+                            named.unwrap_or_else(MembershipId::new_v7),
+                            credential.subject_id,
+                            tenant,
+                            &details.facts,
+                        )
+                        .await?
+                        .0
+                    }
+                };
                 for key in &details.roles {
                     let role = roles::get(conn, tenant, key).await?;
                     roles::assign(
