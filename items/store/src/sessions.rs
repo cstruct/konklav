@@ -622,3 +622,45 @@ pub async fn move_to_credential(
         .await?;
     Ok(())
 }
+
+/// A session carried over from another system, with its version and state.
+#[derive(Debug, Clone)]
+pub struct ImportedSession {
+    pub session: NewSession,
+    pub tenant_id: Option<TenantId>,
+    pub membership_id: Option<MembershipId>,
+    pub version: i64,
+    pub revoked_at: Option<DateTime<Utc>>,
+}
+
+/// Imports a session unless one with its id exists. Imports emit no events:
+/// they happen before relying systems switch over. Returns whether it was
+/// inserted.
+pub async fn import(conn: &mut AsyncPgConnection, imported: ImportedSession) -> StoreResult<bool> {
+    let new = imported.session;
+    let inserted = diesel::insert_into(session::table)
+        .values((
+            session::id.eq(new.id.as_uuid()),
+            session::subject_id.eq(new.subject_id.as_uuid()),
+            session::credential_id.eq(new.credential_id.as_uuid()),
+            session::tenant_id.eq(imported.tenant_id.map(uuid::Uuid::from)),
+            session::membership_id.eq(imported.membership_id.map(uuid::Uuid::from)),
+            session::stage.eq(new.stage.as_str()),
+            session::client_kind.eq(new.client_kind.as_str()),
+            session::amr.eq(nullable(&new.amr)),
+            session::auth_time.eq(new.auth_time),
+            session::flags.eq(nullable(&new.flags)),
+            session::impersonator_subject_id.eq(new.impersonator_subject_id.map(uuid::Uuid::from)),
+            session::refresh_hash.eq(&new.refresh_hash),
+            session::expires_at.eq(new.expires_at),
+            session::version.eq(imported.version),
+            session::revoked_at.eq(imported.revoked_at),
+            session::revoked_reason.eq(imported.revoked_at.map(|_| "imported_revoked")),
+        ))
+        .on_conflict(session::id)
+        .do_nothing()
+        .execute(conn)
+        .await
+        .map_err(StoreError::from_constraint)?;
+    Ok(inserted > 0)
+}

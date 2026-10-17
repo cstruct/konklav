@@ -202,3 +202,28 @@ pub async fn remove(
     .await?;
     Ok(removed > 0)
 }
+
+/// Imports a factor with a known id unless it exists. Returns whether it was
+/// inserted.
+pub async fn import(
+    conn: &mut AsyncPgConnection,
+    id: uuid::Uuid,
+    subject: SubjectId,
+    data: &FactorData,
+    active: bool,
+) -> StoreResult<bool> {
+    let inserted = diesel::insert_into(mfa_factor::table)
+        .values((
+            mfa_factor::id.eq(id),
+            mfa_factor::subject_id.eq(subject.as_uuid()),
+            mfa_factor::kind.eq(data.kind().as_str()),
+            mfa_factor::data.eq(data.to_json()),
+            mfa_factor::active.eq(active),
+        ))
+        .on_conflict(mfa_factor::id)
+        .do_nothing()
+        .execute(conn)
+        .await
+        .map_err(StoreError::from_constraint)?;
+    Ok(inserted > 0)
+}

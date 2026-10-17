@@ -9,8 +9,8 @@ use axum::routing::get;
 
 use crate::config::Listen;
 use crate::{
-    AppState, control_api, control_authz, error, feed, flows, health, invites, keys, relying_api,
-    subject_api,
+    AppState, control_api, control_authz, error, feed, flows, health, import_api, invites, keys,
+    relying_api, subject_api,
 };
 
 /// One of Conclave's groups of endpoints.
@@ -37,7 +37,8 @@ impl Surface {
             Self::Relying => relying_api::routes().merge(feed::routes()),
             Self::Control => control_api::routes(state)
                 .merge(control_authz::routes(state))
-                .merge(invites::control_routes(state)),
+                .merge(invites::control_routes(state))
+                .merge(import_api::routes(state)),
         }
     }
 

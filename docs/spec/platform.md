@@ -85,3 +85,23 @@ r[platform.idempotency.write-cursor]
 Every successful state-changing response MUST include the change-feed cursor
 of the last event the change produced, so that callers can wait for their
 own writes to propagate.
+
+## Import
+
+r[import.idempotent]
+Conclave MUST offer a bulk import of subjects, credentials, MFA factors and
+sessions that keeps the imported identifiers and can be re-run: records
+whose identifiers already exist are skipped. Import MUST require a
+dedicated control-plane capability.
+
+r[import.credentials]
+Imported password and secret-key credentials MUST be accepted as Argon2
+hashes and stored as given, so existing secrets keep working.
+
+r[import.mfa]
+Imported TOTP seeds MUST be encrypted with Conclave's own keys on arrival.
+
+r[import.sessions]
+Imported sessions MUST keep their identifiers, versions and expiry, with a
+refresh-token hash supplied by the importer, so that people stay signed in
+across a migration.

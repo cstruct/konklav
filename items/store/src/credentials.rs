@@ -342,3 +342,27 @@ pub async fn revoke(
     }
     Ok(updated > 0)
 }
+
+/// Inserts a credential unless one with its id exists. Returns whether it
+/// was inserted. For bulk imports, which may be re-run.
+pub async fn insert_if_absent(
+    conn: &mut AsyncPgConnection,
+    new: NewCredential,
+) -> StoreResult<bool> {
+    let inserted = diesel::insert_into(credential::table)
+        .values((
+            credential::id.eq(new.id.as_uuid()),
+            credential::subject_id.eq(new.subject_id.as_uuid()),
+            credential::kind.eq(new.data.kind().as_str()),
+            credential::identifier.eq(normalize_identifier(&new.identifier)),
+            credential::data.eq(new.data.to_json()),
+            credential::mfa_factors_required.eq(new.mfa_factors_required),
+            credential::replaces.eq(new.replaces.map(uuid::Uuid::from)),
+        ))
+        .on_conflict(credential::id)
+        .do_nothing()
+        .execute(conn)
+        .await
+        .map_err(StoreError::from_constraint)?;
+    Ok(inserted > 0)
+}
