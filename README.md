@@ -20,16 +20,21 @@ It is designed around:
 
 ## Status
 
-Milestones M0–M7 are done, and M8 (cutover) is in progress. Conclave's
-side is complete. The relying system still has to port its own write paths
-(admin, tenant creation, subject-facing flows) to Conclave before the cutover
-can run; its runbook lists them.
+Milestones M0–M8 are done in code. The cutover itself is an operation the
+relying system's runbook describes, and it remains: publish the Python
+binding, ship the frontends, rehearse, switch over, then clean up.
 
 By milestone:
 
-- M8, in progress: the relying system's read side (token verification and
-  decisions through the Python binding), a delivery worker, a legacy
-  refresh exchange and a cutover runbook live in that system's repository.
+- M8: the relying system runs on Conclave behind a flag, and a cutover
+  runbook lives in that system's repository. The integration covers:
+  - token verification and decisions through the Python binding
+  - a transactional sync of its admin writes to the control plane
+  - invites that name their membership
+  - secret-key rotation on re-import
+  - retired sign-in routes
+  - delivery
+  - a legacy refresh exchange
 - M7: a capability-gated bulk import of subjects, Argon2-hashed
   credentials, MFA seeds and sessions that keeps existing ids and can be
   re-run.
