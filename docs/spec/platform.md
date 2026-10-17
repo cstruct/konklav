@@ -1,40 +1,87 @@
 # Platform
 
-This file defines the repo-level requirements that let the project stay spec-driven as it grows.
+Repository-level and runtime requirements.
 
 ## Repository shape
 
-r[platform.monorepo.structure]
-The repository MUST keep specifications under `docs/spec/` and implementation code under language-specific workspace roots so Tracey can map requirements to code as the system evolves.
+r[platform.repo.spec-first]
+User-facing capabilities MUST be described in Tracey-managed specifications
+under `docs/spec/` before they are treated as implementation targets.
 
-r[platform.traceability.spec-first]
-User-facing capabilities MUST be described in Tracey-managed specifications before they are treated as implementation targets.
+r[platform.repo.relying-agnostic]
+Conclave code, specs and architecture notes MUST NOT depend on or name a
+specific relying system. Relying-system concepts such as scope kinds, action
+names, fact keys and session flags MUST enter Conclave only as catalog data.
 
-## Server foundation
+## Runtime
 
-r[platform.server.bootstrap]
-The repository MUST provide a Rust server workspace member that can build and run as the authoritative Conclave control-plane API entry point.
+r[platform.server.single-binary]
+Conclave MUST run as one server binary that serves the subject-facing,
+relying and control-plane surfaces.
 
-r[platform.cli.operator-interface]
-The repository MUST provide a Rust CLI workspace member that serves as the operator interface for validating, planning, and applying managed configuration against the Conclave control plane.
+r[platform.server.surface-separation]
+The server MUST keep the three surfaces separately routable so that
+deployments can expose them on different listeners or ingress paths.
 
-r[platform.relying-auth.library]
-The repository MUST provide a Rust library workspace member that lets relying systems validate Conclave-issued JWTs and evaluate token-carried authorization snapshots offline.
+r[platform.server.versioned-paths]
+Every HTTP endpoint other than health checks and `/.well-known/*` MUST live
+under a major-version prefix, starting with `/v1`.
 
-r[platform.server.control-plane-boundary]
-The first server component MUST own the orchestration boundary for tenants, identities, authentication, authorization, and federation even if those domains are later split into separate services.
+r[platform.server.health]
+The server MUST expose a liveness endpoint and a readiness endpoint. The
+readiness endpoint MUST fail while the database is unreachable or migrations
+are pending.
 
-r[platform.server.multi-surface-runtime]
-The first server component MUST support distinct control-plane, subject-facing, and relying-system HTTP surfaces even when they run from one process.
+## Configuration
 
-r[platform.server.split-config-files]
-The server MUST load ordinary runtime config and secret-bearing runtime config from separate startup files rather than one combined config document.
+r[platform.config.layered]
+Runtime configuration MUST be loaded from layered sources (files, then
+environment) so that each value's winning source can be reported.
 
-r[platform.server.strict-config-secrets-boundary]
-The server MUST reject secret-bearing fields in the ordinary runtime-config file and MUST reject non-secret runtime fields in the secret-bearing config file.
+r[platform.config.secrets-separate]
+Secret-bearing configuration MUST load only from secret sources (secret
+files or files they reference). The environment and command-line flags MUST
+NOT supply secret values, though they MAY locate secret files.
 
-r[platform.server.explicit-secrets-path]
-The server MUST let operators configure the secret-bearing startup-config file path explicitly and independently from the ordinary runtime-config file path.
+r[platform.config.report-all-errors]
+Configuration loading MUST report every problem it finds (unknown keys,
+misplaced secrets, decode errors) together, not just the first one.
 
-r[platform.server.secret-file-only-values]
-The server MUST require secret-bearing startup material to come from the secret-bearing config file or from referenced secret files rather than direct command-line or environment-variable value overrides.
+## Storage
+
+r[platform.storage.postgres]
+Conclave MUST persist its authoritative state in a PostgreSQL database that
+it owns exclusively. Relying systems MUST NOT read or write that database
+directly.
+
+r[platform.storage.forward-migrations]
+Schema changes MUST be applied as forward-only migrations that the server
+can verify at startup.
+
+r[platform.storage.transactional-events]
+Every state change that produces a change-feed event MUST write that event
+in the same database transaction as the change itself.
+
+## Errors
+
+r[platform.error.typed-codes]
+Every error response MUST carry a stable machine-readable code in
+`SCREAMING_SNAKE_CASE` and a human-readable message. Clients MUST be able to
+rely on codes, not messages.
+
+r[platform.error.no-enumeration]
+Authentication failures MUST NOT reveal whether a login identifier, subject
+or credential exists.
+
+## Idempotency
+
+r[platform.idempotency.client-ids]
+Control-plane create operations for tenants, subjects and memberships MUST
+accept a caller-supplied identifier and MUST be idempotent on that
+identifier: repeating an identical request succeeds, and repeating it with
+conflicting content fails with a typed conflict error.
+
+r[platform.idempotency.write-cursor]
+Every successful state-changing response MUST include the change-feed cursor
+of the last event the change produced, so that callers can wait for their
+own writes to propagate.

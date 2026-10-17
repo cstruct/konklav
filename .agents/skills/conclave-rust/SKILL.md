@@ -11,17 +11,16 @@ description: Rust conventions for Conclave Rust workspace members. Use when edit
 - Keep `types.rs` narrow.
   - Put only semantically stable shared aliases or value types there.
   - Do not move every DTO or domain struct into `types.rs`.
-- When splitting crates, prefer ownership-based crates such as `core`, `managed-config`, `controlplane-api`, and `cli` over a generic catch-all shared-model crate.
+- When splitting crates, prefer ownership-based crates such as `core`, `store`, `authz`, `authn`, `server`, `relying` and `cli` (see `docs/architecture/v2-overview.md`) over a generic catch-all shared-model crate.
+- Keep `authz` compilation and the `relying` core free of I/O so they stay pure and testable.
 - If a `core` crate exists, keep it tiny.
   - Good candidates: stable identifier/revision types and small value types used by multiple crates.
   - Bad candidates: compiled models, HTTP-only DTOs, or full desired-state/config trees.
 - Keep representations near the code that owns them.
-  - `config`: desired-state parsing and Styx/Facet types.
+  - `config`: `ordna` config trees for runtime configuration.
   - `model`: domain models, compiled state, and stable response shapes.
-  - `compile`: validation, derivation, resolution, and hashing.
-  - `tokens` or `sql`: protocol-specific encoding logic.
-- If operator tooling parses Styx locally, treat that as operator UX.
-  - The server still owns authoritative validation, reconciliation, and persisted apply state.
+  - `compile`: validation, derivation and resolution.
+  - `tokens` or `db`: protocol- or storage-specific encoding logic (Diesel models stay in `store`).
 - Prefer explicit transport DTOs in an API crate over sharing server-internal models across the network boundary.
 - Preserve external module paths when refactoring.
   - Prefer `foo.rs` as a facade over `foo/` submodules so callers keep using `crate::foo::*`.

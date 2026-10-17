@@ -1,0 +1,43 @@
+# Storage
+
+## Postgres with Diesel
+
+Conclave owns one Postgres database. Diesel gives compile-time-checked
+queries against a generated `schema.rs`. `diesel-async` with a deadpool
+pool keeps the server on tokio, and `diesel_migrations` embeds the
+forward-only migrations so that readiness can confirm none are pending.
+
+Diesel has no `LISTEN` support, so the one place that needs it (waking SSE
+writers) uses a dedicated `tokio-postgres` connection. Nothing else depends
+on it, and losing it only delays pushes until the next poll
+(`r[feed.notify-hint-only]`).
+
+## Shape
+
+- Ordinary mutable tables with `created_at` and `updated_at`. Bitemporal
+  history is not the default. Tables that need history (credentials,
+  sessions) keep it explicitly, either as superseded rows with a reason or
+  as revoked or expired rows kept for a retention period.
+- UUIDv7 identifiers everywhere, including caller-supplied ones
+  (`r[platform.idempotency.client-ids]`).
+- `event` is the outbox, with columns `cursor bigserial`, `kind`, `subject`,
+  `tenant`, `payload jsonb`, `created_at`. A helper inside the repository
+  transaction writes events, so no state change can commit without its
+  event (`r[platform.storage.transactional-events]`).
+- The revision of any piece of state is the cursor of the last event that
+  touched it. There are no separate revision counters to keep in sync.
+
+## Entitlement storage
+
+Entitlement sets are compiled on demand by `conclave-authz` from the
+current rows and cached in the server process, keyed by (subject, tenant)
+and invalidated by the server's own outbox events.
+
+Materializing compiled entitlements into tables is a later optimization if
+compile cost turns out to matter. The pure compiler makes that a storage
+decision, not a semantic one.
+
+## Retention
+
+The outbox, revoked sessions, used challenges and superseded credentials
+are pruned by a background job according to configured retention periods.
