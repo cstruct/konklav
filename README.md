@@ -20,28 +20,38 @@ It is designed around:
 
 ## Status
 
-v2 has finished milestone M7: a capability-gated bulk import API. It
-covers subjects, Argon2-hashed credentials, MFA seeds and sessions, keeps
-existing ids, and can be re-run. A relying system's own tool maps its data
-onto it and diffs access afterwards. Before that, M6 delivered a control plane where operators are
-authorized by capabilities instead of a static token, with listings and
-entitlement explanations. Before that, M5 covered MFA, step-up, passwordless login, invites,
-password reset and change, impersonation, and delivery requests. Before
-that, M4 delivered the change feed (SSE with resume, reset and
-batches) and the relying SDK. The SDK is a sans-I/O core that also builds
-for wasm, with a native Rust client and a Python binding. Before that, M3
-covered tenancy and authorization. M3 adds tenants
-and memberships with facts, the action catalog, templates, roles and
-assignments, entitlement compilation that matches onetwo's semantics, tenant
-selection at login, session flags, and the entitlements and check APIs.
-Earlier milestones built:
+v2 is feature-complete for its first relying system: milestones M0–M8
+are done in code. The production cutover itself (M8's final step, run from
+the relying system's runbook) and the relying system's clean-up afterwards
+remain.
 
-- subjects, and credentials in one JSON-Schema-validated table
-- password and secret-key login
-- server-side sessions with refresh rotation and reuse detection
-- browser cookies with CSRF checks
-- Ed25519 tokens with JWKS
-- control-plane administration of all of the above v1, a prototype backed by Feldera, is preserved at tag `v1`.
+By milestone:
+
+- M8: the relying system's integration (token verification and decisions
+  through the Python binding, a delivery worker, a legacy refresh
+  exchange) and a cutover runbook live in that system's repository.
+- M7: a capability-gated bulk import of subjects, Argon2-hashed
+  credentials, MFA seeds and sessions that keeps existing ids and can be
+  re-run.
+- M6: a control plane authorized by capabilities instead of a static token,
+  with listings and entitlement explanations.
+- M5: MFA, step-up, passwordless login, invites, password reset and change,
+  impersonation, and delivery requests.
+- M4: the change feed (SSE with resume, reset and batches) and the relying
+  SDK: a sans-I/O core that also builds for wasm, with a native Rust client
+  and a Python binding.
+- M3: tenants and memberships with facts, the action catalog, templates,
+  roles and assignments, entitlement compilation, tenant selection at
+  login, session flags, and the entitlements and check APIs.
+- M1–M2:
+  - subjects, and credentials in one JSON-Schema-validated table
+  - password and secret-key login
+  - server-side sessions with refresh rotation and reuse detection
+  - browser cookies with CSRF checks
+  - Ed25519 tokens with JWKS
+  - control-plane administration of all of the above
+
+v1, a prototype backed by Feldera, is preserved at tag `v1`.
 
 ## Repository layout
 
