@@ -1,0 +1,46 @@
+# conclave-py (`conclave-relying` on PyPI)
+
+Python bindings for the relying core, plus an asyncio/httpx host.
+
+## Responsibilities
+
+- `conclave_relying._core.Core`: pyo3 bindings over `conclave-relying`. Values cross as JSON strings and times as Unix ms.
+- `conclave_relying.RelyingClient`: the Python I/O layer.
+  - Logs in as a service principal and follows the change feed.
+  - Runs background refreshes.
+  - Decides locally, falling back to `/v1/check` when caches can't be trusted.
+  - Offers `await_cursor` for read-your-writes.
+
+No decision logic lives in Python.
+
+## Usage
+
+```python
+client = RelyingClient(
+    relying_url="https://conclave:8081",
+    subject_url="https://conclave:8080",
+    key_id=key_id,
+    secret=secret,
+    issuer="https://auth.example",
+    audience="api",
+)
+await client.start()
+decision = await client.decide(token, {"scopes": [{"kind": "workspace", "id": ws, "actions": ["patient:read"]}]})
+```
+
+## Running and testing
+
+The crate is its own Cargo workspace, built by maturin.
+
+```sh
+mise run py:test
+```
+
+- Direct coverage:
+  - the core through the binding: decisions, revocations, flags, check fallback, input validation
+  - the client against an httpx mock of Conclave with a live SSE feed: fallback, local decisions, invalidation, revocation, unknown sessions
+
+## Traceability and related docs
+
+- [Relying SDK](../../docs/architecture/relying-sdk.md)
+- [Relying core](../relying/README.md)

@@ -5,6 +5,8 @@ rust = { version = "1.99.0", components = "rustfmt,clippy" }
 "github:bearcove/tracey" = "1.4.0"
 # Diesel's CLI for migrations and schema.rs. libpq is compiled in, so no
 # system Postgres client libraries are needed.
+# Builds and tests the Python relying binding (items/py).
+uv = "0.8.24"
 "cargo:diesel_cli" = { version = "2.3.14", default-features = false, features = "postgres-bundled" }
 
 [env]
@@ -43,8 +45,13 @@ run = "cargo build --workspace"
 
 [tasks.test]
 description = "Run every test; database tests use isolated databases on the local Postgres"
-depends = ["db:up"]
+depends = ["db:up", "py:test"]
 run = "cargo test --workspace"
+
+[tasks."py:test"]
+description = "Build the Python relying binding and run its tests"
+dir = "items/py"
+run = ["uv sync -q --reinstall-package conclave-relying", "uv run -q pytest -q tests"]
 
 [tasks.lint]
 description = "Check formatting, lints and spec traceability"
@@ -52,6 +59,8 @@ run = [
     "cargo fmt --all --check",
     "cargo clippy --workspace --all-targets -- -D warnings",
     "cargo build -q -p conclave-relying --target wasm32-unknown-unknown",
+    "cargo fmt --manifest-path items/py/Cargo.toml --check",
+    "PYO3_PYTHON=$(cd items/py && uv python find) cargo clippy --manifest-path items/py/Cargo.toml -- -D warnings",
     "tracey query validate",
 ]
 

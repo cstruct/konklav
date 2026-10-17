@@ -28,7 +28,7 @@ Planned software items for v2 (see
 - `token`
 - [`relying`](relying.md)
 - `relying-client`
-- `py`
+- `py` (built separately by maturin)
 - `cli`
 - `test-support` (test-only)
 

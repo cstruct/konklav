@@ -19,9 +19,18 @@ Every open stream:
 
 Because streams always read the outbox, a missed wake-up only adds latency.
 
-Cursor gaps from rolled-back `bigserial` values are harmless. A cursor that
-has been pruned (older than retention) gets a `reset` event, and the
-stream then continues from the oldest retained event.
+Cursor gaps from rolled-back identity values are harmless, so pruning can't
+be detected from gaps. Retention instead records the highest pruned cursor
+in `feed_watermark`. A consumer resuming below the watermark, or from a
+cursor ahead of the outbox, gets a `reset` event (whose `id` is the
+watermark) and continues from there. Without a cursor, a stream starts at
+the head: new consumers don't replay history.
+
+Other relying endpoints:
+
+- `GET /v1/session-states/{id}` returns a session in the `session.changed`
+  shape, for caches that haven't seen it yet.
+- `GET /v1/entitlements/{subject}[/{tenant}]` returns an entitlement set.
 
 ## Event payloads
 

@@ -20,7 +20,10 @@ It is designed around:
 
 ## Status
 
-v2 has finished milestone M3, tenancy and authorization. M3 adds tenants
+v2 has finished milestone M4: the change feed (SSE with resume, reset and
+batches) and the relying SDK. The SDK is a sans-I/O core that also builds
+for wasm, with a native Rust client and a Python binding. Before that, M3
+covered tenancy and authorization. M3 adds tenants
 and memberships with facts, the action catalog, templates, roles and
 assignments, entitlement compilation that matches onetwo's semantics, tenant
 selection at login, session flags, and the entitlements and check APIs.
@@ -46,6 +49,9 @@ Earlier milestones built:
   - `authz`: entitlement compilation and evaluation
   - `store`: Postgres, migrations, repositories
   - `server`: the binary
+  - `relying`: the sans-I/O relying core
+  - `relying-client`: the native Rust host
+  - `py`: the Python binding (maturin)
   - `test-support`: shared test helpers
 - `config/`: development configuration.
 - `dev/`: local services for development.

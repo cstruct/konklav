@@ -11,6 +11,8 @@ members = [
     "items/token",
 ]
 resolver = "3"
+# Built by maturin as a Python extension, with its own lockfile and target.
+exclude = ["items/py"]
 
 [workspace.package]
 version = "0.1.0"
