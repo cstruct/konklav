@@ -98,6 +98,66 @@ async fn imported_secret_keys_keep_working() {
     assert_eq!(login.status, StatusCode::OK, "{:?}", login.body);
 }
 
+/// Produced by Python's argon2-cffi for "swordfish".
+const SWORDFISH: &str = "$argon2id$v=19$m=65536,t=3,p=4$AIuJ/bg0xA1dNFOl/Y8xkw$gKt+ObjIzIEnOSKX6cVpsSdoPA5zgkfSkXwBXGlf/88";
+
+// r[verify import.credentials.secret-key-rotation]
+#[tokio::test(flavor = "multi_thread")]
+async fn reimported_secret_keys_take_rotated_slots_but_passwords_do_not() {
+    let app = TestApp::new().await;
+    let (service, human) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+    let (key, password) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+    app.control(
+        Method::POST,
+        "/v1/import/subjects",
+        Some(json!({"subjects": [{"id": service, "kind": "service"}, {"id": human, "kind": "human"}]})),
+    )
+    .await;
+    let import = |hash: &str| {
+        let slot = json!({"hash": hash, "created_at": "2026-01-01T00:00:00Z"});
+        json!({"credentials": [
+            {"id": key, "subject": service, "identifier": key, "kind": "secret_key", "a": slot, "b": slot},
+            {"id": password, "subject": human, "identifier": "rotating@example.com", "kind": "password", "password_hash": hash},
+        ]})
+    };
+    let first = app
+        .control(
+            Method::POST,
+            "/v1/import/credentials",
+            Some(import(HUNTER2)),
+        )
+        .await;
+    assert_eq!(first.body["imported"], 2, "{:?}", first.body);
+    let rotated = app
+        .control(
+            Method::POST,
+            "/v1/import/credentials",
+            Some(import(SWORDFISH)),
+        )
+        .await;
+    assert_eq!(rotated.body["updated"], 1, "{:?}", rotated.body);
+    assert_eq!(rotated.body["skipped"], 1, "{:?}", rotated.body);
+
+    let with = |secret: &str| json!({"key_id": key, "secret": secret});
+    assert_eq!(
+        app.post("/v1/login/secret-key", with("swordfish"))
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        app.post("/v1/login/secret-key", with("hunter2"))
+            .await
+            .code(),
+        "INVALID_CREDENTIALS"
+    );
+    assert_eq!(
+        app.login("rotating@example.com", "hunter2").await.status,
+        StatusCode::OK,
+        "passwords keep the hash Conclave has"
+    );
+}
+
 // r[verify import.mfa]
 #[tokio::test(flavor = "multi_thread")]
 async fn imported_totp_seeds_are_encrypted_and_verify() {

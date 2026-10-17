@@ -32,10 +32,14 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .route_layer(guard(state, capabilities::IMPORT))
 }
 
+// The field names are the API's.
+#[allow(clippy::struct_field_names)]
 #[derive(Serialize, Default)]
 struct Imported {
     imported: usize,
     skipped: usize,
+    /// Existing secret keys whose slots were replaced.
+    updated: usize,
 }
 
 impl Imported {
@@ -169,12 +173,25 @@ async fn import_credentials(
                         id: record.id,
                         subject_id: record.subject,
                         identifier: record.identifier,
-                        data,
+                        data: data.clone(),
                         mfa_factors_required: record.mfa_factors_required,
                         replaces: None,
                     },
                 )
                 .await?;
+                // r[impl import.credentials.secret-key-rotation]
+                if !inserted && matches!(data, CredentialData::SecretKey(_)) {
+                    let existing = credentials::get(conn, record.id).await?;
+                    if existing.subject_id == record.subject
+                        && existing.is_active()
+                        && matches!(existing.data, CredentialData::SecretKey(_))
+                        && existing.data != data
+                    {
+                        credentials::set_data(conn, record.id, &data).await?;
+                        result.updated += 1;
+                        continue;
+                    }
+                }
                 result.count(inserted);
             }
             Ok(result)
