@@ -83,6 +83,11 @@ typically adopts Conclave like this:
    are no diffs.
 5. Switch the ports over to Conclave.
 
+Conclave's side of this is the import API (`/v1/import/*`, capability
+`conclave:import`) plus the idempotent control-plane endpoints. Mapping
+the relying system's tables onto them, and comparing its access decisions
+with Conclave's entitlement sets, belongs in that system's own tooling.
+
 Compilation semantics are pinned by golden tests
 (`r[authz.compile.reference-semantics]`) so that a zero-diff replay stays
 meaningful.

@@ -20,7 +20,10 @@ It is designed around:
 
 ## Status
 
-v2 has finished milestone M6: a control plane where operators are
+v2 has finished milestone M7: a capability-gated bulk import API. It
+covers subjects, Argon2-hashed credentials, MFA seeds and sessions, keeps
+existing ids, and can be re-run. A relying system's own tool maps its data
+onto it and diffs access afterwards. Before that, M6 delivered a control plane where operators are
 authorized by capabilities instead of a static token, with listings and
 entitlement explanations. Before that, M5 covered MFA, step-up, passwordless login, invites,
 password reset and change, impersonation, and delivery requests. Before
