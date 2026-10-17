@@ -11,4 +11,6 @@ mod jws;
 
 pub use claims::{AccessClaims, Actor, TokenKind};
 pub use jwk::{Jwk, JwkSet, kid_for};
-pub use jws::{Signer, VerifyError, VerifyOptions, decode_unverified_kid, verify};
+pub use jws::{
+    Signer, VerifyError, VerifyOptions, decode_claims_unverified, decode_unverified_kid, verify,
+};

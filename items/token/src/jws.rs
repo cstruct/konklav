@@ -120,6 +120,14 @@ pub fn decode_unverified_kid(token: &str) -> Result<String, VerifyError> {
     Ok(decode_header(header)?.kid)
 }
 
+/// Decodes a token's claims without verifying anything. Only for tokens
+/// that have just been verified by [`verify`].
+#[must_use]
+pub fn decode_claims_unverified(token: &str) -> Option<AccessClaims> {
+    let (_, payload, _) = split(token).ok()?;
+    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).ok()?).ok()
+}
+
 /// Verifies a compact JWS access token: algorithm, signature, issuer,
 /// audience, expiry and issue time.
 ///

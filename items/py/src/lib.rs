@@ -7,7 +7,7 @@
 use conclave_authz::{EntitlementSet, Requirements};
 use conclave_core::Cursor;
 use conclave_core::feed::{FeedEvent, SessionChanged};
-use conclave_relying::{Config, Need, Relying};
+use conclave_relying::{Config, Key, Need, Relying};
 use conclave_token::JwkSet;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -40,6 +40,27 @@ impl Core {
     fn decide(&mut self, token: &str, requirements: &str, now: u64) -> PyResult<String> {
         let requirements: Requirements = parse(requirements, "requirements")?;
         dump(&self.inner.decide(token, &requirements, None, now))
+    }
+
+    /// Returns `{"outcome": "verified", "claims": ...}`, `{"outcome":
+    /// "invalid"}` or `{"outcome": "need", "needs": [...]}`.
+    fn verify(&mut self, token: &str, now: u64) -> PyResult<String> {
+        dump(&self.inner.verify(token, now))
+    }
+
+    /// Returns `{"outcome": "ready", "set": ...}` or `{"outcome": "need",
+    /// "needs": [...]}`.
+    #[pyo3(signature = (subject, tenant, now))]
+    fn entitlements(&mut self, subject: &str, tenant: Option<&str>, now: u64) -> PyResult<String> {
+        let invalid = |_| PyValueError::new_err("invalid id");
+        let key = Key {
+            subject: subject.parse().map_err(invalid)?,
+            tenant: tenant.map(str::parse).transpose().map_err(invalid)?,
+        };
+        match self.inner.entitlements(key, now) {
+            Ok(set) => dump(&serde_json::json!({"outcome": "ready", "set": set})),
+            Err(needs) => dump(&serde_json::json!({"outcome": "need", "needs": needs})),
+        }
     }
 
     fn is_trusted(&self, now: u64) -> bool {

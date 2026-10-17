@@ -458,3 +458,43 @@ fn malformed_known_events_are_errors() {
     };
     assert!(f.core.on_feed_event(&unknown, T0).is_ok());
 }
+
+#[test]
+fn verifies_tokens_without_needing_entitlements() {
+    use conclave_relying::Verification;
+    let mut f = Fixture::new();
+    f.core.on_session(f.session_state(1, false));
+    let token = f.token(1, T0);
+    match f.core.verify(&token, T0) {
+        Verification::Verified { claims } => assert_eq!(claims.sid, f.session),
+        other => panic!("expected verified, got {other:?}"),
+    }
+    assert_eq!(
+        f.core.verify(&f.token(0, T0), T0),
+        Verification::Invalid,
+        "superseded"
+    );
+    let mut cold = Fixture::new();
+    assert_eq!(
+        cold.core.verify(&cold.token(1, T0), T0),
+        Verification::Need {
+            needs: vec![Need::Session {
+                session: cold.session
+            }]
+        }
+    );
+}
+
+#[test]
+fn serves_cached_entitlement_sets() {
+    let mut f = Fixture::new();
+    assert_eq!(
+        f.core.entitlements(f.key(), T0),
+        Err(vec![Need::Entitlements { key: f.key() }])
+    );
+    f.warm(T0);
+    let set = f.core.entitlements(f.key(), T0).unwrap();
+    assert!(set.entitlements.tenant.contains("workspace:read"));
+    f.core.on_feed_lost();
+    assert_eq!(f.core.entitlements(f.key(), T0), Err(vec![Need::Check]));
+}

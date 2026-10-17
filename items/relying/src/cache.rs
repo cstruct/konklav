@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use conclave_authz::{Decision, DenyReason, EntitlementSet, Requirements, evaluate};
 use conclave_core::feed::{EntitlementsChanged, FeedEvent, FeedPayload, SessionChanged};
 use conclave_core::{Cursor, SessionId, SubjectId, TenantId};
-use conclave_token::{JwkSet, VerifyOptions};
+use conclave_token::{AccessClaims, JwkSet, VerifyOptions};
 use serde::{Deserialize, Serialize};
 
 use crate::Config;
@@ -42,6 +42,20 @@ pub enum Outcome {
     Need {
         needs: Vec<Need>,
     },
+}
+
+/// The answer to [`Relying::verify`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum Verification {
+    /// The token verifies and its session is current.
+    Verified {
+        claims: Box<conclave_token::AccessClaims>,
+    },
+    /// The token doesn't verify, or its session has ended or moved on.
+    Invalid,
+    /// Provide these, then ask again.
+    Need { needs: Vec<Need> },
 }
 
 /// Background fetches that are due, and when to poll again.
@@ -133,6 +147,95 @@ impl Relying {
         self.feed.cursor
     }
 
+    /// Verifies `token` and checks its session, without evaluating any
+    /// requirements: for hosts that build their own request context.
+    pub fn verify(&mut self, token: &str, now: u64) -> Verification {
+        match self.check_token(token, now) {
+            Ok((claims, needs)) if needs.is_empty() => Verification::Verified {
+                claims: Box::new(claims),
+            },
+            Ok((_, needs)) | Err(Outcome::Need { needs }) => Verification::Need { needs },
+            Err(Outcome::Decided { .. }) => Verification::Invalid,
+        }
+    }
+
+    /// The cached entitlement set for `key`, or what to fetch first.
+    pub fn entitlements(&mut self, key: Key, now: u64) -> Result<EntitlementSet, Vec<Need>> {
+        if !self.is_trusted(now) {
+            return Err(vec![Need::Check]);
+        }
+        let usable = self.usable_entry(key, now);
+        if let Some(entry) = self.entries.get_mut(&key) {
+            entry.last_used = now;
+        }
+        usable.ok_or_else(|| vec![Need::Entitlements { key }])
+    }
+
+    /// Verifies the token and its session. `Err` carries the outcome to
+    /// return; `Ok` carries the claims and any session fetch still needed.
+    fn check_token(&mut self, token: &str, now: u64) -> Result<(AccessClaims, Vec<Need>), Outcome> {
+        let invalid = || Outcome::Decided {
+            decision: Decision::Deny {
+                reason: DenyReason::InvalidToken,
+            },
+        };
+        if !self.is_trusted(now) {
+            return Err(Outcome::Need {
+                needs: vec![Need::Check],
+            });
+        }
+
+        let Ok(kid) = conclave_token::decode_unverified_kid(token) else {
+            return Err(invalid());
+        };
+        let key = self.jwks.as_ref().and_then(|jwks| jwks.find(&kid));
+        let Some(key) = key else {
+            let recently = self
+                .jwks_fetched_at
+                .is_some_and(|at| now.saturating_sub(at) < self.config.jwks_min_refresh_ms);
+            if recently {
+                return Err(invalid());
+            }
+            self.jwks_wanted = true;
+            return Err(Outcome::Need {
+                needs: vec![Need::Jwks],
+            });
+        };
+        let now_seconds = i64::try_from(now / 1000).unwrap_or(i64::MAX);
+        let options = VerifyOptions {
+            issuer: &self.config.issuer,
+            audience: &self.config.audience,
+            now: now_seconds,
+            leeway: self.config.leeway_seconds,
+        };
+        let Ok(claims) = conclave_token::verify(token, |_| Some(key), &options) else {
+            return Err(invalid());
+        };
+
+        if self.unknown_sessions.contains(&claims.sid) {
+            return Err(invalid());
+        }
+        let mut needs = Vec::new();
+        match self.sessions.get(&claims.sid) {
+            Some(session)
+                if session.revoked
+                    || session.expires_at <= now_seconds
+                    || claims.sv < session.version =>
+            {
+                return Err(invalid());
+            }
+            // A token newer than what we know means we missed an event.
+            Some(session) if claims.sv > session.version => needs.push(Need::Session {
+                session: claims.sid,
+            }),
+            Some(_) => {}
+            None => needs.push(Need::Session {
+                session: claims.sid,
+            }),
+        }
+        Ok((claims, needs))
+    }
+
     /// Decides `requirements` for `token`, or says what is missing.
     // r[impl relying.decision.local]
     // r[impl relying.verify.offline]
@@ -144,65 +247,11 @@ impl Relying {
         _request: Option<&RequestDescriptor>,
         now: u64,
     ) -> Outcome {
-        let invalid = || Outcome::Decided {
-            decision: Decision::Deny {
-                reason: DenyReason::InvalidToken,
-            },
-        };
-        if !self.is_trusted(now) {
-            return Outcome::Need {
-                needs: vec![Need::Check],
-            };
-        }
-
-        let Ok(kid) = conclave_token::decode_unverified_kid(token) else {
-            return invalid();
-        };
-        let key = self.jwks.as_ref().and_then(|jwks| jwks.find(&kid));
-        let Some(key) = key else {
-            let recently = self
-                .jwks_fetched_at
-                .is_some_and(|at| now.saturating_sub(at) < self.config.jwks_min_refresh_ms);
-            if recently {
-                return invalid();
-            }
-            self.jwks_wanted = true;
-            return Outcome::Need {
-                needs: vec![Need::Jwks],
-            };
+        let (claims, mut needs) = match self.check_token(token, now) {
+            Ok(checked) => checked,
+            Err(outcome) => return outcome,
         };
         let now_seconds = i64::try_from(now / 1000).unwrap_or(i64::MAX);
-        let options = VerifyOptions {
-            issuer: &self.config.issuer,
-            audience: &self.config.audience,
-            now: now_seconds,
-            leeway: self.config.leeway_seconds,
-        };
-        let Ok(claims) = conclave_token::verify(token, |_| Some(key), &options) else {
-            return invalid();
-        };
-
-        if self.unknown_sessions.contains(&claims.sid) {
-            return invalid();
-        }
-        let mut needs = Vec::new();
-        match self.sessions.get(&claims.sid) {
-            Some(session)
-                if session.revoked
-                    || session.expires_at <= now_seconds
-                    || claims.sv < session.version =>
-            {
-                return invalid();
-            }
-            // A token newer than what we know means we missed an event.
-            Some(session) if claims.sv > session.version => needs.push(Need::Session {
-                session: claims.sid,
-            }),
-            Some(_) => {}
-            None => needs.push(Need::Session {
-                session: claims.sid,
-            }),
-        }
 
         let key = Key {
             subject: claims.sub,

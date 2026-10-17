@@ -26,6 +26,7 @@ if decision["decision"] != "allow":
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import json
 import logging
@@ -121,6 +122,45 @@ class RelyingClient:
                 return await self._check(token, requirements)
             await asyncio.gather(*(self._fetch(need) for need in needs))
         raise ConclaveError("could not reach a decision")
+
+    async def verify(self, token: str) -> dict[str, Any] | None:
+        """
+        Verify a token and its session; return its claims, or None if it is
+        not valid. Raises `ConclaveError` when it can't be verified now.
+        """
+        for _ in range(4):
+            with self._lock:
+                outcome = json.loads(self._core.verify(token, _now()))
+            if outcome["outcome"] == "verified":
+                return outcome["claims"]
+            if outcome["outcome"] == "invalid":
+                return None
+            if any(need["need"] == "check" for need in outcome["needs"]):
+                return await self._verify_centrally(token)
+            await asyncio.gather(*(self._fetch(need) for need in outcome["needs"]))
+        raise ConclaveError("could not verify the token")
+
+    async def _verify_centrally(self, token: str) -> dict[str, Any] | None:
+        decision = await self._check(token, {"token_kinds": ["partial", "identity", "tenant", "reset_password", "invite"]})
+        if decision.get("reason") == "invalid_token":
+            return None
+        # The check API vouched for the token; read its claims.
+        payload = token.split(".")[1]
+        return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+
+    async def entitlements(self, subject: str, tenant: str | None) -> dict[str, Any]:
+        """The entitlement set of `subject` in `tenant` (global only when None)."""
+        for _ in range(3):
+            with self._lock:
+                outcome = json.loads(self._core.entitlements(subject, tenant, _now()))
+            if outcome["outcome"] == "ready":
+                return outcome["set"]
+            needs = [need for need in outcome["needs"] if need["need"] != "check"]
+            if not needs:
+                path = f"/v1/entitlements/{subject}" + (f"/{tenant}" if tenant else "")
+                return _checked(await self._get(path)).json()
+            await asyncio.gather(*(self._fetch(need) for need in needs))
+        raise ConclaveError("could not load entitlements")
 
     async def await_cursor(self, cursor: int, timeout: float = 5.0) -> bool:
         """Wait until this client reflects every change up to `cursor`."""

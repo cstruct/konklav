@@ -85,3 +85,26 @@ def test_tokens_for_unknown_sessions_are_denied() -> None:
             await client.stop()
 
     asyncio.run(scenario())
+
+
+def test_verifies_tokens_and_reads_entitlements() -> None:
+    async def scenario() -> None:
+        keys = Keys()
+        subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
+        fake = FakeConclave(keys, subject, tenant, session)
+        client = client_for(fake)
+        await client.start()
+        try:
+            await until_trusted(client)
+            token = keys.token(subject=subject, session=session, tenant=tenant)
+            claims = await client.verify(token)
+            assert claims is not None and claims["sid"] == session
+            assert await client.verify(keys.token(subject=subject, session=session, tenant=tenant, version=0)) is None
+            stranger = Keys().token(subject=subject, session=session, tenant=tenant)
+            assert await client.verify(stranger) is None
+            entitlements = await client.entitlements(subject, tenant)
+            assert entitlements["tenant"] == ["workspace:read"]
+        finally:
+            await client.stop()
+
+    asyncio.run(scenario())
