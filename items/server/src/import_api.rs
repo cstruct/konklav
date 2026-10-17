@@ -289,6 +289,11 @@ struct SessionRecord {
     client_kind: ClientKind,
     #[serde(default)]
     amr: Vec<String>,
+    /// Session flags, which must be declared in the catalog.
+    #[serde(default)]
+    flags: Vec<String>,
+    /// The subject acting as `subject`, for impersonation sessions.
+    impersonator: Option<SubjectId>,
     auth_time: DateTime<Utc>,
     version: i64,
     /// SHA-256 (hex) of the refresh token the client will present:
@@ -350,8 +355,8 @@ async fn import_sessions(
                             client_kind: record.client_kind,
                             amr: record.amr,
                             auth_time: record.auth_time,
-                            flags: Vec::new(),
-                            impersonator_subject_id: None,
+                            flags: record.flags,
+                            impersonator_subject_id: record.impersonator,
                             parent_session_id: None,
                             refresh_hash,
                             expires_at: record.expires_at,
