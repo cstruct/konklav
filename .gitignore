@@ -1,5 +1,6 @@
 /target
 .agents/plans/*
 !.agents/plans/PLANS.md
-config/server.signing-private-key.pem
+config/dev.signing-key.pem
 mise.local.toml
+config/server.signing-private-key.pem

@@ -17,9 +17,15 @@ database {
     name conclave
     user conclave
 }
+tokens {
+    issuer "https://auth.example"
+    audience api
+    signing_key_file "key.pem"
+}
 "#;
 
-const SECRETS: &str = "database {\n    password from-secrets\n}\n";
+const SECRETS: &str =
+    "database {\n    password from-secrets\n}\ncontrol {\n    bootstrap_token t\n}\n";
 
 struct Files(PathBuf);
 
@@ -75,12 +81,16 @@ fn environment_overrides_the_config_file() {
         &[("CONCLAVE__LISTEN__CONTROL", "0.0.0.0:9000")],
     )
     .unwrap();
-    let (listen, database, log) = loaded;
+    let (listen, database, log, tokens, browser, control) = loaded;
     assert_eq!(listen.listen.control, "0.0.0.0:9000".parse().unwrap());
     assert_eq!(listen.listen.subject, "127.0.0.1:8080".parse().unwrap());
     assert_eq!(database.database.password, "from-secrets");
     assert_eq!(database.database.max_connections, 10, "default applies");
     assert_eq!(log.filter(), None);
+    assert_eq!(tokens.tokens.access_ttl_seconds, 900, "default applies");
+    assert_eq!(tokens.tokens.published_key_files, Vec::<String>::new());
+    assert_eq!(browser.browser, None);
+    assert_eq!(control.control.bootstrap_token, "t");
 }
 
 // r[verify platform.config.secrets-separate]
@@ -153,9 +163,10 @@ fn reports_every_problem_at_once() {
 #[test]
 fn the_dev_config_loads() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config");
-    let (_, database, _) =
+    let (_, database, _, _, browser, _) =
         load(&root.join("dev.styx"), &root.join("dev.secrets.styx"), &[]).unwrap();
     assert_eq!(database.database.port, 55432);
+    assert!(!browser.browser.unwrap().secure_cookies);
 }
 
 #[test]

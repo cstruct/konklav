@@ -3,11 +3,16 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use conclave_server::AppState;
+use conclave_server::AuthContext;
 use conclave_server::config::{
-    self, DatabaseConfig, ListenConfig, LogConfig, MigrateContexts, ServeContexts, ServerContexts,
+    self, BrowserConfig, ControlConfig, DatabaseConfig, ListenConfig, LogConfig, MigrateContexts,
+    ServeContexts, ServerContexts, TokensConfig,
 };
+use conclave_server::keys::ConfiguredKeys;
 use conclave_server::serve::{BoundServer, shutdown_signal};
 use ordna_core::ConfigContexts;
+use std::path::Path;
+use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
 /// The Conclave identity and access server.
@@ -40,9 +45,9 @@ async fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Serve => match load::<ServeContexts>(&cli) {
-            Ok((listen, database, log)) => {
+            Ok((listen, database, log, tokens, browser, control)) => {
                 init_tracing(&log);
-                serve(listen, database).await
+                serve(listen, database, tokens, browser, control).await
             }
             Err(code) => return code,
         },
@@ -93,7 +98,15 @@ async fn migrate(config: DatabaseConfig) -> Result<(), Box<dyn std::error::Error
 async fn serve(
     listen: ListenConfig,
     database: DatabaseConfig,
+    tokens: TokensConfig,
+    browser: BrowserConfig,
+    control: ControlConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let tokens = tokens.tokens;
+    let keys = ConfiguredKeys::load(
+        Path::new(&tokens.signing_key_file),
+        &tokens.published_key_files,
+    )?;
     let pool = conclave_store::connect(&database.database.connect_options())?;
     match conclave_store::pending_migrations(&pool).await {
         Ok(pending) if !pending.is_empty() => tracing::warn!(
@@ -103,7 +116,21 @@ async fn serve(
         Ok(_) => {}
         Err(error) => tracing::warn!(%error, "could not check migrations at startup"),
     }
-    let server = BoundServer::bind(&listen.listen, AppState { pool }).await?;
+    match pool.get().await {
+        Ok(mut conn) => keys.sync(&mut conn).await?,
+        Err(error) => tracing::warn!(%error, "could not publish signing keys at startup"),
+    }
+    let auth = AuthContext::new(
+        &tokens,
+        browser.browser.as_ref(),
+        &control.control,
+        keys.signer,
+    );
+    let state = AppState {
+        pool,
+        auth: Arc::new(auth),
+    };
+    let server = BoundServer::bind(&listen.listen, state).await?;
     server.run(shutdown_signal()).await?;
     Ok(())
 }

@@ -8,8 +8,15 @@ publish.workspace = true
 
 [dependencies]
 axum.workspace = true
+chrono.workspace = true
 clap.workspace = true
+conclave-authn.workspace = true
+conclave-core.workspace = true
 conclave-store.workspace = true
+conclave-token.workspace = true
+diesel.workspace = true
+diesel-async.workspace = true
+ed25519-dalek.workspace = true
 facet.workspace = true
 ordna-core.workspace = true
 ordna-source-env.workspace = true
@@ -18,14 +25,16 @@ ordna-source-styx.workspace = true
 percent-encoding.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+subtle.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
 conclave-test-support.workspace = true
-diesel.workspace = true
 diesel-async.workspace = true
 http-body-util.workspace = true
 tower = { workspace = true, features = ["util"] }

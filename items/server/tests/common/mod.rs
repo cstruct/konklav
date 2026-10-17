@@ -1,0 +1,196 @@
+//! A Conclave app on an isolated database, driven through its router.
+
+#![allow(dead_code)]
+
+use std::sync::Arc;
+
+use axum::Router;
+use axum::body::Body;
+use axum::http::{HeaderMap, Method, Request, StatusCode};
+use chrono::Duration;
+use conclave_authn::PasswordHasher;
+use conclave_server::keys::ConfiguredKeys;
+use conclave_server::surface::{self, Surface};
+use conclave_server::{AppState, AuthContext, BrowserSettings};
+use conclave_test_support::TestDatabase;
+use conclave_token::{AccessClaims, JwkSet, Signer, VerifyOptions};
+use ed25519_dalek::SigningKey;
+use http_body_util::BodyExt;
+use serde_json::{Value, json};
+use tower::ServiceExt;
+
+pub const CONTROL_TOKEN: &str = "test-control-token";
+pub const ORIGIN: &str = "https://app.example";
+pub const ISSUER: &str = "https://auth.example";
+pub const AUDIENCE: &str = "api";
+
+pub struct TestApp {
+    pub db: TestDatabase,
+    pub state: AppState,
+    router: Router,
+}
+
+pub struct Reply {
+    pub status: StatusCode,
+    pub headers: HeaderMap,
+    pub body: Value,
+}
+
+impl Reply {
+    pub fn code(&self) -> &str {
+        self.body["error"]["code"].as_str().unwrap_or_default()
+    }
+
+    pub fn set_cookies(&self) -> Vec<String> {
+        self.headers
+            .get_all("set-cookie")
+            .iter()
+            .map(|v| v.to_str().unwrap().to_owned())
+            .collect()
+    }
+}
+
+pub fn auth_context(signer: Signer) -> AuthContext {
+    AuthContext {
+        issuer: ISSUER.into(),
+        audience: AUDIENCE.into(),
+        access_ttl: Duration::minutes(15),
+        session_lifetime: Duration::days(30),
+        // Cheap parameters keep the tests fast.
+        hasher: PasswordHasher::new(8, 1, 1).unwrap(),
+        signer,
+        browser: Some(BrowserSettings {
+            allowed_origins: vec![ORIGIN.into()],
+            secure_cookies: true,
+        }),
+        control_token: CONTROL_TOKEN.into(),
+    }
+}
+
+impl TestApp {
+    pub async fn new() -> Self {
+        Self::with_key(1).await
+    }
+
+    pub async fn with_key(seed: u8) -> Self {
+        let db = TestDatabase::new().await;
+        let keys = ConfiguredKeys {
+            signer: Signer::new(SigningKey::from_bytes(&[seed; 32])),
+            published: vec![SigningKey::from_bytes(&[seed; 32]).verifying_key()],
+        };
+        keys.sync(&mut db.pool().get().await.unwrap())
+            .await
+            .unwrap();
+        let state = AppState {
+            pool: db.pool().clone(),
+            auth: Arc::new(auth_context(keys.signer)),
+        };
+        let router = surface::router(&Surface::ALL, state.clone());
+        Self { db, state, router }
+    }
+
+    pub async fn send(
+        &self,
+        method: Method,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: Option<Value>,
+    ) -> Reply {
+        let mut request = Request::builder().method(method).uri(uri);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let request = match body {
+            Some(body) => request
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string())),
+            None => request.body(Body::empty()),
+        }
+        .unwrap();
+        let response = self.router.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body = if bytes.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&bytes).unwrap()
+        };
+        Reply {
+            status,
+            headers,
+            body,
+        }
+    }
+
+    pub async fn control(&self, method: Method, uri: &str, body: Option<Value>) -> Reply {
+        let auth = format!("Bearer {CONTROL_TOKEN}");
+        self.send(method, uri, &[("authorization", &auth)], body)
+            .await
+    }
+
+    pub async fn post(&self, uri: &str, body: Value) -> Reply {
+        self.send(Method::POST, uri, &[], Some(body)).await
+    }
+
+    pub async fn with_bearer(&self, method: Method, uri: &str, token: &str) -> Reply {
+        let auth = format!("Bearer {token}");
+        self.send(method, uri, &[("authorization", &auth)], None)
+            .await
+    }
+
+    /// Creates a human subject with a password and returns its id.
+    pub async fn human(&self, email: &str, password: &str) -> String {
+        let id = uuid::Uuid::now_v7().to_string();
+        let reply = self
+            .control(
+                Method::PUT,
+                &format!("/v1/subjects/{id}"),
+                Some(json!({"kind": "human"})),
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::CREATED, "{:?}", reply.body);
+        let reply = self
+            .control(
+                Method::POST,
+                &format!("/v1/subjects/{id}/credentials"),
+                Some(json!({"kind": "password", "identifier": email, "password": password})),
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::CREATED, "{:?}", reply.body);
+        id
+    }
+
+    pub async fn login(&self, email: &str, password: &str) -> Reply {
+        self.post(
+            "/v1/login/password",
+            json!({"identifier": email, "password": password}),
+        )
+        .await
+    }
+
+    /// Verifies an access token against the published JWKS.
+    pub async fn verify(&self, token: &str) -> AccessClaims {
+        let jwks: JwkSet = serde_json::from_value(
+            self.send(Method::GET, "/.well-known/jwks.json", &[], None)
+                .await
+                .body,
+        )
+        .unwrap();
+        let options = VerifyOptions {
+            issuer: ISSUER,
+            audience: AUDIENCE,
+            now: chrono::Utc::now().timestamp(),
+            leeway: 5,
+        };
+        conclave_token::verify(token, |kid| jwks.find(kid), &options).unwrap()
+    }
+}
+
+/// App state over `pool`, with a fixed signing key and test settings.
+pub fn state(pool: conclave_store::Pool) -> AppState {
+    AppState {
+        pool,
+        auth: Arc::new(auth_context(Signer::new(SigningKey::from_bytes(&[1; 32])))),
+    }
+}

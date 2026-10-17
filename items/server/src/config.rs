@@ -63,10 +63,77 @@ config_tree! {
     }
 }
 
-config_contexts!(pub ServerContexts = [ListenConfig, DatabaseConfig, LogConfig]);
+config_tree! {
+    /// Access-token issuance and session lifetimes.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct TokensConfig {
+        pub tokens: pub struct Tokens {
+            /// The `iss` claim, usually Conclave's public base URL.
+            pub issuer: String,
+            /// The `aud` claim relying systems expect.
+            pub audience: String,
+            #[facet(default = 900)]
+            pub access_ttl_seconds: u32,
+            /// Absolute session lifetime; refreshing never extends it.
+            #[facet(default = 2_592_000)]
+            pub session_lifetime_seconds: u32,
+            /// PKCS#8 PEM file with the Ed25519 key that signs new tokens.
+            pub signing_key_file: String,
+            /// More PEM files whose public keys are published without
+            /// signing, such as the next key ahead of a rotation.
+            #[facet(default)]
+            pub published_key_files: Vec<String>,
+        },
+    }
+}
+
+config_tree! {
+    /// Browser clients. Without this section, browser logins are refused.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct BrowserConfig {
+        pub browser: Option<pub struct Browser {
+            /// Origins allowed to use cookie-based endpoints, such as
+            /// `https://app.example`.
+            pub allowed_origins: Vec<String>,
+            /// Set to `false` only for local development over plain HTTP.
+            #[facet(default = true)]
+            pub secure_cookies: bool,
+        }>,
+    }
+}
+
+config_tree! {
+    /// Control-plane access. Until operator authorization arrives (M6), the
+    /// control surface accepts one static bearer token.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct ControlConfig {
+        pub control: pub struct Control {
+            #[config(secret)]
+            pub bootstrap_token: String,
+        },
+    }
+}
+
+config_contexts!(
+    pub ServerContexts = [
+        ListenConfig,
+        DatabaseConfig,
+        LogConfig,
+        TokensConfig,
+        BrowserConfig,
+        ControlConfig,
+    ]
+);
 
 /// The contexts `serve` needs, which is everything.
-pub type ServeContexts = (ListenConfig, DatabaseConfig, LogConfig);
+pub type ServeContexts = (
+    ListenConfig,
+    DatabaseConfig,
+    LogConfig,
+    TokensConfig,
+    BrowserConfig,
+    ControlConfig,
+);
 
 /// The contexts `migrate` needs: no listeners.
 pub type MigrateContexts = (DatabaseConfig, LogConfig);
@@ -92,6 +159,13 @@ impl Database {
             ),
             max_connections: self.max_connections as usize,
         }
+    }
+}
+
+impl Control {
+    #[must_use]
+    pub fn control_token(&self) -> String {
+        self.bootstrap_token.clone()
     }
 }
 

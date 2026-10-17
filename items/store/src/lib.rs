@@ -1,11 +1,46 @@
 //! Conclave's Postgres schema, migrations, connection pool and repositories.
 //!
 //! Conclave owns its database exclusively. Every other software item reaches
-//! it through this crate.
+//! it through this crate. Repository functions take a connection so callers
+//! can compose them inside one transaction.
 
+pub mod credentials;
+pub mod events;
+pub mod login_attempts;
 mod migrate;
 mod pool;
 pub mod schema;
+pub mod sessions;
+pub mod signing_keys;
+pub mod subjects;
 
+pub use diesel_async::AsyncPgConnection as Connection;
 pub use migrate::{MigrationError, pending_migrations, run_pending_migrations};
-pub use pool::{ConnectOptions, Pool, PoolError, connect, ping};
+pub use pool::{Checkout, ConnectOptions, Pool, PoolError, connect, ping};
+
+/// Errors from repository functions.
+#[derive(Debug, thiserror::Error)]
+pub enum StoreError {
+    #[error("not found")]
+    NotFound,
+    /// A uniqueness or idempotency conflict, such as reusing an id with
+    /// different content or an identifier that is already taken.
+    #[error("conflict: {0}")]
+    Conflict(String),
+    #[error("database error: {0}")]
+    Database(#[from] diesel::result::Error),
+}
+
+impl StoreError {
+    fn from_unique_violation(error: diesel::result::Error, what: &str) -> Self {
+        match error {
+            diesel::result::Error::DatabaseError(
+                diesel::result::DatabaseErrorKind::UniqueViolation,
+                _,
+            ) => Self::Conflict(format!("{what} already exists")),
+            other => Self::Database(other),
+        }
+    }
+}
+
+pub type StoreResult<T> = Result<T, StoreError>;

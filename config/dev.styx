@@ -15,3 +15,14 @@ database {
 log {
     filter "info,conclave_server=debug"
 }
+
+tokens {
+    issuer "http://127.0.0.1:8080"
+    audience conclave-dev
+    signing_key_file "config/dev.signing-key.pem"
+}
+
+browser {
+    allowed_origins ("http://localhost:5173")
+    secure_cookies false
+}

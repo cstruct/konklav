@@ -8,6 +8,13 @@ Library crate that owns Conclave's Postgres database: schema, forward-only migra
 - Embedding the migrations from `migrations/`, listing the pending ones (`pending_migrations`) and applying them (`run_pending_migrations`).
 - The Diesel schema in `src/schema.rs`. It is generated, so don't edit it by hand: run `mise run db:schema`.
 - The `event` outbox table that the change feed is built on.
+- Repositories:
+  - `subjects`
+  - `credentials`: one table for every kind; kind-specific `data` is `jsonb` that the database checks against a JSON Schema per kind with pg_jsonschema
+  - `sessions`: refresh rotation with reuse detection, revocation by filter, and a `session.changed` event for every change in the same transaction
+  - `signing_keys`: published public keys and their rotation state
+  - `login_attempts`: rate limiting
+  - `events`
 
 ## Public interface
 
@@ -24,7 +31,7 @@ The migration functions use Diesel's blocking harness, so they must run on a mul
 | `conclave-core` | Shared identifier types |
 | `conclave-server` | Runs migrations (`migrate`) and checks them for readiness |
 | `conclave-test-support` | Creates isolated, migrated databases for tests |
-| PostgreSQL | Conclave's exclusive, authoritative store |
+| PostgreSQL | Conclave's exclusive, authoritative store. It needs the [pg_jsonschema](https://github.com/supabase/pg_jsonschema) extension; the dev image in `dev/postgres` includes it |
 
 ## Usage
 
@@ -47,7 +54,13 @@ mise run db:up
 cargo test -p conclave-store
 ```
 
-- Direct coverage: migration discovery, idempotent application and pending detection, each in its own database.
+- Direct coverage:
+  - migrations
+  - JSON Schema rejection of invalid credential data
+  - identifier uniqueness and credential history
+  - refresh rotation and reuse detection
+  - revocation filters and their events
+  - signing-key rotation and revocation
 - Indirect coverage: the server readiness tests.
 
 ## Traceability and related docs

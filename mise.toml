@@ -15,7 +15,7 @@ CONCLAVE_SECRETS = "{{config_root}}/config/dev.secrets.styx"
 
 [tasks."db:up"]
 description = "Start the local Postgres and wait until it accepts connections"
-run = "docker compose -f dev/compose.yaml up -d --wait"
+run = "docker compose -f dev/compose.yaml up -d --wait --build"
 
 [tasks."db:down"]
 description = "Stop the local Postgres, keeping its data"
@@ -59,9 +59,13 @@ description = "Apply pending migrations to the local database"
 depends = ["db:up"]
 run = "cargo run -q -p conclave-server -- migrate"
 
+[tasks."dev:signing-key"]
+description = "Create the untracked development signing key if it is missing"
+run = "test -f config/dev.signing-key.pem || openssl genpkey -algorithm Ed25519 -out config/dev.signing-key.pem"
+
 [tasks.serve]
 description = "Run the server against the local database with config/dev.styx"
-depends = ["migrate"]
+depends = ["migrate", "dev:signing-key"]
 run = "cargo run -q -p conclave-server -- serve"
 
 [tasks."db:schema"]

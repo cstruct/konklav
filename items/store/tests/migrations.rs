@@ -25,14 +25,12 @@ async fn an_unmigrated_database_reports_and_applies_every_migration() {
     let db = TestDatabase::new().await;
     let mut conn = db.pool().get().await.unwrap();
     // Recreate an unmigrated state inside the isolated database.
-    diesel::sql_query("drop table event")
-        .execute(&mut conn)
-        .await
-        .unwrap();
-    diesel::sql_query("truncate __diesel_schema_migrations")
-        .execute(&mut conn)
-        .await
-        .unwrap();
+    for statement in ["drop schema public cascade", "create schema public"] {
+        diesel::sql_query(statement)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+    }
     drop(conn);
 
     let pending = conclave_store::pending_migrations(db.pool()).await.unwrap();

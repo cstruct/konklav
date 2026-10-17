@@ -12,6 +12,30 @@ writers) uses a dedicated `tokio-postgres` connection. Nothing else depends
 on it, and losing it only delays pushes until the next poll
 (`r[feed.notify-hint-only]`).
 
+## Required extensions
+
+[pg_jsonschema](https://github.com/supabase/pg_jsonschema) validates `jsonb`
+columns against JSON Schemas in check constraints. The migrations run
+`create extension if not exists`, which needs elevated privileges, so
+production databases should have it installed beforehand. The development
+image in `dev/postgres` includes it.
+
+## Credentials: one table, typed data
+
+All credential kinds share the `credential` table. The common columns are
+id, subject, kind, normalized login identifier, MFA requirement,
+replacement link and revocation. Kind-specific material lives in `data
+jsonb`, and a check constraint validates it with
+`jsonb_matches_schema(credential_data_schema(kind), data)`.
+`credential_data_schema` is an immutable SQL function holding one JSON Schema
+per kind. The `kind` check lists only kinds that have a schema, so no
+unvalidated data can slip through.
+
+Compared with a base table plus one subtype table per kind, adding a kind is
+a migration that extends `kind` and `credential_data_schema`, with no new
+table, view or join. The schemas mirror the serde types in
+`conclave-store`'s `credentials` module, and the two must change together.
+
 ## Shape
 
 - Ordinary mutable tables with `created_at` and `updated_at`. Bitemporal

@@ -1,6 +1,7 @@
+mod common;
+
 use std::net::SocketAddr;
 
-use conclave_server::AppState;
 use conclave_server::config::Listen;
 use conclave_server::serve::BoundServer;
 use conclave_server::surface::Surface;
@@ -27,14 +28,9 @@ async fn serves_every_surface_on_its_own_listener_until_shutdown() {
         relying: any_port,
         control: any_port,
     };
-    let server = BoundServer::bind(
-        &listen,
-        AppState {
-            pool: db.pool().clone(),
-        },
-    )
-    .await
-    .unwrap();
+    let server = BoundServer::bind(&listen, common::state(db.pool().clone()))
+        .await
+        .unwrap();
     let addrs = server.local_addrs().unwrap();
     let surfaces = addrs
         .iter()

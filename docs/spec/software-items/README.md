@@ -25,6 +25,7 @@ Planned software items for v2 (see
 - `authz`
 - `authn`
 - `server`
+- `token`
 - [`relying`](relying.md)
 - `relying-client`
 - `py`

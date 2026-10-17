@@ -1,3 +1,5 @@
+mod common;
+
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use conclave_server::AppState;
@@ -37,9 +39,7 @@ fn unreachable_pool() -> conclave_store::Pool {
 // r[verify platform.server.health]
 #[tokio::test(flavor = "multi_thread")]
 async fn liveness_does_not_need_the_database() {
-    let state = AppState {
-        pool: unreachable_pool(),
-    };
+    let state = common::state(unreachable_pool());
     let (status, body) = call(state, Method::GET, "/healthz").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({"status": "ok"}));
@@ -48,9 +48,7 @@ async fn liveness_does_not_need_the_database() {
 #[tokio::test(flavor = "multi_thread")]
 async fn ready_when_the_database_is_migrated() {
     let db = TestDatabase::new().await;
-    let state = AppState {
-        pool: db.pool().clone(),
-    };
+    let state = common::state(db.pool().clone());
     let (status, body) = call(state, Method::GET, "/readyz").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({"status": "ready"}));
@@ -58,9 +56,7 @@ async fn ready_when_the_database_is_migrated() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn not_ready_while_the_database_is_unreachable() {
-    let state = AppState {
-        pool: unreachable_pool(),
-    };
+    let state = common::state(unreachable_pool());
     let (status, body) = call(state, Method::GET, "/readyz").await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["error"]["code"], "DATABASE_UNAVAILABLE");
@@ -76,9 +72,7 @@ async fn not_ready_while_migrations_are_pending() {
         .unwrap();
     drop(conn);
 
-    let state = AppState {
-        pool: db.pool().clone(),
-    };
+    let state = common::state(db.pool().clone());
     let (status, body) = call(state, Method::GET, "/readyz").await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["error"]["code"], "MIGRATIONS_PENDING");
@@ -88,9 +82,7 @@ async fn not_ready_while_migrations_are_pending() {
 // r[verify platform.server.versioned-paths]
 #[tokio::test(flavor = "multi_thread")]
 async fn unknown_endpoints_get_a_typed_error() {
-    let state = AppState {
-        pool: unreachable_pool(),
-    };
+    let state = common::state(unreachable_pool());
     for uri in ["/v1/nope", "/nope"] {
         let (status, body) = call(state.clone(), Method::GET, uri).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
@@ -101,9 +93,7 @@ async fn unknown_endpoints_get_a_typed_error() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn wrong_methods_get_a_typed_error() {
-    let state = AppState {
-        pool: unreachable_pool(),
-    };
+    let state = common::state(unreachable_pool());
     let (status, body) = call(state, Method::POST, "/healthz").await;
     assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
     assert_eq!(body["error"]["code"], "METHOD_NOT_ALLOWED");

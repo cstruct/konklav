@@ -74,6 +74,11 @@ define_id!(
     /// Identifies a session.
     SessionId
 );
+define_id!(
+    /// Identifies a credential. For secret keys it is also the login
+    /// identifier.
+    CredentialId
+);
 
 #[cfg(test)]
 mod tests {

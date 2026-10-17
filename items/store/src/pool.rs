@@ -5,6 +5,9 @@ use diesel_async::{AsyncPgConnection, RunQueryDsl};
 /// A pool of async Postgres connections.
 pub type Pool = deadpool::Pool<AsyncPgConnection>;
 
+/// The error of checking a connection out of the pool.
+pub type Checkout = deadpool::PoolError;
+
 /// How to reach the database.
 #[derive(Clone)]
 pub struct ConnectOptions {

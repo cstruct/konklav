@@ -8,7 +8,7 @@ use axum::Router;
 use axum::routing::get;
 
 use crate::config::Listen;
-use crate::{AppState, error, health};
+use crate::{AppState, control_api, error, health, keys, subject_api};
 
 /// One of Conclave's groups of endpoints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -26,9 +26,19 @@ impl Surface {
 
     /// The surface's versioned endpoints, relative to `/v1`. Surfaces that
     /// share a listener are merged, so their paths must not overlap.
-    fn v1_routes(self) -> Router<AppState> {
+    fn v1_routes(self, state: &AppState) -> Router<AppState> {
         match self {
-            Self::Subject | Self::Relying | Self::Control => Router::new(),
+            Self::Subject => subject_api::routes(),
+            Self::Relying => Router::new(),
+            Self::Control => control_api::routes(state),
+        }
+    }
+
+    /// Unversioned endpoints at fixed, well-known paths.
+    fn root_routes(self) -> Router<AppState> {
+        match self {
+            Self::Relying => Router::new().route("/.well-known/jwks.json", get(keys::jwks)),
+            Self::Subject | Self::Control => Router::new(),
         }
     }
 }
@@ -47,10 +57,12 @@ impl fmt::Display for Surface {
 // r[impl platform.server.versioned-paths]
 pub fn router(surfaces: &[Surface], state: AppState) -> Router {
     let v1 = surfaces.iter().fold(Router::new(), |router, surface| {
-        router.merge(surface.v1_routes())
+        router.merge(surface.v1_routes(&state))
     });
-    Router::new()
-        .route("/healthz", get(health::healthz))
+    let root = surfaces.iter().fold(Router::new(), |router, surface| {
+        router.merge(surface.root_routes())
+    });
+    root.route("/healthz", get(health::healthz))
         .route("/readyz", get(health::readyz))
         .nest("/v1", v1)
         .fallback(error::not_found)

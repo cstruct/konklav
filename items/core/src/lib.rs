@@ -7,4 +7,4 @@ mod cursor;
 mod id;
 
 pub use cursor::Cursor;
-pub use id::{MembershipId, SessionId, SubjectId, TenantId};
+pub use id::{CredentialId, MembershipId, SessionId, SubjectId, TenantId};

@@ -20,10 +20,15 @@ It is designed around:
 
 ## Status
 
-v2 has finished milestone M1: the workspace skeleton. That covers
-configuration, the server with its three surfaces, health checks, the
-typed error model, and Postgres with migrations and isolated test
-databases. v1, a prototype backed by Feldera, is preserved at tag `v1`.
+v2 has finished milestone M2, identity and the authentication core. That
+covers:
+
+- subjects, and credentials in one JSON-Schema-validated table
+- password and secret-key login
+- server-side sessions with refresh rotation and reuse detection
+- browser cookies with CSRF checks
+- Ed25519 tokens with JWKS
+- control-plane administration of all of the above v1, a prototype backed by Feldera, is preserved at tag `v1`.
 
 ## Repository layout
 
@@ -33,7 +38,9 @@ databases. v1, a prototype backed by Feldera, is preserved at tag `v1`.
   [`v2-overview.md`](docs/architecture/v2-overview.md).
 - `items/`: software items:
   - `core`: identifiers
-  - `store`: Postgres, migrations
+  - `token`: claims, JWS, JWKS
+  - `authn`: hashing, refresh tokens
+  - `store`: Postgres, migrations, repositories
   - `server`: the binary
   - `test-support`: shared test helpers
 - `config/`: development configuration.
@@ -48,7 +55,7 @@ so no system Postgres client is needed).
 
 ```sh
 mise trust && mise install
-mise run db:up      # Postgres 18 in Docker on localhost:55432, waits until healthy
+mise run db:up      # Postgres 18 with pg_jsonschema in Docker on localhost:55432
 ```
 
 mise sets `DATABASE_URL`, `CONCLAVE_CONFIG` and `CONCLAVE_SECRETS` for the
