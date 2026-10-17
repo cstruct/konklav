@@ -4,8 +4,9 @@ use std::collections::BTreeMap;
 
 use chrono::Utc;
 use conclave_store::Connection;
+use conclave_store::catalog::{self, FactTarget};
 use conclave_store::sessions::{Session, Stage};
-use conclave_store::signing_keys;
+use conclave_store::{memberships, signing_keys, tenants};
 use conclave_token::{AccessClaims, Actor, TokenKind};
 use serde::Serialize;
 
@@ -19,6 +20,27 @@ pub struct IssuedToken {
     pub token_kind: TokenKind,
     pub expires_in: i64,
     pub session_id: conclave_core::SessionId,
+}
+
+/// The portable facts of the session's tenant and membership.
+// r[impl token.access.facts]
+async fn portable_facts(
+    conn: &mut Connection,
+    session: &Session,
+) -> Result<BTreeMap<String, serde_json::Value>, ApiError> {
+    let (Some(tenant), Some(membership)) = (session.tenant_id, session.membership_id) else {
+        return Ok(BTreeMap::new());
+    };
+    let document = catalog::load(conn).await?;
+    let tenant = tenants::get(conn, tenant).await?;
+    let membership = memberships::get(conn, membership).await?;
+    let mut facts = catalog::portable_facts(&document, FactTarget::Tenant, &tenant.facts);
+    facts.extend(catalog::portable_facts(
+        &document,
+        FactTarget::Membership,
+        &membership.facts,
+    ));
+    Ok(facts)
 }
 
 /// Signs an access token for the session's current state.
@@ -65,7 +87,7 @@ pub async fn access_token(
         tid: session.tenant_id,
         mid: session.membership_id,
         sfl: session.flags.clone(),
-        fct: BTreeMap::new(),
+        fct: portable_facts(conn, session).await?,
         act: session
             .impersonator_subject_id
             .map(|sub| Actor { sub, tid: None }),

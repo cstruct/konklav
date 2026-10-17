@@ -50,7 +50,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         ))
 }
 
-async fn require_control_token(
+pub(crate) async fn require_control_token(
     State(state): State<AppState>,
     request: Request,
     next: Next,
@@ -73,7 +73,7 @@ async fn require_control_token(
     }
 }
 
-fn parse_id<T: std::str::FromStr>(value: &str, what: &str) -> Result<T, ApiError> {
+pub(crate) fn parse_id<T: std::str::FromStr>(value: &str, what: &str) -> Result<T, ApiError> {
     value
         .parse()
         .map_err(|_| ApiError::invalid_request(format!("{what} is not a valid identifier")))
@@ -82,11 +82,11 @@ fn parse_id<T: std::str::FromStr>(value: &str, what: &str) -> Result<T, ApiError
 /// A write's result and the cursor of the last event it produced, if any.
 // r[impl platform.idempotency.write-cursor]
 #[derive(Serialize)]
-struct Written<T> {
+pub(crate) struct Written<T> {
     #[serde(flatten)]
-    value: T,
+    pub(crate) value: T,
     #[serde(skip_serializing_if = "Option::is_none")]
-    cursor: Option<Cursor>,
+    pub(crate) cursor: Option<Cursor>,
 }
 
 fn last_cursor(revoked: &[(Session, Cursor)]) -> Option<Cursor> {

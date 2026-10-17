@@ -20,8 +20,11 @@ It is designed around:
 
 ## Status
 
-v2 has finished milestone M2, identity and the authentication core. That
-covers:
+v2 has finished milestone M3, tenancy and authorization. M3 adds tenants
+and memberships with facts, the action catalog, templates, roles and
+assignments, entitlement compilation that matches onetwo's semantics, tenant
+selection at login, session flags, and the entitlements and check APIs.
+Earlier milestones built:
 
 - subjects, and credentials in one JSON-Schema-validated table
 - password and secret-key login
@@ -40,6 +43,7 @@ covers:
   - `core`: identifiers
   - `token`: claims, JWS, JWKS
   - `authn`: hashing, refresh tokens
+  - `authz`: entitlement compilation and evaluation
   - `store`: Postgres, migrations, repositories
   - `server`: the binary
   - `test-support`: shared test helpers

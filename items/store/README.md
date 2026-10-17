@@ -14,7 +14,12 @@ Library crate that owns Conclave's Postgres database: schema, forward-only migra
   - `sessions`: refresh rotation with reuse detection, revocation by filter, and a `session.changed` event for every change in the same transaction
   - `signing_keys`: published public keys and their rotation state
   - `login_attempts`: rate limiting
-  - `events`
+  - `events`, including `last_in_transaction` for write cursors
+  - `tenants` (the root is the nil UUID) and `memberships`
+  - `catalog`: one document of actions, groups, scope kinds, facts and session flags
+  - `templates`, `roles`, and role assignments (membership or global)
+  - `compile_input`: everything the compiler needs for one subject and tenant, read in one repeatable-read snapshot
+- Triggers append `entitlements.changed` and `tenant.changed` for every write to memberships, assignments, subject state, the catalog, templates, roles and tenants.
 
 ## Public interface
 

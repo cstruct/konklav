@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 chrono.workspace = true
+conclave-authz.workspace = true
 conclave-core.workspace = true
 diesel.workspace = true
 diesel-async.workspace = true
@@ -27,3 +28,4 @@ conclave-test-support.workspace = true
 chrono.workspace = true
 conclave-core.workspace = true
 serde_json.workspace = true
+conclave-authz.workspace = true

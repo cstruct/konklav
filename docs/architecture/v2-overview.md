@@ -46,7 +46,7 @@ and spec-first development with Tracey.
 |---|---|
 | `conclave-core` | Identifiers, nomenclature types, action names and selectors |
 | `conclave-store` | Diesel schema, migrations, repositories, event outbox |
-| `conclave-authz` | Pure compilation of entitlement sets |
+| `conclave-authz` | Pure compilation of entitlement sets and evaluation of requirements |
 | `conclave-token` | Access-token claims, EdDSA JWS signing and verification, JWKS (shared by the issuer and the relying core) |
 | `conclave-authn` | Password and secret-key hashing, refresh tokens; TOTP and challenges later |
 | `conclave-server` | axum surfaces, wiring, background workers |
@@ -56,8 +56,8 @@ and spec-first development with Tracey.
 | `conclave-cli` | Admin tooling and importers |
 
 Dependencies point inward: `server` → `authn`/`authz`/`store` → `core`.
-`relying` depends only on `core` and `token`, and the bindings depend only
-on `relying`.
+`relying` depends only on `core`, `token` and `authz` (for evaluation), and
+the bindings depend only on `relying`.
 
 Until operator authorization lands (M6), the control-plane surface is
 guarded by a single bootstrap bearer token from the secrets file. This is a

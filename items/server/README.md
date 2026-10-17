@@ -24,12 +24,22 @@ The Conclave server binary. It serves the subject-facing, relying and control-pl
   - `refresh`, with rotation and reuse detection
   - `sign-out` and `sign-out/others`
   - browser clients get the refresh token as an `HttpOnly` cookie and must pass Origin and `X-Conclave-Client` checks
-- Relying surface: `/.well-known/jwks.json`.
+- Subject-facing `login/tenant` moves a session into a tenant where the subject has an active membership. The new token carries `tid`, `mid` and portable facts. Logins may request restrictive session flags that the catalog marks as requestable.
+- Relying surface, for service principals only:
+  - `/.well-known/jwks.json`
+  - `/v1/entitlements/{subject}[/{tenant}]`
+  - `/v1/check`, which decides from current state, session validity included
 - Control-plane surface (`/v1`):
   - subjects (idempotent `PUT`, disable and enable)
   - credentials (create, revoke, replace a password, rotate a secret-key slot)
   - sessions (list, get, revoke by filter)
   - signing keys (list, break-glass revoke)
+  - the catalog
+  - tenants (create with roles instantiated from templates; facts; state, where leaving `active` ends the tenant's sessions)
+  - memberships (create, facts, end, assignments)
+  - templates and roles, where roles of `root` are global roles
+  - global assignments
+  - an operator view of a subject's entitlements
 
   Until operator authorization arrives in M6, the control plane is guarded by one bootstrap bearer token from the secrets file.
 
@@ -51,6 +61,7 @@ The Conclave server binary. It serves the subject-facing, relying and control-pl
 | `conclave-store` | Pool, migrations, readiness checks and every repository |
 | `conclave-authn` | Password and secret hashing, refresh tokens |
 | `conclave-token` | Signing access tokens, JWKS |
+| `conclave-authz` | Compiling entitlement sets and evaluating checks |
 | `conclave-test-support` | Isolated databases in tests |
 | PostgreSQL | Must be reachable for readiness and for every stateful endpoint |
 

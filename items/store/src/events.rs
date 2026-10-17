@@ -46,3 +46,31 @@ pub async fn after(
         .load(conn)
         .await
 }
+
+/// The cursor of the last event written by the current transaction, if any.
+/// Triggers append events too, so this is how a write learns the cursor to
+/// report. Call it inside the writing transaction.
+// r[impl platform.idempotency.write-cursor]
+pub async fn last_in_transaction(conn: &mut AsyncPgConnection) -> QueryResult<Option<Cursor>> {
+    diesel::sql_query(
+        "select max(cursor) as cursor from event where xmin = pg_current_xact_id()::xid",
+    )
+    .get_result::<LastCursor>(conn)
+    .await
+    .map(|row| row.cursor.map(Cursor::new))
+}
+
+#[derive(QueryableByName)]
+struct LastCursor {
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::BigInt>)]
+    cursor: Option<i64>,
+}
+
+/// The cursor of the newest event, or [`Cursor::START`] when there is none.
+pub async fn head(conn: &mut AsyncPgConnection) -> QueryResult<Cursor> {
+    event::table
+        .select(diesel::dsl::max(event::cursor))
+        .get_result::<Option<i64>>(conn)
+        .await
+        .map(|cursor| cursor.map_or(Cursor::START, Cursor::new))
+}

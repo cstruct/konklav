@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "items/authn",
+    "items/authz",
     "items/core",
     "items/server",
     "items/store",
@@ -17,6 +18,7 @@ publish = false
 
 [workspace.dependencies]
 conclave-authn = { path = "items/authn" }
+conclave-authz = { path = "items/authz" }
 conclave-core = { path = "items/core" }
 conclave-store = { path = "items/store" }
 conclave-test-support = { path = "items/test-support" }

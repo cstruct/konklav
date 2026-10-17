@@ -32,12 +32,24 @@ EntitlementSet {
 
 Steps 5–7 reproduce the semantics that existing relying systems commonly
 implement with a ranked SQL view plus deny subtraction in application code.
-Golden tests pin them. A specificity-ordered precedence model (from v1) can
-be offered later as an explicit catalog option.
+Golden tests in `items/authz/tests/golden.rs` pin them. A specificity-ordered
+precedence model (from v1) can be offered later as an explicit catalog
+option.
 
-Open detail, to settle with golden tests before implementation: whether a
-deny at a higher level also removes allows at lower levels, or only the
-same action at the same level.
+Decided details:
+
+- Ranking is per placement and action, so priorities never compete across
+  levels.
+- A deny cancels allows only at its own placement
+  (`r[authz.compile.deny-level]`).
+- Overrides match a role policy against template policies by the
+  unexpanded name. A role denying one action does not replace a template's
+  group; both apply, and the deny wins only where it ties or outranks.
+- Groups grant their own name, because existing relying systems require
+  names such as `sys:all` directly.
+- Groups expand the same way at every level. The reference model expanded
+  only `sys:all` for global roles. Global roles never used `tenant:all`
+  there, so importers should flag that case rather than reproduce it.
 
 ## Decision path in the relying SDK
 
@@ -57,6 +69,28 @@ token ──verify (JWKS)──▶ claims
 
 When the cache is untrusted (feed lagging or disconnected), every decision
 goes to `POST /v1/check`. Without Conclave, the result is deny.
+
+## Compiling on read, invalidating by trigger
+
+Entitlement sets are compiled on demand: one repeatable-read transaction
+loads the subject's active assignments, the role, template and catalog
+definitions, and the newest event cursor (the set's revision).
+
+Invalidation is reactive. Database triggers append `entitlements.changed`
+in the writing transaction:
+
+- row triggers on memberships, role assignments and subject state name the
+  affected subject (and tenant)
+- statement triggers on catalog, template and role tables invalidate
+  everything
+- tenant state changes invalidate the tenant
+
+Triggers mean no write path can skip invalidation, including bulk SQL from
+importers. Compiling inside triggers was rejected: it would duplicate the
+precedence rules in PL/pgSQL, and fan definition changes out to every
+affected subject inside the admin transaction. If compile cost ever
+matters, a worker fed by the outbox can materialize sets asynchronously
+with the same Rust compiler.
 
 ## Cache freshness
 

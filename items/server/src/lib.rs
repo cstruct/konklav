@@ -3,10 +3,12 @@
 
 pub mod config;
 mod control_api;
+mod control_authz;
 pub mod error;
 pub mod health;
 mod issue;
 pub mod keys;
+mod relying_api;
 pub mod serve;
 mod subject_api;
 pub mod surface;

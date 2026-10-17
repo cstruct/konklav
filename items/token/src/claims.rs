@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// What an access token may be used for.
 // r[impl token.access.kind]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TokenKind {
     /// The first factor succeeded but MFA is still required.

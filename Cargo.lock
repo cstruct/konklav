@@ -387,6 +387,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "conclave-authz"
+version = "0.1.0"
+dependencies = [
+ "conclave-core",
+ "conclave-token",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "conclave-core"
 version = "0.1.0"
 dependencies = [
@@ -404,6 +414,7 @@ dependencies = [
  "chrono",
  "clap",
  "conclave-authn",
+ "conclave-authz",
  "conclave-core",
  "conclave-store",
  "conclave-test-support",
@@ -434,6 +445,7 @@ name = "conclave-store"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "conclave-authz",
  "conclave-core",
  "conclave-test-support",
  "diesel",

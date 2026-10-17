@@ -194,3 +194,36 @@ pub fn state(pool: conclave_store::Pool) -> AppState {
         auth: Arc::new(auth_context(Signer::new(SigningKey::from_bytes(&[1; 32])))),
     }
 }
+
+impl TestApp {
+    /// Creates a service principal with a secret key and returns an access
+    /// token for it.
+    pub async fn service_token(&self) -> String {
+        let id = uuid::Uuid::now_v7();
+        self.control(
+            Method::PUT,
+            &format!("/v1/subjects/{id}"),
+            Some(json!({"kind": "service"})),
+        )
+        .await;
+        let created = self
+            .control(
+                Method::POST,
+                &format!("/v1/subjects/{id}/credentials"),
+                Some(json!({"kind": "secret_key"})),
+            )
+            .await;
+        let (key_id, secret) = created.body["secret_keys"]["a"]
+            .as_str()
+            .unwrap()
+            .split_once('.')
+            .unwrap();
+        let login = self
+            .post(
+                "/v1/login/secret-key",
+                json!({"key_id": key_id, "secret": secret}),
+            )
+            .await;
+        login.body["access_token"].as_str().unwrap().to_owned()
+    }
+}

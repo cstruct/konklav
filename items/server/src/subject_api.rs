@@ -14,7 +14,7 @@ use conclave_store::sessions::{
     self, ClientKind, NewSession, Rotation, Session, SessionFilter, Stage,
 };
 use conclave_store::subjects::{self, SubjectKind, SubjectState};
-use conclave_store::{Connection, login_attempts};
+use conclave_store::{Connection, catalog, login_attempts, memberships, tenants};
 use conclave_token::{AccessClaims, VerifyOptions};
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +27,7 @@ pub fn routes() -> Router<AppState> {
         .route("/login/password", post(login_password))
         .route("/login/secret-key", post(login_secret_key))
         .route("/refresh", post(refresh))
+        .route("/login/tenant", post(select_tenant))
         .route("/sign-out", post(sign_out))
         .route("/sign-out/others", post(sign_out_others))
 }
@@ -53,6 +54,10 @@ enum Client {
 
 #[derive(Deserialize)]
 struct PasswordLogin {
+    /// Restrictive session flags the client asks for, from the catalog's
+    /// requestable ones.
+    #[serde(default)]
+    flags: Vec<String>,
     identifier: String,
     password: String,
     #[serde(default)]
@@ -174,6 +179,27 @@ async fn enforce_rate_limit(
     Ok(())
 }
 
+/// Only requestable (restrictive) catalog flags may be asked for at login.
+// r[impl session.flags.origin]
+async fn check_requested_flags(conn: &mut Connection, flags: &[String]) -> Result<(), ApiError> {
+    if flags.is_empty() {
+        return Ok(());
+    }
+    let catalog = catalog::load(conn).await?;
+    for flag in flags {
+        let requestable = catalog
+            .session_flags
+            .iter()
+            .any(|entry| entry.name == *flag && entry.requestable);
+        if !requestable {
+            return Err(ApiError::invalid_request(format!(
+                "session flag `{flag}` cannot be requested"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Starts a session after a successful first factor and issues its first
 /// tokens.
 async fn start_session(
@@ -183,6 +209,7 @@ async fn start_session(
     amr: &str,
     client: Client,
     browser: Option<&BrowserSettings>,
+    flags: &[String],
 ) -> Result<Response, ApiError> {
     let now = Utc::now();
     let id = SessionId::new_v7();
@@ -206,7 +233,7 @@ async fn start_session(
             },
             amr: vec![amr.to_owned()],
             auth_time: now,
-            flags: Vec::new(),
+            flags: flags.to_vec(),
             impersonator_subject_id: None,
             refresh_hash: refresh.hash(),
             expires_at: now + state.auth.session_lifetime,
@@ -249,6 +276,7 @@ async fn login_password(
         Client::Native => None,
     };
     let mut conn = state.pool.get().await?;
+    check_requested_flags(&mut conn, &body.flags).await?;
     let kind = CredentialKind::Password;
     enforce_rate_limit(&mut conn, kind, &body.identifier).await?;
 
@@ -304,6 +332,7 @@ async fn login_password(
         "pwd",
         body.client,
         browser.as_ref(),
+        &body.flags,
     )
     .await
 }
@@ -362,7 +391,16 @@ async fn login_secret_key(
     let (Some(credential), true) = (credential, succeeded) else {
         return Err(invalid_credentials());
     };
-    start_session(&state, &mut conn, &credential, "swk", Client::Native, None).await
+    start_session(
+        &state,
+        &mut conn,
+        &credential,
+        "swk",
+        Client::Native,
+        None,
+        &[],
+    )
+    .await
 }
 
 /// Ends `session` if its subject or credential is no longer usable.
@@ -465,6 +503,22 @@ pub(crate) async fn authenticate(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or_else(unauthenticated)?;
+    verify_access_token(state, conn, token).await
+}
+
+/// Verifies an access token and its session: the session must be active
+/// and the token issued at its current version.
+pub(crate) async fn verify_access_token(
+    state: &AppState,
+    conn: &mut Connection,
+    token: &str,
+) -> Result<(AccessClaims, Session), ApiError> {
+    let unauthenticated = || {
+        ApiError::new(
+            ErrorCode::Unauthenticated,
+            "missing or invalid access token",
+        )
+    };
     let kid = conclave_token::decode_unverified_kid(token).map_err(|_| unauthenticated())?;
     let key = keys::verifying_key(conn, &kid, state.auth.access_ttl).await?;
     let options = VerifyOptions {
@@ -537,5 +591,46 @@ async fn sign_out_others(
         sessions::revoke(&mut conn, &filter, Some(claims.sid), "signed_out_elsewhere").await?;
     Ok(Json(CursorResponse {
         cursor: revoked.last().map(|(_, cursor)| *cursor),
+    }))
+}
+
+#[derive(Deserialize)]
+struct SelectTenant {
+    /// A tenant id, or `root`.
+    tenant: String,
+}
+
+/// `POST /v1/login/tenant`: moves the caller's session into a tenant where
+/// the subject has an active membership, and issues a tenant token.
+// r[impl authn.login.tenant-selection]
+async fn select_tenant(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ApiJson(body): ApiJson<SelectTenant>,
+) -> Result<Json<TokenResponse>, ApiError> {
+    let mut conn = state.pool.get().await?;
+    let (claims, session) = authenticate(&state, &mut conn, &headers).await?;
+    if session.stage == Stage::Partial {
+        return Err(ApiError::new(ErrorCode::Forbidden, "complete MFA first"));
+    }
+    let tenant_id = tenants::parse_reference(&body.tenant)
+        .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
+    let no_access = || ApiError::new(ErrorCode::Forbidden, "no active membership in that tenant");
+    let tenant = tenants::get(&mut conn, tenant_id)
+        .await
+        .map_err(|_| no_access())?;
+    if tenant.state != tenants::TenantState::Active {
+        return Err(no_access());
+    }
+    let membership = memberships::find_active(&mut conn, claims.sub, tenant_id)
+        .await?
+        .ok_or_else(no_access)?;
+    let (session, cursor) =
+        sessions::select_tenant(&mut conn, session.id, tenant_id, membership.id).await?;
+    let token = issue::access_token(&mut conn, &state.auth, &session).await?;
+    Ok(Json(TokenResponse {
+        token,
+        refresh_token: None,
+        cursor,
     }))
 }

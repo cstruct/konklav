@@ -3,6 +3,11 @@ use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 
 use crate::{Pool, PoolError};
 
+// The migrations install the triggers that append `entitlements.changed`
+// for every write to memberships, assignments, subject state, the catalog,
+// templates and roles.
+// r[impl authz.invalidate.subject]
+// r[impl authz.invalidate.definition]
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
 #[derive(Debug, thiserror::Error)]

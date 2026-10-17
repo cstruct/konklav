@@ -104,8 +104,8 @@ or assertive. Conclave MUST NOT interpret flag names.
 r[session.flags.origin]
 Flags MUST be set only by the flow that creates or steps up a session,
 according to catalog or credential configuration, or by an explicit login
-request that the catalog allows. Relying systems MUST NOT add flags to an
-existing session.
+request that the catalog allows. Only restrictive flags may be requestable
+at login. Relying systems MUST NOT add flags to an existing session.
 
 r[session.flags.restrictive]
 A decision for a session carrying a restrictive flag MUST deny unless the

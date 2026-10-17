@@ -5,8 +5,8 @@ Tenants, subjects, credentials, memberships and facts.
 ## Tenants
 
 r[tenant.root.bootstrap]
-Conclave MUST always have a root tenant with the reserved identifier `root`,
-created before any other tenant.
+Conclave MUST always have a root tenant, created before any other tenant.
+Its identifier is the nil UUID, and APIs MUST also accept `root` for it.
 
 r[tenant.tree.single-parent]
 Every non-root tenant MUST have exactly one parent tenant.
@@ -111,6 +111,10 @@ r[fact.typed]
 Facts MUST be typed (string, integer, boolean or string list) according to
 their catalog declaration. Writing a fact that is undeclared or of the wrong
 type MUST fail.
+
+r[fact.unique-keys]
+A fact key MUST be declared for at most one target (tenant or membership),
+so that tokens can carry tenant and membership facts side by side.
 
 r[fact.portability]
 Every fact key MUST be declared portable or non-portable. Only portable

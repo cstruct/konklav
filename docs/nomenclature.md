@@ -33,7 +33,7 @@ Terms are introduced in dependency order: each definition only uses terms define
   - Relying systems typically map a tenant to a customer, organization, or account, and keep their own data partitioned by it.
 
 - `root tenant`
-  - The tenant with the reserved identifier `root`, which always exists.
+  - The tenant that always exists. Its identifier is the nil UUID, and APIs accept `root` for it.
   - It is the top of the tenant tree and the home of `global roles` (see Authorization).
 
 - `tenant tree`
@@ -96,6 +96,7 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `action group`
   - A catalog name that stands for a set of actions and is expanded when authorization is compiled.
   - It is defined either by listing actions, or by a namespace selector such as "every action not in `sys:`".
+  - Granting a group also grants the group's own name, so an operation can require the group itself.
   - Example: `tenant:all` expanding to every tenant-level action.
 
 - `scope kind`

@@ -449,3 +449,34 @@ pub async fn refresh_matches(
     .get_result(conn)
     .await?)
 }
+
+/// Points a session at a tenant through one of the subject's memberships,
+/// bumping its version so tokens for the previous context stop working.
+// r[impl authn.login.single-tenant-context]
+pub async fn select_tenant(
+    conn: &mut AsyncPgConnection,
+    id: SessionId,
+    tenant: TenantId,
+    membership: MembershipId,
+) -> StoreResult<(Session, Cursor)> {
+    conn.transaction::<_, StoreError, _>(async |conn| {
+        let row = diesel::update(session::table.find(id.as_uuid()))
+            .filter(session::revoked_at.is_null())
+            .set((
+                session::stage.eq(Stage::Tenant.as_str()),
+                session::tenant_id.eq(tenant.as_uuid()),
+                session::membership_id.eq(membership.as_uuid()),
+                session::version.eq(session::version + 1),
+                session::updated_at.eq(diesel::dsl::now),
+            ))
+            .returning(Row::as_returning())
+            .get_result(conn)
+            .await
+            .optional()?
+            .ok_or(StoreError::NotFound)?;
+        let session = Session::from(row);
+        let cursor = changed(conn, &session).await?;
+        Ok((session, cursor))
+    })
+    .await
+}

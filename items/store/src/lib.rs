@@ -4,15 +4,21 @@
 //! it through this crate. Repository functions take a connection so callers
 //! can compose them inside one transaction.
 
+pub mod catalog;
+pub mod compile_input;
 pub mod credentials;
 pub mod events;
 pub mod login_attempts;
+pub mod memberships;
 mod migrate;
 mod pool;
+pub mod roles;
 pub mod schema;
 pub mod sessions;
 pub mod signing_keys;
 pub mod subjects;
+pub mod templates;
+pub mod tenants;
 
 pub use diesel_async::AsyncPgConnection as Connection;
 pub use migrate::{MigrationError, pending_migrations, run_pending_migrations};
@@ -38,6 +44,20 @@ impl StoreError {
                 diesel::result::DatabaseErrorKind::UniqueViolation,
                 _,
             ) => Self::Conflict(format!("{what} already exists")),
+            other => Self::Database(other),
+        }
+    }
+
+    /// Maps constraint violations (foreign keys, checks, triggers) to
+    /// conflicts carrying the database's message, and anything else to a
+    /// database error.
+    fn from_constraint(error: diesel::result::Error) -> Self {
+        use diesel::result::DatabaseErrorKind as Kind;
+        match error {
+            diesel::result::Error::DatabaseError(
+                Kind::UniqueViolation | Kind::ForeignKeyViolation | Kind::CheckViolation,
+                info,
+            ) => Self::Conflict(info.message().to_owned()),
             other => Self::Database(other),
         }
     }

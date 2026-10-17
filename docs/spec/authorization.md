@@ -15,9 +15,11 @@ Action names MUST be colon-delimited. The `conclave:` namespace MUST be
 reserved for control-plane capabilities and MUST NOT be authored.
 
 r[authz.catalog.groups]
-An action group MUST expand to a fixed set of catalog actions, defined
-either by listing them or by a namespace selector (for example "every action
-not in `sys:`"). Expansion MUST happen during compilation.
+An action group MUST expand to a fixed set of catalog names, defined either
+by listing actions or by a prefix selector (for example "every name not in
+`sys:`"). Granting a group MUST also grant the group's own name, so that
+operations can require the group itself. Expansion MUST happen during
+compilation.
 
 r[authz.catalog.revision]
 Every catalog change MUST produce a new revision and an
@@ -93,6 +95,11 @@ over `allow`.
 r[authz.compile.allows-only]
 Entitlement sets MUST contain only effective allows. Denies MUST be fully
 resolved during compilation.
+
+r[authz.compile.deny-level]
+A deny MUST cancel allows only at its own level: global, tenant-wide, or the
+same scope. A tenant-wide deny does not remove an allow granted at a scope,
+and a global deny does not remove a tenant-wide allow.
 
 r[authz.compile.subsumption]
 An action granted at a higher level (global, then tenant-wide) MUST NOT be
