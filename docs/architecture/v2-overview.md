@@ -59,9 +59,17 @@ Dependencies point inward: `server` → `authn`/`authz`/`store` → `core`.
 `relying` depends only on `core`, `token` and `authz` (for evaluation), and
 the bindings depend only on `relying`.
 
-Until operator authorization lands (M6), the control-plane surface is
-guarded by a single bootstrap bearer token from the secrets file. This is a
-stopgap, not part of the specified design.
+The control-plane surface is authorized by built-in `conclave:`
+capabilities that operators hold through global roles:
+
+- `conclave:control:all`, or one per area: `subjects`, `tenants`, `authz`,
+  `sessions`, `keys`, `invites`
+- `conclave:subject:impersonate` and `conclave:delivery:read` for the
+  matching flows
+
+An optional bootstrap token from the secrets file is accepted for
+everything. It exists to create the first operator and should then be
+removed.
 
 ## Adoption path for an existing relying system
 

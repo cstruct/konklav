@@ -103,14 +103,16 @@ config_tree! {
 }
 
 config_tree! {
-    /// Control-plane access. Until operator authorization arrives (M6), the
-    /// control surface accepts one static bearer token.
+    /// Control-plane access. Operators authenticate with access tokens and
+    /// need `conclave:` capabilities. A bootstrap token, if configured, is
+    /// accepted for everything: use it to create the first operator, then
+    /// remove it.
     #[derive(Debug, Clone, PartialEq)]
     pub struct ControlConfig {
-        pub control: pub struct Control {
+        pub control: Option<pub struct Control {
             #[config(secret)]
-            pub bootstrap_token: String,
-        },
+            pub bootstrap_token: Option<String>,
+        }>,
     }
 }
 
@@ -213,10 +215,12 @@ impl Database {
     }
 }
 
-impl Control {
+impl ControlConfig {
     #[must_use]
-    pub fn control_token(&self) -> String {
-        self.bootstrap_token.clone()
+    pub fn bootstrap_token(&self) -> Option<String> {
+        self.control
+            .as_ref()
+            .and_then(|c| c.bootstrap_token.clone())
     }
 }
 

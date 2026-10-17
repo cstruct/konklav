@@ -186,3 +186,28 @@ pub async fn set_facts(
         .map(Tenant::from)
         .ok_or(StoreError::NotFound)
 }
+
+/// Tenants, newest first, optionally only children of `parent`.
+pub async fn list(
+    conn: &mut AsyncPgConnection,
+    parent: Option<TenantId>,
+    before: Option<TenantId>,
+    limit: i64,
+) -> StoreResult<Vec<Tenant>> {
+    let mut query = tenant::table.into_boxed();
+    if let Some(parent) = parent {
+        query = query.filter(tenant::parent_id.eq(uuid::Uuid::from(parent)));
+    }
+    if let Some(before) = before {
+        query = query.filter(tenant::id.lt(uuid::Uuid::from(before)));
+    }
+    Ok(query
+        .order(tenant::id.desc())
+        .limit(limit)
+        .select(Row::as_select())
+        .load(conn)
+        .await?
+        .into_iter()
+        .map(Tenant::from)
+        .collect())
+}

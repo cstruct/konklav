@@ -55,7 +55,7 @@ async fn server() -> Server {
             hasher: conclave_authn::PasswordHasher::new(8, 1, 1).unwrap(),
             signer: keys.signer,
             browser: None,
-            control_token: CONTROL.into(),
+            control_token: Some(CONTROL.into()),
             secrets: conclave_authn::SecretBox::new([]).unwrap(),
         }),
         feed: Arc::new(FeedHub::new(Duration::from_millis(100))),

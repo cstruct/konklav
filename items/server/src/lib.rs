@@ -41,8 +41,8 @@ pub struct AuthContext {
     pub hasher: PasswordHasher,
     pub signer: Signer,
     pub browser: Option<BrowserSettings>,
-    /// The interim control-plane bearer token (until M6).
-    pub control_token: String,
+    /// The bootstrap control-plane token, if configured.
+    pub control_token: Option<String>,
     /// Encrypts TOTP seeds.
     pub secrets: conclave_authn::SecretBox,
 }
@@ -64,7 +64,7 @@ impl AuthContext {
     pub fn new(
         tokens: &config::Tokens,
         browser: Option<&config::Browser>,
-        control: &config::Control,
+        control: &config::ControlConfig,
         signer: Signer,
     ) -> Self {
         Self {
@@ -78,7 +78,7 @@ impl AuthContext {
                 allowed_origins: browser.allowed_origins.clone(),
                 secure_cookies: browser.secure_cookies,
             }),
-            control_token: control.control_token(),
+            control_token: control.bootstrap_token(),
             secrets: conclave_authn::SecretBox::new([]).expect("an empty key set is valid"),
         }
     }

@@ -60,6 +60,7 @@ fn workspace(id: &str) -> Scope {
 
 fn role(level: Level, priority: i32, policies: Vec<Policy>) -> Assignment {
     Assignment {
+        label: format!("role at priority {priority}"),
         level,
         priority,
         template_policies: vec![],
@@ -208,6 +209,7 @@ fn higher_levels_subsume_lower_ones() {
 #[test]
 fn role_policies_replace_template_policies_for_the_same_action() {
     let assignment = Assignment {
+        label: String::new(),
         level: Level::Tenant,
         priority: 0,
         template_policies: vec![allow("workspace:read"), allow("workspace:write")],
@@ -224,6 +226,7 @@ fn overrides_match_the_unexpanded_name() {
     // A role denying one action doesn't replace the template's group: both
     // apply, and the deny wins only on its action at equal priority.
     let assignment = Assignment {
+        label: String::new(),
         level: Level::Tenant,
         priority: 0,
         template_policies: vec![allow("tenant:all")],
@@ -286,4 +289,29 @@ fn entitlements_round_trip_through_json() {
 
 fn serde_json_like(entitlements: &Entitlements) -> String {
     serde_json::to_string(entitlements).unwrap()
+}
+
+// r[verify authz.explain]
+#[test]
+fn explanations_name_every_contributing_policy() {
+    use conclave_authz::explain;
+    let w1 = workspace("w1");
+    let assignments = [
+        role(Level::Tenant, 1, vec![allow("tenant:all")]),
+        role(Level::Tenant, 5, vec![deny("patient:read")]),
+        role(Level::Scope(w1), 0, vec![scoped(allow("patient:read"))]),
+    ];
+    let explanation = explain(&catalog(), &assignments, "patient:read");
+    assert_eq!(explanation.contributions.len(), 3);
+    assert_eq!(
+        explanation.contributions[0].policy, "tenant:all",
+        "named as written"
+    );
+    assert_eq!(explanation.contributions[1].effect, Effect::Deny);
+    assert_eq!(explanation.contributions[2].level, "workspace/w1");
+    assert_eq!(
+        explanation.granted_at,
+        vec!["workspace/w1"],
+        "the tenant-wide deny wins tenant-wide only"
+    );
 }

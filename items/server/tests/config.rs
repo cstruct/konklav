@@ -90,7 +90,7 @@ fn environment_overrides_the_config_file() {
     assert_eq!(tokens.tokens.access_ttl_seconds, 900, "default applies");
     assert_eq!(tokens.tokens.published_key_files, Vec::<String>::new());
     assert_eq!(browser.browser, None);
-    assert_eq!(control.control.bootstrap_token, "t");
+    assert_eq!(control.bootstrap_token().as_deref(), Some("t"));
     assert_eq!(
         feed.retention(),
         chrono::Duration::hours(168),

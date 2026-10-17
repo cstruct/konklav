@@ -3,7 +3,6 @@
 
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::middleware;
 use axum::response::Response;
 use axum::routing::post;
 use axum::{Json, Router};
@@ -21,18 +20,15 @@ use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
-use crate::AppState;
-use crate::control_api::require_control_token;
+use crate::control_api::guard;
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::subject_api::start_passwordless_session;
+use crate::{AppState, capabilities};
 
 pub fn control_routes(state: &AppState) -> Router<AppState> {
     Router::new()
         .route("/invites", post(create_invite))
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            require_control_token,
-        ))
+        .route_layer(guard(state, capabilities::INVITES))
 }
 
 pub fn subject_routes() -> Router<AppState> {

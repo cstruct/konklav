@@ -186,3 +186,25 @@ pub async fn list_for_subject(
         .map(Membership::from)
         .collect())
 }
+
+/// A tenant's memberships, oldest first, optionally only active ones.
+pub async fn list_for_tenant(
+    conn: &mut AsyncPgConnection,
+    tenant: TenantId,
+    active_only: bool,
+) -> StoreResult<Vec<Membership>> {
+    let mut query = membership::table
+        .filter(membership::tenant_id.eq(tenant.as_uuid()))
+        .into_boxed();
+    if active_only {
+        query = query.filter(membership::state.eq("active"));
+    }
+    Ok(query
+        .order(membership::created_at.asc())
+        .select(Row::as_select())
+        .load(conn)
+        .await?
+        .into_iter()
+        .map(Membership::from)
+        .collect())
+}

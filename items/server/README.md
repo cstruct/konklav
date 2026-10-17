@@ -41,9 +41,10 @@ The Conclave server binary. It serves the subject-facing, relying and control-pl
   - templates and roles, where roles of `root` are global roles
   - global assignments
   - invites (`POST /v1/invites`)
-  - an operator view of a subject's entitlements
+  - an operator view of a subject's entitlements, with explanations (`/v1/subjects/{id}/explain`)
+  - listings of subjects (by kind or login identifier), tenants (by parent) and a tenant's memberships
 
-  Until operator authorization arrives in M6, the control plane is guarded by one bootstrap bearer token from the secrets file.
+  Each area requires a `conclave:` capability, held through a global role (`conclave:control:all` covers everything). An optional bootstrap token from the secrets file is also accepted; use it to create the first operator, then remove it.
 
 ## Public interface
 

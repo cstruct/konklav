@@ -3,7 +3,6 @@
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
@@ -19,27 +18,31 @@ use conclave_store::{Connection, StoreError, compile_input, events, subjects};
 use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 
-use crate::AppState;
-use crate::control_api::{Written, parse_id, require_control_token};
+use crate::control_api::{Written, guard, parse_id};
 use crate::error::{ApiError, ApiJson, ErrorCode};
+use crate::{AppState, capabilities};
 
 pub fn routes(state: &AppState) -> Router<AppState> {
-    Router::new()
-        .route("/catalog", get(get_catalog).put(put_catalog))
+    let tenancy = Router::new()
+        .route("/tenants", get(list_tenants))
         .route("/tenants/{id}", put(create_tenant).get(get_tenant))
         .route("/tenants/{id}/facts", put(set_tenant_facts))
         .route("/tenants/{id}/state", put(set_tenant_state))
-        .route("/tenants/{id}/roles", get(list_roles))
-        .route(
-            "/tenants/{id}/roles/{key}",
-            put(put_role).get(get_role).delete(delete_role),
-        )
+        .route("/tenants/{id}/memberships", get(list_memberships))
         .route(
             "/memberships/{id}",
             put(create_membership).get(get_membership),
         )
         .route("/memberships/{id}/facts", put(set_membership_facts))
         .route("/memberships/{id}/end", post(end_membership))
+        .route_layer(guard(state, capabilities::TENANTS));
+    let authz = Router::new()
+        .route("/catalog", get(get_catalog).put(put_catalog))
+        .route("/tenants/{id}/roles", get(list_roles))
+        .route(
+            "/tenants/{id}/roles/{key}",
+            put(put_role).get(get_role).delete(delete_role),
+        )
         .route(
             "/memberships/{id}/assignments",
             post(assign_membership_role),
@@ -49,13 +52,12 @@ pub fn routes(state: &AppState) -> Router<AppState> {
             post(assign_global_role).get(list_global_assignments),
         )
         .route("/subjects/{id}/entitlements", get(subject_entitlements))
+        .route("/subjects/{id}/explain", get(explain_entitlement))
         .route("/assignments/{id}", delete(unassign))
         .route("/templates", get(list_templates))
         .route("/templates/{key}", put(put_template).get(get_template))
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            require_control_token,
-        ))
+        .route_layer(guard(state, capabilities::AUTHZ));
+    tenancy.merge(authz)
 }
 
 fn tenant_ref(value: &str) -> Result<TenantId, ApiError> {
@@ -626,4 +628,75 @@ async fn subject_entitlements(
     let mut conn = state.pool.get().await?;
     let input = compile_input::load(&mut conn, id, tenant).await?;
     Ok(Json(compile(&input.catalog, &input.assignments)))
+}
+
+#[derive(Deserialize)]
+struct TenantQuery {
+    parent: Option<String>,
+    before: Option<TenantId>,
+    limit: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct TenantPage {
+    tenants: Vec<Tenant>,
+    next: Option<TenantId>,
+}
+
+/// `GET /v1/tenants?parent=&before=&limit=`
+async fn list_tenants(
+    State(state): State<AppState>,
+    Query(query): Query<TenantQuery>,
+) -> Result<Json<TenantPage>, ApiError> {
+    let parent = query.parent.as_deref().map(tenant_ref).transpose()?;
+    let limit = query.limit.unwrap_or(50).clamp(1, 500);
+    let mut conn = state.pool.get().await?;
+    let tenants = tenants::list(&mut conn, parent, query.before, limit).await?;
+    let next = (i64::try_from(tenants.len()) == Ok(limit))
+        .then(|| tenants.last().map(|t| t.id))
+        .flatten();
+    Ok(Json(TenantPage { tenants, next }))
+}
+
+#[derive(Deserialize)]
+struct MembershipQuery {
+    #[serde(default)]
+    active: bool,
+}
+
+/// `GET /v1/tenants/{id}/memberships?active=`
+async fn list_memberships(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<MembershipQuery>,
+) -> Result<Json<Vec<Membership>>, ApiError> {
+    let tenant = tenant_ref(&id)?;
+    let mut conn = state.pool.get().await?;
+    Ok(Json(
+        memberships::list_for_tenant(&mut conn, tenant, query.active).await?,
+    ))
+}
+
+#[derive(Deserialize)]
+struct ExplainQuery {
+    tenant: Option<String>,
+    action: String,
+}
+
+/// `GET /v1/subjects/{id}/explain?tenant=&action=`: which assignments and
+/// policies bear on an action, and where it ends up granted.
+async fn explain_entitlement(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<ExplainQuery>,
+) -> Result<Json<conclave_authz::Explanation>, ApiError> {
+    let id: SubjectId = parse_id(&id, "subject id")?;
+    let tenant = query.tenant.as_deref().map(tenant_ref).transpose()?;
+    let mut conn = state.pool.get().await?;
+    let input = compile_input::load(&mut conn, id, tenant).await?;
+    Ok(Json(conclave_authz::explain(
+        &input.catalog,
+        &input.assignments,
+        &query.action,
+    )))
 }

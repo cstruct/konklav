@@ -24,11 +24,12 @@ use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
-use crate::AppState;
 use crate::error::{ApiError, ApiJson, ErrorCode};
+use crate::{AppState, capabilities};
 
 pub fn routes(state: &AppState) -> Router<AppState> {
-    Router::new()
+    let subjects = Router::new()
+        .route("/subjects", get(list_subjects))
         .route("/subjects/{id}", put(create_subject).get(get_subject))
         .route("/subjects/{id}/disable", post(disable_subject))
         .route("/subjects/{id}/enable", post(enable_subject))
@@ -39,37 +40,92 @@ pub fn routes(state: &AppState) -> Router<AppState> {
             "/credentials/{id}/slots/{slot}/rotate",
             post(rotate_secret_slot),
         )
+        .route_layer(guard(state, capabilities::SUBJECTS));
+    let sessions = Router::new()
         .route("/sessions", get(list_sessions))
         .route("/sessions/revoke", post(revoke_sessions))
         .route("/sessions/{id}", get(get_session))
+        .route_layer(guard(state, capabilities::SESSIONS));
+    let keys = Router::new()
         .route("/signing-keys", get(list_signing_keys))
         .route("/signing-keys/{kid}/revoke", post(revoke_signing_key))
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            require_control_token,
-        ))
+        .route_layer(guard(state, capabilities::KEYS));
+    subjects.merge(sessions).merge(keys)
 }
 
-pub(crate) async fn require_control_token(
-    State(state): State<AppState>,
+/// Guards control-plane routes: the bootstrap token (when configured), or an
+/// operator's access token whose subject holds `capability` or
+/// `conclave:control:all`.
+pub(crate) fn guard(state: &AppState, capability: &'static str) -> GuardLayer {
+    middleware::from_fn_with_state(
+        (state.clone(), capability),
+        check_operator as fn(_, _, _) -> _,
+    )
+}
+
+type GuardFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>>;
+type GuardState = (AppState, &'static str);
+type GuardLayer = axum::middleware::FromFnLayer<
+    fn(State<GuardState>, Request, Next) -> GuardFuture,
+    GuardState,
+    (State<GuardState>, Request),
+>;
+
+// r[impl authz.control-plane.capability.built-in]
+fn check_operator(
+    State((state, capability)): State<(AppState, &'static str)>,
     request: Request,
     next: Next,
-) -> Response {
-    let presented = request
-        .headers()
+) -> GuardFuture {
+    Box::pin(async move {
+        match authorize_operator(&state, capability, request.headers()).await {
+            Ok(()) => next.run(request).await,
+            Err(error) => error.into_response(),
+        }
+    })
+}
+
+async fn authorize_operator(
+    state: &AppState,
+    capability: &'static str,
+    headers: &axum::http::HeaderMap,
+) -> Result<(), ApiError> {
+    let presented = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .unwrap_or_default();
-    let expected = state.auth.control_token.as_bytes();
-    if presented.as_bytes().ct_eq(expected).into() {
-        next.run(request).await
+        .ok_or_else(|| {
+            ApiError::new(
+                ErrorCode::Unauthenticated,
+                "missing control-plane credentials",
+            )
+        })?;
+    if let Some(bootstrap) = &state.auth.control_token
+        && bool::from(presented.as_bytes().ct_eq(bootstrap.as_bytes()))
+    {
+        return Ok(());
+    }
+    let mut conn = state.pool.get().await?;
+    let (_, session) = crate::subject_api::verify_access_token(state, &mut conn, presented)
+        .await
+        .map_err(|_| {
+            ApiError::new(
+                ErrorCode::Unauthenticated,
+                "missing or invalid control-plane credentials",
+            )
+        })?;
+    if session.stage == conclave_store::sessions::Stage::Partial {
+        return Err(ApiError::new(ErrorCode::Forbidden, "complete MFA first"));
+    }
+    if capabilities::holds(&mut conn, session.subject_id, capabilities::CONTROL_ALL).await?
+        || capabilities::holds(&mut conn, session.subject_id, capability).await?
+    {
+        Ok(())
     } else {
-        ApiError::new(
-            ErrorCode::Unauthenticated,
-            "missing or invalid control-plane token",
-        )
-        .into_response()
+        Err(ApiError::new(
+            ErrorCode::Forbidden,
+            format!("missing capability {capability}"),
+        ))
     }
 }
 
@@ -112,6 +168,45 @@ impl From<Subject> for SubjectView {
             created_at: subject.created_at,
         }
     }
+}
+
+#[derive(Deserialize)]
+struct SubjectQuery {
+    kind: Option<SubjectKind>,
+    /// A login identifier (email address, phone number or key id).
+    identifier: Option<String>,
+    before: Option<SubjectId>,
+    limit: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct SubjectPage {
+    subjects: Vec<SubjectView>,
+    next: Option<SubjectId>,
+}
+
+/// `GET /v1/subjects?kind=&identifier=&before=&limit=`
+async fn list_subjects(
+    State(state): State<AppState>,
+    Query(query): Query<SubjectQuery>,
+) -> Result<Json<SubjectPage>, ApiError> {
+    let limit = query.limit.unwrap_or(50).clamp(1, 500);
+    let mut conn = state.pool.get().await?;
+    let subjects = subjects::list(
+        &mut conn,
+        query.kind,
+        query.identifier.as_deref(),
+        query.before,
+        limit,
+    )
+    .await?;
+    let next = (i64::try_from(subjects.len()) == Ok(limit))
+        .then(|| subjects.last().map(|s| s.id))
+        .flatten();
+    Ok(Json(SubjectPage {
+        subjects: subjects.into_iter().map(SubjectView::from).collect(),
+        next,
+    }))
 }
 
 #[derive(Deserialize)]

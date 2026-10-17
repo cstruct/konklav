@@ -7,6 +7,13 @@ use conclave_store::{Connection, compile_input};
 use crate::error::{ApiError, ErrorCode};
 
 pub const IMPERSONATE: &str = "conclave:subject:impersonate";
+pub const CONTROL_ALL: &str = "conclave:control:all";
+pub const SUBJECTS: &str = "conclave:subjects:manage";
+pub const TENANTS: &str = "conclave:tenants:manage";
+pub const AUTHZ: &str = "conclave:authz:manage";
+pub const SESSIONS: &str = "conclave:sessions:manage";
+pub const KEYS: &str = "conclave:keys:manage";
+pub const INVITES: &str = "conclave:invites:manage";
 pub const DELIVERY_READ: &str = "conclave:delivery:read";
 
 /// Whether `subject` holds `capability` through its global assignments.

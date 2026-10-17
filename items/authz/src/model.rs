@@ -88,6 +88,9 @@ pub enum Level {
 /// One active role assignment with its role's policies.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Assignment {
+    /// Names the assignment in explanations, such as the role key and
+    /// assignment id. Not used for compilation.
+    pub label: String,
     pub level: Level,
     pub priority: i32,
     /// The policies of the role's template, if any.

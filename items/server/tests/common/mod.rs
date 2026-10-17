@@ -65,7 +65,7 @@ pub fn auth_context(signer: Signer) -> AuthContext {
             allowed_origins: vec![ORIGIN.into()],
             secure_cookies: true,
         }),
-        control_token: CONTROL_TOKEN.into(),
+        control_token: Some(CONTROL_TOKEN.into()),
         secrets: conclave_authn::SecretBox::new([("test", TOTP_KEY)]).unwrap(),
     }
 }
@@ -73,6 +73,23 @@ pub fn auth_context(signer: Signer) -> AuthContext {
 impl TestApp {
     pub async fn new() -> Self {
         Self::with_key(1).await
+    }
+
+    /// An app whose control plane has no bootstrap token.
+    pub async fn without_bootstrap() -> Self {
+        let app = Self::with_key(1).await;
+        let mut auth = auth_context(Signer::new(SigningKey::from_bytes(&[1; 32])));
+        auth.control_token = None;
+        let state = AppState {
+            auth: Arc::new(auth),
+            ..app.state.clone()
+        };
+        let router = surface::router(&Surface::ALL, state.clone());
+        Self {
+            db: app.db,
+            state,
+            router,
+        }
     }
 
     pub async fn with_key(seed: u8) -> Self {

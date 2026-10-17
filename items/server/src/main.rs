@@ -123,12 +123,7 @@ async fn serve(
         Ok(mut conn) => keys.sync(&mut conn).await?,
         Err(error) => tracing::warn!(%error, "could not publish signing keys at startup"),
     }
-    let mut auth = AuthContext::new(
-        &tokens,
-        browser.browser.as_ref(),
-        &control.control,
-        keys.signer,
-    );
+    let mut auth = AuthContext::new(&tokens, browser.browser.as_ref(), &control, keys.signer);
     if let Some(mfa) = &mfa.mfa {
         auth.secrets = conclave_authn::SecretBox::new(
             mfa.totp_keys

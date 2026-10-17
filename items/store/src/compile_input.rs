@@ -10,7 +10,8 @@ use crate::catalog::{self, CatalogDocument};
 use crate::schema::{membership, role, role_assignment, subject, tenant};
 use crate::{StoreError, StoreResult, events, roles, templates};
 
-/// (role id, priority, template id, via a membership, scope kind, scope id)
+/// (role id, priority, template id, via a membership, scope kind, scope id,
+/// role key, assignment id)
 type AssignmentRow = (
     uuid::Uuid,
     i32,
@@ -18,6 +19,8 @@ type AssignmentRow = (
     bool,
     Option<String>,
     Option<String>,
+    String,
+    uuid::Uuid,
 );
 
 /// Compiler input plus the revision it reflects.
@@ -76,6 +79,8 @@ pub async fn load(
                     diesel::dsl::sql::<diesel::sql_types::Bool>("false"),
                     role_assignment::scope_kind,
                     role_assignment::scope_id,
+                    role::key,
+                    role_assignment::id,
                 ))
                 .load(conn)
                 .await?;
@@ -94,6 +99,8 @@ pub async fn load(
                         diesel::dsl::sql::<diesel::sql_types::Bool>("true"),
                         role_assignment::scope_kind,
                         role_assignment::scope_id,
+                        role::key,
+                        role_assignment::id,
                     ))
                     .load::<AssignmentRow>(conn)
                     .await?;
@@ -114,8 +121,9 @@ pub async fn load(
             let assignments = rows
                 .into_iter()
                 .map(
-                    |(role_id, priority, template_id, in_tenant, scope_kind, scope_id)| {
+                    |(role_id, priority, template_id, in_tenant, scope_kind, scope_id, key, id)| {
                         Assignment {
+                            label: format!("{key} ({id})"),
                             level: match (in_tenant, scope_kind.zip(scope_id)) {
                                 (false, _) => Level::Global,
                                 (true, None) => Level::Tenant,

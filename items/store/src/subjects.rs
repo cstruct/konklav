@@ -149,3 +149,39 @@ pub async fn set_state(
         .await?;
     Ok(previous)
 }
+
+/// Subjects, newest first, optionally only those of `kind` or holding an
+/// active credential with this login identifier. Pass the last id of a page
+/// as `before` for the next.
+pub async fn list(
+    conn: &mut AsyncPgConnection,
+    kind: Option<SubjectKind>,
+    identifier: Option<&str>,
+    before: Option<SubjectId>,
+    limit: i64,
+) -> StoreResult<Vec<Subject>> {
+    use crate::schema::credential;
+    let mut query = subject::table.into_boxed();
+    if let Some(kind) = kind {
+        query = query.filter(subject::kind.eq(kind.as_str()));
+    }
+    if let Some(identifier) = identifier {
+        let owners = credential::table
+            .filter(credential::identifier.eq(crate::credentials::normalize_identifier(identifier)))
+            .filter(credential::revoked_at.is_null())
+            .select(credential::subject_id);
+        query = query.filter(subject::id.eq_any(owners));
+    }
+    if let Some(before) = before {
+        query = query.filter(subject::id.lt(uuid::Uuid::from(before)));
+    }
+    Ok(query
+        .order(subject::id.desc())
+        .limit(limit)
+        .select(Row::as_select())
+        .load(conn)
+        .await?
+        .into_iter()
+        .map(Subject::from)
+        .collect())
+}
