@@ -162,6 +162,17 @@ class RelyingClient:
             await asyncio.gather(*(self._fetch(need) for need in needs))
         raise ConclaveError("could not load entitlements")
 
+    async def events(self, after: int, kinds: list[str] | None = None, limit: int = 100) -> dict[str, Any]:
+        """
+        A page of the change feed after `after`: `{"events": [...], "next":
+        cursor, "reset": bool}`. For consumers that keep their own cursor,
+        such as a delivery worker.
+        """
+        query = f"?after={after}&limit={limit}"
+        if kinds:
+            query += "&kinds=" + ",".join(kinds)
+        return _checked(await self._get(f"/v1/events/batch{query}")).json()
+
     async def await_cursor(self, cursor: int, timeout: float = 5.0) -> bool:
         """Wait until this client reflects every change up to `cursor`."""
         deadline = time.monotonic() + timeout
