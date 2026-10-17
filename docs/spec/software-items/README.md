@@ -29,5 +29,6 @@ Planned software items for v2 (see
 - `relying-client`
 - `py`
 - `cli`
+- `test-support` (test-only)
 
 Specs are added as each item is built.

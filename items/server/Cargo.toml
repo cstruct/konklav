@@ -1,0 +1,34 @@
+[package]
+name = "conclave-server"
+description = "The Conclave server: subject-facing, relying and control-plane HTTP surfaces"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+axum.workspace = true
+clap.workspace = true
+conclave-store.workspace = true
+facet.workspace = true
+ordna-core.workspace = true
+ordna-source-env.workspace = true
+ordna-source-file.workspace = true
+ordna-source-styx.workspace = true
+percent-encoding.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+conclave-test-support.workspace = true
+diesel.workspace = true
+diesel-async.workspace = true
+http-body-util.workspace = true
+tower = { workspace = true, features = ["util"] }
+
+[lints]
+workspace = true

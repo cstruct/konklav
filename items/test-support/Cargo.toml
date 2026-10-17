@@ -1,0 +1,17 @@
+[package]
+name = "conclave-test-support"
+description = "Test helpers: isolated databases on the development Postgres server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+conclave-store.workspace = true
+diesel.workspace = true
+diesel-async.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

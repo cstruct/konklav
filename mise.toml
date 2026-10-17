@@ -10,6 +10,8 @@ rust = { version = "1.99.0", components = "rustfmt,clippy" }
 [env]
 CONCLAVE_DEV_PG_PORT = "55432"
 DATABASE_URL = "postgres://conclave:conclave@localhost:{{env.CONCLAVE_DEV_PG_PORT}}/conclave"
+CONCLAVE_CONFIG = "{{config_root}}/config/dev.styx"
+CONCLAVE_SECRETS = "{{config_root}}/config/dev.secrets.styx"
 
 [tasks."db:up"]
 description = "Start the local Postgres and wait until it accepts connections"
@@ -34,3 +36,36 @@ run = "docker compose -f dev/compose.yaml logs --follow"
 [tasks."db:psql"]
 description = "Open psql against the local database"
 run = "docker compose -f dev/compose.yaml exec postgres psql -U conclave -d conclave"
+
+[tasks.build]
+description = "Build every crate"
+run = "cargo build --workspace"
+
+[tasks.test]
+description = "Run every test; database tests use isolated databases on the local Postgres"
+depends = ["db:up"]
+run = "cargo test --workspace"
+
+[tasks.lint]
+description = "Check formatting, lints and spec traceability"
+run = [
+    "cargo fmt --all --check",
+    "cargo clippy --workspace --all-targets -- -D warnings",
+    "tracey query validate",
+]
+
+[tasks.migrate]
+description = "Apply pending migrations to the local database"
+depends = ["db:up"]
+run = "cargo run -q -p conclave-server -- migrate"
+
+[tasks.serve]
+description = "Run the server against the local database with config/dev.styx"
+depends = ["migrate"]
+run = "cargo run -q -p conclave-server -- serve"
+
+[tasks."db:schema"]
+description = "Regenerate items/store/src/schema.rs from the migrations"
+depends = ["db:up"]
+dir = "items/store"
+run = "diesel migration run && diesel print-schema > src/schema.rs"

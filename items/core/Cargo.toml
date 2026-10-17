@@ -1,0 +1,17 @@
+[package]
+name = "conclave-core"
+description = "Identifiers and small value types shared across Conclave software items"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

@@ -1,0 +1,17 @@
+listen {
+    subject "127.0.0.1:8080"
+    relying "127.0.0.1:8081"
+    control "127.0.0.1:8082"
+}
+
+database {
+    host localhost
+    port 55432
+    name conclave
+    user conclave
+    max_connections 10
+}
+
+log {
+    filter "info,conclave_server=debug"
+}
