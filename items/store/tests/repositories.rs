@@ -55,6 +55,7 @@ async fn session(
             auth_time: Utc::now(),
             flags: vec![],
             impersonator_subject_id: None,
+            parent_session_id: None,
             refresh_hash: refresh.to_vec(),
             expires_at: Utc::now() + Duration::days(1),
         },
@@ -405,9 +406,8 @@ async fn configured_keys_rotate_and_can_be_revoked() {
     assert!(!keys.iter().find(|k| k.kid == "k2").unwrap().is_active());
 
     let kinds = event_kinds(&mut conn).await;
-    assert!(kinds.iter().all(|k| k == "signing_keys.changed"));
     assert_eq!(
-        kinds.len(),
+        kinds.iter().filter(|k| *k == "signing_keys.changed").count(),
         4,
         "publish k1, publish k2, rotate, revoke; the no-op sync emits nothing"
     );

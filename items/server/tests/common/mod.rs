@@ -24,6 +24,7 @@ pub const CONTROL_TOKEN: &str = "test-control-token";
 pub const ORIGIN: &str = "https://app.example";
 pub const ISSUER: &str = "https://auth.example";
 pub const AUDIENCE: &str = "api";
+pub const TOTP_KEY: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
 
 pub struct TestApp {
     pub db: TestDatabase,
@@ -65,6 +66,7 @@ pub fn auth_context(signer: Signer) -> AuthContext {
             secure_cookies: true,
         }),
         control_token: CONTROL_TOKEN.into(),
+        secrets: conclave_authn::SecretBox::new([("test", TOTP_KEY)]).unwrap(),
     }
 }
 

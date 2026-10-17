@@ -145,6 +145,22 @@ impl FeedConfig {
     }
 }
 
+config_tree! {
+    /// MFA secrets. TOTP seeds are encrypted with the first key; every key
+    /// decrypts, so keys rotate by prepending a new one.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct MfaConfig {
+        pub mfa: Option<pub struct Mfa {
+            #[config(secret)]
+            pub totp_keys: Vec<pub struct TotpKey {
+                pub id: String,
+                /// 32 bytes, base64.
+                pub key: String,
+            }>,
+        }>,
+    }
+}
+
 config_contexts!(
     pub ServerContexts = [
         ListenConfig,
@@ -154,6 +170,7 @@ config_contexts!(
         BrowserConfig,
         ControlConfig,
         FeedConfig,
+        MfaConfig,
     ]
 );
 
@@ -166,6 +183,7 @@ pub type ServeContexts = (
     BrowserConfig,
     ControlConfig,
     FeedConfig,
+    MfaConfig,
 );
 
 /// The contexts `migrate` needs: no listeners.

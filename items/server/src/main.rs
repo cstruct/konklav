@@ -6,7 +6,7 @@ use conclave_server::AppState;
 use conclave_server::AuthContext;
 use conclave_server::config::{
     self, BrowserConfig, ControlConfig, DatabaseConfig, FeedConfig, ListenConfig, LogConfig,
-    MigrateContexts, ServeContexts, ServerContexts, TokensConfig,
+    MfaConfig, MigrateContexts, ServeContexts, ServerContexts, TokensConfig,
 };
 use conclave_server::feed::FeedHub;
 use conclave_server::keys::ConfiguredKeys;
@@ -46,9 +46,9 @@ async fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Serve => match load::<ServeContexts>(&cli) {
-            Ok((listen, database, log, tokens, browser, control, feed)) => {
+            Ok((listen, database, log, tokens, browser, control, feed, mfa)) => {
                 init_tracing(&log);
-                serve(listen, database, tokens, browser, control, feed).await
+                serve(listen, database, tokens, browser, control, feed, mfa).await
             }
             Err(code) => return code,
         },
@@ -103,6 +103,7 @@ async fn serve(
     browser: BrowserConfig,
     control: ControlConfig,
     feed: FeedConfig,
+    mfa: MfaConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tokens = tokens.tokens;
     let keys = ConfiguredKeys::load(
@@ -122,12 +123,19 @@ async fn serve(
         Ok(mut conn) => keys.sync(&mut conn).await?,
         Err(error) => tracing::warn!(%error, "could not publish signing keys at startup"),
     }
-    let auth = AuthContext::new(
+    let mut auth = AuthContext::new(
         &tokens,
         browser.browser.as_ref(),
         &control.control,
         keys.signer,
     );
+    if let Some(mfa) = &mfa.mfa {
+        auth.secrets = conclave_authn::SecretBox::new(
+            mfa.totp_keys
+                .iter()
+                .map(|key| (key.id.as_str(), key.key.as_str())),
+        )?;
+    }
     let hub = Arc::new(FeedHub::new(feed.poll_interval()));
     tokio::spawn(conclave_server::feed::listen(
         database.database.connect_options().url,

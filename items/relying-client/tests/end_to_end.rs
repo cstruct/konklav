@@ -56,6 +56,7 @@ async fn server() -> Server {
             signer: keys.signer,
             browser: None,
             control_token: CONTROL.into(),
+            secrets: conclave_authn::SecretBox::new([]).unwrap(),
         }),
         feed: Arc::new(FeedHub::new(Duration::from_millis(100))),
     };

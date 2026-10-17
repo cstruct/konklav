@@ -20,7 +20,9 @@ It is designed around:
 
 ## Status
 
-v2 has finished milestone M4: the change feed (SSE with resume, reset and
+v2 has finished milestone M5: MFA, step-up, passwordless login, invites,
+password reset and change, impersonation, and delivery requests. Before
+that, M4 delivered the change feed (SSE with resume, reset and
 batches) and the relying SDK. The SDK is a sans-I/O core that also builds
 for wasm, with a native Rust client and a Python binding. Before that, M3
 covered tenancy and authorization. M3 adds tenants

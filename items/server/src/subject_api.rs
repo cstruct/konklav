@@ -235,6 +235,7 @@ async fn start_session(
             auth_time: now,
             flags: flags.to_vec(),
             impersonator_subject_id: None,
+            parent_session_id: None,
             refresh_hash: refresh.hash(),
             expires_at: now + state.auth.session_lifetime,
         },
@@ -633,4 +634,22 @@ async fn select_tenant(
         refresh_token: None,
         cursor,
     }))
+}
+
+/// Starts a native session after a passwordless first factor (magic link,
+/// phone code, invite), checking the subject can still log in.
+pub(crate) async fn start_passwordless_session(
+    state: &AppState,
+    conn: &mut Connection,
+    credential: &Credential,
+    amr: &str,
+) -> Result<Response, ApiError> {
+    let subject = subjects::get(conn, credential.subject_id).await?;
+    if subject.state != SubjectState::Active
+        || subject.kind != SubjectKind::Human
+        || !credential.is_active()
+    {
+        return Err(invalid_credentials());
+    }
+    start_session(state, conn, credential, amr, Client::Native, None, &[]).await
 }

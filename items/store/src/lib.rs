@@ -5,11 +5,13 @@
 //! can compose them inside one transaction.
 
 pub mod catalog;
+pub mod challenges;
 pub mod compile_input;
 pub mod credentials;
 pub mod events;
 pub mod login_attempts;
 pub mod memberships;
+pub mod mfa;
 mod migrate;
 mod pool;
 pub mod roles;

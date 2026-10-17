@@ -252,7 +252,9 @@ impl From<Credential> for CredentialView {
                 a: SlotView::from(&data.a),
                 b: SlotView::from(&data.b),
             }),
-            CredentialData::Password(_) => None,
+            CredentialData::Password(_) | CredentialData::EmailLink | CredentialData::PhoneOtp => {
+                None
+            }
         };
         Self {
             id: credential.id,
@@ -282,6 +284,16 @@ enum CreateCredential {
     SecretKey {
         id: Option<CredentialId>,
         expires_at: Option<DateTime<Utc>>,
+    },
+    /// Log in with a magic link sent to `identifier`, an email address.
+    EmailLink {
+        id: Option<CredentialId>,
+        identifier: String,
+    },
+    /// Log in with a code sent to `identifier`, an E.164 phone number.
+    PhoneOtp {
+        id: Option<CredentialId>,
+        identifier: String,
     },
 }
 
@@ -343,6 +355,7 @@ async fn create_credential(
         .await
         .map_err(|_| ApiError::not_found("subject"))?;
 
+    let is_email = matches!(body, CreateCredential::EmailLink { .. });
     let (new, secret_keys) = match body {
         CreateCredential::Password {
             id,
@@ -379,6 +392,11 @@ async fn create_credential(
             };
             (new, None)
         }
+        CreateCredential::EmailLink { id, identifier }
+        | CreateCredential::PhoneOtp { id, identifier } => (
+            passwordless_credential(&subject, id, identifier, is_email)?,
+            None,
+        ),
         CreateCredential::SecretKey { id, expires_at } => {
             if subject.kind != SubjectKind::Service {
                 return Err(ApiError::invalid_request(
@@ -411,6 +429,46 @@ async fn create_credential(
             secret_keys,
         }),
     ))
+}
+
+/// A magic-link (`email`) or phone-code credential for a person.
+fn passwordless_credential(
+    subject: &Subject,
+    id: Option<CredentialId>,
+    identifier: String,
+    email: bool,
+) -> Result<NewCredential, ApiError> {
+    if subject.kind != SubjectKind::Human {
+        return Err(ApiError::invalid_request(
+            "service principals cannot use interactive credentials",
+        ));
+    }
+    let valid = if email {
+        identifier.contains('@')
+    } else {
+        identifier.len() > 7
+            && identifier.starts_with('+')
+            && identifier[1..].chars().all(|c| c.is_ascii_digit())
+    };
+    if !valid {
+        return Err(ApiError::invalid_request(if email {
+            "identifier must be an email address"
+        } else {
+            "identifier must be an E.164 phone number"
+        }));
+    }
+    Ok(NewCredential {
+        id: id.unwrap_or_else(CredentialId::new_v7),
+        subject_id: subject.id,
+        identifier,
+        data: if email {
+            CredentialData::EmailLink
+        } else {
+            CredentialData::PhoneOtp
+        },
+        mfa_factors_required: 0,
+        replaces: None,
+    })
 }
 
 #[derive(Default, Deserialize)]

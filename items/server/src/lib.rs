@@ -1,12 +1,15 @@
 //! The Conclave server: one binary serving the subject-facing, relying and
 //! control-plane surfaces.
 
+mod capabilities;
 pub mod config;
 mod control_api;
 mod control_authz;
 pub mod error;
 pub mod feed;
+mod flows;
 pub mod health;
+mod invites;
 mod issue;
 pub mod keys;
 mod relying_api;
@@ -40,6 +43,8 @@ pub struct AuthContext {
     pub browser: Option<BrowserSettings>,
     /// The interim control-plane bearer token (until M6).
     pub control_token: String,
+    /// Encrypts TOTP seeds.
+    pub secrets: conclave_authn::SecretBox,
 }
 
 #[derive(Clone, Debug)]
@@ -49,7 +54,12 @@ pub struct BrowserSettings {
 }
 
 impl AuthContext {
-    /// Builds the context from configuration and the already-loaded signer.
+    /// Builds the context from configuration and the already-loaded signer,
+    /// with no MFA encryption keys (set `secrets` to add them).
+    ///
+    /// # Panics
+    ///
+    /// Never: an empty key set is always valid.
     #[must_use]
     pub fn new(
         tokens: &config::Tokens,
@@ -69,6 +79,7 @@ impl AuthContext {
                 secure_cookies: browser.secure_cookies,
             }),
             control_token: control.control_token(),
+            secrets: conclave_authn::SecretBox::new([]).expect("an empty key set is valid"),
         }
     }
 }

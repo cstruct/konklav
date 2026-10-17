@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use chrono::Utc;
 use conclave_store::Connection;
 use conclave_store::catalog::{self, FactTarget};
-use conclave_store::sessions::{Session, Stage};
+use conclave_store::sessions::{self, Session, Stage};
 use conclave_store::{memberships, signing_keys, tenants};
 use conclave_token::{AccessClaims, Actor, TokenKind};
 use serde::Serialize;
@@ -88,9 +88,16 @@ pub async fn access_token(
         mid: session.membership_id,
         sfl: session.flags.clone(),
         fct: portable_facts(conn, session).await?,
-        act: session
-            .impersonator_subject_id
-            .map(|sub| Actor { sub, tid: None }),
+        act: match session.impersonator_subject_id {
+            Some(sub) => {
+                let tid = match session.parent_session_id {
+                    Some(parent) => sessions::get(conn, parent).await?.tenant_id,
+                    None => None,
+                };
+                Some(Actor { sub, tid })
+            }
+            None => None,
+        },
     };
     Ok(IssuedToken {
         access_token: auth.signer.sign(&claims),

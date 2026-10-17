@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 use crate::schema::{catalog_action, catalog_fact, catalog_scope_kind, catalog_session_flag};
 use crate::{StoreError, StoreResult};
 
+/// Built-in control-plane capabilities share this prefix.
+pub const CAPABILITY_PREFIX: &str = "conclave:";
+
 /// The most portable facts, in bytes of JSON, that one tenant or one
 /// membership may carry into tokens.
 pub const MAX_PORTABLE_FACT_BYTES: usize = 1024;
@@ -224,7 +227,7 @@ impl CatalogDocument {
             .chain(self.groups.iter().map(|g| &g.name))
         {
             // r[impl authz.catalog.names]
-            if name.starts_with("conclave:") {
+            if name.starts_with(CAPABILITY_PREFIX) {
                 return Err(format!("`{name}` is in the reserved conclave: namespace"));
             }
             if !names.insert(name) {
@@ -274,6 +277,7 @@ struct ActionRow {
 pub async fn load(conn: &mut AsyncPgConnection) -> StoreResult<CatalogDocument> {
     let mut document = CatalogDocument::default();
     let rows = catalog_action::table
+        .filter(catalog_action::builtin.eq(false))
         .order(catalog_action::name.asc())
         .select((
             catalog_action::name,
@@ -382,10 +386,14 @@ async fn replace_actions(
         .map(|a| a.name.as_str())
         .chain(document.groups.iter().map(|g| g.name.as_str()))
         .collect();
-    diesel::delete(catalog_action::table.filter(catalog_action::name.ne_all(&names)))
-        .execute(conn)
-        .await
-        .map_err(StoreError::from_constraint)?;
+    diesel::delete(
+        catalog_action::table
+            .filter(catalog_action::builtin.eq(false))
+            .filter(catalog_action::name.ne_all(&names)),
+    )
+    .execute(conn)
+    .await
+    .map_err(StoreError::from_constraint)?;
     for action in &document.actions {
         diesel::insert_into(catalog_action::table)
             .values((

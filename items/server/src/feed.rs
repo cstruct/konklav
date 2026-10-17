@@ -17,9 +17,9 @@ use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
-use crate::AppState;
 use crate::error::ApiError;
 use crate::relying_api::require_service;
+use crate::{AppState, capabilities};
 
 /// The interval between heartbeat comments on idle streams.
 // r[impl feed.sse.heartbeat]
@@ -142,11 +142,31 @@ async fn resume_point(
     }
 }
 
+const DELIVERY: &str = "delivery.requested";
+
+/// Whether a consumer sees `event`: it matches the kinds filter, and delivery
+/// requests only go to holders of the delivery capability.
+fn visible(event: &events::Event, kinds: Option<&BTreeSet<String>>, delivery: bool) -> bool {
+    kinds.is_none_or(|kinds| kinds.contains(&event.kind)) && (event.kind != DELIVERY || delivery)
+}
+
+/// Converts an outbox row, removing challenge material from delivery
+/// requests whose challenge has expired, so replays reveal nothing usable.
+// r[impl challenge.delivery.no-replay]
 fn to_feed_event(event: events::Event) -> FeedEvent {
+    let mut payload = event.payload;
+    if event.kind == DELIVERY {
+        let expired = payload["expires_at"]
+            .as_i64()
+            .is_none_or(|at| at <= chrono::Utc::now().timestamp());
+        if expired && let Some(object) = payload.as_object_mut() {
+            object.remove("material");
+        }
+    }
     FeedEvent {
         cursor: Cursor::new(event.cursor),
         kind: event.kind,
-        payload: event.payload,
+        payload,
     }
 }
 
@@ -162,6 +182,8 @@ struct StreamState {
     hub: std::sync::Arc<FeedHub>,
     cursor: Cursor,
     kinds: Option<BTreeSet<String>>,
+    /// Whether the consumer may read delivery requests.
+    delivery: bool,
     buffer: VecDeque<FeedEvent>,
 }
 
@@ -177,7 +199,8 @@ async fn stream_events(
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let mut conn = state.pool.get().await?;
     // r[impl feed.authorization]
-    require_service(&state, &mut conn, &headers).await?;
+    let caller = require_service(&state, &mut conn, &headers).await?;
+    let delivery = capabilities::holds(&mut conn, caller, capabilities::DELIVERY_READ).await?;
     let requested = headers
         .get("last-event-id")
         .and_then(|v| v.to_str().ok())
@@ -200,6 +223,7 @@ async fn stream_events(
         hub: state.feed.clone(),
         cursor,
         kinds: kinds(&query),
+        delivery,
         buffer,
     };
     let stream = futures_util::stream::unfold(initial, |mut state| async move {
@@ -223,11 +247,7 @@ async fn stream_events(
             }
             for event in page {
                 state.cursor = Cursor::new(event.cursor);
-                if state
-                    .kinds
-                    .as_ref()
-                    .is_none_or(|kinds| kinds.contains(&event.kind))
-                {
+                if visible(&event, state.kinds.as_ref(), state.delivery) {
                     state.buffer.push_back(to_feed_event(event));
                 }
             }
@@ -253,7 +273,8 @@ async fn batch_events(
     Query(query): Query<FeedQuery>,
 ) -> Result<Json<Batch>, ApiError> {
     let mut conn = state.pool.get().await?;
-    require_service(&state, &mut conn, &headers).await?;
+    let caller = require_service(&state, &mut conn, &headers).await?;
+    let delivery = capabilities::holds(&mut conn, caller, capabilities::DELIVERY_READ).await?;
     let requested = Cursor::new(query.after.unwrap_or(0));
     let (cursor, reset) = resume_point(&mut conn, Some(requested)).await?;
     let limit = query.limit.unwrap_or(PAGE).clamp(1, 1000);
@@ -263,7 +284,7 @@ async fn batch_events(
     Ok(Json(Batch {
         events: page
             .into_iter()
-            .filter(|e| kinds.as_ref().is_none_or(|kinds| kinds.contains(&e.kind)))
+            .filter(|e| visible(e, kinds.as_ref(), delivery))
             .map(to_feed_event)
             .collect(),
         next,

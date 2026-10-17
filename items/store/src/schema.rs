@@ -5,6 +5,7 @@ diesel::table! {
         name -> Text,
         description -> Text,
         group_definition -> Nullable<Jsonb>,
+        builtin -> Bool,
     }
 }
 
@@ -31,6 +32,25 @@ diesel::table! {
         kind -> Text,
         requestable -> Bool,
         description -> Text,
+    }
+}
+
+diesel::table! {
+    challenge (id) {
+        id -> Uuid,
+        purpose -> Text,
+        subject_id -> Nullable<Uuid>,
+        credential_id -> Nullable<Uuid>,
+        mfa_factor_id -> Nullable<Uuid>,
+        session_id -> Nullable<Uuid>,
+        recipient -> Text,
+        secret_hash -> Bytea,
+        attempts -> Int4,
+        max_attempts -> Int4,
+        details -> Jsonb,
+        created_at -> Timestamptz,
+        expires_at -> Timestamptz,
+        consumed_at -> Nullable<Timestamptz>,
     }
 }
 
@@ -89,6 +109,19 @@ diesel::table! {
 }
 
 diesel::table! {
+    mfa_factor (id) {
+        id -> Uuid,
+        subject_id -> Uuid,
+        kind -> Text,
+        data -> Jsonb,
+        active -> Bool,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+        removed_at -> Nullable<Timestamptz>,
+    }
+}
+
+diesel::table! {
     role (id) {
         id -> Uuid,
         tenant_id -> Uuid,
@@ -142,6 +175,8 @@ diesel::table! {
         expires_at -> Timestamptz,
         revoked_at -> Nullable<Timestamptz>,
         revoked_reason -> Nullable<Text>,
+        mfa_factors -> Array<Nullable<Text>>,
+        parent_session_id -> Nullable<Uuid>,
     }
 }
 
@@ -206,9 +241,14 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(challenge -> credential (credential_id));
+diesel::joinable!(challenge -> mfa_factor (mfa_factor_id));
+diesel::joinable!(challenge -> session (session_id));
+diesel::joinable!(challenge -> subject (subject_id));
 diesel::joinable!(credential -> subject (subject_id));
 diesel::joinable!(membership -> subject (subject_id));
 diesel::joinable!(membership -> tenant (tenant_id));
+diesel::joinable!(mfa_factor -> subject (subject_id));
 diesel::joinable!(role -> template (template_id));
 diesel::joinable!(role -> tenant (tenant_id));
 diesel::joinable!(role_assignment -> catalog_scope_kind (scope_kind));
@@ -229,11 +269,13 @@ diesel::allow_tables_to_appear_in_same_query!(
     catalog_fact,
     catalog_scope_kind,
     catalog_session_flag,
+    challenge,
     credential,
     event,
     feed_watermark,
     login_attempt,
     membership,
+    mfa_factor,
     role,
     role_assignment,
     role_policy,

@@ -77,6 +77,11 @@ pub struct Session {
     pub auth_time: DateTime<Utc>,
     pub flags: Vec<String>,
     pub impersonator_subject_id: Option<SubjectId>,
+    /// MFA factors verified in this session.
+    pub mfa_factors: Vec<String>,
+    /// The session this one was started from (impersonation); ending the
+    /// parent ends this one.
+    pub parent_session_id: Option<SessionId>,
     pub version: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -113,6 +118,8 @@ struct Row {
     expires_at: DateTime<Utc>,
     revoked_at: Option<DateTime<Utc>>,
     revoked_reason: Option<String>,
+    mfa_factors: Vec<Option<String>>,
+    parent_session_id: Option<uuid::Uuid>,
 }
 
 impl From<Row> for Session {
@@ -129,6 +136,8 @@ impl From<Row> for Session {
             auth_time: row.auth_time,
             flags: row.flags.into_iter().flatten().collect(),
             impersonator_subject_id: row.impersonator_subject_id.map(Into::into),
+            mfa_factors: row.mfa_factors.into_iter().flatten().collect(),
+            parent_session_id: row.parent_session_id.map(Into::into),
             version: row.version,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -172,6 +181,7 @@ pub struct NewSession {
     pub auth_time: DateTime<Utc>,
     pub flags: Vec<String>,
     pub impersonator_subject_id: Option<SubjectId>,
+    pub parent_session_id: Option<SessionId>,
     pub refresh_hash: Vec<u8>,
     pub expires_at: DateTime<Utc>,
 }
@@ -196,6 +206,7 @@ pub async fn insert(
                     .eq(new.impersonator_subject_id.map(uuid::Uuid::from)),
                 session::refresh_hash.eq(&new.refresh_hash),
                 session::expires_at.eq(new.expires_at),
+                session::parent_session_id.eq(new.parent_session_id.map(uuid::Uuid::from)),
             ))
             .returning(Row::as_returning())
             .get_result(conn)
@@ -367,6 +378,27 @@ async fn revoke_ids(
         let cursor = changed(conn, &session).await?;
         revoked.push((session, cursor));
     }
+    // Sessions started from these end with them.
+    // r[impl authn.impersonation.time-bounded]
+    let parents: Vec<uuid::Uuid> = revoked
+        .iter()
+        .map(|(s, _)| uuid::Uuid::from(s.id))
+        .collect();
+    if !parents.is_empty() {
+        let children = session::table
+            .filter(session::parent_session_id.eq_any(&parents))
+            .filter(session::revoked_at.is_null())
+            .select(session::id)
+            .load::<uuid::Uuid>(conn)
+            .await?
+            .into_iter()
+            .map(SessionId::from)
+            .collect::<Vec<_>>();
+        if !children.is_empty() {
+            let cascaded = Box::pin(revoke_ids(conn, &children, "parent_session_ended")).await?;
+            revoked.extend(cascaded);
+        }
+    }
     Ok(revoked)
 }
 
@@ -479,4 +511,114 @@ pub async fn select_tenant(
         Ok((session, cursor))
     })
     .await
+}
+
+/// Records a verified MFA factor. Once `required` distinct factors are
+/// verified, a partial session becomes an identity session and gets
+/// `refresh_hash`. Bumps the version.
+pub async fn verify_mfa_factor(
+    conn: &mut AsyncPgConnection,
+    id: SessionId,
+    factor: &str,
+    amr: &str,
+    required: usize,
+    refresh_hash: &[u8],
+) -> StoreResult<(Session, Cursor)> {
+    conn.transaction::<_, StoreError, _>(async |conn| {
+        let current = Session::from(
+            session::table
+                .find(id.as_uuid())
+                .select(Row::as_select())
+                .for_update()
+                .first(conn)
+                .await?,
+        );
+        let mut factors = current.mfa_factors.clone();
+        if !factors.iter().any(|f| f == factor) {
+            factors.push(factor.to_owned());
+        }
+        let mut amr_values = current.amr.clone();
+        if !amr_values.iter().any(|m| m == amr) {
+            amr_values.push(amr.to_owned());
+        }
+        let complete = current.stage == Stage::Partial && factors.len() >= required;
+        let stage = if complete {
+            Stage::Identity
+        } else {
+            current.stage
+        };
+        let row = diesel::update(session::table.find(id.as_uuid()))
+            .set((
+                session::mfa_factors.eq(nullable(&factors)),
+                session::amr.eq(nullable(&amr_values)),
+                session::stage.eq(stage.as_str()),
+                session::auth_time.eq(diesel::dsl::now),
+                session::version.eq(session::version + 1),
+                session::updated_at.eq(diesel::dsl::now),
+            ))
+            .returning(Row::as_returning())
+            .get_result(conn)
+            .await?;
+        if complete {
+            diesel::update(session::table.find(id.as_uuid()))
+                .set(session::refresh_hash.eq(refresh_hash))
+                .execute(conn)
+                .await?;
+        }
+        let session = Session::from(row);
+        let cursor = changed(conn, &session).await?;
+        Ok((session, cursor))
+    })
+    .await
+}
+
+/// Records a step-up: adds the method, resets the authentication time and
+/// bumps the version, in the same session.
+// r[impl authn.step-up.in-session]
+pub async fn step_up(
+    conn: &mut AsyncPgConnection,
+    id: SessionId,
+    amr: &str,
+) -> StoreResult<(Session, Cursor)> {
+    conn.transaction::<_, StoreError, _>(async |conn| {
+        let current = get(conn, id).await?;
+        let mut amr_values = current.amr;
+        if !amr_values.iter().any(|m| m == amr) {
+            amr_values.push(amr.to_owned());
+        }
+        let row = diesel::update(session::table.find(id.as_uuid()))
+            .filter(session::revoked_at.is_null())
+            .set((
+                session::amr.eq(nullable(&amr_values)),
+                session::auth_time.eq(diesel::dsl::now),
+                session::version.eq(session::version + 1),
+                session::updated_at.eq(diesel::dsl::now),
+            ))
+            .returning(Row::as_returning())
+            .get_result(conn)
+            .await
+            .optional()?
+            .ok_or(StoreError::NotFound)?;
+        let session = Session::from(row);
+        let cursor = changed(conn, &session).await?;
+        Ok((session, cursor))
+    })
+    .await
+}
+
+/// Re-points a session at a replacement credential (after a password
+/// change), so it stays valid.
+pub async fn move_to_credential(
+    conn: &mut AsyncPgConnection,
+    id: SessionId,
+    credential: CredentialId,
+) -> StoreResult<()> {
+    diesel::update(session::table.find(id.as_uuid()))
+        .set((
+            session::credential_id.eq(credential.as_uuid()),
+            session::updated_at.eq(diesel::dsl::now),
+        ))
+        .execute(conn)
+        .await?;
+    Ok(())
 }

@@ -69,6 +69,13 @@ r[authz.assignment.global]
 Global roles MUST be assigned to subjects directly. Their grants MUST apply
 regardless of the target tenant.
 
+r[authz.control-plane.capability]
+Built-in capabilities MUST be catalog actions in the `conclave:` namespace
+that only Conclave defines. Catalog documents MUST NOT declare or remove
+them, and action groups MUST NOT expand to them, so they are only ever
+granted by name. Every control-plane operation, impersonation and reading
+delivery requests MUST each require a capability.
+
 r[authz.assignment.capabilities]
 Control-plane capabilities MUST only be grantable through global
 assignments.

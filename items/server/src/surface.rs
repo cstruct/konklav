@@ -9,7 +9,8 @@ use axum::routing::get;
 
 use crate::config::Listen;
 use crate::{
-    AppState, control_api, control_authz, error, feed, health, keys, relying_api, subject_api,
+    AppState, control_api, control_authz, error, feed, flows, health, invites, keys, relying_api,
+    subject_api,
 };
 
 /// One of Conclave's groups of endpoints.
@@ -30,9 +31,13 @@ impl Surface {
     /// share a listener are merged, so their paths must not overlap.
     fn v1_routes(self, state: &AppState) -> Router<AppState> {
         match self {
-            Self::Subject => subject_api::routes(),
+            Self::Subject => subject_api::routes()
+                .merge(flows::routes())
+                .merge(invites::subject_routes()),
             Self::Relying => relying_api::routes().merge(feed::routes()),
-            Self::Control => control_api::routes(state).merge(control_authz::routes(state)),
+            Self::Control => control_api::routes(state)
+                .merge(control_authz::routes(state))
+                .merge(invites::control_routes(state)),
         }
     }
 

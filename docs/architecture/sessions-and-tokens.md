@@ -25,6 +25,42 @@ impersonator?, expires_at, revoked_at?, revoked_reason? }`
 - Revocation sets `revoked_at` and bumps `version` in one statement, then
   emits `session.changed`.
 
+## MFA, step-up and impersonation
+
+- A credential's `mfa_factors_required` makes login stop at a partial
+  session. `POST /v1/login/mfa` proves one active factor at a time. Once
+  enough distinct factors are proven, the session becomes an identity
+  session and gets its refresh token.
+- Factors:
+  - TOTP: the seed is encrypted with AES-256-GCM under configured keys,
+    and replay is refused by remembering the last step.
+  - Email codes: challenges.
+- `amr` values: `pwd`, `otp` (TOTP), `eml` (email code or magic link),
+  `sms` (phone code), `swk` (secret key).
+- Step-up (`POST /v1/step-up`) proves a factor or the password again in the
+  same session. It adds the method, resets `auth_time` and bumps the
+  version.
+- Impersonation (`POST /v1/impersonate`) needs the
+  `conclave:subject:impersonate` capability. It creates a child session for
+  the target with `act` naming the impersonator. The child lasts at most an
+  hour and never outlives its parent: revoking a session revokes its
+  children.
+
+## Challenges and delivery
+
+Magic links, phone codes, email MFA codes, invites and password resets are
+challenges:
+
+- single-use and short-lived
+- stored as SHA-256 of the challenge id and secret
+- codes allow 5 attempts
+- at most 5 are sent per recipient and purpose every 10 minutes
+
+Each one appends `delivery.requested` with the material. Only service
+principals holding `conclave:delivery:read` see those events, and the
+material is stripped once the challenge has expired. Start endpoints always
+answer 202, so they reveal nothing about which identifiers exist.
+
 ## Session flags
 
 Flags are catalog-declared labels that Conclave copies into `sfl` without

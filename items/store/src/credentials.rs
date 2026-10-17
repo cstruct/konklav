@@ -15,6 +15,10 @@ use crate::{StoreError, StoreResult};
 pub enum CredentialKind {
     Password,
     SecretKey,
+    /// Log in through a magic link sent to the identifier (an email address).
+    EmailLink,
+    /// Log in with a code sent to the identifier (an E.164 phone number).
+    PhoneOtp,
 }
 
 impl CredentialKind {
@@ -23,6 +27,8 @@ impl CredentialKind {
         match self {
             Self::Password => "password",
             Self::SecretKey => "secret_key",
+            Self::EmailLink => "email_link",
+            Self::PhoneOtp => "phone_otp",
         }
     }
 }
@@ -90,6 +96,8 @@ impl SecretKeyData {
 pub enum CredentialData {
     Password(PasswordData),
     SecretKey(SecretKeyData),
+    EmailLink,
+    PhoneOtp,
 }
 
 impl CredentialData {
@@ -98,6 +106,8 @@ impl CredentialData {
         match self {
             Self::Password(_) => CredentialKind::Password,
             Self::SecretKey(_) => CredentialKind::SecretKey,
+            Self::EmailLink => CredentialKind::EmailLink,
+            Self::PhoneOtp => CredentialKind::PhoneOtp,
         }
     }
 
@@ -105,6 +115,7 @@ impl CredentialData {
         match self {
             Self::Password(data) => serde_json::to_value(data),
             Self::SecretKey(data) => serde_json::to_value(data),
+            Self::EmailLink | Self::PhoneOtp => Ok(serde_json::json!({})),
         }
         .expect("credential data serializes")
     }
@@ -113,6 +124,8 @@ impl CredentialData {
         let parsed = match kind {
             "password" => serde_json::from_value(data).map(Self::Password),
             "secret_key" => serde_json::from_value(data).map(Self::SecretKey),
+            "email_link" => Ok(Self::EmailLink),
+            "phone_otp" => Ok(Self::PhoneOtp),
             other => {
                 return Err(diesel::result::Error::DeserializationError(
                     format!("unknown credential kind {other}").into(),

@@ -28,11 +28,11 @@ pub(crate) async fn require_service(
     state: &AppState,
     conn: &mut Connection,
     headers: &HeaderMap,
-) -> Result<(), ApiError> {
+) -> Result<SubjectId, ApiError> {
     let (claims, _) = authenticate(state, conn, headers).await?;
     let caller = subjects::get(conn, claims.sub).await?;
     if caller.kind == SubjectKind::Service {
-        Ok(())
+        Ok(caller.id)
     } else {
         Err(ApiError::new(
             ErrorCode::Forbidden,
