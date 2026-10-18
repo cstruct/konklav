@@ -17,6 +17,7 @@ use conclave_store::sessions::{
 use conclave_store::subjects::{self, SubjectKind, SubjectState};
 use conclave_store::{Connection, catalog, login_attempts, memberships, tenants};
 use conclave_token::{AccessClaims, VerifyOptions};
+use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ApiError, ApiJson, ErrorCode};
@@ -236,27 +237,45 @@ pub(crate) async fn create_session(
     } else {
         Stage::Identity
     };
-    let (session, cursor) = sessions::insert(
-        conn,
-        NewSession {
-            id,
-            subject_id: credential.subject_id,
-            credential_id: credential.id,
-            stage,
-            client_kind: match client {
-                Client::Browser => ClientKind::Browser,
-                Client::Native => ClientKind::Native,
-            },
-            amr,
-            auth_time: now,
-            flags: flags.to_vec(),
-            impersonator_subject_id: None,
-            parent_session_id: None,
-            refresh_hash: refresh.hash(),
-            expires_at: now + lifetime.min(state.auth.session_lifetime),
+    let new = NewSession {
+        id,
+        subject_id: credential.subject_id,
+        credential_id: credential.id,
+        stage,
+        client_kind: match client {
+            Client::Browser => ClientKind::Browser,
+            Client::Native => ClientKind::Native,
         },
-    )
-    .await?;
+        amr,
+        auth_time: now,
+        flags: flags.to_vec(),
+        impersonator_subject_id: None,
+        parent_session_id: None,
+        refresh_hash: refresh.hash(),
+        expires_at: now + lifetime.min(state.auth.session_lifetime),
+    };
+    let (session, cursor) = conn
+        .transaction::<_, ApiError, _>(async |conn| {
+            let (session, cursor) = sessions::insert(conn, new).await?;
+            if !credential.break_glass {
+                return Ok((session, cursor));
+            }
+            // r[impl federation.break-glass]
+            let cursor = conclave_store::events::append(
+                conn,
+                "break_glass.used",
+                serde_json::json!({
+                    "subject": session.subject_id,
+                    "credential": credential.id,
+                    "kind": credential.kind().as_str(),
+                    "session": session.id,
+                }),
+            )
+            .await?;
+            tracing::warn!(subject = %session.subject_id, credential = %credential.id, "break-glass credential used");
+            Ok((session, cursor))
+        })
+        .await?;
     Ok(Started {
         session,
         refresh,

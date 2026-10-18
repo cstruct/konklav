@@ -36,6 +36,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .route("/subjects/{id}/credentials", post(create_credential))
         .route("/credentials/{id}/revoke", post(revoke_credential))
         .route("/credentials/{id}/replace", post(replace_password))
+        .route("/credentials/{id}/break-glass", put(set_break_glass))
         .route(
             "/credentials/{id}/slots/{slot}/rotate",
             post(rotate_secret_slot),
@@ -338,6 +339,7 @@ struct CredentialView {
     created_at: DateTime<Utc>,
     revoked_at: Option<DateTime<Utc>>,
     revoked_reason: Option<String>,
+    break_glass: bool,
 }
 
 impl From<Credential> for CredentialView {
@@ -363,6 +365,7 @@ impl From<Credential> for CredentialView {
             created_at: credential.created_at,
             revoked_at: credential.revoked_at,
             revoked_reason: credential.revoked_reason,
+            break_glass: credential.break_glass,
         }
     }
 }
@@ -832,4 +835,35 @@ async fn revoke_signing_key(
             other => other.into(),
         })?;
     Ok(Json(RevokedKey { kid, revoked }))
+}
+
+#[derive(Deserialize)]
+struct BreakGlass {
+    break_glass: bool,
+}
+
+/// `PUT /v1/credentials/{id}/break-glass`: marks a local password or secret
+/// key as a break-glass credential, whose every use appends
+/// `break_glass.used`.
+async fn set_break_glass(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<BreakGlass>,
+) -> Result<Json<CredentialView>, ApiError> {
+    let id: CredentialId = parse_id(&id, "credential id")?;
+    let mut conn = state.pool.get().await?;
+    let credential = credentials::get(&mut conn, id)
+        .await
+        .map_err(|_| ApiError::not_found("credential"))?;
+    if !matches!(
+        credential.kind(),
+        CredentialKind::Password | CredentialKind::SecretKey
+    ) || !credential.is_active()
+    {
+        return Err(ApiError::invalid_request(
+            "only active passwords and secret keys can be break-glass credentials",
+        ));
+    }
+    credentials::set_break_glass(&mut conn, id, body.break_glass).await?;
+    Ok(Json(credentials::get(&mut conn, id).await?.into()))
 }

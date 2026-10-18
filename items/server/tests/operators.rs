@@ -261,3 +261,49 @@ async fn explains_entitlements() {
             .starts_with("reader (")
     );
 }
+
+// r[verify federation.break-glass]
+#[tokio::test(flavor = "multi_thread")]
+async fn break_glass_logins_are_recorded() {
+    let app = TestApp::new().await;
+    let service = app.service_token().await;
+    let subject = app
+        .human("glass@example.com", "correct horse battery")
+        .await;
+    app.human("everyday@example.com", "correct horse battery")
+        .await;
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    let credential = detail.body["credentials"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let marked = app
+        .control(
+            Method::PUT,
+            &format!("/v1/credentials/{credential}/break-glass"),
+            Some(json!({"break_glass": true})),
+        )
+        .await;
+    assert_eq!(marked.status, StatusCode::OK, "{:?}", marked.body);
+    assert_eq!(marked.body["break_glass"], true);
+
+    app.login("everyday@example.com", "correct horse battery")
+        .await;
+    let login = app
+        .login("glass@example.com", "correct horse battery")
+        .await;
+    assert_eq!(login.status, StatusCode::OK);
+    let events = app
+        .with_bearer(
+            Method::GET,
+            "/v1/events/batch?after=0&kinds=break_glass.used",
+            &service,
+        )
+        .await;
+    let used: Vec<_> = events.body["events"].as_array().unwrap().iter().collect();
+    assert_eq!(used.len(), 1, "{:?}", events.body);
+    assert_eq!(used[0]["payload"]["subject"], subject.as_str());
+    assert_eq!(used[0]["payload"]["credential"], credential.as_str());
+}

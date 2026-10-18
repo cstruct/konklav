@@ -23,6 +23,8 @@ pub struct Membership {
     pub tenant_id: TenantId,
     pub state: MembershipState,
     pub facts: serde_json::Value,
+    /// The identity provider whose claim mapping created it, if any.
+    pub managed_by: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -44,6 +46,7 @@ struct Row {
     facts: serde_json::Value,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    managed_by: Option<String>,
 }
 
 impl From<Row> for Membership {
@@ -58,6 +61,7 @@ impl From<Row> for Membership {
                 MembershipState::Active
             },
             facts: row.facts,
+            managed_by: row.managed_by,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }
@@ -105,12 +109,26 @@ pub async fn create(
     tenant: TenantId,
     facts: &serde_json::Value,
 ) -> StoreResult<(Membership, bool)> {
+    create_managed(conn, id, subject, tenant, facts, None).await
+}
+
+/// [`create`], recording the identity provider whose claim mapping asked
+/// for the membership.
+pub async fn create_managed(
+    conn: &mut AsyncPgConnection,
+    id: MembershipId,
+    subject: SubjectId,
+    tenant: TenantId,
+    facts: &serde_json::Value,
+    managed_by: Option<&str>,
+) -> StoreResult<(Membership, bool)> {
     let inserted = diesel::insert_into(membership::table)
         .values((
             membership::id.eq(id.as_uuid()),
             membership::subject_id.eq(subject.as_uuid()),
             membership::tenant_id.eq(tenant.as_uuid()),
             membership::facts.eq(facts),
+            membership::managed_by.eq(managed_by),
         ))
         .on_conflict(membership::id)
         .do_nothing()
@@ -201,6 +219,24 @@ pub async fn list_for_tenant(
     }
     Ok(query
         .order(membership::created_at.asc())
+        .select(Row::as_select())
+        .load(conn)
+        .await?
+        .into_iter()
+        .map(Membership::from)
+        .collect())
+}
+
+/// The subject's active memberships that `provider` manages.
+pub async fn list_managed(
+    conn: &mut AsyncPgConnection,
+    subject: SubjectId,
+    provider: &str,
+) -> StoreResult<Vec<Membership>> {
+    Ok(membership::table
+        .filter(membership::subject_id.eq(subject.as_uuid()))
+        .filter(membership::managed_by.eq(provider))
+        .filter(membership::state.eq("active"))
         .select(Row::as_select())
         .load(conn)
         .await?

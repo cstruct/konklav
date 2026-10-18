@@ -67,6 +67,7 @@ diesel::table! {
         updated_at -> Timestamptz,
         revoked_at -> Nullable<Timestamptz>,
         revoked_reason -> Nullable<Text>,
+        break_glass -> Bool,
     }
 }
 
@@ -105,6 +106,7 @@ diesel::table! {
         facts -> Jsonb,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
+        managed_by -> Nullable<Text>,
     }
 }
 
@@ -143,6 +145,7 @@ diesel::table! {
         scope_kind -> Nullable<Text>,
         scope_id -> Nullable<Text>,
         created_at -> Timestamptz,
+        managed_by -> Nullable<Text>,
     }
 }
 

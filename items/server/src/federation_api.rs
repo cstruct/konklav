@@ -22,12 +22,14 @@ use conclave_store::credentials::{
     self, CredentialData, CredentialKind, FederatedData, NewCredential, federated_identifier,
 };
 use conclave_store::subjects::{self, SubjectKind, SubjectState};
-use conclave_store::{Connection, sessions::Stage};
+use conclave_store::{Connection, StoreError, sessions::Stage};
+use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
+use crate::claim_mapping;
 use crate::error::{ApiError, ErrorCode};
-use crate::federation::{FederationError, LoginRequest, Provider};
+use crate::federation::{FederationError, LoginRequest, Provider, Provisioning};
 use crate::subject_api::{self, Client, Started};
 use crate::{AppState, BrowserSettings};
 
@@ -378,17 +380,31 @@ async fn finish(
         return Ok((("linked", "true"), Vec::new()));
     }
 
-    // r[impl federation.provisioning]
-    // Subjects are only created through linking for now, so an account
-    // nobody linked can't sign in. The answer doesn't depend on whether a
-    // subject with the same email exists.
-    let credential = existing.ok_or(Failure::NotLinked)?;
+    let credential = match existing {
+        Some(credential) => credential,
+        None => provision(conn, provider, &claims, identifier)
+            .await
+            .map_err(|error| {
+                tracing::warn!(%error, "provisioning a federated subject failed");
+                Failure::Provider
+            })?
+            .ok_or(Failure::NotLinked)?,
+    };
     let subject = subjects::get(conn, credential.subject_id)
         .await
         .map_err(|_| Failure::NotLinked)?;
     if subject.state != SubjectState::Active || subject.kind != SubjectKind::Human {
         return Err(Failure::NotLinked);
     }
+    let desired = claim_mapping::evaluate(&provider.settings.grants, &claims.raw);
+    conn.transaction::<_, StoreError, _>(async |conn| {
+        claim_mapping::apply(conn, &provider.settings.id, subject.id, &desired).await
+    })
+    .await
+    .map_err(|error| {
+        tracing::warn!(%error, "applying claim mapping failed");
+        Failure::Provider
+    })?;
     // r[impl federation.session-lifetime]
     let lifetime = provider
         .settings
@@ -413,4 +429,61 @@ async fn finish(
         ("signed_in", "true"),
         subject_api::refresh_cookies(browser, refresh.as_str(), max_age),
     ))
+}
+
+/// A subject for an account nobody linked yet, if the provider's policy
+/// allows one: the subject whose login identifier is the account's verified
+/// email, in a domain the provider may link, or else a new subject when the
+/// provider creates them. Both kinds of failure look the same to the
+/// browser, so existing identifiers aren't revealed.
+// r[impl federation.provisioning]
+// r[impl federation.linking]
+async fn provision(
+    conn: &mut Connection,
+    provider: &Provider,
+    claims: &crate::federation::IdClaims,
+    identifier: String,
+) -> Result<Option<credentials::Credential>, StoreError> {
+    let settings = &provider.settings;
+    conn.transaction::<_, StoreError, _>(async |conn| {
+        let mut subject = None;
+        if let (Some(email), Some(true)) = (&claims.email, claims.email_verified) {
+            let domain = email.rsplit_once('@').map(|(_, d)| d.to_lowercase());
+            if domain.is_some_and(|d| settings.link_verified_email_domains.contains(&d)) {
+                for kind in [CredentialKind::Password, CredentialKind::EmailLink] {
+                    if let Some(found) = credentials::find_active(conn, kind, email).await? {
+                        subject = Some(found.subject_id);
+                        break;
+                    }
+                }
+            }
+        }
+        if subject.is_none() && settings.provisioning == Provisioning::Create {
+            let id = SubjectId::new_v7();
+            subjects::create(conn, id, SubjectKind::Human).await?;
+            subject = Some(id);
+        }
+        let Some(subject) = subject else {
+            return Ok(None);
+        };
+        let credential = credentials::insert(
+            conn,
+            NewCredential {
+                id: CredentialId::new_v7(),
+                subject_id: subject,
+                identifier,
+                data: CredentialData::Federated(FederatedData {
+                    provider: settings.id.clone(),
+                    subject: claims.sub.clone(),
+                    email: claims.email.clone(),
+                    email_verified: claims.email_verified,
+                }),
+                mfa_factors_required: 0,
+                replaces: None,
+            },
+        )
+        .await?;
+        Ok(Some(credential))
+    })
+    .await
 }

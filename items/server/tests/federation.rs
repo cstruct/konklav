@@ -12,7 +12,7 @@ use axum::routing::{get, post};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use common::{ORIGIN, TestApp};
-use conclave_server::federation::{Providers, Settings};
+use conclave_server::federation::{Providers, Provisioning, Settings};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -89,7 +89,7 @@ impl FakeProvider {
             methods: vec![("hwk".into(), "hwk".into())],
             require_acr: None,
             max_age: None,
-            session_lifetime: None,
+            ..Settings::default()
         }
     }
 
@@ -479,4 +479,223 @@ async fn return_urls_must_be_registered() {
         .send(Method::GET, "/v1/login/oidc/nope/start", &[], None)
         .await;
     assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+}
+
+/// Signs in at the provider with `claims` and returns the reply to the
+/// callback.
+async fn federated_login(app: &TestApp, provider: &FakeProvider, claims: Value) -> common::Reply {
+    let (url, state_cookie) = start(app).await;
+    let code = provider.authorize(&url, claims, Signing::Provider);
+    callback(app, &url, &code, Some(&state_cookie)).await
+}
+
+/// The subject a successful federated login signed in.
+async fn signed_in_subject(app: &TestApp, reply: &common::Reply) -> String {
+    assert_eq!(location(reply), format!("{RETURN}?signed_in=true"));
+    let refresh_cookie = cookie(reply, "conclave_refresh").unwrap();
+    let refreshed = app
+        .send(
+            Method::POST,
+            "/v1/refresh",
+            &[
+                ("cookie", &refresh_cookie),
+                ("origin", ORIGIN),
+                ("x-conclave-client", "web"),
+            ],
+            None,
+        )
+        .await;
+    app.verify(refreshed.body["access_token"].as_str().unwrap())
+        .await
+        .sub
+        .to_string()
+}
+
+// r[verify federation.provisioning]
+#[tokio::test(flavor = "multi_thread")]
+async fn creating_providers_provision_subjects_for_unknown_accounts() {
+    let provider = FakeProvider::start().await;
+    let settings = Settings {
+        provisioning: Provisioning::Create,
+        ..provider.settings()
+    };
+    let app = TestApp::with_identity_providers(Providers::from_settings([settings])).await;
+    let first = federated_login(&app, &provider, json!({"sub": "new-person"})).await;
+    let subject = signed_in_subject(&app, &first).await;
+    let again = federated_login(&app, &provider, json!({"sub": "new-person"})).await;
+    assert_eq!(
+        signed_in_subject(&app, &again).await,
+        subject,
+        "the account stays linked"
+    );
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    assert_eq!(detail.body["kind"], "human");
+    assert_eq!(detail.body["credentials"][0]["kind"], "federated");
+}
+
+// r[verify federation.linking]
+#[tokio::test(flavor = "multi_thread")]
+async fn verified_emails_link_only_in_allowed_domains() {
+    let provider = FakeProvider::start().await;
+    let settings = Settings {
+        link_verified_email_domains: vec!["example.com".into()],
+        ..provider.settings()
+    };
+    let app = TestApp::with_identity_providers(Providers::from_settings([settings])).await;
+    let ada = app.human("ada@example.com", "correct horse battery").await;
+    app.human("bo@other.example", "correct horse battery").await;
+
+    for claims in [
+        json!({"sub": "u1", "email": "ada@example.com", "email_verified": false}),
+        json!({"sub": "u2", "email": "ada@example.com"}),
+        json!({"sub": "u3", "email": "bo@other.example", "email_verified": true}),
+        json!({"sub": "u4", "email": "nobody@example.com", "email_verified": true}),
+    ] {
+        let reply = federated_login(&app, &provider, claims.clone()).await;
+        assert_eq!(
+            location(&reply),
+            format!("{RETURN}?error=account_not_linked"),
+            "{claims}"
+        );
+    }
+    let reply = federated_login(
+        &app,
+        &provider,
+        json!({"sub": "u5", "email": "Ada@Example.com", "email_verified": true}),
+    )
+    .await;
+    assert_eq!(signed_in_subject(&app, &reply).await, ada);
+}
+
+// r[verify federation.mapping.rules]
+// r[verify federation.mapping.managed]
+#[tokio::test(flavor = "multi_thread")]
+async fn claim_mapping_manages_only_its_own_grants() {
+    let provider = FakeProvider::start().await;
+    let tenant = uuid::Uuid::now_v7();
+    let rule = |claim: &str,
+                contains: &str,
+                global_role: Option<&str>,
+                tenant: Option<String>,
+                roles: &[&str]| {
+        conclave_server::claim_mapping::Rule::from_config(&conclave_server::config::ClaimGrant {
+            claim: claim.into(),
+            equals: None,
+            contains: Some(contains.into()),
+            global_role: global_role.map(Into::into),
+            tenant,
+            roles: roles.iter().map(|r| (*r).into()).collect(),
+        })
+        .unwrap()
+    };
+    let settings = Settings {
+        provisioning: Provisioning::Create,
+        grants: vec![
+            rule("groups", "sre", Some("operator"), None, &[]),
+            rule(
+                "groups",
+                "support",
+                None,
+                Some(tenant.to_string()),
+                &["agent"],
+            ),
+        ],
+        ..provider.settings()
+    };
+    let app = TestApp::with_identity_providers(Providers::from_settings([settings])).await;
+    for (method, path, body) in [
+        (
+            Method::PUT,
+            "/v1/catalog".to_owned(),
+            json!({"actions": [{"name": "ops:run"}, {"name": "tickets:read"}, {"name": "local:thing"}]}),
+        ),
+        (
+            Method::PUT,
+            "/v1/tenants/root/roles/operator".to_owned(),
+            json!({"policies": [{"action": "ops:run", "effect": "allow"}]}),
+        ),
+        (
+            Method::PUT,
+            "/v1/tenants/root/roles/local".to_owned(),
+            json!({"policies": [{"action": "local:thing", "effect": "allow"}]}),
+        ),
+        (Method::PUT, format!("/v1/tenants/{tenant}"), json!({})),
+        (
+            Method::PUT,
+            format!("/v1/tenants/{tenant}/roles/agent"),
+            json!({"policies": [{"action": "tickets:read", "effect": "allow"}]}),
+        ),
+    ] {
+        let reply = app.control(method, &path, Some(body)).await;
+        assert!(reply.status.is_success(), "{path}: {:?}", reply.body);
+    }
+
+    let reply = federated_login(
+        &app,
+        &provider,
+        json!({"sub": "op", "groups": ["sre", "support"]}),
+    )
+    .await;
+    let subject = signed_in_subject(&app, &reply).await;
+    // A grant made outside claim mapping.
+    let local = app
+        .control(
+            Method::POST,
+            &format!("/v1/subjects/{subject}/global-assignments"),
+            Some(json!({"role": "local"})),
+        )
+        .await;
+    assert!(local.status.is_success(), "{:?}", local.body);
+    let entitlements = |tenant: Option<uuid::Uuid>| {
+        let app = &app;
+        let subject = subject.clone();
+        async move {
+            let query = tenant.map(|t| format!("?tenant={t}")).unwrap_or_default();
+            app.control(
+                Method::GET,
+                &format!("/v1/subjects/{subject}/entitlements{query}"),
+                None,
+            )
+            .await
+            .body
+        }
+    };
+    let granted = entitlements(Some(tenant)).await;
+    assert_eq!(granted["global"], json!(["local:thing", "ops:run"]));
+    assert_eq!(granted["tenant"], json!(["tickets:read"]));
+
+    // Leaving both groups removes the managed grants and ends the managed
+    // membership, but keeps the local grant.
+    let reply = federated_login(&app, &provider, json!({"sub": "op", "groups": []})).await;
+    signed_in_subject(&app, &reply).await;
+    let granted = entitlements(Some(tenant)).await;
+    assert_eq!(granted["global"], json!(["local:thing"]));
+    assert_eq!(granted["tenant"], json!([]));
+    let memberships = app
+        .control(
+            Method::GET,
+            &format!("/v1/tenants/{tenant}/memberships"),
+            None,
+        )
+        .await;
+    assert!(
+        memberships
+            .body
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["state"] == "ended"),
+        "{:?}",
+        memberships.body
+    );
+
+    // Rejoining re-grants.
+    let reply = federated_login(&app, &provider, json!({"sub": "op", "groups": ["support"]})).await;
+    signed_in_subject(&app, &reply).await;
+    assert_eq!(
+        entitlements(Some(tenant)).await["tenant"],
+        json!(["tickets:read"])
+    );
 }

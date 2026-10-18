@@ -265,6 +265,8 @@ pub struct RoleAssignment {
     pub role_id: uuid::Uuid,
     pub target: AssignmentTarget,
     pub scope: Option<Scope>,
+    /// The identity provider whose claim mapping created it, if any.
+    pub managed_by: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -276,6 +278,7 @@ type AssignmentRow = (
     Option<String>,
     Option<String>,
     DateTime<Utc>,
+    Option<String>,
 );
 
 fn assignment_columns() -> (
@@ -286,6 +289,7 @@ fn assignment_columns() -> (
     role_assignment::scope_kind,
     role_assignment::scope_id,
     role_assignment::created_at,
+    role_assignment::managed_by,
 ) {
     (
         role_assignment::id,
@@ -295,11 +299,12 @@ fn assignment_columns() -> (
         role_assignment::scope_kind,
         role_assignment::scope_id,
         role_assignment::created_at,
+        role_assignment::managed_by,
     )
 }
 
 fn to_assignment(row: AssignmentRow) -> RoleAssignment {
-    let (id, role_id, membership, subject, scope_kind, scope_id, created_at) = row;
+    let (id, role_id, membership, subject, scope_kind, scope_id, created_at, managed_by) = row;
     let target = match (membership, subject) {
         (Some(membership), _) => AssignmentTarget::Membership(membership.into()),
         (None, Some(subject)) => AssignmentTarget::Subject(subject.into()),
@@ -312,6 +317,7 @@ fn to_assignment(row: AssignmentRow) -> RoleAssignment {
         scope: scope_kind
             .zip(scope_id)
             .map(|(kind, id)| Scope { kind, id }),
+        managed_by,
         created_at,
     }
 }
@@ -328,6 +334,18 @@ pub async fn assign(
     target: AssignmentTarget,
     scope: Option<&Scope>,
 ) -> StoreResult<RoleAssignment> {
+    assign_managed(conn, role_id, target, scope, None).await
+}
+
+/// [`assign`], recording the identity provider whose claim mapping asked
+/// for it. An existing equal assignment keeps whoever made it.
+pub async fn assign_managed(
+    conn: &mut AsyncPgConnection,
+    role_id: uuid::Uuid,
+    target: AssignmentTarget,
+    scope: Option<&Scope>,
+    managed_by: Option<&str>,
+) -> StoreResult<RoleAssignment> {
     let (membership, subject) = match target {
         AssignmentTarget::Membership(id) => (Some(uuid::Uuid::from(id)), None),
         AssignmentTarget::Subject(id) => (None, Some(uuid::Uuid::from(id))),
@@ -342,6 +360,7 @@ pub async fn assign(
             role_assignment::subject_id.eq(subject),
             role_assignment::scope_kind.eq(&scope_kind),
             role_assignment::scope_id.eq(&scope_id),
+            role_assignment::managed_by.eq(managed_by),
         ))
         .on_conflict_do_nothing()
         .execute(conn)
@@ -390,6 +409,32 @@ pub async fn global_assignments_of(
     Ok(role_assignment::table
         .filter(role_assignment::subject_id.eq(subject.as_uuid()))
         .order(role_assignment::created_at.asc())
+        .select(assignment_columns())
+        .load::<AssignmentRow>(conn)
+        .await?
+        .into_iter()
+        .map(to_assignment)
+        .collect())
+}
+
+/// Every assignment `provider` manages for `subject`: global ones, and those
+/// of the subject's memberships.
+pub async fn managed_assignments_of(
+    conn: &mut AsyncPgConnection,
+    subject: SubjectId,
+    provider: &str,
+) -> StoreResult<Vec<RoleAssignment>> {
+    use crate::schema::membership;
+    let memberships = membership::table
+        .filter(membership::subject_id.eq(subject.as_uuid()))
+        .select(membership::id);
+    Ok(role_assignment::table
+        .filter(role_assignment::managed_by.eq(provider))
+        .filter(
+            role_assignment::subject_id
+                .eq(subject.as_uuid())
+                .or(role_assignment::membership_id.eq_any(memberships.nullable())),
+        )
         .select(assignment_columns())
         .load::<AssignmentRow>(conn)
         .await?

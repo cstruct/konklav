@@ -38,7 +38,7 @@ pub enum FederationError {
 }
 
 /// A configured identity provider.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Settings {
     pub id: String,
     pub issuer: String,
@@ -52,6 +52,21 @@ pub struct Settings {
     pub require_acr: Option<String>,
     pub max_age: Option<u32>,
     pub session_lifetime: Option<chrono::Duration>,
+    pub provisioning: Provisioning,
+    /// Domains whose verified emails may link to the subject with that
+    /// login identifier.
+    pub link_verified_email_domains: Vec<String>,
+    pub grants: Vec<crate::claim_mapping::Rule>,
+}
+
+/// What happens when an account nobody linked signs in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Provisioning {
+    /// Refuse it.
+    #[default]
+    Link,
+    /// Create a subject for it.
+    Create,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -81,6 +96,9 @@ pub struct IdClaims {
     #[serde(default)]
     azp: Option<String>,
     aud: serde_json::Value,
+    /// Every claim, for claim mapping.
+    #[serde(skip)]
+    pub raw: serde_json::Value,
 }
 
 /// The values a login keeps between redirecting to the provider and the
@@ -270,9 +288,12 @@ impl Provider {
         validation.set_audience(&[&self.settings.client_id]);
         validation.set_required_spec_claims(&["exp", "iat", "iss", "aud", "sub"]);
         validation.leeway = LEEWAY_SECONDS;
-        let claims = jsonwebtoken::decode::<IdClaims>(id_token, &key, &validation)
+        let raw = jsonwebtoken::decode::<serde_json::Value>(id_token, &key, &validation)
             .map_err(|e| invalid(&e.to_string()))?
             .claims;
+        let mut claims: IdClaims =
+            serde_json::from_value(raw.clone()).map_err(|e| invalid(&e.to_string()))?;
+        claims.raw = raw;
         let audiences = match &claims.aud {
             serde_json::Value::Array(values) => values.len(),
             _ => 1,
@@ -373,6 +394,27 @@ impl Providers {
                 session_lifetime: provider
                     .session_lifetime_seconds
                     .map(|s| chrono::Duration::seconds(i64::from(s))),
+                provisioning: match provider.provisioning.as_deref() {
+                    None | Some("link") => Provisioning::Link,
+                    Some("create") => Provisioning::Create,
+                    Some(other) => {
+                        return Err(format!(
+                            "identity provider `{}`: provisioning must be `link` or `create`, not `{other}`",
+                            provider.id
+                        ));
+                    }
+                },
+                link_verified_email_domains: provider
+                    .link_verified_email_domains
+                    .iter()
+                    .map(|domain| domain.to_lowercase())
+                    .collect(),
+                grants: provider
+                    .grants
+                    .iter()
+                    .map(crate::claim_mapping::Rule::from_config)
+                    .collect::<Result<_, _>>()
+                    .map_err(|error| format!("identity provider `{}`: {error}", provider.id))?,
             };
             providers.insert(
                 provider.id.clone(),
@@ -420,7 +462,7 @@ mod tests {
                     .collect(),
                 require_acr: Some("urn:hwk".into()),
                 max_age: Some(300),
-                session_lifetime: None,
+                ..Settings::default()
             },
             reqwest::Client::new(),
         )
@@ -437,6 +479,7 @@ mod tests {
             nonce: None,
             azp: None,
             aud: serde_json::json!("prod"),
+            raw: serde_json::Value::Null,
         }
     }
 

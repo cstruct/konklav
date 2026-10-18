@@ -2,6 +2,7 @@
 //! control-plane surfaces.
 
 mod capabilities;
+pub mod claim_mapping;
 pub mod config;
 mod control_api;
 mod control_authz;

@@ -289,3 +289,59 @@ identity_providers ({{
         Some("identity provider `ops` has no client secret")
     );
 }
+
+#[test]
+fn malformed_provisioning_and_grants_are_refused() {
+    let files = Files::new("identity-provider-rules");
+    let provider = |extra: &str| {
+        format!(
+            r#"{CONFIG}
+identity_providers ({{
+    id ops
+    issuer "https://ops.example"
+    client_id prod-eu
+    redirect_uri "https://auth.example/v1/login/oidc/ops/callback"
+    return_urls ("https://app.example/")
+    {extra}
+}})
+"#
+        )
+    };
+    let secrets =
+        format!("{SECRETS}identity_provider_secrets ({{provider ops, client_secret shh}})\n");
+    for (extra, expected) in [
+        (
+            "provisioning maybe",
+            "provisioning must be `link` or `create`",
+        ),
+        (
+            "grants ({claim groups, global_role operator})",
+            "needs exactly one of equals and contains",
+        ),
+        (
+            "grants ({claim groups, contains sre, global_role operator, tenant root})",
+            "needs either global_role, or tenant",
+        ),
+    ] {
+        let (.., browser, _, _, _) = load(
+            &files.write("c.styx", &provider(extra)),
+            &files.write("s.styx", &secrets),
+            &[],
+        )
+        .unwrap();
+        let error = conclave_server::federation::Providers::from_config(&browser)
+            .err()
+            .unwrap_or_default();
+        assert!(error.contains(expected), "{extra}: {error}");
+    }
+    let (.., browser, _, _, _) = load(
+        &files.write(
+            "c.styx",
+            &provider("provisioning create\n    grants ({claim groups, contains sre, global_role operator})"),
+        ),
+        &files.write("s.styx", &secrets),
+        &[],
+    )
+    .unwrap();
+    assert!(conclave_server::federation::Providers::from_config(&browser).is_ok());
+}

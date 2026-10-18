@@ -5,9 +5,10 @@ identity providers, and Conclave acting as an OpenID provider for
 applications and other Conclave instances. Federation between Conclave
 instances builds on both and adds a few capabilities only peers have.
 
-Status: identity providers (sign-in, linking, method mapping, session caps)
-are implemented; claim mapping, the OpenID provider role, peering,
-break-glass and workload federation are specified only. The rationale and the decisions behind
+Status: identity providers (sign-in, linking, provisioning, method mapping,
+session caps), claim mapping and break-glass credentials are implemented;
+the OpenID provider role, peering and workload federation are specified
+only. The rationale and the decisions behind
 these rules are in
 [`../architecture/oidc-and-federation.md`](../architecture/oidc-and-federation.md).
 

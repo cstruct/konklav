@@ -142,6 +142,30 @@ config_tree! {
             pub max_age_seconds: Option<u32>,
             /// Caps sessions started through this provider.
             pub session_lifetime_seconds: Option<u32>,
+            /// What happens when an account nobody linked signs in: `link`
+            /// (the default) refuses it, `create` creates a subject.
+            pub provisioning: Option<String>,
+            /// Email domains whose verified addresses may link an account to
+            /// the subject with that login identifier. Off when empty.
+            #[facet(default)]
+            pub link_verified_email_domains: Vec<String>,
+            /// Claim mapping: each rule that matches grants a global role, or
+            /// a membership in a tenant with roles there.
+            #[facet(default)]
+            pub grants: Vec<pub struct ClaimGrant {
+                /// The claim to test, such as `groups`.
+                pub claim: String,
+                /// Matches when the claim is this string.
+                pub equals: Option<String>,
+                /// Matches when the claim is a list holding this string.
+                pub contains: Option<String>,
+                pub global_role: Option<String>,
+                /// A tenant id; the membership is created if missing.
+                pub tenant: Option<String>,
+                /// Role keys in `tenant`.
+                #[facet(default)]
+                pub roles: Vec<String>,
+            }>,
         }>,
         /// Client secrets for `identity_providers`, by provider id.
         #[config(secret)]

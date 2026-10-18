@@ -1,7 +1,7 @@
 # OIDC and federation
 
-Status: accepted. Phase 1 (the identity-provider client) is implemented;
-later phases are designed only. The rules are in
+Status: accepted. Phases 1 and 2 (identity providers, claim mapping and
+break-glass) are implemented; later phases are designed only. The rules are in
 [`../spec/federation.md`](../spec/federation.md); this note explains them
 and lists the decisions still open. It replaces the earlier "federation is
 out of scope" position.
@@ -124,25 +124,38 @@ Rules live in the provider's configuration, so environments can be
 reviewed and deployed like any other config:
 
 ```styx
-providers ({
+identity_providers ({
     id operators
     issuer "https://ops.conclave.example"
     client_id prod-eu
+    redirect_uri "https://prod-eu.conclave.example/v1/login/oidc/operators/callback"
+    return_urls ("https://console.prod-eu.example/")
     provisioning create
     session_lifetime_seconds 3600
     require_acr "urn:conclave:acr:hwk"
-    methods { hwk hwk, pwd pwd, otp otp }
+    methods ({from hwk, to hwk}, {from otp, to otp})
     grants (
-        { when { claim groups, contains sre }, global_role operator }
-        { when { claim groups, contains support }, global_role support }
+        {claim groups, contains sre, global_role operator}
+        {claim groups, contains support, tenant "0193…", roles (agent)}
     )
 })
 ```
 
-- Rules are evaluated at every federated login.
-- Global roles, memberships and assignments that a rule creates record
-  `managed_by = provider`. When a rule stops matching, its managed grants
-  are removed; local grants are never touched.
+The client secret goes in the secrets file, as
+`identity_provider_secrets ({provider operators, client_secret …})`.
+
+- Each rule tests one claim, with `equals` (a string) or `contains` (a
+  member of a list), and grants either a global role, or a membership in a
+  tenant with roles there.
+- Rules are evaluated at every federated login, before the session starts,
+  so the first token already reflects them.
+- Global role assignments, memberships and tenant role assignments that a
+  rule creates record `managed_by = provider`. When a rule stops matching,
+  its managed assignments are removed and its managed memberships end
+  (revoking their sessions). Grants made any other way are never touched.
+  An existing membership is reused rather than taken over.
+- A rule naming a role or tenant that doesn't exist is skipped with a
+  warning, so a stale rule doesn't block logins.
 - Mapping to capabilities goes through roles (for example `operator`
   granting `conclave:control:all`), so the catalog still says what each
   capability means.
@@ -177,8 +190,12 @@ Losing the upstream mustn't lock operators out of production:
 - Each instance keeps a few local operator subjects with hardware-backed or
   sealed secret-key credentials, not the bootstrap token. They have the
   `operator` role locally and no federated credential.
-- Every use appends `break_glass.used` (subject, credential, source
-  address), which deployments alert on.
+- `PUT /v1/credentials/{id}/break-glass` marks an active password or
+  secret key; federated credentials can't be marked, since they depend on
+  an upstream.
+- Every session started with one appends `break_glass.used` (subject,
+  credential, kind, session) in the same transaction, which deployments
+  alert on.
 - The bootstrap token stays a first-run tool, removed once the first
   operator exists.
 
@@ -233,8 +250,9 @@ Proposed defaults, to confirm before implementation:
 1. **Identity-provider client** (done): providers in configuration, PKCE,
    ID-token validation, federated credentials, linking while signed in,
    link-only provisioning, method mapping, session caps.
-2. **Claim mapping and break-glass**: rules, managed grants, provisioning
-   policy, `break_glass.used`. Operator federation works from here.
+2. **Claim mapping and break-glass** (done): rules, managed grants,
+   provisioning policy and verified-email linking, `break_glass.used`.
+   Operator federation works from here.
 3. **OpenID provider**: discovery, clients, login hand-off, codes, ID tokens,
    ES256, userinfo with groups, refresh.
 4. **Provider extras**: client credentials, RP-initiated and back-channel
