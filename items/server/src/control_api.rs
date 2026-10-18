@@ -71,7 +71,7 @@ type GuardLayer = axum::middleware::FromFnLayer<
     (State<GuardState>, Request),
 >;
 
-// r[impl authz.control-plane.capability.built-in]
+// r[impl authz.control-plane.capability]
 fn check_operator(
     State((state, capability)): State<(AppState, &'static str)>,
     request: Request,

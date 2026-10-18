@@ -49,7 +49,7 @@ async fn as_operator(
         .await
 }
 
-// r[verify authz.control-plane.capability.built-in]
+// r[verify authz.control-plane.capability]
 // r[verify authz.assignment.capabilities]
 #[tokio::test(flavor = "multi_thread")]
 async fn operators_need_the_capability_for_each_area() {
