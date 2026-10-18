@@ -28,7 +28,9 @@ use subtle::ConstantTimeEq;
 
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::issue::{self, IssuedToken};
-use crate::subject_api::{authenticate, start_passwordless_session};
+use crate::subject_api::{
+    authenticate, check_browser_request, refresh_cookies, start_passwordless_session, with_cookies,
+};
 use crate::{AppState, capabilities, pacing};
 
 pub fn routes(state: &AppState) -> Router<AppState> {
@@ -243,14 +245,24 @@ async fn full_session(
     Ok(session)
 }
 
+/// `GET /v1/mfa`: the subject's factors. A partial session sees only the
+/// active ones, to pick one for completing login.
+// r[impl authn.mfa.partial-factors]
 async fn list_factors(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<FactorView>>, ApiError> {
     let mut conn = state.pool.get().await?;
-    let session = full_session(&state, &mut conn, &headers).await?;
+    let (_, session) = authenticate(&state, &mut conn, &headers).await?;
+    let partial = session.stage == Stage::Partial;
     let factors = mfa::list(&mut conn, session.subject_id).await?;
-    Ok(Json(factors.iter().map(FactorView::from).collect()))
+    Ok(Json(
+        factors
+            .iter()
+            .filter(|factor| !partial || factor.active)
+            .map(FactorView::from)
+            .collect(),
+    ))
 }
 
 #[derive(Serialize)]
@@ -467,12 +479,17 @@ async fn complete_mfa(
     State(state): State<AppState>,
     headers: HeaderMap,
     ApiJson(body): ApiJson<FactorCode>,
-) -> Result<Json<TokenBody>, ApiError> {
+) -> Result<Response, ApiError> {
     let mut conn = state.pool.get().await?;
     let (_, session) = authenticate(&state, &mut conn, &headers).await?;
     if session.stage != Stage::Partial {
         return Err(ApiError::invalid_request("the session has no pending MFA"));
     }
+    // r[impl session.browser.mfa]
+    let browser = match session.client_kind {
+        ClientKind::Browser => Some(check_browser_request(&state.auth, &headers)?.clone()),
+        ClientKind::Native => None,
+    };
     let factor = mfa::get(&mut conn, session.subject_id, body.factor_id)
         .await
         .ok()
@@ -494,16 +511,27 @@ async fn complete_mfa(
     )
     .await?;
     let token = issue::access_token(&mut conn, &state.auth, &session).await?;
-    // Browser sessions get their refresh cookie on the next refresh call;
-    // native ones get the token here.
-    let refresh_token = (session.stage != Stage::Partial
-        && session.client_kind == ClientKind::Native)
-        .then(|| refresh.as_str().to_owned());
-    Ok(Json(TokenBody {
+    // Once MFA is done, browsers get the refresh token as a cookie and
+    // native clients in the body.
+    let done = session.stage != Stage::Partial;
+    let (refresh_token, cookies) = match &browser {
+        Some(browser) if done => (
+            None,
+            refresh_cookies(
+                browser,
+                refresh.as_str(),
+                (session.expires_at - Utc::now()).num_seconds(),
+            ),
+        ),
+        None if done => (Some(refresh.as_str().to_owned()), Vec::new()),
+        _ => (None, Vec::new()),
+    };
+    let body = TokenBody {
         token,
         refresh_token,
         cursor,
-    }))
+    };
+    Ok(with_cookies(Json(body).into_response(), cookies))
 }
 
 #[derive(Deserialize)]

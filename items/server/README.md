@@ -25,7 +25,8 @@ The Conclave server binary. It serves the subject-facing, relying and control-pl
   - `sign-out` and `sign-out/others`
   - browser clients get the refresh token as an `HttpOnly` cookie and must pass Origin and `X-Conclave-Client` checks
 - Subject-facing `login/tenant` moves a session into a tenant where the subject has an active membership. The new token carries `tid`, `mid` and portable facts. Logins may request restrictive session flags that the catalog marks as requestable.
-- MFA (TOTP and email-code factors), step-up, magic-link and phone-code login, password reset and change, invite redemption, and impersonation. These emit `delivery.requested` for anything a relying system must send.
+- `GET /v1/capabilities`: the `conclave:` capabilities the caller holds, for operator tools such as the console.
+- MFA (TOTP and email-code factors; partial sessions can list their active factors, and browsers get their cookie when MFA completes), step-up, magic-link and phone-code login, password reset and change, invite redemption, and impersonation. These emit `delivery.requested` for anything a relying system must send.
 - Relying surface, for service principals only:
   - `/.well-known/jwks.json`
   - `/v1/entitlements/{subject}[/{tenant}]`

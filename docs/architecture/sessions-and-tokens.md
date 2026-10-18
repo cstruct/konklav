@@ -28,9 +28,11 @@ impersonator?, expires_at, revoked_at?, revoked_reason? }`
 ## MFA, step-up and impersonation
 
 - A credential's `mfa_factors_required` makes login stop at a partial
-  session. `POST /v1/login/mfa` proves one active factor at a time. Once
+  session. The partial session can list its active factors
+  (`GET /v1/mfa`), and `POST /v1/login/mfa` proves one at a time. Once
   enough distinct factors are proven, the session becomes an identity
-  session and gets its refresh token.
+  session and gets its refresh token: in the body for native clients, as
+  the cookie for browsers.
 - Factors:
   - TOTP: the seed is encrypted with AES-256-GCM under configured keys,
     and replay is refused by remembering the last step.

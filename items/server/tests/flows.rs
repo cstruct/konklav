@@ -179,6 +179,98 @@ async fn totp_completes_mfa_for_credentials_that_require_it() {
     assert_eq!(claims.amr, vec!["pwd", "otp"]);
 }
 
+// r[verify authn.mfa.partial-factors]
+// r[verify session.browser.mfa]
+#[tokio::test(flavor = "multi_thread")]
+async fn browsers_complete_mfa_with_a_listed_factor_and_get_the_cookie() {
+    let app = TestApp::new().await;
+    app.human(EMAIL, PASSWORD).await;
+    let session = token(&app.login(EMAIL, PASSWORD).await);
+    let enrolled = post_bearer(&app, "/v1/mfa/totp", &session, json!({})).await;
+    let secret = enrolled.body["secret"].as_str().unwrap().to_owned();
+    let factor = enrolled.body["factor_id"].as_str().unwrap().to_owned();
+    post_bearer(
+        &app,
+        &format!("/v1/mfa/{factor}/activate"),
+        &session,
+        json!({"code": totp_code(&secret, 0)}),
+    )
+    .await;
+    // An inactive factor that a partial session must not see.
+    post_bearer(&app, "/v1/mfa/totp", &session, json!({})).await;
+    {
+        let mut conn = app.db.pool().get().await.unwrap();
+        diesel::sql_query("update credential set mfa_factors_required = 1")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+    }
+
+    let browser = [("origin", common::ORIGIN), ("x-conclave-client", "web")];
+    let login = app
+        .send(
+            Method::POST,
+            "/v1/login/password",
+            &browser,
+            Some(json!({"identifier": EMAIL, "password": PASSWORD, "client": "browser"})),
+        )
+        .await;
+    assert_eq!(login.body["token_kind"], "partial");
+    assert!(login.set_cookies().is_empty(), "no cookie before MFA");
+    let partial = token(&login);
+
+    let listed = app.with_bearer(Method::GET, "/v1/mfa", &partial).await;
+    assert_eq!(listed.status, StatusCode::OK, "{:?}", listed.body);
+    let listed = listed.body.as_array().unwrap();
+    assert_eq!(listed.len(), 1, "only active factors: {listed:?}");
+    assert_eq!(listed[0]["id"], factor.as_str());
+    let enroll = post_bearer(&app, "/v1/mfa/totp", &partial, json!({})).await;
+    assert_eq!(enroll.code(), "FORBIDDEN");
+
+    let auth = format!("Bearer {partial}");
+    let body = json!({"factor_id": factor, "code": totp_code(&secret, 1)});
+    let no_header = app
+        .send(
+            Method::POST,
+            "/v1/login/mfa",
+            &[("authorization", &auth), ("origin", common::ORIGIN)],
+            Some(body.clone()),
+        )
+        .await;
+    assert_eq!(no_header.code(), "FORBIDDEN", "{:?}", no_header.body);
+    let done = app
+        .send(
+            Method::POST,
+            "/v1/login/mfa",
+            &[
+                ("authorization", &auth),
+                ("origin", common::ORIGIN),
+                ("x-conclave-client", "web"),
+            ],
+            Some(body),
+        )
+        .await;
+    assert_eq!(done.status, StatusCode::OK, "{:?}", done.body);
+    assert_eq!(done.body["token_kind"], "identity");
+    assert!(done.body.get("refresh_token").is_none());
+    let cookies = done.set_cookies();
+    assert_eq!(cookies.len(), 2, "{cookies:?}");
+    let cookie = cookies[0].split(';').next().unwrap().to_owned();
+    let refreshed = app
+        .send(
+            Method::POST,
+            "/v1/refresh",
+            &[
+                ("origin", common::ORIGIN),
+                ("x-conclave-client", "web"),
+                ("cookie", &cookie),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(refreshed.status, StatusCode::OK, "{:?}", refreshed.body);
+}
+
 #[derive(diesel::QueryableByName)]
 struct StoredFactor {
     #[diesel(sql_type = diesel::sql_types::Text)]

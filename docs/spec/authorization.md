@@ -80,6 +80,12 @@ r[authz.assignment.capabilities]
 Control-plane capabilities MUST only be grantable through global
 assignments.
 
+r[authz.control-plane.own-capabilities]
+The subject-facing surface MUST let a subject with a full (non-partial)
+session list the control-plane capabilities it holds, so operator tools can
+show what an operator may do before trying it. It MUST NOT reveal another
+subject's capabilities, or actions outside the `conclave:` namespace.
+
 r[authz.assignment.multiple]
 A membership MUST be able to hold several assignments, including several at
 the same scope.

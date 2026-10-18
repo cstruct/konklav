@@ -307,3 +307,28 @@ async fn break_glass_logins_are_recorded() {
     assert_eq!(used[0]["payload"]["subject"], subject.as_str());
     assert_eq!(used[0]["payload"]["credential"], credential.as_str());
 }
+
+// r[verify authz.control-plane.own-capabilities]
+#[tokio::test(flavor = "multi_thread")]
+async fn operators_read_their_own_capabilities() {
+    let app = TestApp::new().await;
+    let people = operator(&app, "people@example.com", &["conclave:subjects:manage"]).await;
+    let nobody = operator(&app, "nobody@example.com", &[]).await;
+    let own = app
+        .with_bearer(Method::GET, "/v1/capabilities", &people)
+        .await;
+    assert_eq!(own.status, StatusCode::OK, "{:?}", own.body);
+    assert_eq!(
+        own.body["capabilities"],
+        json!(["conclave:subjects:manage"])
+    );
+    let claims = app.verify(&people).await;
+    assert_eq!(own.body["subject"], claims.sub.to_string());
+
+    let none = app
+        .with_bearer(Method::GET, "/v1/capabilities", &nobody)
+        .await;
+    assert_eq!(none.body["capabilities"], json!([]));
+    let anonymous = app.send(Method::GET, "/v1/capabilities", &[], None).await;
+    assert_eq!(anonymous.code(), "UNAUTHENTICATED");
+}

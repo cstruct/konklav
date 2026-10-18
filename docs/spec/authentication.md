@@ -51,6 +51,11 @@ r[authn.mfa.secrets-encrypted]
 TOTP secrets MUST be stored encrypted under keys from secret configuration,
 with support for several active decryption keys so they can be rotated.
 
+r[authn.mfa.partial-factors]
+A partial session MUST be able to list its subject's active MFA factors, so
+the client can offer one to complete login with. It MUST NOT see inactive
+factors or enroll, activate or remove any.
+
 r[authn.mfa.amr]
 Every session MUST record the authentication methods used, as RFC 8176
 `amr` values, together with the time of the last authentication.
@@ -134,6 +139,11 @@ sign-out paths. Access tokens MUST be returned in the response body.
 r[session.browser.csrf]
 Cookie-authenticated endpoints MUST check the request `Origin` against a
 configured allow-list and MUST require a custom request header.
+
+r[session.browser.mfa]
+When MFA completes a browser session's login, the refresh cookie MUST be
+delivered in that response, after the same `Origin` and header checks as
+the login itself.
 
 r[session.client-kind]
 Whether a login returns cookies or body tokens MUST be decided by the
