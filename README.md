@@ -101,7 +101,7 @@ mise trust && mise install
 mise run db:up      # Postgres 18 with pg_jsonschema in Docker on localhost:55432
 ```
 
-mise sets `DATABASE_URL`, `CONCLAVE_CONFIG` and `CONCLAVE_SECRETS` for the
+mise sets `DATABASE_URL`, `KONKLAV_CONFIG` and `KONKLAV_SECRETS` for the
 local setup. Everyday tasks:
 
 - `mise run serve` starts Postgres, migrates it and serves on ports 8080 to
@@ -131,7 +131,7 @@ Other database tasks:
 - `db:logs` follows its logs.
 - `db:psql` opens psql inside the container.
 
-To use another port, set `CONCLAVE_DEV_PG_PORT`, for example in an untracked
+To use another port, set `KONKLAV_DEV_PG_PORT`, for example in an untracked
 `mise.local.toml`.
 
 ## Stack

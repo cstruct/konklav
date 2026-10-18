@@ -1,5 +1,5 @@
 //! Runtime configuration, loaded with ordna from a Styx file, a secrets Styx
-//! file and `CONCLAVE__*` environment variables, in that order of precedence.
+//! file and `KONKLAV__*` environment variables, in that order of precedence.
 
 use std::fmt;
 use std::net::SocketAddr;
@@ -16,8 +16,8 @@ use ordna_source_styx::{DeserializeError, styx_file};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 /// The prefix of environment variables that override config values, as in
-/// `CONCLAVE__LISTEN__SUBJECT=0.0.0.0:8080`.
-pub const ENV_PREFIX: &str = "CONCLAVE";
+/// `KONKLAV__LISTEN__SUBJECT=0.0.0.0:8080`.
+pub const ENV_PREFIX: &str = "KONKLAV";
 
 // Each entrypoint loads only the contexts it needs, but every source is
 // checked against the fields of all of them: a key meant for another
@@ -491,7 +491,7 @@ mod tests {
         Database {
             host: "db.internal".into(),
             port: 5432,
-            name: "conclave".into(),
+            name: "konklav".into(),
             user: user.into(),
             password: password.into(),
             max_connections: 3,
@@ -500,10 +500,10 @@ mod tests {
 
     #[test]
     fn builds_a_connection_url() {
-        let options = database("conclave", "secret").connect_options();
+        let options = database("konklav", "secret").connect_options();
         assert_eq!(
             options.url,
-            "postgres://conclave:secret@db.internal:5432/conclave"
+            "postgres://konklav:secret@db.internal:5432/konklav"
         );
         assert_eq!(options.max_connections, 3);
     }
@@ -513,7 +513,7 @@ mod tests {
         let options = database("svc@acme", "p@ss:w/rd?#").connect_options();
         assert_eq!(
             options.url,
-            "postgres://svc%40acme:p%40ss%3Aw%2Frd%3F%23@db.internal:5432/conclave"
+            "postgres://svc%40acme:p%40ss%3Aw%2Frd%3F%23@db.internal:5432/konklav"
         );
     }
 }

@@ -7,8 +7,8 @@ listen {
 database {
     host localhost
     port 55432
-    name conclave
-    user conclave
+    name konklav
+    user konklav
     max_connections 10
 }
 
@@ -18,7 +18,7 @@ log {
 
 tokens {
     issuer "http://127.0.0.1:8080"
-    audience conclave-dev
+    audience konklav-dev
     signing_key_file "config/dev.signing-key.pem"
 }
 

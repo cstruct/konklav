@@ -7,7 +7,7 @@ The Conclave server binary. It serves the subject-facing, relying and control-pl
 - Loading runtime configuration with ordna, in this order:
   1. a Styx config file
   2. a Styx secrets file
-  3. `CONCLAVE__*` environment variables
+  3. `KONKLAV__*` environment variables
 
   Secret values are only accepted from the secrets file, and every problem is reported at once.
 - Configuration is split into ordna contexts (`ListenConfig`, `DatabaseConfig`, `LogConfig`), and each command loads only the ones it needs:
@@ -50,7 +50,7 @@ The Conclave server binary. It serves the subject-facing, relying and control-pl
 ## Public interface
 
 - CLI: `conclave-server --config <file> --secrets <file> <serve|migrate|check-config>`.
-  - The file paths can also come from `CONCLAVE_CONFIG` and `CONCLAVE_SECRETS`.
+  - The file paths can also come from `KONKLAV_CONFIG` and `KONKLAV_SECRETS`.
 - Configuration: the contexts in `src/config.rs`:
   - `listen`, `database`, `log`
   - `tokens`: issuer, audience, lifetimes and signing-key PEM files

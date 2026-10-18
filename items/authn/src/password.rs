@@ -85,7 +85,7 @@ impl PasswordHasher {
     // r[impl authn.login.timing]
     pub fn verify_dummy(&self, secret: &str) {
         static DUMMY: OnceLock<String> = OnceLock::new();
-        let dummy = DUMMY.get_or_init(|| self.hash("conclave-timing-equalizer"));
+        let dummy = DUMMY.get_or_init(|| self.hash("konklav-timing-equalizer"));
         let _ = self.verify(secret, dummy);
     }
 }

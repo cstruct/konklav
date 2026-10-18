@@ -86,8 +86,8 @@ class RelyingClient:
     async def start(self) -> None:
         """Start following the feed and refreshing caches in the background."""
         self._tasks = [
-            asyncio.create_task(self._run_feed(), name="conclave-feed"),
-            asyncio.create_task(self._run_work(), name="conclave-work"),
+            asyncio.create_task(self._run_feed(), name="konklav-feed"),
+            asyncio.create_task(self._run_work(), name="konklav-work"),
         ]
 
     async def stop(self) -> None:

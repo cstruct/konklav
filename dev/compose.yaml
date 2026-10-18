@@ -1,22 +1,22 @@
-name: conclave-dev
+name: konklav-dev
 
 services:
   postgres:
-    image: conclave-dev-postgres:18.6-jsonschema0.3.4
+    image: konklav-dev-postgres:18.6-jsonschema0.3.4
     build: postgres
     environment:
-      POSTGRES_USER: conclave
-      POSTGRES_PASSWORD: conclave
-      POSTGRES_DB: conclave
+      POSTGRES_USER: konklav
+      POSTGRES_PASSWORD: konklav
+      POSTGRES_DB: konklav
     ports:
-      - "${CONCLAVE_DEV_PG_PORT:-55432}:5432"
+      - "${KONKLAV_DEV_PG_PORT:-55432}:5432"
     # Postgres 18 images keep data in a versioned directory below
     # /var/lib/postgresql, so the volume is mounted there instead of at
     # .../data. That also lets future major upgrades live side by side.
     volumes:
       - postgres-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U conclave -d conclave"]
+      test: ["CMD-SHELL", "pg_isready -U konklav -d konklav"]
       interval: 1s
       timeout: 3s
       retries: 30

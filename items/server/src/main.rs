@@ -21,11 +21,11 @@ use tracing_subscriber::EnvFilter;
 #[command(version)]
 struct Cli {
     /// The public configuration file (Styx).
-    #[arg(long, env = "CONCLAVE_CONFIG")]
+    #[arg(long, env = "KONKLAV_CONFIG")]
     config: PathBuf,
     /// The secrets configuration file (Styx). Only secret values may be set
     /// here, and secret values may only be set here.
-    #[arg(long, env = "CONCLAVE_SECRETS")]
+    #[arg(long, env = "KONKLAV_SECRETS")]
     secrets: PathBuf,
     #[command(subcommand)]
     command: Command,

@@ -141,7 +141,7 @@ mod tests {
     // r[verify token.keys.private-material]
     #[test]
     fn reads_pkcs8_pem_keys_and_rejects_anything_else() {
-        let dir = std::env::temp_dir().join(format!("conclave-keys-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("konklav-keys-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let key = SigningKey::from_bytes(&[7; 32]);
         let pem = key

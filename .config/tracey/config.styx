@@ -1,6 +1,6 @@
 specs (
     {
-        name conclave
+        name konklav
         include (
             docs/spec/**/*.md
         )

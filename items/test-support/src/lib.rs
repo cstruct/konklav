@@ -2,7 +2,7 @@
 //!
 //! Tests get an isolated database each: [`TestDatabase`] creates a fresh,
 //! fully migrated database on the development Postgres server and drops it
-//! again afterwards. The server comes from `CONCLAVE_TEST_DATABASE_URL`, or
+//! again afterwards. The server comes from `KONKLAV_TEST_DATABASE_URL`, or
 //! `DATABASE_URL` as set by mise; start it with `mise run db:up`.
 //!
 //! Database tests must run on a multi-threaded runtime, because the migration
@@ -19,7 +19,7 @@
 use conclave_store::{ConnectOptions, Pool};
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 
-const SERVER_URL_VARS: [&str; 2] = ["CONCLAVE_TEST_DATABASE_URL", "DATABASE_URL"];
+const SERVER_URL_VARS: [&str; 2] = ["KONKLAV_TEST_DATABASE_URL", "DATABASE_URL"];
 
 /// A freshly created and migrated database, dropped when this value is.
 pub struct TestDatabase {
@@ -38,7 +38,7 @@ impl TestDatabase {
     /// migrations fail; a test cannot proceed in any of those cases.
     pub async fn new() -> Self {
         let admin_url = server_url();
-        let name = format!("conclave_test_{}", uuid::Uuid::now_v7().simple());
+        let name = format!("konklav_test_{}", uuid::Uuid::now_v7().simple());
         let url = with_database(&admin_url, &name);
 
         let mut admin = AsyncPgConnection::establish(&admin_url)
@@ -144,7 +144,7 @@ mod tests {
     #[test]
     fn replaces_the_database_name() {
         assert_eq!(
-            with_database("postgres://u:p@localhost:5432/conclave", "other"),
+            with_database("postgres://u:p@localhost:5432/konklav", "other"),
             "postgres://u:p@localhost:5432/other"
         );
     }
@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn keeps_query_parameters() {
         assert_eq!(
-            with_database("postgres://localhost/conclave?sslmode=disable", "other"),
+            with_database("postgres://localhost/konklav?sslmode=disable", "other"),
             "postgres://localhost/other?sslmode=disable"
         );
     }

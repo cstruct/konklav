@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 
 const CALLBACK: &str = "https://auth.example/v1/login/oidc/hydra/callback";
 const RETURN: &str = "https://app.example/signed-in";
-const CLIENT_SECRET: &str = "conclave-client-secret";
+const CLIENT_SECRET: &str = "konklav-client-secret";
 
 struct Hydra {
     process: Child,
@@ -62,7 +62,7 @@ async fn hydra() -> Option<Hydra> {
         .env("URLS_SELF_ISSUER", &public)
         .env("URLS_LOGIN", "http://127.0.0.1:9/login")
         .env("URLS_CONSENT", "http://127.0.0.1:9/consent")
-        .env("SECRETS_SYSTEM", "conclave-tests-only-hydra-system-secret")
+        .env("SECRETS_SYSTEM", "konklav-tests-only-hydra-system-secret")
         .env("STRATEGIES_ACCESS_TOKEN", "jwt")
         .env("LOG_LEVEL", "error")
         .stdout(Stdio::null())
@@ -131,7 +131,7 @@ impl Hydra {
         Settings {
             id: "hydra".into(),
             issuer: self.issuer.clone(),
-            client_id: "conclave".into(),
+            client_id: "konklav".into(),
             client_secret: CLIENT_SECRET.into(),
             redirect_uri: CALLBACK.into(),
             scopes: vec!["openid".into(), "email".into()],
@@ -251,7 +251,7 @@ async fn conclave_signs_people_in_through_hydra() {
     };
     hydra
         .create_client(json!({
-            "client_id": "conclave",
+            "client_id": "konklav",
             "client_secret": CLIENT_SECRET,
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],

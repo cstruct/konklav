@@ -30,7 +30,7 @@ async fn call(state: AppState, method: Method, uri: &str) -> (StatusCode, Value)
 fn unreachable_pool() -> conclave_store::Pool {
     // Port 1 is reserved and never runs Postgres.
     conclave_store::connect(&ConnectOptions {
-        url: "postgres://conclave:conclave@127.0.0.1:1/conclave".into(),
+        url: "postgres://konklav:konklav@127.0.0.1:1/konklav".into(),
         max_connections: 1,
     })
     .unwrap()

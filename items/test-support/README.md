@@ -14,7 +14,7 @@ Library crate with test helpers shared by Conclave's software items. It is only 
 |---|---|
 | `conclave-store` | Provides the pool and migrations |
 | `conclave-store`, `conclave-server` tests | Use it for isolated databases |
-| PostgreSQL | The server from `CONCLAVE_TEST_DATABASE_URL`, falling back to `DATABASE_URL` (which mise sets) |
+| PostgreSQL | The server from `KONKLAV_TEST_DATABASE_URL`, falling back to `DATABASE_URL` (which mise sets) |
 
 ## Usage
 

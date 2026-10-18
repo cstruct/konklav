@@ -32,7 +32,7 @@ struct Files(PathBuf);
 impl Files {
     fn new(name: &str) -> Self {
         let dir =
-            std::env::temp_dir().join(format!("conclave-config-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("konklav-config-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         Self(dir)
@@ -78,7 +78,7 @@ fn environment_overrides_the_config_file() {
     let loaded = load(
         &files.write("c.styx", CONFIG),
         &files.write("s.styx", SECRETS),
-        &[("CONCLAVE__LISTEN__CONTROL", "0.0.0.0:9000")],
+        &[("KONKLAV__LISTEN__CONTROL", "0.0.0.0:9000")],
     )
     .unwrap();
     let (listen, database, log, tokens, browser, control, feed, mfa) = loaded;
@@ -122,7 +122,7 @@ fn rejects_secrets_from_the_environment() {
     let error = load(
         &files.write("c.styx", CONFIG),
         &files.write("s.styx", SECRETS),
-        &[("CONCLAVE__DATABASE__PASSWORD", "from-env")],
+        &[("KONKLAV__DATABASE__PASSWORD", "from-env")],
     )
     .unwrap_err();
     assert!(error.to_string().contains("database.password"), "{error}");
@@ -149,8 +149,8 @@ fn reports_every_problem_at_once() {
         &files.write("c.styx", &config),
         &files.write("s.styx", SECRETS),
         &[
-            ("CONCLAVE__DATABASE__PASSWORD", "from-env"),
-            ("CONCLAVE__LISTEN__NOPE", "1"),
+            ("KONKLAV__DATABASE__PASSWORD", "from-env"),
+            ("KONKLAV__LISTEN__NOPE", "1"),
         ],
     )
     .unwrap_err();

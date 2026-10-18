@@ -17,10 +17,10 @@ uv = "0.8.24"
 "cargo:diesel_cli" = { version = "2.3.14", default-features = false, features = "postgres-bundled" }
 
 [env]
-CONCLAVE_DEV_PG_PORT = "55432"
-DATABASE_URL = "postgres://conclave:conclave@localhost:{{env.CONCLAVE_DEV_PG_PORT}}/conclave"
-CONCLAVE_CONFIG = "{{config_root}}/config/dev.styx"
-CONCLAVE_SECRETS = "{{config_root}}/config/dev.secrets.styx"
+KONKLAV_DEV_PG_PORT = "55432"
+DATABASE_URL = "postgres://konklav:konklav@localhost:{{env.KONKLAV_DEV_PG_PORT}}/konklav"
+KONKLAV_CONFIG = "{{config_root}}/config/dev.styx"
+KONKLAV_SECRETS = "{{config_root}}/config/dev.secrets.styx"
 
 [tasks."db:up"]
 description = "Start the local Postgres and wait until it accepts connections"
@@ -44,7 +44,7 @@ run = "docker compose -f dev/compose.yaml logs --follow"
 
 [tasks."db:psql"]
 description = "Open psql against the local database"
-run = "docker compose -f dev/compose.yaml exec postgres psql -U conclave -d conclave"
+run = "docker compose -f dev/compose.yaml exec postgres psql -U konklav -d konklav"
 
 [tasks.build]
 description = "Build every crate"
@@ -106,7 +106,7 @@ DSN = "memory"
 URLS_SELF_ISSUER = "http://127.0.0.1:4444"
 URLS_LOGIN = "http://127.0.0.1:3000/login"
 URLS_CONSENT = "http://127.0.0.1:3000/consent"
-SECRETS_SYSTEM = "conclave-dev-only-hydra-system-secret"
+SECRETS_SYSTEM = "konklav-dev-only-hydra-system-secret"
 
 [tasks."dev:signing-key"]
 description = "Create the untracked development signing key if it is missing"
