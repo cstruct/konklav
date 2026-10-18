@@ -1,8 +1,9 @@
 # OIDC and federation
 
-Status: accepted. Phases 1 to 4 (identity providers, claim mapping,
-break-glass, the OpenID provider, client credentials, revocation and
-logout) are implemented; phase 5 (peering and workloads) is designed only. The rules are in
+Status: accepted and implemented through phase 5: identity providers,
+claim mapping, break-glass, the OpenID provider with client credentials,
+revocation and logout, peering, key pinning and workload federation.
+What's left is listed under Open points. The rules are in
 [`../spec/federation.md`](../spec/federation.md); this note explains them
 and lists the decisions still open. It replaces the earlier "federation is
 out of scope" position.
@@ -263,18 +264,33 @@ keeps downstream sessions until they expire. In increasing strength:
 2. **Back-channel logout.** The upstream sends a logout token to each client
    when a session ends or a subject is disabled. This works with any
    OpenID provider that supports it.
-3. **Peering through the change feed.** A downstream instance follows the
-   upstream's feed as a relying system, through the relying SDK it already
-   ships. On `subject.changed` (disabled) it revokes the subject's federated
-   sessions. That event doesn't exist yet: subject state changes only show
-   today as `session.changed` for the revoked sessions, so peering adds it. On `entitlements.changed` for a federated subject, it fetches
-   the entitlement set, re-evaluates mapping, and adjusts managed grants
-   immediately. The delay becomes the feed's propagation delay, typically
-   seconds.
+3. **Peering.** A downstream follows its upstream's peer feed: a view of
+   the change feed scoped to the downstream's OIDC client.
+   - The upstream emits `subject.changed` when a subject is disabled or
+     re-enabled, alongside `entitlements.changed`.
+   - `POST /v1/oauth2/peer/events` lists those events for subjects that
+     have had a session for the calling client. An event without a subject
+     means every subject may be affected, such as after a catalog change.
+   - `POST /v1/oauth2/peer/subjects` returns a subject's `active` state and
+     the claims the client would receive with all its scopes, including
+     `groups`.
+   - Both endpoints authenticate the client like the token endpoint
+     (secret or `private_key_jwt`). They answer as if subjects the client
+     has never seen don't exist, so a downstream learns nothing about
+     anyone else and needs no service principal or capability upstream.
 
-Peering needs a service principal at the upstream for each downstream,
-holding a read-only capability for the subjects it federates. Most of
-this machinery already exists.
+   A downstream with `peering` on polls the feed every ten seconds, keeping
+   its place in `peer_cursor`. For each federated account an event names,
+   it fetches the subject's current claims:
+   - If the upstream disabled the subject or no longer knows it, the
+     downstream revokes that credential's sessions and removes the
+     provider's managed grants.
+   - Otherwise it re-applies claim mapping to the fresh claims, as at a
+     login.
+
+   Access therefore follows upstream changes within seconds, without a new
+   login. Peering only works with a Conclave upstream; other providers
+   still have the first two mechanisms.
 
 ## Break-glass
 
@@ -294,12 +310,35 @@ Losing the upstream mustn't lock operators out of production:
 
 ## Workload federation
 
-CI and tools acting across environments get a token from the upstream
-(client credentials) and exchange it downstream with the JWT bearer grant
-(`/v1/oauth2/token`, `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`).
-The downstream maps the upstream issuer and `sub` to a local service
-principal, so no long-lived secret keys sit in every environment. Token
-exchange (RFC 8693) for acting on behalf of a person is deferred.
+CI and tools acting across environments get a token from the upstream and
+exchange it downstream with the JWT bearer grant (`POST /v1/oauth2/token`,
+`grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`). For example, an
+upstream OIDC client bound to the job's service principal uses the client
+credentials grant, with the downstream's issuer as its audience.
+
+- The downstream accepts assertions only from identity providers with
+  `workloads` on. It checks them with that provider's keys (discovered or
+  pinned), and requires its own issuer or token endpoint as `aud`.
+- It maps the assertion's `sub` to the local service principal that holds
+  a federated credential for it. Operators create that credential on the
+  control plane (`POST /v1/subjects/{id}/credentials` with
+  `{"kind": "federated", "provider": …, "subject": …}`). People can't have
+  workload identities; they link accounts by signing in.
+- The resulting session lasts one access token, with this instance's
+  audience and the `fed` method. Nothing is refreshed, and no long-lived
+  secret sits in every environment.
+- The grant uses the token endpoint, so the instance needs `oidc_provider`
+  configured.
+
+Token exchange (RFC 8693), for acting on behalf of a person, is deferred.
+
+### Key pinning
+
+`pinned_jwks_file` makes a downstream use a fixed JWKS for a provider
+instead of the keys its discovery document names. The keys are never
+fetched or refreshed, so a compromised discovery document or key endpoint
+can't introduce a key. Rotating the upstream's keys then means updating the
+file first.
 
 ## Audit and impersonation
 
@@ -320,7 +359,7 @@ exchange (RFC 8693) for acting on behalf of a person is deferred.
 | Control plane | OIDC clients (`conclave:clients:manage`); break-glass credentials flagged |
 | Subject surface | `/v1/login/oidc/*`, linking, login-request acceptance |
 | New surface paths | `/.well-known/openid-configuration`, `/v1/oauth2/authorize` (and `/resume`), `/v1/oauth2/login-requests/{id}` (and `/accept`), `/v1/oauth2/token`, `/v1/oauth2/userinfo`, `/v1/oauth2/revoke`, `/v1/oauth2/logout` |
-| Feed | `break_glass.used`, and `subject.changed` for peering |
+| Feed | `break_glass.used`; `subject.changed`; the client-scoped peer feed |
 
 ## Decisions
 
@@ -350,5 +389,14 @@ Proposed defaults, to confirm before implementation:
    ID tokens, ES256, userinfo with groups, refresh.
 4. **Provider extras** (done): client credentials with `private_key_jwt`,
    RP-initiated and back-channel logout, revocation.
-5. **Peering and workloads**: following the upstream feed, key pinning, the
-   JWT bearer grant.
+5. **Peering and workloads** (done): the client-scoped peer feed, key
+   pinning, the JWT bearer grant.
+
+## Open points
+
+- The claims hook for profile claims beyond login identifiers and groups.
+- Publishing the next ES256 key ahead of a rotation, as Ed25519 keys allow.
+- Token exchange (RFC 8693) for acting on behalf of a person.
+- Back-channel logout for sessions that expire rather than end.
+- An SSE variant of the peer feed, if polling every ten seconds proves too
+  slow or too costly.

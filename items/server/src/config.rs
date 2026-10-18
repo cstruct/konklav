@@ -158,6 +158,18 @@ config_tree! {
             /// What happens when an account nobody linked signs in: `link`
             /// (the default) refuses it, `create` creates a subject.
             pub provisioning: Option<String>,
+            /// A JWKS file with the provider's signing keys, used instead of
+            /// the keys its discovery document names.
+            pub pinned_jwks_file: Option<String>,
+            /// Follow the provider's peer feed (a Conclave upstream) to end
+            /// sessions of subjects it disables and re-apply claim mapping
+            /// when their claims change.
+            #[facet(default)]
+            pub peering: bool,
+            /// Accept the provider's tokens for local service principals
+            /// with the JWT bearer grant.
+            #[facet(default)]
+            pub workloads: bool,
             /// Email domains whose verified addresses may link an account to
             /// the subject with that login identifier. Off when empty.
             #[facet(default)]

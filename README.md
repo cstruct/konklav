@@ -24,6 +24,16 @@ Milestones M0–M8 are done in code. The cutover itself is an operation the
 relying system's runbook describes, and it remains: publish the Python
 binding, ship the frontends, rehearse, switch over, then clean up.
 
+Beyond the milestones, Conclave federates through OpenID Connect in both
+directions:
+- signing in through identity providers, with claim mapping
+- acting as an OpenID provider, with client credentials, revocation and
+  logout
+- peering between Conclave instances
+- workload tokens
+
+See [OIDC and federation](docs/architecture/oidc-and-federation.md).
+
 By milestone:
 
 - M8: the relying system runs on Conclave behind a flag, and a cutover

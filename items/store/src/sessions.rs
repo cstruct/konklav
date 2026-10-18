@@ -711,3 +711,39 @@ pub async fn bind_client(
         .await?
         .into())
 }
+
+/// Of `subjects`, those that have ever had a session for the OIDC client.
+pub async fn subjects_with_client(
+    conn: &mut AsyncPgConnection,
+    client: &str,
+    subjects: &[SubjectId],
+) -> StoreResult<Vec<SubjectId>> {
+    let ids: Vec<uuid::Uuid> = subjects.iter().map(|s| uuid::Uuid::from(*s)).collect();
+    Ok(session::table
+        .filter(session::oidc_client_id.eq(client))
+        .filter(session::subject_id.eq_any(ids))
+        .select(session::subject_id)
+        .distinct()
+        .load::<uuid::Uuid>(conn)
+        .await?
+        .into_iter()
+        .map(SubjectId::from)
+        .collect())
+}
+
+/// The subject's most recent session for the OIDC client, if any.
+pub async fn latest_for_client(
+    conn: &mut AsyncPgConnection,
+    client: &str,
+    subject: SubjectId,
+) -> StoreResult<Option<Session>> {
+    Ok(session::table
+        .filter(session::oidc_client_id.eq(client))
+        .filter(session::subject_id.eq(subject.as_uuid()))
+        .order(session::created_at.desc())
+        .select(Row::as_select())
+        .first(conn)
+        .await
+        .optional()?
+        .map(Session::from))
+}

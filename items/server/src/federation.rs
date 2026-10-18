@@ -57,6 +57,10 @@ pub struct Settings {
     /// login identifier.
     pub link_verified_email_domains: Vec<String>,
     pub grants: Vec<crate::claim_mapping::Rule>,
+    /// Keys used instead of the discovered ones.
+    pub pinned_keys: Option<Arc<JwkSet>>,
+    pub peering: bool,
+    pub workloads: bool,
 }
 
 /// What happens when an account nobody linked signs in.
@@ -75,6 +79,27 @@ struct Metadata {
     authorization_endpoint: String,
     token_endpoint: String,
     jwks_uri: String,
+    /// Only Conclave upstreams have these.
+    #[serde(default)]
+    conclave_peer_events_endpoint: Option<String>,
+    #[serde(default)]
+    conclave_peer_subjects_endpoint: Option<String>,
+}
+
+/// A page of an upstream's peer feed.
+#[derive(Clone, Debug, Deserialize)]
+pub struct PeerPage {
+    pub events: Vec<PeerEvent>,
+    pub next: i64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct PeerEvent {
+    pub cursor: i64,
+    pub kind: String,
+    /// The upstream subject; absent when every subject may be affected.
+    #[serde(default)]
+    pub subject: Option<String>,
 }
 
 /// The claims Conclave uses from a validated ID token.
@@ -175,7 +200,11 @@ impl Provider {
 
     /// The provider's keys, fetched again when `refresh` is set (an ID token
     /// named a key that isn't known yet).
+    // r[impl federation.peer.pinning]
     async fn keys(&self, refresh: bool) -> Result<Arc<JwkSet>, FederationError> {
+        if let Some(pinned) = &self.settings.pinned_keys {
+            return Ok(pinned.clone());
+        }
         if !refresh && let Some(keys) = &*self.keys.read().await {
             return Ok(keys.clone());
         }
@@ -251,6 +280,65 @@ impl Provider {
         Ok(tokens.id_token)
     }
 
+    /// Posts to a peer endpoint as this instance's client.
+    async fn peer_post(
+        &self,
+        endpoint: Option<&String>,
+        form: &[(&str, &str)],
+    ) -> Result<reqwest::Response, FederationError> {
+        let endpoint = endpoint.ok_or_else(|| {
+            FederationError::Provider("the provider doesn't offer peering".into())
+        })?;
+        self.http
+            .post(endpoint)
+            .basic_auth(&self.settings.client_id, Some(&self.settings.client_secret))
+            .form(form)
+            .send()
+            .await
+            .map_err(|error| FederationError::Provider(error.to_string()))
+    }
+
+    /// The upstream's peer feed after `after`.
+    pub async fn peer_events(&self, after: i64) -> Result<PeerPage, FederationError> {
+        let metadata = self.metadata().await?;
+        let after = after.to_string();
+        self.peer_post(
+            metadata.conclave_peer_events_endpoint.as_ref(),
+            &[("after", &after)],
+        )
+        .await?
+        .error_for_status()
+        .map_err(|error| FederationError::Provider(error.to_string()))?
+        .json()
+        .await
+        .map_err(|error| FederationError::Provider(error.to_string()))
+    }
+
+    /// The upstream subject's current claims, with `active`, or None if the
+    /// upstream doesn't know it for this client.
+    pub async fn peer_subject(
+        &self,
+        subject: &str,
+    ) -> Result<Option<serde_json::Value>, FederationError> {
+        let metadata = self.metadata().await?;
+        let response = self
+            .peer_post(
+                metadata.conclave_peer_subjects_endpoint.as_ref(),
+                &[("subject", subject)],
+            )
+            .await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        response
+            .error_for_status()
+            .map_err(|error| FederationError::Provider(error.to_string()))?
+            .json()
+            .await
+            .map(Some)
+            .map_err(|error| FederationError::Provider(error.to_string()))
+    }
+
     /// Validates an ID token issued for this login.
     // r[impl federation.idp.id-token]
     pub async fn verify(&self, id_token: &str, nonce: &str) -> Result<IdClaims, FederationError> {
@@ -310,6 +398,49 @@ impl Provider {
         Ok(claims)
     }
 
+    /// Validates a token the provider issued to a workload, for the JWT
+    /// bearer grant: signed with the provider's keys, issued by it, for one
+    /// of `audiences`, unexpired. Returns its `sub`.
+    pub async fn verify_assertion(
+        &self,
+        token: &str,
+        audiences: &[String],
+    ) -> Result<String, FederationError> {
+        #[derive(Deserialize)]
+        struct Assertion {
+            sub: String,
+        }
+        let invalid = |reason: &str| FederationError::InvalidIdToken(reason.to_owned());
+        let header = jsonwebtoken::decode_header(token).map_err(|e| invalid(&e.to_string()))?;
+        if matches!(
+            header.alg,
+            Algorithm::HS256 | Algorithm::HS384 | Algorithm::HS512
+        ) {
+            return Err(invalid("only asymmetric algorithms are accepted"));
+        }
+        let kid = header.kid.as_deref();
+        let mut keys = self.keys(false).await?;
+        if kid.is_some_and(|kid| keys.find(kid).is_none()) {
+            keys = self.keys(true).await?;
+        }
+        let jwk = match kid {
+            Some(kid) => keys.find(kid),
+            None if keys.keys.len() == 1 => keys.keys.first(),
+            None => None,
+        }
+        .ok_or_else(|| invalid("signed with an unknown key"))?;
+        let key = DecodingKey::from_jwk(jwk).map_err(|e| invalid(&e.to_string()))?;
+        let mut validation = Validation::new(header.alg);
+        validation.set_issuer(&[&self.settings.issuer]);
+        validation.set_audience(audiences);
+        validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
+        validation.leeway = LEEWAY_SECONDS;
+        Ok(jsonwebtoken::decode::<Assertion>(token, &key, &validation)
+            .map_err(|e| invalid(&e.to_string()))?
+            .claims
+            .sub)
+    }
+
     /// Checks `acr` and authentication recency against the provider's
     /// requirements.
     // r[impl federation.methods]
@@ -346,6 +477,12 @@ impl Provider {
         }
         methods
     }
+}
+
+/// The start of every federated credential identifier for `provider`.
+#[must_use]
+pub fn federated_prefix(provider: &str) -> String {
+    format!("{provider}|")
 }
 
 /// The configured identity providers, by id.
@@ -409,6 +546,19 @@ impl Providers {
                     .iter()
                     .map(|domain| domain.to_lowercase())
                     .collect(),
+                pinned_keys: provider
+                    .pinned_jwks_file
+                    .as_ref()
+                    .map(|file| {
+                        let text = std::fs::read_to_string(file)
+                            .map_err(|error| format!("reading {file}: {error}"))?;
+                        serde_json::from_str::<JwkSet>(&text)
+                            .map(Arc::new)
+                            .map_err(|error| format!("{file} is not a JWKS: {error}"))
+                    })
+                    .transpose()?,
+                peering: provider.peering,
+                workloads: provider.workloads,
                 grants: provider
                     .grants
                     .iter()
@@ -439,6 +589,10 @@ impl Providers {
     #[must_use]
     pub fn get(&self, id: &str) -> Option<&Arc<Provider>> {
         self.0.get(id)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Arc<Provider>> {
+        self.0.values()
     }
 }
 

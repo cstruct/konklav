@@ -5,10 +5,7 @@ identity providers, and Conclave acting as an OpenID provider for
 applications and other Conclave instances. Federation between Conclave
 instances builds on both and adds a few capabilities only peers have.
 
-Status: identity providers, claim mapping, break-glass credentials and the
-OpenID provider (authorization code flow, refresh, userinfo, client
-credentials, revocation and logout) are implemented. Peering and workload
-federation are specified only. The rationale and the decisions behind
+Status: implemented. The rationale and the decisions behind
 these rules are in
 [`../architecture/oidc-and-federation.md`](../architecture/oidc-and-federation.md).
 
@@ -153,10 +150,12 @@ so an upstream instance can be replaced by another OpenID provider.
 Peer-only capabilities MUST be optional.
 
 r[federation.peer.feed]
-A downstream instance MAY follow an upstream Conclave's change feed as a
-relying system. When it does, it MUST revoke the sessions of subjects the
+An upstream Conclave MUST offer each OIDC client a view of its change feed
+limited to subjects that have had a session for that client, and the
+current claims and state of such a subject. A downstream instance MAY
+follow it. When it does, it MUST revoke the sessions of subjects the
 upstream disables, and MUST re-evaluate managed grants when a subject's
-mapped claims change, within the feed's propagation delay.
+claims change, within its polling interval.
 
 r[federation.peer.pinning]
 A downstream instance MUST be able to pin the upstream's signing keys

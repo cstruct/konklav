@@ -16,6 +16,7 @@ pub mod memberships;
 pub mod mfa;
 mod migrate;
 pub mod oidc_clients;
+pub mod peer_cursors;
 mod pool;
 pub mod roles;
 pub mod schema;

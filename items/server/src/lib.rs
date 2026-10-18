@@ -20,6 +20,7 @@ pub mod oidc;
 mod oidc_api;
 mod oidc_clients_api;
 pub mod pacing;
+pub mod peering;
 mod relying_api;
 pub mod serve;
 mod subject_api;

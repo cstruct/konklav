@@ -382,3 +382,49 @@ p1XNGpwF1zXMHj8NrRZRBsdiy2jZvNVSLlPqzmK3P4YLDAtSoKNCeXst
         "https://auth.example/.well-known/jwks.json"
     );
 }
+
+// r[verify federation.peer.pinning]
+#[test]
+fn pinned_keys_load_from_a_jwks_file() {
+    let files = Files::new("pinned-keys");
+    let jwks = files.write(
+        "ops.jwks.json",
+        r#"{"keys": [{"kty": "EC", "crv": "P-256", "kid": "k1", "alg": "ES256", "x": "Y6_1EEzqCvOEimuWQdUYPZi0Vo88sqdVzRqcBdc1zB4", "y": "Pw2tFlEGx2LLaNm81VIuU-rOYrc_hgsMC1Kgo0J5ey0"}]}"#,
+    );
+    let provider = |file: &str| {
+        format!(
+            r#"{CONFIG}
+identity_providers ({{
+    id ops
+    issuer "https://ops.example"
+    client_id prod-eu
+    redirect_uri "https://auth.example/v1/login/oidc/ops/callback"
+    return_urls ("https://app.example/")
+    pinned_jwks_file "{file}"
+    peering true
+    workloads true
+}})
+"#
+        )
+    };
+    let secrets =
+        format!("{SECRETS}identity_provider_secrets ({{provider ops, client_secret shh}})\n");
+    let (.., browser, _, _, _) = load(
+        &files.write("c.styx", &provider(&jwks.display().to_string())),
+        &files.write("s.styx", &secrets),
+        &[],
+    )
+    .unwrap();
+    let providers = conclave_server::federation::Providers::from_config(&browser).unwrap();
+    let ops = providers.get("ops").unwrap();
+    assert_eq!(ops.settings.pinned_keys.as_ref().unwrap().keys.len(), 1);
+    assert!(ops.settings.peering && ops.settings.workloads);
+
+    let (.., browser, _, _, _) = load(
+        &files.write("c.styx", &provider("/nonexistent.json")),
+        &files.write("s.styx", &secrets),
+        &[],
+    )
+    .unwrap();
+    assert!(conclave_server::federation::Providers::from_config(&browser).is_err());
+}

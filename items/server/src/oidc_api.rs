@@ -52,6 +52,8 @@ pub fn routes() -> Router<AppState> {
         .route("/oauth2/userinfo", get(userinfo).post(userinfo))
         .route("/oauth2/revoke", post(revoke))
         .route("/oauth2/logout", get(logout))
+        .route("/oauth2/peer/events", post(peer_events))
+        .route("/oauth2/peer/subjects", post(peer_subject))
 }
 
 fn provider(state: &AppState) -> Result<&OpenIdProvider, ApiError> {
@@ -82,10 +84,17 @@ pub async fn discovery(State(state): State<AppState>) -> Result<Response, ApiErr
         "end_session_endpoint": endpoint(&state, "logout"),
         "backchannel_logout_supported": true,
         "backchannel_logout_session_supported": true,
+        "conclave_peer_events_endpoint": endpoint(&state, "peer/events"),
+        "conclave_peer_subjects_endpoint": endpoint(&state, "peer/subjects"),
         "jwks_uri": provider.jwks_uri,
         "response_types_supported": ["code"],
         "response_modes_supported": ["query"],
-        "grant_types_supported": ["authorization_code", "refresh_token", "client_credentials"],
+        "grant_types_supported": [
+            "authorization_code",
+            "refresh_token",
+            "client_credentials",
+            JWT_BEARER_GRANT
+        ],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["ES256", "EdDSA"],
         "code_challenge_methods_supported": ["S256"],
@@ -468,9 +477,15 @@ struct TokenRequest {
     client_secret: Option<String>,
     client_assertion_type: Option<String>,
     client_assertion: Option<String>,
+    /// For the peer endpoints.
+    after: Option<i64>,
+    subject: Option<String>,
+    /// For the JWT bearer grant.
+    assertion: Option<String>,
 }
 
 const JWT_BEARER_ASSERTION: &str = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+const JWT_BEARER_GRANT: &str = "urn:ietf:params:oauth:grant-type:jwt-bearer";
 
 /// An RFC 6749 token-endpoint error.
 fn oauth_error(status: StatusCode, error: &str, description: &str) -> Response {
@@ -604,6 +619,10 @@ async fn token(
 ) -> Result<Response, ApiError> {
     provider(&state)?;
     let mut conn = state.pool.get().await?;
+    // The assertion is the credential: no client authenticates this grant.
+    if form.grant_type.as_deref() == Some(JWT_BEARER_GRANT) {
+        return jwt_bearer_grant(&state, &mut conn, form.assertion.as_deref()).await;
+    }
     let Some(client) = authenticate_client(&state, &mut conn, &headers, &form).await else {
         return Ok(oauth_error(
             StatusCode::UNAUTHORIZED,
@@ -973,6 +992,215 @@ async fn logout(
         params.push(("state", client_state.as_str()));
     }
     Ok(redirect_to(uri, &params))
+}
+
+/// The JWT bearer grant (RFC 7523) for workloads: a token from an identity
+/// provider that accepts workloads signs in the service principal holding a
+/// federated credential for its `sub`. The access token has this instance's
+/// audience and lasts at most one access token.
+// r[impl federation.jwt-bearer]
+async fn jwt_bearer_grant(
+    state: &AppState,
+    conn: &mut Connection,
+    assertion: Option<&str>,
+) -> Result<Response, ApiError> {
+    #[derive(Deserialize)]
+    struct Issuer {
+        iss: String,
+    }
+    let Some(assertion) = assertion else {
+        return Ok(invalid_grant("assertion is required"));
+    };
+    let Ok(unverified) = jsonwebtoken::dangerous::insecure_decode::<Issuer>(assertion) else {
+        return Ok(invalid_grant("malformed assertion"));
+    };
+    let Some(provider) = state
+        .auth
+        .identity_providers
+        .iter()
+        .find(|p| p.settings.workloads && p.settings.issuer == unverified.claims.iss)
+    else {
+        return Ok(invalid_grant(
+            "the assertion's issuer isn't trusted for workloads",
+        ));
+    };
+    let audiences = [state.auth.issuer.clone(), endpoint(state, "token")];
+    let subject = match provider.verify_assertion(assertion, &audiences).await {
+        Ok(subject) => subject,
+        Err(error) => {
+            tracing::info!(%error, "JWT bearer assertion refused");
+            return Ok(invalid_grant("the assertion is invalid"));
+        }
+    };
+    let identifier = credentials::federated_identifier(&provider.settings.id, &subject);
+    let Some(credential) =
+        credentials::find_active(conn, credentials::CredentialKind::Federated, &identifier).await?
+    else {
+        return Ok(invalid_grant(
+            "no service principal has this workload identity",
+        ));
+    };
+    let principal = conclave_store::subjects::get(conn, credential.subject_id).await?;
+    if principal.kind != conclave_store::subjects::SubjectKind::Service
+        || principal.state != conclave_store::subjects::SubjectState::Active
+    {
+        return Ok(invalid_grant(
+            "no service principal has this workload identity",
+        ));
+    }
+    let now = Utc::now();
+    let (session, _) = sessions::insert(
+        conn,
+        NewSession {
+            id: SessionId::new_v7(),
+            subject_id: credential.subject_id,
+            credential_id: credential.id,
+            stage: Stage::Identity,
+            client_kind: SessionClient::Native,
+            amr: vec![crate::federation::FEDERATED_METHOD.to_owned()],
+            auth_time: now,
+            flags: Vec::new(),
+            impersonator_subject_id: None,
+            parent_session_id: None,
+            // Never presented: these sessions can't be refreshed.
+            refresh_hash: Sha256::digest(generate_secret().as_bytes()).to_vec(),
+            expires_at: now + state.auth.access_ttl,
+        },
+    )
+    .await?;
+    let access = issue::access_token(conn, &state.auth, &session).await?;
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(serde_json::json!({
+            "access_token": access.access_token,
+            "token_type": "Bearer",
+            "expires_in": access.expires_in,
+        })),
+    )
+        .into_response())
+}
+
+// --- Peering -------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct PeerEvent {
+    cursor: i64,
+    kind: &'static str,
+    /// The subject affected; absent when every subject may be.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subject: Option<conclave_core::SubjectId>,
+}
+
+/// `POST /v1/oauth2/peer/events`: the client's view of the change feed.
+/// Only subjects that have had a session for the client appear, so a client
+/// learns nothing about anyone else.
+// r[impl federation.peer.feed]
+async fn peer_events(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Form(form): Form<TokenRequest>,
+) -> Result<Response, ApiError> {
+    provider(&state)?;
+    let mut conn = state.pool.get().await?;
+    let Some(client) = authenticate_client(&state, &mut conn, &headers, &form).await else {
+        return Ok(oauth_error(
+            StatusCode::UNAUTHORIZED,
+            "invalid_client",
+            "client authentication failed",
+        ));
+    };
+    let after = form.after.unwrap_or(0);
+    let scanned =
+        conclave_store::events::after(&mut conn, conclave_core::Cursor::new(after), 500).await?;
+    let next = scanned.last().map_or(after, |event| event.cursor);
+    let mut candidates: Vec<(i64, &'static str, Option<conclave_core::SubjectId>)> = Vec::new();
+    for event in &scanned {
+        let parse = |value: &serde_json::Value| {
+            value
+                .as_str()
+                .and_then(|s| s.parse::<uuid::Uuid>().ok())
+                .map(conclave_core::SubjectId::from)
+        };
+        match event.kind.as_str() {
+            "subject.changed" => {
+                if let Some(subject) = parse(&event.payload["subject"]) {
+                    candidates.push((event.cursor, "subject.changed", Some(subject)));
+                }
+            }
+            "entitlements.changed" if event.payload["all"] == true => {
+                candidates.push((event.cursor, "entitlements.changed", None));
+            }
+            "entitlements.changed" => {
+                for subject in event.payload["subjects"].as_array().into_iter().flatten() {
+                    if let Some(subject) = parse(subject) {
+                        candidates.push((event.cursor, "entitlements.changed", Some(subject)));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let named: Vec<_> = candidates.iter().filter_map(|(_, _, s)| *s).collect();
+    let known = sessions::subjects_with_client(&mut conn, &client.id, &named).await?;
+    let events: Vec<PeerEvent> = candidates
+        .into_iter()
+        .filter(|(_, _, subject)| subject.is_none_or(|s| known.contains(&s)))
+        .map(|(cursor, kind, subject)| PeerEvent {
+            cursor,
+            kind,
+            subject,
+        })
+        .collect();
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(serde_json::json!({"events": events, "next": next})),
+    )
+        .into_response())
+}
+
+/// `POST /v1/oauth2/peer/subjects`: whether a subject is still active, and
+/// the claims the client would receive for it with all its scopes. Only
+/// for subjects that have had a session for the client.
+async fn peer_subject(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Form(form): Form<TokenRequest>,
+) -> Result<Response, ApiError> {
+    provider(&state)?;
+    let mut conn = state.pool.get().await?;
+    let Some(client) = authenticate_client(&state, &mut conn, &headers, &form).await else {
+        return Ok(oauth_error(
+            StatusCode::UNAUTHORIZED,
+            "invalid_client",
+            "client authentication failed",
+        ));
+    };
+    let unknown = || {
+        oauth_error(
+            StatusCode::NOT_FOUND,
+            "unknown_subject",
+            "no such subject has signed in to this client",
+        )
+    };
+    let Some(subject) = form
+        .subject
+        .as_deref()
+        .and_then(|s| s.parse::<uuid::Uuid>().ok())
+        .map(conclave_core::SubjectId::from)
+    else {
+        return Ok(unknown());
+    };
+    let Some(latest) = sessions::latest_for_client(&mut conn, &client.id, subject).await? else {
+        return Ok(unknown());
+    };
+    let principal = conclave_store::subjects::get(&mut conn, subject).await?;
+    let credential = credentials::get(&mut conn, latest.credential_id).await?;
+    let claims = oidc::claims(&mut conn, &client, &client.scopes, subject, &credential).await?;
+    let mut body = serde_json::to_value(&claims).map_err(ApiError::internal)?;
+    body["sub"] = serde_json::json!(subject);
+    body["active"] =
+        serde_json::json!(principal.state == conclave_store::subjects::SubjectState::Active);
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(body)).into_response())
 }
 
 // --- Userinfo -------------------------------------------------------------------

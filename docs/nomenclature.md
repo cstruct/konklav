@@ -365,7 +365,7 @@ Terms are introduced in dependency order: each definition only uses terms define
   - In federation between Conclave instances, the upstream is the OpenID provider (for example, an operators' instance) and each downstream (dev, staging, a production region) trusts it as an identity provider.
 
 - `peering`
-  - Optional federation between Conclave instances beyond OIDC: a downstream follows the upstream's change feed as a relying system, so subjects disabled or regrouped upstream lose access downstream within seconds.
+  - Optional federation between Conclave instances beyond OIDC: a downstream follows the upstream's change feed, limited to subjects that signed in through it, so subjects disabled or regrouped upstream lose access downstream within seconds.
 
 - `break-glass credential`
   - A local operator credential that works while every upstream is unavailable. Every use is recorded as an event.

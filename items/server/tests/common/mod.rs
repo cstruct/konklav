@@ -96,6 +96,38 @@ impl TestApp {
         }
     }
 
+    /// An app whose authentication settings `configure` adjusts.
+    pub async fn with_auth(configure: impl FnOnce(&mut AuthContext)) -> Self {
+        let app = Self::with_key(1).await;
+        let mut auth = auth_context(Signer::new(SigningKey::from_bytes(&[1; 32])));
+        configure(&mut auth);
+        let state = AppState {
+            auth: Arc::new(auth),
+            ..app.state.clone()
+        };
+        let router = surface::router(&Surface::ALL, state.clone());
+        Self {
+            db: app.db,
+            state,
+            router,
+        }
+    }
+
+    /// An app also served over TCP, with its address as the issuer, so other
+    /// instances can federate with it. Returns the base URL.
+    pub async fn serving(configure: impl FnOnce(&mut AuthContext, &str)) -> (Self, String) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = Self::with_auth(|auth| {
+            auth.issuer.clone_from(&base);
+            configure(auth, &base);
+        })
+        .await;
+        let router = app.router.clone();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        (app, base)
+    }
+
     /// An app that is also an OpenID provider.
     pub async fn with_openid_provider(provider: conclave_server::oidc::OpenIdProvider) -> Self {
         let app = Self::with_key(1).await;

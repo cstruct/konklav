@@ -428,3 +428,28 @@ pub async fn set_break_glass(
     }
     Ok(())
 }
+
+/// Active credentials of `kind` whose identifier starts with `prefix`.
+pub async fn list_active_with_prefix(
+    conn: &mut AsyncPgConnection,
+    kind: CredentialKind,
+    prefix: &str,
+) -> StoreResult<Vec<Credential>> {
+    let pattern = format!(
+        "{}%",
+        prefix
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    );
+    credential::table
+        .filter(credential::kind.eq(kind.as_str()))
+        .filter(credential::identifier.like(pattern))
+        .filter(credential::revoked_at.is_null())
+        .select(Row::as_select())
+        .load(conn)
+        .await?
+        .into_iter()
+        .map(|row| row.try_into().map_err(StoreError::from))
+        .collect()
+}

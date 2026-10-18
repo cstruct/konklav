@@ -167,6 +167,14 @@ diesel::table! {
 }
 
 diesel::table! {
+    peer_cursor (provider) {
+        provider -> Text,
+        cursor -> Int8,
+        updated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
     role (id) {
         id -> Uuid,
         tenant_id -> Uuid,
@@ -333,6 +341,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     membership,
     mfa_factor,
     oidc_client,
+    peer_cursor,
     role,
     role_assignment,
     role_policy,

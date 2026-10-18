@@ -157,6 +157,7 @@ async fn serve(
     tokio::spawn(conclave_server::oidc::deliver_logouts_forever(
         state.clone(),
     ));
+    tokio::spawn(conclave_server::peering::sync_forever(state.clone()));
     let server = BoundServer::bind(&listen.listen, state).await?;
     server.run(shutdown_signal()).await?;
     Ok(())

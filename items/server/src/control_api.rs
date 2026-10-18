@@ -395,6 +395,13 @@ enum CreateCredential {
         id: Option<CredentialId>,
         identifier: String,
     },
+    /// A workload identity at an identity provider: tokens it issues for
+    /// `subject` sign the service principal in with the JWT bearer grant.
+    Federated {
+        id: Option<CredentialId>,
+        provider: String,
+        subject: String,
+    },
 }
 
 #[derive(Serialize)]
@@ -520,6 +527,14 @@ async fn create_credential(
             };
             (new, Some(keys))
         }
+        CreateCredential::Federated {
+            id,
+            provider,
+            subject: upstream,
+        } => (
+            workload_credential(&state, &subject, id, provider, upstream)?,
+            None,
+        ),
     };
     let credential = credentials::insert(&mut conn, new).await?;
     Ok((
@@ -836,6 +851,40 @@ async fn revoke_signing_key(
             other => other.into(),
         })?;
     Ok(Json(RevokedKey { kid, revoked }))
+}
+
+/// A federated credential naming a workload at an identity provider, for
+/// the JWT bearer grant. Only service principals get them; people link
+/// accounts by signing in.
+// r[impl federation.jwt-bearer]
+fn workload_credential(
+    state: &AppState,
+    subject: &conclave_store::subjects::Subject,
+    id: Option<CredentialId>,
+    provider: String,
+    upstream: String,
+) -> Result<NewCredential, ApiError> {
+    if subject.kind != SubjectKind::Service {
+        return Err(ApiError::invalid_request(
+            "people link identity-provider accounts by signing in; only service principals get workload identities",
+        ));
+    }
+    if state.auth.identity_providers.get(&provider).is_none() {
+        return Err(ApiError::invalid_request("unknown identity provider"));
+    }
+    Ok(NewCredential {
+        id: id.unwrap_or_else(CredentialId::new_v7),
+        subject_id: subject.id,
+        identifier: credentials::federated_identifier(&provider, &upstream),
+        data: CredentialData::Federated(credentials::FederatedData {
+            provider,
+            subject: upstream,
+            email: None,
+            email_verified: None,
+        }),
+        mfa_factors_required: 0,
+        replaces: None,
+    })
 }
 
 #[derive(Deserialize)]
