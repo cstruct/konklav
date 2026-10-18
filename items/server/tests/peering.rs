@@ -163,7 +163,7 @@ impl Federation {
             .send(Method::GET, "/v1/login/oidc/ops/start", &[], None)
             .await;
         assert_eq!(started.status, StatusCode::SEE_OTHER, "{:?}", started.body);
-        let state_cookie = cookie(&started, "conclave_oidc").unwrap();
+        let state_cookie = cookie(&started, "konklav_oidc").unwrap();
         let authorize = location(&started);
         let path = authorize.trim_start_matches(&self.upstream_base);
 
@@ -176,7 +176,7 @@ impl Federation {
             handed_off.body
         );
         let request = query(&location(&handed_off))["login_request"].clone();
-        let browser = cookie(&handed_off, "conclave_authorize").unwrap();
+        let browser = cookie(&handed_off, "konklav_authorize").unwrap();
         let auth = format!("Bearer {}", self.operator_token);
         let accepted = up
             .send(
@@ -185,7 +185,7 @@ impl Federation {
                 &[
                     ("authorization", &auth),
                     ("origin", ORIGIN),
-                    ("x-conclave-client", "web"),
+                    ("x-konklav-client", "web"),
                 ],
                 None,
             )
@@ -210,14 +210,14 @@ impl Federation {
 }
 
 async fn refresh(app: &TestApp, reply: &common::Reply) -> common::Reply {
-    let refresh_cookie = cookie(reply, "conclave_refresh").expect("a refresh cookie");
+    let refresh_cookie = cookie(reply, "konklav_refresh").expect("a refresh cookie");
     app.send(
         Method::POST,
         "/v1/refresh",
         &[
             ("cookie", &refresh_cookie),
             ("origin", ORIGIN),
-            ("x-conclave-client", "web"),
+            ("x-konklav-client", "web"),
         ],
         None,
     )

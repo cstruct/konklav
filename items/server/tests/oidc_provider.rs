@@ -157,7 +157,7 @@ async fn authorize(world: &World, extra: &[(&str, &str)]) -> String {
     let login_url = location(&started);
     assert!(login_url.starts_with(LOGIN_URL));
     let request = query(&login_url)["login_request"].clone();
-    let browser = cookie(&started, "conclave_authorize").unwrap();
+    let browser = cookie(&started, "konklav_authorize").unwrap();
 
     let viewed = app
         .send(
@@ -181,7 +181,7 @@ async fn authorize(world: &World, extra: &[(&str, &str)]) -> String {
             &[
                 ("authorization", &auth),
                 ("origin", ORIGIN),
-                ("x-conclave-client", "web"),
+                ("x-konklav-client", "web"),
             ],
             None,
         )
@@ -264,7 +264,7 @@ async fn clients_sign_subjects_in_with_the_code_flow() {
     assert_eq!(id["nonce"], "client-nonce");
     assert_eq!(id["azp"], "console");
     assert_eq!(id["amr"], json!(["pwd"]));
-    assert_eq!(id["acr"], "urn:conclave:acr:1");
+    assert_eq!(id["acr"], "urn:konklav:acr:1");
     assert_eq!(id["email"], "ada@example.com");
     assert_eq!(id["email_verified"], false);
     assert_eq!(
@@ -407,7 +407,7 @@ async fn bad_requests_are_refused_without_leaking_codes() {
         &[
             ("authorization", &auth),
             ("origin", ORIGIN),
-            ("x-conclave-client", "web"),
+            ("x-konklav-client", "web"),
         ],
         None,
     )
@@ -430,7 +430,7 @@ async fn requests_are_only_accepted_by_sessions_that_satisfy_them() {
     let app = &world.app;
     let auth = format!("Bearer {}", world.login_token);
     for (extra, reason) in [
-        (vec![("acr_values", "urn:conclave:acr:2")], "acr_values"),
+        (vec![("acr_values", "urn:konklav:acr:2")], "acr_values"),
         (
             vec![("scope", &*format!("openid tenant:{}", uuid::Uuid::now_v7()))],
             "tenant",
@@ -447,7 +447,7 @@ async fn requests_are_only_accepted_by_sessions_that_satisfy_them() {
                 &[
                     ("authorization", &auth),
                     ("origin", ORIGIN),
-                    ("x-conclave-client", "web"),
+                    ("x-konklav-client", "web"),
                 ],
                 None,
             )

@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 /// Covers every other capability.
-pub const CONTROL_ALL: &str = "conclave:control:all";
+pub const CONTROL_ALL: &str = "konklav:control:all";
 
 /// The control-plane capabilities the console's areas need.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -28,17 +28,17 @@ impl Capability {
         Self::Keys,
     ];
 
-    /// The `conclave:` action that grants it.
+    /// The `konklav:` action that grants it.
     #[must_use]
     pub const fn action(self) -> &'static str {
         match self {
-            Self::Subjects => "conclave:subjects:manage",
-            Self::Tenants => "conclave:tenants:manage",
-            Self::Authz => "conclave:authz:manage",
-            Self::Sessions => "conclave:sessions:manage",
-            Self::Keys => "conclave:keys:manage",
-            Self::Invites => "conclave:invites:manage",
-            Self::Clients => "conclave:clients:manage",
+            Self::Subjects => "konklav:subjects:manage",
+            Self::Tenants => "konklav:tenants:manage",
+            Self::Authz => "konklav:authz:manage",
+            Self::Sessions => "konklav:sessions:manage",
+            Self::Keys => "konklav:keys:manage",
+            Self::Invites => "konklav:invites:manage",
+            Self::Clients => "konklav:clients:manage",
         }
     }
 
@@ -110,7 +110,7 @@ mod tests {
     // r[verify item.console.capability-gating]
     #[test]
     fn areas_need_their_capability_or_control_all() {
-        let people = Grants::held(["conclave:subjects:manage".to_owned()]);
+        let people = Grants::held(["konklav:subjects:manage".to_owned()]);
         assert!(people.allows(Capability::Subjects));
         assert!(!people.allows(Capability::Sessions));
 
@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn unrelated_actions_grant_nothing() {
-        let grants = Grants::held(["conclave:import".to_owned(), "workspace:read".to_owned()]);
+        let grants = Grants::held(["konklav:import".to_owned(), "workspace:read".to_owned()]);
         assert!(Capability::ALL.iter().all(|c| !grants.allows(*c)));
     }
 }

@@ -37,7 +37,7 @@ use crate::oidc::{self, OpenIdProvider};
 use crate::subject_api::{self, Started};
 use crate::{AppState, issue};
 
-const AUTHORIZE_COOKIE: &str = "conclave_authorize";
+const AUTHORIZE_COOKIE: &str = "konklav_authorize";
 const AUTHORIZE_COOKIE_PATH: &str = "/v1/oauth2";
 const LOGIN_REQUEST_MINUTES: i64 = 10;
 const CODE_SECONDS: i64 = 60;
@@ -84,8 +84,8 @@ pub async fn discovery(State(state): State<AppState>) -> Result<Response, ApiErr
         "end_session_endpoint": endpoint(&state, "logout"),
         "backchannel_logout_supported": true,
         "backchannel_logout_session_supported": true,
-        "conclave_peer_events_endpoint": endpoint(&state, "peer/events"),
-        "conclave_peer_subjects_endpoint": endpoint(&state, "peer/subjects"),
+        "konklav_peer_events_endpoint": endpoint(&state, "peer/events"),
+        "konklav_peer_subjects_endpoint": endpoint(&state, "peer/subjects"),
         "jwks_uri": provider.jwks_uri,
         "response_types_supported": ["code"],
         "response_modes_supported": ["query"],

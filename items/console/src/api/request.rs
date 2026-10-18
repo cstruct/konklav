@@ -5,7 +5,7 @@ use serde_json::Value;
 
 /// Sent with every request. Conclave requires it on cookie endpoints, where
 /// it forces a CORS preflight that other sites can't pass.
-pub const CLIENT_HEADER: (&str, &str) = ("x-conclave-client", "console");
+pub const CLIENT_HEADER: (&str, &str) = ("x-konklav-client", "console");
 
 /// Characters left alone in path segments and query values.
 const UNRESERVED: &AsciiSet = &NON_ALPHANUMERIC

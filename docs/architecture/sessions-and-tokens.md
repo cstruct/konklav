@@ -44,7 +44,7 @@ impersonator?, expires_at, revoked_at?, revoked_reason? }`
   same session. It adds the method, resets `auth_time` and bumps the
   version.
 - Impersonation (`POST /v1/impersonate`) needs the
-  `conclave:subject:impersonate` capability. It creates a child session for
+  `konklav:subject:impersonate` capability. It creates a child session for
   the target with `act` naming the impersonator. The child lasts at most an
   hour and never outlives its parent: revoking a session revokes its
   children.
@@ -60,7 +60,7 @@ challenges:
 - at most 5 are sent per recipient and purpose every 10 minutes
 
 Each one appends `delivery.requested` with the material. Only service
-principals holding `conclave:delivery:read` see those events, and the
+principals holding `konklav:delivery:read` see those events, and the
 material is stripped once the challenge has expired. Start endpoints always
 answer 202, so they reveal nothing about which identifiers exist.
 
@@ -113,7 +113,7 @@ Relying systems never set or clear flags on existing sessions.
 - `SameSite=Strict` requires the frontend and Conclave to share a
   registrable domain (for example `app.example` and `auth.example`).
 - CSRF defence in depth: an `Origin` allow-list plus a required custom
-  header (for example `X-Conclave-Client: web`), which forces a CORS
+  header (for example `X-Konklav-Client: web`), which forces a CORS
   preflight.
 - Non-browser clients use body tokens. The login endpoint variant or an
   explicit `client=browser|native` parameter chooses between the two.

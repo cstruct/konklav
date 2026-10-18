@@ -17,7 +17,7 @@ async fn mailer(app: &TestApp) -> String {
     app.control(
         Method::PUT,
         "/v1/tenants/root/roles/delivery",
-        Some(json!({"policies": [{"action": "conclave:delivery:read", "effect": "allow"}]})),
+        Some(json!({"policies": [{"action": "konklav:delivery:read", "effect": "allow"}]})),
     )
     .await;
     let token = app.service_token().await;
@@ -206,7 +206,7 @@ async fn browsers_complete_mfa_with_a_listed_factor_and_get_the_cookie() {
             .unwrap();
     }
 
-    let browser = [("origin", common::ORIGIN), ("x-conclave-client", "web")];
+    let browser = [("origin", common::ORIGIN), ("x-konklav-client", "web")];
     let login = app
         .send(
             Method::POST,
@@ -245,7 +245,7 @@ async fn browsers_complete_mfa_with_a_listed_factor_and_get_the_cookie() {
             &[
                 ("authorization", &auth),
                 ("origin", common::ORIGIN),
-                ("x-conclave-client", "web"),
+                ("x-konklav-client", "web"),
             ],
             Some(body),
         )
@@ -262,7 +262,7 @@ async fn browsers_complete_mfa_with_a_listed_factor_and_get_the_cookie() {
             "/v1/refresh",
             &[
                 ("origin", common::ORIGIN),
-                ("x-conclave-client", "web"),
+                ("x-konklav-client", "web"),
                 ("cookie", &cookie),
             ],
             None,
@@ -688,7 +688,7 @@ async fn impersonation_needs_the_capability_and_ends_with_the_impersonator() {
     app.control(
         Method::PUT,
         "/v1/tenants/root/roles/SUPPORT",
-        Some(json!({"policies": [{"action": "conclave:subject:impersonate", "effect": "allow"}]})),
+        Some(json!({"policies": [{"action": "konklav:subject:impersonate", "effect": "allow"}]})),
     )
     .await;
     app.control(

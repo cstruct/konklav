@@ -37,10 +37,10 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .route("/sign-out/others", post(sign_out_others))
 }
 
-const REFRESH_COOKIE: &str = "conclave_refresh";
+const REFRESH_COOKIE: &str = "konklav_refresh";
 /// Browser requests to cookie endpoints must carry this header. Setting a
 /// custom header forces a CORS preflight, so other sites cannot send it.
-const CLIENT_HEADER: &str = "x-conclave-client";
+const CLIENT_HEADER: &str = "x-konklav-client";
 /// Cookies are scoped to the only endpoints that read them.
 const COOKIE_PATHS: [&str; 2] = ["/v1/refresh", "/v1/sign-out"];
 

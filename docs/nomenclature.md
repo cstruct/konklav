@@ -90,7 +90,7 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `action`
   - A named permission that can be granted, such as `workspace:read` or `report:export`.
   - Action names are colon-delimited hierarchical names.
-  - The `conclave:` namespace is reserved for `control-plane capabilities` (see Authorization) and cannot be authored.
+  - The `konklav:` namespace is reserved for `control-plane capabilities` (see Authorization) and cannot be authored.
   - Conclave never interprets what an action means. It only records who holds it, and where.
 
 - `action group`
@@ -248,7 +248,7 @@ Terms are introduced in dependency order: each definition only uses terms define
   - This is how operator-level actions are granted, including control-plane capabilities.
 
 - `control-plane capability`
-  - A built-in action in the `conclave:` namespace that governs Conclave's own control-plane operations.
+  - A built-in action in the `konklav:` namespace that governs Conclave's own control-plane operations.
   - Examples: creating tenants, revoking sessions, impersonating subjects.
   - Capabilities can only be granted through global assignments.
 

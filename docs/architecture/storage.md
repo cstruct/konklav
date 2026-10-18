@@ -56,7 +56,7 @@ table, view or join. The schemas mirror the serde types in
 Session and signing-key events are appended by repository code, because
 their payloads come from the change itself. Authorization events
 (`entitlements.changed`, `tenant.changed`) are appended by triggers through
-`conclave_emit(kind, payload)`, so every write path invalidates, bulk SQL
+`konklav_emit(kind, payload)`, so every write path invalidates, bulk SQL
 included. Writes report their cursor with
 `events::last_in_transaction`, which finds the newest event whose `xmin` is
 the current transaction.

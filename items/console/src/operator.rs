@@ -194,7 +194,7 @@ mod tests {
             &token("identity"),
             OwnCapabilities {
                 subject: "ada".into(),
-                capabilities: vec!["conclave:keys:manage".into()],
+                capabilities: vec!["konklav:keys:manage".into()],
             },
         );
         assert_eq!(operator.subject(), Some("ada"));

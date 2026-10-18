@@ -33,7 +33,7 @@ use crate::federation::{FederationError, LoginRequest, Provider, Provisioning};
 use crate::subject_api::{self, Client, Started};
 use crate::{AppState, BrowserSettings};
 
-const STATE_COOKIE: &str = "conclave_oidc";
+const STATE_COOKIE: &str = "konklav_oidc";
 const STATE_COOKIE_PATH: &str = "/v1/login/oidc";
 const LOGIN_MINUTES: i64 = 10;
 

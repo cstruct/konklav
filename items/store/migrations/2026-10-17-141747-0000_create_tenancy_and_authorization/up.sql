@@ -3,7 +3,7 @@
 
 -- Appends a change-feed event. Triggers use it so that no write path,
 -- including bulk SQL from importers, can skip invalidation.
-create function conclave_emit(kind text, payload jsonb) returns void
+create function konklav_emit(kind text, payload jsonb) returns void
 language sql
 as $$
     insert into event (kind, payload) values (kind, payload);
@@ -29,14 +29,14 @@ create function tenant_changed() returns trigger
 language plpgsql
 as $$
 begin
-    perform conclave_emit('tenant.changed', jsonb_build_object(
+    perform konklav_emit('tenant.changed', jsonb_build_object(
         'tenant', new.id,
         'parent', new.parent_id,
         'state', new.state,
         'created', tg_op = 'INSERT'
     ));
     if tg_op = 'UPDATE' and new.state is distinct from old.state then
-        perform conclave_emit('entitlements.changed', jsonb_build_object('all', true, 'tenant', new.id));
+        perform konklav_emit('entitlements.changed', jsonb_build_object('all', true, 'tenant', new.id));
     end if;
     return null;
 end
@@ -67,7 +67,7 @@ as $$
 declare
     row membership := coalesce(new, old);
 begin
-    perform conclave_emit('entitlements.changed', jsonb_build_object(
+    perform konklav_emit('entitlements.changed', jsonb_build_object(
         'subjects', jsonb_build_array(row.subject_id),
         'tenant', row.tenant_id
     ));
@@ -90,7 +90,7 @@ create function subject_state_changed() returns trigger
 language plpgsql
 as $$
 begin
-    perform conclave_emit('entitlements.changed', jsonb_build_object('subjects', jsonb_build_array(new.id)));
+    perform konklav_emit('entitlements.changed', jsonb_build_object('subjects', jsonb_build_array(new.id)));
     return null;
 end
 $$;
@@ -108,7 +108,7 @@ create table catalog_action (
     name text primary key check (name ~ '^[a-z0-9_]+(:[a-z0-9_*]+)*$'),
     description text not null default '',
     group_definition jsonb,
-    constraint catalog_action_reserved check (name not like 'conclave:%'),
+    constraint catalog_action_reserved check (name not like 'konklav:%'),
     constraint catalog_action_group_matches_schema check (
         group_definition is null or jsonb_matches_schema('{
             "type": "object",
@@ -244,7 +244,7 @@ declare
     row role_assignment := coalesce(new, old);
     subject uuid := coalesce(row.subject_id, (select subject_id from membership where id = row.membership_id));
 begin
-    perform conclave_emit('entitlements.changed', jsonb_build_object(
+    perform konklav_emit('entitlements.changed', jsonb_build_object(
         'subjects', jsonb_build_array(subject),
         'tenant', (select tenant_id from membership where id = row.membership_id)
     ));
@@ -264,7 +264,7 @@ create function definitions_changed() returns trigger
 language plpgsql
 as $$
 begin
-    perform conclave_emit('entitlements.changed', jsonb_build_object('all', true));
+    perform konklav_emit('entitlements.changed', jsonb_build_object('all', true));
     return null;
 end
 $$;

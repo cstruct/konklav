@@ -174,7 +174,7 @@ async fn browsers_get_http_only_cookies_and_must_pass_csrf_checks() {
     assert_eq!(no_origin.code(), "FORBIDDEN");
     let evil = [
         ("origin", "https://evil.example"),
-        ("x-conclave-client", "web"),
+        ("x-konklav-client", "web"),
     ];
     assert_eq!(
         app.send(
@@ -200,7 +200,7 @@ async fn browsers_get_http_only_cookies_and_must_pass_csrf_checks() {
         "FORBIDDEN"
     );
 
-    let browser = [("origin", ORIGIN), ("x-conclave-client", "web")];
+    let browser = [("origin", ORIGIN), ("x-konklav-client", "web")];
     let login = app
         .send(Method::POST, "/v1/login/password", &browser, Some(body))
         .await;
@@ -212,7 +212,7 @@ async fn browsers_get_http_only_cookies_and_must_pass_csrf_checks() {
     let cookies = login.set_cookies();
     assert_eq!(cookies.len(), 2);
     for (cookie, path) in cookies.iter().zip(["/v1/refresh", "/v1/sign-out"]) {
-        assert!(cookie.starts_with("conclave_refresh="), "{cookie}");
+        assert!(cookie.starts_with("konklav_refresh="), "{cookie}");
         for attribute in [
             "HttpOnly",
             "SameSite=Strict",
@@ -234,7 +234,7 @@ async fn browsers_get_http_only_cookies_and_must_pass_csrf_checks() {
     );
     let with_cookie = [
         ("origin", ORIGIN),
-        ("x-conclave-client", "web"),
+        ("x-konklav-client", "web"),
         ("cookie", value.as_str()),
     ];
     let refreshed = app
@@ -250,7 +250,7 @@ async fn browsers_get_http_only_cookies_and_must_pass_csrf_checks() {
 
     let sign_out = [
         ("origin", ORIGIN),
-        ("x-conclave-client", "web"),
+        ("x-konklav-client", "web"),
         ("cookie", rotated.as_str()),
     ];
     let out = app
@@ -260,7 +260,7 @@ async fn browsers_get_http_only_cookies_and_must_pass_csrf_checks() {
     assert!(out.set_cookies().iter().all(|c| c.contains("Max-Age=0")));
     let again = [
         ("origin", ORIGIN),
-        ("x-conclave-client", "web"),
+        ("x-konklav-client", "web"),
         ("cookie", rotated.as_str()),
     ];
     assert_eq!(

@@ -131,9 +131,9 @@ create index session_active_parent_idx on session (parent_session_id) where revo
 alter table catalog_action add column builtin boolean not null default false;
 alter table catalog_action drop constraint catalog_action_reserved;
 alter table catalog_action add constraint catalog_action_reserved
-    check ((name like 'conclave:%') = builtin);
+    check ((name like 'konklav:%') = builtin);
 
 insert into catalog_action (name, description, builtin) values
-    ('conclave:subject:impersonate', 'Start sessions as other subjects', true),
-    ('conclave:delivery:read', 'Read delivery requests (challenge material) from the change feed', true),
-    ('conclave:control:all', 'Every control-plane operation', true);
+    ('konklav:subject:impersonate', 'Start sessions as other subjects', true),
+    ('konklav:delivery:read', 'Read delivery requests (challenge material) from the change feed', true),
+    ('konklav:control:all', 'Every control-plane operation', true);

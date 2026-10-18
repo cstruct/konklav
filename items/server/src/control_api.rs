@@ -56,7 +56,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
 
 /// Guards control-plane routes: the bootstrap token (when configured), or an
 /// operator's access token whose subject holds `capability` or
-/// `conclave:control:all`.
+/// `konklav:control:all`.
 pub(crate) fn guard(state: &AppState, capability: &'static str) -> GuardLayer {
     middleware::from_fn_with_state(
         (state.clone(), capability),

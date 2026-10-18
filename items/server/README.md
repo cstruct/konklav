@@ -23,9 +23,9 @@ The Conclave server binary. It serves the subject-facing, relying and control-pl
   - `login/password` and `login/secret-key`, rate limited per identifier, with failures that reveal nothing
   - `refresh`, with rotation and reuse detection
   - `sign-out` and `sign-out/others`
-  - browser clients get the refresh token as an `HttpOnly` cookie and must pass Origin and `X-Conclave-Client` checks
+  - browser clients get the refresh token as an `HttpOnly` cookie and must pass Origin and `X-Konklav-Client` checks
 - Subject-facing `login/tenant` moves a session into a tenant where the subject has an active membership. The new token carries `tid`, `mid` and portable facts. Logins may request restrictive session flags that the catalog marks as requestable.
-- `GET /v1/capabilities`: the `conclave:` capabilities the caller holds, for operator tools such as the console.
+- `GET /v1/capabilities`: the `konklav:` capabilities the caller holds, for operator tools such as the console.
 - MFA (TOTP and email-code factors; partial sessions can list their active factors, and browsers get their cookie when MFA completes), step-up, magic-link and phone-code login, password reset and change, invite redemption, and impersonation. These emit `delivery.requested` for anything a relying system must send.
 - Relying surface, for service principals only:
   - `/.well-known/jwks.json`
@@ -45,7 +45,7 @@ The Conclave server binary. It serves the subject-facing, relying and control-pl
   - an operator view of a subject's entitlements, with explanations (`/v1/subjects/{id}/explain`)
   - listings of subjects (by kind or login identifier), tenants (by parent) and a tenant's memberships
 
-  Each area requires a `conclave:` capability, held through a global role (`conclave:control:all` covers everything). An optional bootstrap token from the secrets file is also accepted; use it to create the first operator, then remove it.
+  Each area requires a `konklav:` capability, held through a global role (`konklav:control:all` covers everything). An optional bootstrap token from the secrets file is also accepted; use it to create the first operator, then remove it.
 
 ## Public interface
 

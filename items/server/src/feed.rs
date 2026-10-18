@@ -53,7 +53,7 @@ impl FeedHub {
     }
 }
 
-/// Listens for `conclave_event` notifications and wakes streams, reconnecting
+/// Listens for `konklav_event` notifications and wakes streams, reconnecting
 /// with backoff. Streams poll anyway, so this only reduces latency.
 // r[impl feed.notify-hint-only]
 pub async fn listen(url: String, hub: std::sync::Arc<FeedHub>) {
@@ -74,7 +74,7 @@ pub async fn listen(url: String, hub: std::sync::Arc<FeedHub>) {
                         }
                     }
                 });
-                if client.batch_execute("listen conclave_event").await.is_ok() {
+                if client.batch_execute("listen konklav_event").await.is_ok() {
                     backoff = Duration::from_millis(500);
                     let _ = messages.await;
                 }

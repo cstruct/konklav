@@ -93,7 +93,7 @@ oidc_provider {
 New pieces:
 
 - **Clients**: a control-plane resource. `PUT /v1/oidc/clients/{id}`
-  registers or replaces a client (needs `conclave:clients:manage`) with its:
+  registers or replaces a client (needs `konklav:clients:manage`) with its:
   - kind (`confidential` or `public`)
   - redirect URIs (exact match)
   - scopes (`openid`, `email`, `phone`, `groups`, and `tenant` to allow
@@ -121,8 +121,8 @@ New pieces:
   relying SDK ignores it. Access tokens stay EdDSA. Rotating the ES256 key
   means replacing the file; publishing the next key ahead of a rotation, as
   the Ed25519 keys allow, is not built yet.
-- **`acr`**: `urn:conclave:acr:1` for sessions with one authentication
-  method and `urn:conclave:acr:2` for two or more (an identity-provider
+- **`acr`**: `urn:konklav:acr:1` for sessions with one authentication
+  method and `urn:konklav:acr:2` for two or more (an identity-provider
   login counts the methods it was credited with). `acr_values` asks for
   `2`.
 
@@ -226,7 +226,7 @@ identity_providers ({
     return_urls ("https://console.prod-eu.example/")
     provisioning create
     session_lifetime_seconds 3600
-    require_acr "urn:conclave:acr:hwk"
+    require_acr "urn:konklav:acr:hwk"
     methods ({from hwk, to hwk}, {from otp, to otp})
     grants (
         {claim groups, contains sre, global_role operator}
@@ -251,7 +251,7 @@ The client secret goes in the secrets file, as
 - A rule naming a role or tenant that doesn't exist is skipped with a
   warning, so a stale rule doesn't block logins.
 - Mapping to capabilities goes through roles (for example `operator`
-  granting `conclave:control:all`), so the catalog still says what each
+  granting `konklav:control:all`), so the catalog still says what each
   capability means.
 
 ## Deprovisioning
@@ -356,7 +356,7 @@ file first.
 | Sessions | Provider and upstream subject through the federated credential; per-provider lifetime cap; the OIDC client and granted scopes for client sessions |
 | Grants | `managed_by` on memberships and role assignments |
 | Signing keys | An ES256 key for ID tokens, in JWKS with its `alg` |
-| Control plane | OIDC clients (`conclave:clients:manage`); break-glass credentials flagged |
+| Control plane | OIDC clients (`konklav:clients:manage`); break-glass credentials flagged |
 | Subject surface | `/v1/login/oidc/*`, linking, login-request acceptance |
 | New surface paths | `/.well-known/openid-configuration`, `/v1/oauth2/authorize` (and `/resume`), `/v1/oauth2/login-requests/{id}` (and `/accept`), `/v1/oauth2/token`, `/v1/oauth2/userinfo`, `/v1/oauth2/revoke`, `/v1/oauth2/logout` |
 | Feed | `break_glass.used`; `subject.changed`; the client-scoped peer feed |

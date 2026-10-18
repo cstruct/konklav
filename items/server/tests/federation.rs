@@ -213,7 +213,7 @@ async fn start(app: &TestApp) -> (String, String) {
         .send(Method::GET, "/v1/login/oidc/ops/start", &[], None)
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{:?}", reply.body);
-    (location(&reply), cookie(&reply, "conclave_oidc").unwrap())
+    (location(&reply), cookie(&reply, "konklav_oidc").unwrap())
 }
 
 async fn callback(
@@ -238,7 +238,7 @@ async fn link(app: &TestApp, provider: &FakeProvider, token: &str, claims: Value
             &[
                 ("authorization", &auth),
                 ("origin", ORIGIN),
-                ("x-conclave-client", "web"),
+                ("x-konklav-client", "web"),
             ],
             Some(json!({})),
         )
@@ -249,7 +249,7 @@ async fn link(app: &TestApp, provider: &FakeProvider, token: &str, claims: Value
         .unwrap()
         .to_owned();
     let code = provider.authorize(&url, claims, Signing::Provider);
-    let state_cookie = cookie(&started, "conclave_oidc").unwrap();
+    let state_cookie = cookie(&started, "konklav_oidc").unwrap();
     callback(app, &url, &code, Some(&state_cookie)).await
 }
 
@@ -276,7 +276,7 @@ async fn linked_provider_accounts_sign_in_with_a_browser_session() {
     assert_eq!(linked.status, StatusCode::SEE_OTHER);
     assert_eq!(location(&linked), format!("{RETURN}?linked=true"));
     assert!(
-        cookie(&linked, "conclave_oidc").is_some_and(|c| c == "conclave_oidc="),
+        cookie(&linked, "konklav_oidc").is_some_and(|c| c == "konklav_oidc="),
         "the state cookie is cleared"
     );
 
@@ -293,7 +293,7 @@ async fn linked_provider_accounts_sign_in_with_a_browser_session() {
     let done = callback(&app, &url, &code, Some(&state_cookie)).await;
     assert_eq!(done.status, StatusCode::SEE_OTHER, "{:?}", done.body);
     assert_eq!(location(&done), format!("{RETURN}?signed_in=true"));
-    let refresh_cookie = cookie(&done, "conclave_refresh").expect("a refresh cookie");
+    let refresh_cookie = cookie(&done, "konklav_refresh").expect("a refresh cookie");
 
     let refreshed = app
         .send(
@@ -302,7 +302,7 @@ async fn linked_provider_accounts_sign_in_with_a_browser_session() {
             &[
                 ("cookie", &refresh_cookie),
                 ("origin", ORIGIN),
-                ("x-conclave-client", "web"),
+                ("x-konklav-client", "web"),
             ],
             None,
         )
@@ -389,7 +389,7 @@ async fn invalid_id_tokens_and_unlinked_accounts_are_refused() {
             format!("{RETURN}?error={error}"),
             "{claims}"
         );
-        assert!(cookie(&reply, "conclave_refresh").is_none());
+        assert!(cookie(&reply, "konklav_refresh").is_none());
     }
 
     // An account linked to one subject can't be linked to another.
@@ -450,7 +450,7 @@ async fn providers_enforce_their_requirements_and_cap_sessions() {
     let refresh = reply
         .set_cookies()
         .into_iter()
-        .find(|c| c.starts_with("conclave_refresh="))
+        .find(|c| c.starts_with("konklav_refresh="))
         .expect("a refresh cookie");
     let max_age: i64 = refresh
         .split(';')
@@ -492,7 +492,7 @@ async fn federated_login(app: &TestApp, provider: &FakeProvider, claims: Value) 
 /// The subject a successful federated login signed in.
 async fn signed_in_subject(app: &TestApp, reply: &common::Reply) -> String {
     assert_eq!(location(reply), format!("{RETURN}?signed_in=true"));
-    let refresh_cookie = cookie(reply, "conclave_refresh").unwrap();
+    let refresh_cookie = cookie(reply, "konklav_refresh").unwrap();
     let refreshed = app
         .send(
             Method::POST,
@@ -500,7 +500,7 @@ async fn signed_in_subject(app: &TestApp, reply: &common::Reply) -> String {
             &[
                 ("cookie", &refresh_cookie),
                 ("origin", ORIGIN),
-                ("x-conclave-client", "web"),
+                ("x-konklav-client", "web"),
             ],
             None,
         )

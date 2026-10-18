@@ -36,4 +36,4 @@ alter table challenge add constraint challenge_purpose_check check (purpose in (
 ));
 
 insert into catalog_action (name, description, builtin) values
-    ('conclave:clients:manage', 'Register and change OIDC clients', true);
+    ('konklav:clients:manage', 'Register and change OIDC clients', true);

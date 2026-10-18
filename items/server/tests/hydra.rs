@@ -237,7 +237,7 @@ async fn login(
         .send(Method::GET, "/v1/login/oidc/hydra/start", &[], None)
         .await;
     assert_eq!(started.status, StatusCode::SEE_OTHER, "{:?}", started.body);
-    let state = cookie(&started, "conclave_oidc").unwrap();
+    let state = cookie(&started, "konklav_oidc").unwrap();
     let callback = hydra.authorize(&location(&started), subject, claims).await;
     let path = callback.trim_start_matches("https://auth.example");
     app.send(Method::GET, path, &[("cookie", &state)], None)
@@ -307,7 +307,7 @@ async fn conclave_signs_people_in_through_hydra() {
         "{:?}",
         done.body
     );
-    let refresh_cookie = cookie(&done, "conclave_refresh").unwrap();
+    let refresh_cookie = cookie(&done, "konklav_refresh").unwrap();
     let refreshed = app
         .send(
             Method::POST,
@@ -315,7 +315,7 @@ async fn conclave_signs_people_in_through_hydra() {
             &[
                 ("cookie", &refresh_cookie),
                 ("origin", ORIGIN),
-                ("x-conclave-client", "web"),
+                ("x-konklav-client", "web"),
             ],
             None,
         )

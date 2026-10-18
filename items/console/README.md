@@ -13,7 +13,7 @@ token.
   the session from the refresh cookie on reload. The bootstrap token is
   accepted as a first-run option.
 - Showing what the operator may do. `GET /v1/capabilities` lists their
-  `conclave:` capabilities; areas they lack one for say which capability
+  `konklav:` capabilities; areas they lack one for say which capability
   is missing, and so do control-plane refusals.
 - Views over the control plane:
   - subjects, with their credentials (add, revoke, replace a password,
@@ -85,7 +85,7 @@ The console must reach Conclave on its own origin
 Same-origin requests keep the `SameSite=Strict` refresh cookie
 first-party, and Conclave serves no CORS. Conclave still checks the
 `Origin` of cookie requests, so add the console's origin to
-`browser.allowed_origins`. Conclave also requires an `X-Conclave-Client`
+`browser.allowed_origins`. Conclave also requires an `X-Konklav-Client`
 header, which the console sends on every request. In development, Trunk
 does the routing (see `Trunk.toml`), and `config/dev.styx` allows
 `http://127.0.0.1:8083`.
@@ -102,7 +102,7 @@ On a fresh database, choose **Bootstrap token** and paste the
 
 1. Create an operator: a human subject with a password credential.
 2. Under **Authorization**, save a role in the root tenant whose policies
-   allow `conclave:control:all` or narrower capabilities.
+   allow `konklav:control:all` or narrower capabilities.
 3. Assign that role on the subject's page, sign out, and sign in as the
    operator.
 

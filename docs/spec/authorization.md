@@ -8,10 +8,10 @@ API.
 r[authz.catalog.data]
 Actions, action groups, scope kinds, fact keys and session flags MUST be
 declared as catalog data supplied through the control plane. Conclave MUST
-NOT hard-code any of them except the `conclave:` control-plane capabilities.
+NOT hard-code any of them except the `konklav:` control-plane capabilities.
 
 r[authz.catalog.names]
-Action names MUST be colon-delimited. The `conclave:` namespace MUST be
+Action names MUST be colon-delimited. The `konklav:` namespace MUST be
 reserved for control-plane capabilities and MUST NOT be authored.
 
 r[authz.catalog.groups]
@@ -70,7 +70,7 @@ Global roles MUST be assigned to subjects directly. Their grants MUST apply
 regardless of the target tenant.
 
 r[authz.control-plane.capability]
-Built-in capabilities MUST be catalog actions in the `conclave:` namespace
+Built-in capabilities MUST be catalog actions in the `konklav:` namespace
 that only Conclave defines. Catalog documents MUST NOT declare or remove
 them, and action groups MUST NOT expand to them, so they are only ever
 granted by name. Every control-plane operation, impersonation and reading
@@ -84,7 +84,7 @@ r[authz.control-plane.own-capabilities]
 The subject-facing surface MUST let a subject with a full (non-partial)
 session list the control-plane capabilities it holds, so operator tools can
 show what an operator may do before trying it. It MUST NOT reveal another
-subject's capabilities, or actions outside the `conclave:` namespace.
+subject's capabilities, or actions outside the `konklav:` namespace.
 
 r[authz.assignment.multiple]
 A membership MUST be able to hold several assignments, including several at

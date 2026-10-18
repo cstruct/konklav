@@ -70,7 +70,7 @@ fn Catalog() -> impl IntoView {
             <form class="card" on:submit=save>
                 <p class="muted">
                     "Actions, groups, scope kinds, fact keys and session flags, replaced as one document. "
-                    "The " <code>"conclave:"</code> " capabilities are built in and can't be declared."
+                    "The " <code>"konklav:"</code> " capabilities are built in and can't be declared."
                 </p>
                 <JsonField label="Catalog document" value=text rows=16/>
                 <Problem error/>
@@ -216,7 +216,7 @@ fn Roles(tenant: RwSignal<String>) -> impl IntoView {
             <button type="submit">"Show roles"</button>
         </form>
         {move || (shown.get() == "root").then(|| view! {
-            <p class="muted">"Roles of the root tenant are global roles; they're assigned to subjects directly, and only they can grant " <code>"conclave:"</code> " capabilities."</p>
+            <p class="muted">"Roles of the root tenant are global roles; they're assigned to subjects directly, and only they can grant " <code>"konklav:"</code> " capabilities."</p>
         })}
         {loaded(roles, move |roles: Vec<Role>| {
             if roles.is_empty() {

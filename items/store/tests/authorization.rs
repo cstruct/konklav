@@ -231,7 +231,7 @@ async fn catalog_entries_in_use_cannot_be_removed() {
 
     let mut reserved = document();
     reserved.actions.push(ActionEntry {
-        name: "conclave:tenant:create".into(),
+        name: "konklav:tenant:create".into(),
         description: String::new(),
     });
     assert!(matches!(

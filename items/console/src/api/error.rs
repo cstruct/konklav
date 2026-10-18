@@ -67,9 +67,9 @@ impl ApiError {
     /// use conclave_console::api::ApiError;
     /// let error = ApiError::from_response(
     ///     403,
-    ///     r#"{"error":{"code":"FORBIDDEN","message":"missing capability conclave:keys:manage"}}"#,
+    ///     r#"{"error":{"code":"FORBIDDEN","message":"missing capability konklav:keys:manage"}}"#,
     /// );
-    /// assert_eq!(error.missing_capability(), Some("conclave:keys:manage"));
+    /// assert_eq!(error.missing_capability(), Some("konklav:keys:manage"));
     /// ```
     #[must_use]
     pub fn missing_capability(&self) -> Option<&str> {

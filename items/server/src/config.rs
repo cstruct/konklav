@@ -204,7 +204,7 @@ config_tree! {
 
 config_tree! {
     /// Control-plane access. Operators authenticate with access tokens and
-    /// need `conclave:` capabilities. A bootstrap token, if configured, is
+    /// need `konklav:` capabilities. A bootstrap token, if configured, is
     /// accepted for everything: use it to create the first operator, then
     /// remove it.
     #[derive(Debug, Clone, PartialEq)]

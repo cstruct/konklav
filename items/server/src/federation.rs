@@ -81,9 +81,9 @@ struct Metadata {
     jwks_uri: String,
     /// Only Conclave upstreams have these.
     #[serde(default)]
-    conclave_peer_events_endpoint: Option<String>,
+    konklav_peer_events_endpoint: Option<String>,
     #[serde(default)]
-    conclave_peer_subjects_endpoint: Option<String>,
+    konklav_peer_subjects_endpoint: Option<String>,
 }
 
 /// A page of an upstream's peer feed.
@@ -303,7 +303,7 @@ impl Provider {
         let metadata = self.metadata().await?;
         let after = after.to_string();
         self.peer_post(
-            metadata.conclave_peer_events_endpoint.as_ref(),
+            metadata.konklav_peer_events_endpoint.as_ref(),
             &[("after", &after)],
         )
         .await?
@@ -323,7 +323,7 @@ impl Provider {
         let metadata = self.metadata().await?;
         let response = self
             .peer_post(
-                metadata.conclave_peer_subjects_endpoint.as_ref(),
+                metadata.konklav_peer_subjects_endpoint.as_ref(),
                 &[("subject", subject)],
             )
             .await?;

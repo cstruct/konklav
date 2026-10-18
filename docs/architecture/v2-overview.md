@@ -59,12 +59,12 @@ Dependencies point inward: `server` → `authn`/`authz`/`store` → `core`.
 `relying` depends only on `core`, `token` and `authz` (for evaluation), and
 the bindings depend only on `relying`.
 
-The control-plane surface is authorized by built-in `conclave:`
+The control-plane surface is authorized by built-in `konklav:`
 capabilities that operators hold through global roles:
 
-- `conclave:control:all`, or one per area: `subjects`, `tenants`, `authz`,
+- `konklav:control:all`, or one per area: `subjects`, `tenants`, `authz`,
   `sessions`, `keys`, `invites`
-- `conclave:subject:impersonate` and `conclave:delivery:read` for the
+- `konklav:subject:impersonate` and `konklav:delivery:read` for the
   matching flows
 
 An optional bootstrap token from the secrets file is accepted for
@@ -84,7 +84,7 @@ typically adopts Conclave like this:
 5. Switch the ports over to Conclave.
 
 Conclave's side of this is the import API (`/v1/import/*`, capability
-`conclave:import`) plus the idempotent control-plane endpoints. Mapping
+`konklav:import`) plus the idempotent control-plane endpoints. Mapping
 the relying system's tables onto them, and comparing its access decisions
 with Conclave's entitlement sets, belongs in that system's own tooling.
 

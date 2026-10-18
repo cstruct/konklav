@@ -18,8 +18,8 @@ use crate::config::OidcProvider as OidcProviderConfig;
 use crate::error::ApiError;
 
 /// `acr` for sessions authenticated with one method, and with two or more.
-pub const ACR_SINGLE: &str = "urn:conclave:acr:1";
-pub const ACR_MULTI: &str = "urn:conclave:acr:2";
+pub const ACR_SINGLE: &str = "urn:konklav:acr:1";
+pub const ACR_MULTI: &str = "urn:konklav:acr:2";
 
 pub struct OpenIdProvider {
     key: EncodingKey,

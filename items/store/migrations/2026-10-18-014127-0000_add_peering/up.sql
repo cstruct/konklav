@@ -4,8 +4,8 @@ create or replace function subject_state_changed() returns trigger
 language plpgsql
 as $$
 begin
-    perform conclave_emit('entitlements.changed', jsonb_build_object('subjects', jsonb_build_array(new.id)));
-    perform conclave_emit('subject.changed', jsonb_build_object('subject', new.id, 'state', new.state));
+    perform konklav_emit('entitlements.changed', jsonb_build_object('subjects', jsonb_build_array(new.id)));
+    perform konklav_emit('subject.changed', jsonb_build_object('subject', new.id, 'state', new.state));
     return null;
 end
 $$;

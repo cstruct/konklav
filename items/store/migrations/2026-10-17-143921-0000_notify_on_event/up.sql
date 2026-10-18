@@ -4,7 +4,7 @@ create function event_appended() returns trigger
 language plpgsql
 as $$
 begin
-    perform pg_notify('conclave_event', '');
+    perform pg_notify('konklav_event', '');
     return null;
 end
 $$;

@@ -55,8 +55,8 @@ async fn as_operator(
 async fn operators_need_the_capability_for_each_area() {
     let app = TestApp::new().await;
     let nobody = operator(&app, "nobody@example.com", &[]).await;
-    let people = operator(&app, "people@example.com", &["conclave:subjects:manage"]).await;
-    let root = operator(&app, "root@example.com", &["conclave:control:all"]).await;
+    let people = operator(&app, "people@example.com", &["konklav:subjects:manage"]).await;
+    let root = operator(&app, "root@example.com", &["konklav:control:all"]).await;
     let subject = uuid::Uuid::now_v7();
     let create = |token: &str| {
         let uri = format!("/v1/subjects/{subject}");
@@ -109,7 +109,7 @@ async fn catalog_documents_cannot_touch_capabilities() {
         .control(
             Method::PUT,
             "/v1/catalog",
-            Some(json!({"actions": [{"name": "conclave:control:all"}]})),
+            Some(json!({"actions": [{"name": "konklav:control:all"}]})),
         )
         .await;
     assert_eq!(reply.code(), "INVALID_REQUEST");
@@ -124,13 +124,13 @@ async fn catalog_documents_cannot_touch_capabilities() {
         .control(
             Method::PUT,
             "/v1/tenants/root/roles/ops",
-            Some(json!({"policies": [{"action": "conclave:sessions:manage", "effect": "allow"}]})),
+            Some(json!({"policies": [{"action": "konklav:sessions:manage", "effect": "allow"}]})),
         )
         .await;
     assert_eq!(role.status, StatusCode::OK, "{:?}", role.body);
     let catalog = app.control(Method::GET, "/v1/catalog", None).await;
     assert!(
-        !catalog.body.to_string().contains("conclave:"),
+        !catalog.body.to_string().contains("konklav:"),
         "built-ins aren't part of the document"
     );
 }
@@ -312,7 +312,7 @@ async fn break_glass_logins_are_recorded() {
 #[tokio::test(flavor = "multi_thread")]
 async fn operators_read_their_own_capabilities() {
     let app = TestApp::new().await;
-    let people = operator(&app, "people@example.com", &["conclave:subjects:manage"]).await;
+    let people = operator(&app, "people@example.com", &["konklav:subjects:manage"]).await;
     let nobody = operator(&app, "nobody@example.com", &[]).await;
     let own = app
         .with_bearer(Method::GET, "/v1/capabilities", &people)
@@ -320,7 +320,7 @@ async fn operators_read_their_own_capabilities() {
     assert_eq!(own.status, StatusCode::OK, "{:?}", own.body);
     assert_eq!(
         own.body["capabilities"],
-        json!(["conclave:subjects:manage"])
+        json!(["konklav:subjects:manage"])
     );
     let claims = app.verify(&people).await;
     assert_eq!(own.body["subject"], claims.sub.to_string());

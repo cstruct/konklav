@@ -14,17 +14,17 @@ use crate::AppState;
 use crate::error::{ApiError, ErrorCode};
 use crate::subject_api::authenticate;
 
-pub const IMPERSONATE: &str = "conclave:subject:impersonate";
-pub const CONTROL_ALL: &str = "conclave:control:all";
-pub const SUBJECTS: &str = "conclave:subjects:manage";
-pub const TENANTS: &str = "conclave:tenants:manage";
-pub const AUTHZ: &str = "conclave:authz:manage";
-pub const SESSIONS: &str = "conclave:sessions:manage";
-pub const KEYS: &str = "conclave:keys:manage";
-pub const INVITES: &str = "conclave:invites:manage";
-pub const IMPORT: &str = "conclave:import";
-pub const CLIENTS: &str = "conclave:clients:manage";
-pub const DELIVERY_READ: &str = "conclave:delivery:read";
+pub const IMPERSONATE: &str = "konklav:subject:impersonate";
+pub const CONTROL_ALL: &str = "konklav:control:all";
+pub const SUBJECTS: &str = "konklav:subjects:manage";
+pub const TENANTS: &str = "konklav:tenants:manage";
+pub const AUTHZ: &str = "konklav:authz:manage";
+pub const SESSIONS: &str = "konklav:sessions:manage";
+pub const KEYS: &str = "konklav:keys:manage";
+pub const INVITES: &str = "konklav:invites:manage";
+pub const IMPORT: &str = "konklav:import";
+pub const CLIENTS: &str = "konklav:clients:manage";
+pub const DELIVERY_READ: &str = "konklav:delivery:read";
 
 /// Whether `subject` holds `capability` through its global assignments.
 // r[impl authz.control-plane.capability]
@@ -81,7 +81,7 @@ async fn own_capabilities(
     let capabilities = compile(&input.catalog, &input.assignments)
         .global
         .into_iter()
-        .filter(|action| action.starts_with("conclave:"))
+        .filter(|action| action.starts_with("konklav:"))
         .collect();
     Ok(Json(OwnCapabilities {
         subject: claims.sub,

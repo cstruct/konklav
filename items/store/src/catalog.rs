@@ -12,7 +12,7 @@ use crate::schema::{catalog_action, catalog_fact, catalog_scope_kind, catalog_se
 use crate::{StoreError, StoreResult};
 
 /// Built-in control-plane capabilities share this prefix.
-pub const CAPABILITY_PREFIX: &str = "conclave:";
+pub const CAPABILITY_PREFIX: &str = "konklav:";
 
 /// The most portable facts, in bytes of JSON, that one tenant or one
 /// membership may carry into tokens.
@@ -228,7 +228,7 @@ impl CatalogDocument {
         {
             // r[impl authz.catalog.names]
             if name.starts_with(CAPABILITY_PREFIX) {
-                return Err(format!("`{name}` is in the reserved conclave: namespace"));
+                return Err(format!("`{name}` is in the reserved konklav: namespace"));
             }
             if !names.insert(name) {
                 return Err(format!("`{name}` is declared more than once"));
