@@ -5,6 +5,8 @@ use diesel::prelude::*;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use serde::{Deserialize, Serialize};
 
+use conclave_core::SubjectId;
+
 use crate::schema::oidc_client;
 use crate::{StoreError, StoreResult};
 
@@ -61,6 +63,17 @@ pub struct ClientDefinition {
     pub id_token_alg: IdTokenAlgorithm,
     #[serde(default = "yes")]
     pub refresh: bool,
+    /// The service principal the client gets tokens for with the client
+    /// credentials grant.
+    #[serde(default)]
+    pub service_subject: Option<SubjectId>,
+    /// Public keys for `private_key_jwt` client authentication, as a JWKS.
+    #[serde(default)]
+    pub jwks: Option<serde_json::Value>,
+    #[serde(default)]
+    pub post_logout_redirect_uris: Vec<String>,
+    #[serde(default)]
+    pub backchannel_logout_uri: Option<String>,
 }
 
 fn default_scopes() -> Vec<String> {
@@ -143,6 +156,10 @@ struct Row {
     disabled_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    service_subject_id: Option<uuid::Uuid>,
+    jwks: Option<serde_json::Value>,
+    post_logout_redirect_uris: Vec<Option<String>>,
+    backchannel_logout_uri: Option<String>,
 }
 
 impl From<Row> for OidcClient {
@@ -167,6 +184,10 @@ impl From<Row> for OidcClient {
                     IdTokenAlgorithm::Es256
                 },
                 refresh: row.refresh,
+                service_subject: row.service_subject_id.map(Into::into),
+                jwks: row.jwks,
+                post_logout_redirect_uris: list(row.post_logout_redirect_uris),
+                backchannel_logout_uri: row.backchannel_logout_uri,
             },
             has_secret: row.secret_hash.is_some(),
             secret_hash: row.secret_hash,
@@ -197,6 +218,10 @@ pub async fn put(
         oidc_client::login_url.eq(&definition.login_url),
         oidc_client::id_token_alg.eq(definition.id_token_alg.as_str()),
         oidc_client::refresh.eq(definition.refresh),
+        oidc_client::service_subject_id.eq(definition.service_subject.map(uuid::Uuid::from)),
+        oidc_client::jwks.eq(&definition.jwks),
+        oidc_client::post_logout_redirect_uris.eq(nullable(&definition.post_logout_redirect_uris)),
+        oidc_client::backchannel_logout_uri.eq(&definition.backchannel_logout_uri),
     );
     diesel::insert_into(oidc_client::table)
         .values((oidc_client::id.eq(id), values.clone()))

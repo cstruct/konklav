@@ -352,7 +352,8 @@ impl From<Credential> for CredentialView {
             CredentialData::Password(_)
             | CredentialData::EmailLink
             | CredentialData::PhoneOtp
-            | CredentialData::Federated(_) => None,
+            | CredentialData::Federated(_)
+            | CredentialData::Client => None,
         };
         Self {
             id: credential.id,

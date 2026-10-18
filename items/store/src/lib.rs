@@ -4,8 +4,10 @@
 //! it through this crate. Repository functions take a connection so callers
 //! can compose them inside one transaction.
 
+pub mod backchannel;
 pub mod catalog;
 pub mod challenges;
+pub mod client_assertions;
 pub mod compile_input;
 pub mod credentials;
 pub mod events;

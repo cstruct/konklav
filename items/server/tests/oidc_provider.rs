@@ -524,3 +524,238 @@ async fn public_clients_use_pkce_alone_and_can_get_eddsa_id_tokens() {
         .await;
     assert_eq!(own.status, StatusCode::UNAUTHORIZED);
 }
+
+const KEY_X: &str = "Y6_1EEzqCvOEimuWQdUYPZi0Vo88sqdVzRqcBdc1zB4";
+const KEY_Y: &str = "Pw2tFlEGx2LLaNm81VIuU-rOYrc_hgsMC1Kgo0J5ey0";
+
+fn assertion(client: &str, jti: &str) -> String {
+    let now = chrono::Utc::now().timestamp();
+    let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
+    header.kid = Some("robot-key".into());
+    jsonwebtoken::encode(
+        &header,
+        &json!({
+            "iss": client, "sub": client, "aud": format!("{ISSUER}/v1/oauth2/token"),
+            "jti": jti, "iat": now, "exp": now + 60,
+        }),
+        &jsonwebtoken::EncodingKey::from_ec_pem(ID_TOKEN_KEY.as_bytes()).unwrap(),
+    )
+    .unwrap()
+}
+
+// r[verify oidc.provider.client-credentials]
+#[tokio::test(flavor = "multi_thread")]
+async fn bound_clients_get_service_tokens_with_private_key_jwt() {
+    let world = world().await;
+    let app = &world.app;
+    let principal = uuid::Uuid::now_v7();
+    app.control(
+        Method::PUT,
+        &format!("/v1/subjects/{principal}"),
+        Some(json!({"kind": "service"})),
+    )
+    .await;
+    let robot = |service_subject: Option<uuid::Uuid>| {
+        json!({
+            "kind": "confidential",
+            "redirect_uris": ["https://robot.example/unused"],
+            "audience": "robot-api",
+            "service_subject": service_subject,
+            "jwks": {"keys": [{"kty": "EC", "crv": "P-256", "kid": "robot-key", "alg": "ES256", "x": KEY_X, "y": KEY_Y}]},
+        })
+    };
+    let registered = app
+        .control(
+            Method::PUT,
+            "/v1/oidc/clients/robot",
+            Some(robot(Some(principal))),
+        )
+        .await;
+    assert_eq!(registered.status, StatusCode::OK, "{:?}", registered.body);
+
+    let grant = |assertion: String| async move {
+        app.send_form(
+            "/v1/oauth2/token",
+            &[],
+            &[
+                ("grant_type", "client_credentials"),
+                (
+                    "client_assertion_type",
+                    "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+                ),
+                ("client_assertion", &assertion),
+            ],
+        )
+        .await
+    };
+    let tokens = grant(assertion("robot", "jti-1")).await;
+    assert_eq!(tokens.status, StatusCode::OK, "{:?}", tokens.body);
+    assert!(tokens.body.get("refresh_token").is_none());
+    assert!(tokens.body.get("id_token").is_none());
+    let claims =
+        conclave_token::decode_claims_unverified(tokens.body["access_token"].as_str().unwrap())
+            .unwrap();
+    assert_eq!(claims.sub.to_string(), principal.to_string());
+    assert_eq!(claims.aud, "robot-api");
+    assert_eq!(claims.amr, ["swk"]);
+
+    let replayed = grant(assertion("robot", "jti-1")).await;
+    assert_eq!(
+        replayed.body["error"], "invalid_client",
+        "each jti works once"
+    );
+    let forged = grant(assertion("console", "jti-2")).await;
+    assert_eq!(
+        forged.body["error"], "invalid_client",
+        "console has no keys"
+    );
+
+    // Unbinding the principal ends client credentials.
+    app.control(Method::PUT, "/v1/oidc/clients/robot", Some(robot(None)))
+        .await;
+    let unbound = grant(assertion("robot", "jti-3")).await;
+    assert_eq!(unbound.body["error"], "unauthorized_client");
+    let human = app
+        .control(
+            Method::PUT,
+            "/v1/oidc/clients/robot",
+            Some(robot(Some(uuid::Uuid::parse_str(&world.subject).unwrap()))),
+        )
+        .await;
+    assert_eq!(human.code(), "INVALID_REQUEST", "only service principals");
+}
+
+// r[verify oidc.provider.revocation]
+#[tokio::test(flavor = "multi_thread")]
+async fn clients_revoke_their_tokens() {
+    let world = world().await;
+    let app = &world.app;
+    let code = authorize(&world, &[]).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    let refresh = tokens.body["refresh_token"].as_str().unwrap();
+    for token in ["not-a-token", refresh] {
+        let revoked = app
+            .send_form(
+                "/v1/oauth2/revoke",
+                &[("authorization", &basic(&world.secret))],
+                &[("token", token)],
+            )
+            .await;
+        assert_eq!(revoked.status, StatusCode::OK);
+    }
+    let access = tokens.body["access_token"].as_str().unwrap();
+    let info = app
+        .with_bearer(Method::GET, "/v1/oauth2/userinfo", access)
+        .await;
+    assert_eq!(info.status, StatusCode::UNAUTHORIZED, "the session ended");
+    let refreshed = app
+        .send_form(
+            "/v1/oauth2/token",
+            &[("authorization", &basic(&world.secret))],
+            &[("grant_type", "refresh_token"), ("refresh_token", refresh)],
+        )
+        .await;
+    assert_eq!(refreshed.body["error"], "invalid_grant");
+}
+
+// r[verify oidc.provider.logout]
+#[tokio::test(flavor = "multi_thread")]
+async fn logout_ends_the_sign_in_and_notifies_clients() {
+    let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backchannel = format!("http://{}/logout", listener.local_addr().unwrap());
+    let sink = received.clone();
+    let rp = axum::Router::new().route(
+        "/logout",
+        axum::routing::post(
+            move |axum::extract::Form(form): axum::extract::Form<HashMap<String, String>>| {
+                let sink = sink.clone();
+                async move {
+                    sink.lock().unwrap().push(form["logout_token"].clone());
+                    StatusCode::OK
+                }
+            },
+        ),
+    );
+    tokio::spawn(async move { axum::serve(listener, rp).await.unwrap() });
+
+    let world = world().await;
+    let app = &world.app;
+    let updated = app
+        .control(
+            Method::PUT,
+            "/v1/oidc/clients/console",
+            Some(json!({
+                "kind": "confidential",
+                "redirect_uris": [REDIRECT],
+                "scopes": ["openid", "email", "groups", "tenant"],
+                "audience": "console",
+                "visible_groups": ["ops-*"],
+                "post_logout_redirect_uris": ["https://console.example/bye"],
+                "backchannel_logout_uri": backchannel,
+            })),
+        )
+        .await;
+    assert_eq!(updated.status, StatusCode::OK, "{:?}", updated.body);
+    let code = authorize(&world, &[]).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    let id_token = tokens.body["id_token"].as_str().unwrap();
+    let sid = id_token_claims(app, id_token).await["sid"].clone();
+
+    let unregistered = app
+        .send(
+            Method::GET,
+            &format!("/v1/oauth2/logout?id_token_hint={id_token}&post_logout_redirect_uri=https://evil.example/"),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(unregistered.code(), "INVALID_REQUEST");
+    let out = app
+        .send(
+            Method::GET,
+            &format!(
+                "/v1/oauth2/logout?id_token_hint={id_token}&post_logout_redirect_uri=https://console.example/bye&state=s1"
+            ),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(out.status, StatusCode::SEE_OTHER, "{:?}", out.body);
+    assert_eq!(location(&out), "https://console.example/bye?state=s1");
+
+    // The login application's sign-in ended too.
+    let auth = format!("Bearer {}", world.login_token);
+    let own = app
+        .send(
+            Method::POST,
+            "/v1/sign-out",
+            &[("authorization", &auth)],
+            None,
+        )
+        .await;
+    assert_eq!(own.code(), "SESSION_ENDED");
+
+    let http = reqwest::Client::new();
+    let tried = conclave_server::oidc::deliver_logouts(&app.state, &http)
+        .await
+        .unwrap();
+    assert_eq!(tried, 1);
+    let tokens = received.lock().unwrap().clone();
+    assert_eq!(tokens.len(), 1);
+    let header = jsonwebtoken::decode_header(&tokens[0]).unwrap();
+    assert_eq!(header.typ.as_deref(), Some("logout+jwt"));
+    let claims = jsonwebtoken::dangerous::insecure_decode::<Value>(&tokens[0])
+        .unwrap()
+        .claims;
+    assert_eq!(claims["aud"], "console");
+    assert_eq!(claims["sid"], sid);
+    assert!(claims["events"]["http://schemas.openid.net/event/backchannel-logout"].is_object());
+    assert_eq!(
+        conclave_server::oidc::deliver_logouts(&app.state, &http)
+            .await
+            .unwrap(),
+        0,
+        "delivered once"
+    );
+}

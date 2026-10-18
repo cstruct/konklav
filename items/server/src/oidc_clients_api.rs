@@ -4,8 +4,9 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::routing::{get, post};
+use conclave_store::credentials::{self, CredentialData, CredentialKind};
 use conclave_store::oidc_clients::{self, ClientDefinition, ClientKind, OidcClient};
-use conclave_store::sessions;
+use conclave_store::{sessions, subjects};
 use diesel_async::AsyncConnection;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -60,8 +61,71 @@ async fn put_client(
             ));
         }
     }
+    if let Some(jwks) = &definition.jwks
+        && serde_json::from_value::<jsonwebtoken::jwk::JwkSet>(jwks.clone()).is_err()
+    {
+        return Err(ApiError::invalid_request("jwks must be a JWK set"));
+    }
+    if definition.service_subject.is_some() && definition.kind != ClientKind::Confidential {
+        return Err(ApiError::invalid_request(
+            "only confidential clients can act as service principals",
+        ));
+    }
     let mut conn = state.pool.get().await?;
-    Ok(Json(oidc_clients::put(&mut conn, &id, &definition).await?))
+    conn.transaction::<_, ApiError, _>(async |conn| {
+        let client = oidc_clients::put(conn, &id, &definition).await?;
+        bind_service_subject(conn, &client).await?;
+        Ok(Json(client))
+    })
+    .await
+}
+
+/// Keeps the client's `client` credential on its service principal, if it
+/// has one: creates it, moves it when the principal changes, and revokes it
+/// (and its sessions) when the binding is removed.
+// r[impl oidc.provider.client-credentials]
+async fn bind_service_subject(
+    conn: &mut conclave_store::Connection,
+    client: &OidcClient,
+) -> Result<(), ApiError> {
+    let current = credentials::find_active(conn, CredentialKind::Client, &client.id).await?;
+    if let Some(credential) = &current
+        && Some(credential.subject_id) != client.service_subject
+    {
+        credentials::revoke(conn, credential.id, "client_rebound").await?;
+        let filter = sessions::SessionFilter {
+            credential: Some(credential.id),
+            ..Default::default()
+        };
+        sessions::revoke(conn, &filter, None, "credential_revoked").await?;
+    }
+    let Some(subject) = client.service_subject else {
+        return Ok(());
+    };
+    if current.is_some_and(|c| c.subject_id == subject) {
+        return Ok(());
+    }
+    let principal = subjects::get(conn, subject)
+        .await
+        .map_err(|_| ApiError::not_found("service subject"))?;
+    if principal.kind != subjects::SubjectKind::Service {
+        return Err(ApiError::invalid_request(
+            "service_subject must be a service principal",
+        ));
+    }
+    credentials::insert(
+        conn,
+        credentials::NewCredential {
+            id: conclave_core::CredentialId::new_v7(),
+            subject_id: subject,
+            identifier: client.id.clone(),
+            data: CredentialData::Client,
+            mfa_factors_required: 0,
+            replaces: None,
+        },
+    )
+    .await?;
+    Ok(())
 }
 
 /// `DELETE /v1/oidc/clients/{id}`: disables the client and revokes its

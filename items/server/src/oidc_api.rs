@@ -50,6 +50,8 @@ pub fn routes() -> Router<AppState> {
         .route("/oauth2/login-requests/{id}/accept", post(accept))
         .route("/oauth2/token", post(token))
         .route("/oauth2/userinfo", get(userinfo).post(userinfo))
+        .route("/oauth2/revoke", post(revoke))
+        .route("/oauth2/logout", get(logout))
 }
 
 fn provider(state: &AppState) -> Result<&OpenIdProvider, ApiError> {
@@ -76,14 +78,19 @@ pub async fn discovery(State(state): State<AppState>) -> Result<Response, ApiErr
         "authorization_endpoint": endpoint(&state, "authorize"),
         "token_endpoint": endpoint(&state, "token"),
         "userinfo_endpoint": endpoint(&state, "userinfo"),
+        "revocation_endpoint": endpoint(&state, "revoke"),
+        "end_session_endpoint": endpoint(&state, "logout"),
+        "backchannel_logout_supported": true,
+        "backchannel_logout_session_supported": true,
         "jwks_uri": provider.jwks_uri,
         "response_types_supported": ["code"],
         "response_modes_supported": ["query"],
-        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "grant_types_supported": ["authorization_code", "refresh_token", "client_credentials"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["ES256", "EdDSA"],
         "code_challenge_methods_supported": ["S256"],
-        "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "none"],
+        "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt", "none"],
+        "token_endpoint_auth_signing_alg_values_supported": ["ES256", "ES384", "RS256", "PS256", "EdDSA"],
         "scopes_supported": ["openid", "email", "phone", "groups"],
         "claims_supported": [
             "iss", "sub", "aud", "azp", "exp", "iat", "auth_time", "nonce", "amr", "acr", "sid",
@@ -450,14 +457,20 @@ async fn resume(
 
 #[derive(Deserialize)]
 struct TokenRequest {
-    grant_type: String,
+    grant_type: Option<String>,
+    /// For revocation.
+    token: Option<String>,
     code: Option<String>,
     redirect_uri: Option<String>,
     code_verifier: Option<String>,
     refresh_token: Option<String>,
     client_id: Option<String>,
     client_secret: Option<String>,
+    client_assertion_type: Option<String>,
+    client_assertion: Option<String>,
 }
+
+const JWT_BEARER_ASSERTION: &str = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
 /// An RFC 6749 token-endpoint error.
 fn oauth_error(status: StatusCode, error: &str, description: &str) -> Response {
@@ -473,12 +486,20 @@ fn invalid_grant(description: &str) -> Response {
     oauth_error(StatusCode::BAD_REQUEST, "invalid_grant", description)
 }
 
-/// Authenticates the client from HTTP basic credentials or the form.
+/// Authenticates the client: a `private_key_jwt` assertion, or a secret in
+/// HTTP basic credentials or the form, or (public clients) just its id.
 async fn authenticate_client(
+    state: &AppState,
     conn: &mut Connection,
     headers: &HeaderMap,
     form: &TokenRequest,
 ) -> Option<OidcClient> {
+    if let Some(assertion) = &form.client_assertion {
+        if form.client_assertion_type.as_deref() != Some(JWT_BEARER_ASSERTION) {
+            return None;
+        }
+        return authenticate_assertion(state, conn, assertion).await;
+    }
     let basic = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -509,6 +530,61 @@ async fn authenticate_client(
     }
 }
 
+/// Authenticates a client by a JWT it signed with a key from its
+/// registered `jwks` (RFC 7523): `iss` and `sub` are the client id, `aud`
+/// names the token endpoint or the issuer, and each `jti` works once.
+// r[impl oidc.provider.client-credentials]
+async fn authenticate_assertion(
+    state: &AppState,
+    conn: &mut Connection,
+    assertion: &str,
+) -> Option<OidcClient> {
+    #[derive(Deserialize)]
+    struct AssertionClaims {
+        iss: String,
+        sub: String,
+        jti: String,
+        exp: i64,
+    }
+    let unverified = jsonwebtoken::dangerous::insecure_decode::<AssertionClaims>(assertion).ok()?;
+    let client_id = unverified.claims.iss;
+    let client = active_client(conn, &client_id).await?;
+    let jwks: jsonwebtoken::jwk::JwkSet = serde_json::from_value(client.jwks.clone()?).ok()?;
+    let header = jsonwebtoken::decode_header(assertion).ok()?;
+    let symmetric = matches!(
+        header.alg,
+        jsonwebtoken::Algorithm::HS256
+            | jsonwebtoken::Algorithm::HS384
+            | jsonwebtoken::Algorithm::HS512
+    );
+    if symmetric {
+        return None;
+    }
+    let jwk = match header.kid.as_deref() {
+        Some(kid) => jwks.find(kid),
+        None if jwks.keys.len() == 1 => jwks.keys.first(),
+        None => None,
+    }?;
+    let key = jsonwebtoken::DecodingKey::from_jwk(jwk).ok()?;
+    let mut validation = jsonwebtoken::Validation::new(header.alg);
+    validation.set_issuer(&[&client_id]);
+    validation.sub = Some(client_id.clone());
+    validation.set_audience(&[endpoint(state, "token"), state.auth.issuer.clone()]);
+    validation.set_required_spec_claims(&["exp", "iss", "sub", "aud", "jti"]);
+    validation.leeway = 30;
+    let claims = jsonwebtoken::decode::<AssertionClaims>(assertion, &key, &validation)
+        .ok()?
+        .claims;
+    if claims.sub != client_id {
+        return None;
+    }
+    let expires = chrono::DateTime::from_timestamp(claims.exp, 0)?;
+    conclave_store::client_assertions::record(conn, &client_id, &claims.jti, expires)
+        .await
+        .ok()?
+        .then_some(client)
+}
+
 #[derive(Serialize)]
 struct Tokens {
     access_token: String,
@@ -528,14 +604,14 @@ async fn token(
 ) -> Result<Response, ApiError> {
     provider(&state)?;
     let mut conn = state.pool.get().await?;
-    let Some(client) = authenticate_client(&mut conn, &headers, &form).await else {
+    let Some(client) = authenticate_client(&state, &mut conn, &headers, &form).await else {
         return Ok(oauth_error(
             StatusCode::UNAUTHORIZED,
             "invalid_client",
             "client authentication failed",
         ));
     };
-    Ok(match form.grant_type.as_str() {
+    Ok(match form.grant_type.as_deref().unwrap_or_default() {
         "authorization_code" => code_grant(&state, &mut conn, &client, &form).await?,
         "refresh_token" if client.refresh => {
             refresh_grant(&state, &mut conn, &client, &form).await?
@@ -545,10 +621,18 @@ async fn token(
             "unauthorized_client",
             "refresh is off for this client",
         ),
+        "client_credentials" if client.service_subject.is_some() => {
+            client_credentials_grant(&state, &mut conn, &client).await?
+        }
+        "client_credentials" => oauth_error(
+            StatusCode::BAD_REQUEST,
+            "unauthorized_client",
+            "the client isn't bound to a service principal",
+        ),
         _ => oauth_error(
             StatusCode::BAD_REQUEST,
             "unsupported_grant_type",
-            "use authorization_code or refresh_token",
+            "use authorization_code, refresh_token or client_credentials",
         ),
     })
 }
@@ -703,6 +787,192 @@ async fn refresh_grant(
             "the refresh token is invalid or its session ended",
         )),
     }
+}
+
+/// Tokens for the client's service principal: a short session, as long as
+/// one access token, with no refresh or ID token.
+// r[impl oidc.provider.client-credentials]
+async fn client_credentials_grant(
+    state: &AppState,
+    conn: &mut Connection,
+    client: &OidcClient,
+) -> Result<Response, ApiError> {
+    let unbound = || {
+        oauth_error(
+            StatusCode::BAD_REQUEST,
+            "unauthorized_client",
+            "the client's service principal can't sign in",
+        )
+    };
+    let Some(credential) =
+        credentials::find_active(conn, credentials::CredentialKind::Client, &client.id).await?
+    else {
+        return Ok(unbound());
+    };
+    let principal = conclave_store::subjects::get(conn, credential.subject_id).await?;
+    if principal.state != conclave_store::subjects::SubjectState::Active {
+        return Ok(unbound());
+    }
+    let id = SessionId::new_v7();
+    let now = Utc::now();
+    let session = conn
+        .transaction::<_, ApiError, _>(async |conn| {
+            let (session, _) = sessions::insert(
+                conn,
+                NewSession {
+                    id,
+                    subject_id: credential.subject_id,
+                    credential_id: credential.id,
+                    stage: Stage::Identity,
+                    client_kind: SessionClient::Native,
+                    amr: vec!["swk".to_owned()],
+                    auth_time: now,
+                    flags: Vec::new(),
+                    impersonator_subject_id: None,
+                    parent_session_id: None,
+                    // Never presented: these sessions can't be refreshed.
+                    refresh_hash: Sha256::digest(generate_secret().as_bytes()).to_vec(),
+                    expires_at: now + state.auth.access_ttl,
+                },
+            )
+            .await?;
+            Ok(sessions::bind_client(conn, session.id, &client.id, &[]).await?)
+        })
+        .await?;
+    let access = issue::access_token(conn, &state.auth, &session).await?;
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(serde_json::json!({
+            "access_token": access.access_token,
+            "token_type": "Bearer",
+            "expires_in": access.expires_in,
+        })),
+    )
+        .into_response())
+}
+
+// --- Revocation and logout -------------------------------------------------------
+
+/// `POST /v1/oauth2/revoke` (RFC 7009): revokes the session behind a refresh
+/// or access token the client was issued. Answers 200 for tokens it doesn't
+/// know, as the RFC asks.
+// r[impl oidc.provider.revocation]
+async fn revoke(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Form(form): Form<TokenRequest>,
+) -> Result<Response, ApiError> {
+    provider(&state)?;
+    let mut conn = state.pool.get().await?;
+    let Some(client) = authenticate_client(&state, &mut conn, &headers, &form).await else {
+        return Ok(oauth_error(
+            StatusCode::UNAUTHORIZED,
+            "invalid_client",
+            "client authentication failed",
+        ));
+    };
+    let token = form.token.as_deref().unwrap_or_default();
+    let session = if token.matches('.').count() == 2 {
+        // An access token: its signature and audience must check out, but an
+        // expired one is fine to revoke.
+        match conclave_token::decode_claims_unverified(token) {
+            Some(claims) if claims.aud == client.audience => {
+                let verified = subject_api::verify_access_token_for(
+                    &state,
+                    &mut conn,
+                    token,
+                    &client.audience,
+                )
+                .await;
+                verified.ok().map(|(_, session)| session)
+            }
+            _ => None,
+        }
+    } else {
+        match RefreshToken::parse(token) {
+            Ok(refresh) => {
+                let matches =
+                    sessions::refresh_matches(&mut conn, refresh.session(), &refresh.hash())
+                        .await?;
+                if matches {
+                    sessions::get(&mut conn, refresh.session()).await.ok()
+                } else {
+                    None
+                }
+            }
+            Err(_) => None,
+        }
+    };
+    if let Some(session) =
+        session.filter(|s| s.oidc_client_id.as_deref() == Some(client.id.as_str()))
+    {
+        let filter = sessions::SessionFilter {
+            session: Some(session.id),
+            ..Default::default()
+        };
+        sessions::revoke(&mut conn, &filter, None, "token_revoked").await?;
+    }
+    Ok(([(header::CACHE_CONTROL, "no-store")], StatusCode::OK).into_response())
+}
+
+#[derive(Deserialize)]
+struct LogoutQuery {
+    id_token_hint: Option<String>,
+    post_logout_redirect_uri: Option<String>,
+    state: Option<String>,
+    client_id: Option<String>,
+}
+
+/// `GET /v1/oauth2/logout` (RP-initiated logout): with a valid
+/// `id_token_hint`, ends the sign-in the client's session came from, and
+/// with it every client session started from it. Then redirects to a
+/// registered `post_logout_redirect_uri`, if one was given.
+// r[impl oidc.provider.logout]
+async fn logout(
+    State(state): State<AppState>,
+    Query(query): Query<LogoutQuery>,
+) -> Result<Response, ApiError> {
+    let provider = provider(&state)?;
+    let mut conn = state.pool.get().await?;
+    let hinted = match &query.id_token_hint {
+        Some(hint) => oidc::verify_own_id_token(&mut conn, &state.auth, provider, hint).await?,
+        None => None,
+    };
+    let client_id = hinted
+        .as_ref()
+        .map(|(client, _)| client.clone())
+        .or(query.client_id.clone());
+    let mut signed_out = false;
+    if let Some((client, sid)) = &hinted
+        && let Ok(session) = sessions::get(&mut conn, *sid).await
+        && session.oidc_client_id.as_deref() == Some(client.as_str())
+    {
+        let filter = sessions::SessionFilter {
+            session: Some(session.parent_session_id.unwrap_or(session.id)),
+            ..Default::default()
+        };
+        sessions::revoke(&mut conn, &filter, None, "signed_out").await?;
+        signed_out = true;
+    }
+    let Some(uri) = &query.post_logout_redirect_uri else {
+        return Ok(Json(serde_json::json!({"signed_out": signed_out})).into_response());
+    };
+    let registered = match &client_id {
+        Some(id) => oidc_clients::get(&mut conn, id)
+            .await
+            .is_ok_and(|client| client.post_logout_redirect_uris.iter().any(|u| u == uri)),
+        None => false,
+    };
+    if !registered {
+        return Err(ApiError::invalid_request(
+            "post_logout_redirect_uri is not registered for the client",
+        ));
+    }
+    let mut params = Vec::new();
+    if let Some(client_state) = &query.state {
+        params.push(("state", client_state.as_str()));
+    }
+    Ok(redirect_to(uri, &params))
 }
 
 // --- Userinfo -------------------------------------------------------------------

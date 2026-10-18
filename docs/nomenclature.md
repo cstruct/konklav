@@ -127,6 +127,7 @@ Terms are introduced in dependency order: each definition only uses terms define
     - `secret_key`: a generated key for service principals, with two independently rotatable slots
     - `public_key`: reserved for future proof-of-possession credentials
     - `federated`: an account at an `identity provider` (see Federation)
+    - `client`: an `OIDC client` acting as a service principal (see Federation)
   - Replaced or revoked credentials are kept as history, never overwritten in place.
 
 - `login identifier`

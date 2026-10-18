@@ -1,8 +1,8 @@
 # OIDC and federation
 
-Status: accepted. Phases 1 to 3 (identity providers, claim mapping,
-break-glass and the OpenID provider) are implemented; later phases are
-designed only. The rules are in
+Status: accepted. Phases 1 to 4 (identity providers, claim mapping,
+break-glass, the OpenID provider, client credentials, revocation and
+logout) are implemented; phase 5 (peering and workloads) is designed only. The rules are in
 [`../spec/federation.md`](../spec/federation.md); this note explains them
 and lists the decisions still open. It replaces the earlier "federation is
 out of scope" position.
@@ -158,6 +158,42 @@ Conclave has no user interface, and `/v1/oauth2/authorize` doesn't add one:
 Consent screens are left to the login application. First-party clients are
 registered as pre-consented.
 
+### Client credentials, revocation and logout
+
+- **Client credentials.** A confidential client can name a
+  `service_subject`. Conclave then keeps a `client` credential (identifier:
+  the client id) on that service principal, moving it if the binding
+  changes and revoking it (and its sessions) if the binding is removed. The
+  `client_credentials` grant starts a session for the principal that lasts
+  one access token. Its access token carries the client's audience, and it
+  gets no refresh or ID token.
+- **`private_key_jwt`.** Any client with a registered `jwks` can
+  authenticate at the token and revocation endpoints with a signed
+  assertion (RFC 7523):
+  - `iss` and `sub` are the client id
+  - `aud` is the token endpoint or the issuer
+  - the signature uses an asymmetric algorithm
+  - `jti` is single-use; used ones are kept until the assertion expires
+- **Revocation** (`POST /v1/oauth2/revoke`, RFC 7009) ends the session
+  behind a refresh or access token the client was issued, and answers 200
+  for anything else.
+- **RP-initiated logout** (`GET /v1/oauth2/logout`) takes an
+  `id_token_hint`. Conclave checks the hint against its own keys, and
+  accepts it even if it has expired. It then ends the login application's
+  session that the client session came from; every client session started
+  from it ends with it. Finally it redirects to a registered
+  `post_logout_redirect_uri` with the client's `state`.
+- **Back-channel logout.** Clients can register a `backchannel_logout_uri`.
+  A trigger queues a logout token whenever one of their sessions is
+  revoked, whether by logout, revocation, an operator or a disabled
+  subject, in the same transaction, so none is lost. A worker in every
+  instance:
+  - leases due tokens
+  - signs them as `logout+jwt` with the client's algorithm
+  - posts them, retrying with backoff up to eight times
+
+  Sessions that simply expire send nothing; clients know `exp`.
+
 ### Claims
 
 Conclave holds no profile data, so it can only serve:
@@ -277,13 +313,13 @@ exchange (RFC 8693) for acting on behalf of a person is deferred.
 
 | Part | Change |
 |---|---|
-| Credentials | New kind `federated` with data `{provider, sub, email?, email_verified?}` |
+| Credentials | New kinds `federated` (data `{provider, sub, email?, email_verified?}`) and `client` (a client acting as a service principal) |
 | Sessions | Provider and upstream subject through the federated credential; per-provider lifetime cap; the OIDC client and granted scopes for client sessions |
 | Grants | `managed_by` on memberships and role assignments |
 | Signing keys | An ES256 key for ID tokens, in JWKS with its `alg` |
 | Control plane | OIDC clients (`conclave:clients:manage`); break-glass credentials flagged |
 | Subject surface | `/v1/login/oidc/*`, linking, login-request acceptance |
-| New surface paths | `/.well-known/openid-configuration`, `/v1/oauth2/authorize` (and `/resume`), `/v1/oauth2/login-requests/{id}` (and `/accept`), `/v1/oauth2/token`, `/v1/oauth2/userinfo`; later `/v1/oauth2/revoke`, `/v1/oauth2/logout` |
+| New surface paths | `/.well-known/openid-configuration`, `/v1/oauth2/authorize` (and `/resume`), `/v1/oauth2/login-requests/{id}` (and `/accept`), `/v1/oauth2/token`, `/v1/oauth2/userinfo`, `/v1/oauth2/revoke`, `/v1/oauth2/logout` |
 | Feed | `break_glass.used`, and `subject.changed` for peering |
 
 ## Decisions
@@ -312,7 +348,7 @@ Proposed defaults, to confirm before implementation:
    Operator federation works from here.
 3. **OpenID provider** (done): discovery, clients, login hand-off, codes,
    ID tokens, ES256, userinfo with groups, refresh.
-4. **Provider extras**: client credentials, RP-initiated and back-channel
-   logout, revocation.
+4. **Provider extras** (done): client credentials with `private_key_jwt`,
+   RP-initiated and back-channel logout, revocation.
 5. **Peering and workloads**: following the upstream feed, key pinning, the
    JWT bearer grant.

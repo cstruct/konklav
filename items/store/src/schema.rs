@@ -1,6 +1,19 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    backchannel_logout (id) {
+        id -> Uuid,
+        client_id -> Text,
+        session_id -> Uuid,
+        subject_id -> Uuid,
+        attempts -> Int4,
+        next_attempt_at -> Timestamptz,
+        last_error -> Nullable<Text>,
+        created_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
     catalog_action (name) {
         name -> Text,
         description -> Text,
@@ -51,6 +64,14 @@ diesel::table! {
         created_at -> Timestamptz,
         expires_at -> Timestamptz,
         consumed_at -> Nullable<Timestamptz>,
+    }
+}
+
+diesel::table! {
+    client_assertion (client_id, jti) {
+        client_id -> Text,
+        jti -> Text,
+        expires_at -> Timestamptz,
     }
 }
 
@@ -138,6 +159,10 @@ diesel::table! {
         disabled_at -> Nullable<Timestamptz>,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
+        service_subject_id -> Nullable<Uuid>,
+        jwks -> Nullable<Jsonb>,
+        post_logout_redirect_uris -> Array<Nullable<Text>>,
+        backchannel_logout_uri -> Nullable<Text>,
     }
 }
 
@@ -264,14 +289,19 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(backchannel_logout -> oidc_client (client_id));
+diesel::joinable!(backchannel_logout -> session (session_id));
+diesel::joinable!(backchannel_logout -> subject (subject_id));
 diesel::joinable!(challenge -> credential (credential_id));
 diesel::joinable!(challenge -> mfa_factor (mfa_factor_id));
 diesel::joinable!(challenge -> session (session_id));
 diesel::joinable!(challenge -> subject (subject_id));
+diesel::joinable!(client_assertion -> oidc_client (client_id));
 diesel::joinable!(credential -> subject (subject_id));
 diesel::joinable!(membership -> subject (subject_id));
 diesel::joinable!(membership -> tenant (tenant_id));
 diesel::joinable!(mfa_factor -> subject (subject_id));
+diesel::joinable!(oidc_client -> subject (service_subject_id));
 diesel::joinable!(role -> template (template_id));
 diesel::joinable!(role -> tenant (tenant_id));
 diesel::joinable!(role_assignment -> catalog_scope_kind (scope_kind));
@@ -289,11 +319,13 @@ diesel::joinable!(template_policy -> catalog_action (action));
 diesel::joinable!(template_policy -> template (template_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    backchannel_logout,
     catalog_action,
     catalog_fact,
     catalog_scope_kind,
     catalog_session_flag,
     challenge,
+    client_assertion,
     credential,
     event,
     feed_watermark,

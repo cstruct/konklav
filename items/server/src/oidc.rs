@@ -211,12 +211,170 @@ pub fn id_token(
         sid: session.id,
         claims,
     };
+    sign_for(auth, provider, client, &token, None)
+}
+
+/// Signs `claims` with the client's algorithm, with an optional `typ`.
+fn sign_for<T: Serialize>(
+    auth: &AuthContext,
+    provider: &OpenIdProvider,
+    client: &OidcClient,
+    claims: &T,
+    typ: Option<&str>,
+) -> String {
     match client.id_token_alg {
-        IdTokenAlgorithm::EdDsa => auth.signer.sign_json(&token),
+        IdTokenAlgorithm::EdDsa => auth.signer.sign_json(claims),
         IdTokenAlgorithm::Es256 => {
             let mut header = Header::new(Algorithm::ES256);
             header.kid = Some(provider.jwk.kid.clone());
-            jsonwebtoken::encode(&header, &token, &provider.key).expect("ID tokens sign")
+            if let Some(typ) = typ {
+                header.typ = Some(typ.to_owned());
+            }
+            jsonwebtoken::encode(&header, claims, &provider.key).expect("tokens sign")
         }
     }
+}
+
+/// A back-channel logout token (OpenID Connect Back-Channel Logout 1.0).
+#[must_use]
+pub fn logout_token(
+    auth: &AuthContext,
+    provider: &OpenIdProvider,
+    client: &OidcClient,
+    subject: SubjectId,
+    session: conclave_core::SessionId,
+) -> String {
+    let claims = serde_json::json!({
+        "iss": auth.issuer,
+        "aud": client.id,
+        "iat": chrono::Utc::now().timestamp(),
+        "exp": chrono::Utc::now().timestamp() + 120,
+        "jti": uuid::Uuid::now_v7(),
+        "sub": subject,
+        "sid": session,
+        "events": {"http://schemas.openid.net/event/backchannel-logout": {}},
+    });
+    sign_for(auth, provider, client, &claims, Some("logout+jwt"))
+}
+
+/// Attempts before an undeliverable logout token is dropped.
+const LOGOUT_ATTEMPTS: i32 = 8;
+
+/// Delivers due back-channel logout tokens. Returns how many were tried.
+// r[impl oidc.provider.logout]
+pub async fn deliver_logouts(
+    state: &crate::AppState,
+    http: &reqwest::Client,
+) -> Result<usize, ApiError> {
+    let Some(provider) = state.auth.oidc.as_ref() else {
+        return Ok(0);
+    };
+    let mut conn = state.pool.get().await?;
+    let pending = conclave_store::backchannel::lease(&mut conn, 50).await?;
+    for logout in &pending {
+        let client = conclave_store::oidc_clients::get(&mut conn, &logout.client_id).await?;
+        let Some(uri) = &client.backchannel_logout_uri else {
+            conclave_store::backchannel::complete(&mut conn, logout.id).await?;
+            continue;
+        };
+        let token = logout_token(
+            &state.auth,
+            provider,
+            &client,
+            logout.subject_id,
+            logout.session_id,
+        );
+        let sent = http
+            .post(uri)
+            .form(&[("logout_token", token)])
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status);
+        match sent {
+            Ok(_) => conclave_store::backchannel::complete(&mut conn, logout.id).await?,
+            Err(error) if logout.attempts + 1 >= LOGOUT_ATTEMPTS => {
+                tracing::warn!(client = %client.id, session = %logout.session_id, %error, "giving up on a back-channel logout");
+                conclave_store::backchannel::complete(&mut conn, logout.id).await?;
+            }
+            Err(error) => {
+                let backoff =
+                    chrono::Duration::seconds(10 * 2_i64.pow(logout.attempts.unsigned_abs()));
+                let retry_at = chrono::Utc::now() + backoff.min(chrono::Duration::hours(1));
+                conclave_store::backchannel::retry(
+                    &mut conn,
+                    logout.id,
+                    &error.to_string(),
+                    retry_at,
+                )
+                .await?;
+            }
+        }
+    }
+    Ok(pending.len())
+}
+
+/// Runs [`deliver_logouts`] forever.
+///
+/// # Panics
+///
+/// If the HTTP client can't be built, which only happens without TLS roots.
+pub async fn deliver_logouts_forever(state: crate::AppState) {
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("an HTTP client");
+    loop {
+        if let Err(error) = deliver_logouts(&state, &http).await {
+            tracing::warn!(?error, "delivering back-channel logouts failed");
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+}
+
+/// The client (`aud`) and session (`sid`) of an ID token Conclave signed,
+/// expired or not, as presented in `id_token_hint`.
+pub async fn verify_own_id_token(
+    conn: &mut Connection,
+    auth: &AuthContext,
+    provider: &OpenIdProvider,
+    token: &str,
+) -> Result<Option<(String, conclave_core::SessionId)>, ApiError> {
+    #[derive(serde::Deserialize)]
+    struct Hint {
+        aud: String,
+        sid: conclave_core::SessionId,
+    }
+    let now = chrono::Utc::now();
+    let mut keys: Vec<Jwk> = conclave_store::signing_keys::list(conn)
+        .await?
+        .iter()
+        .filter(|key| crate::keys::is_publishable(key, now, auth.access_ttl))
+        .filter_map(crate::keys::to_verifying_key)
+        .map(|key| Jwk::from_verifying_key(&key))
+        .collect();
+    keys.push(provider.jwk.clone());
+    let Ok(header) = jsonwebtoken::decode_header(token) else {
+        return Ok(None);
+    };
+    let Some(jwk) = keys
+        .iter()
+        .find(|key| Some(&key.kid) == header.kid.as_ref())
+    else {
+        return Ok(None);
+    };
+    let Some(key) = serde_json::to_value(jwk)
+        .ok()
+        .and_then(|value| serde_json::from_value::<jsonwebtoken::jwk::Jwk>(value).ok())
+        .and_then(|jwk| jsonwebtoken::DecodingKey::from_jwk(&jwk).ok())
+    else {
+        return Ok(None);
+    };
+    let mut validation = jsonwebtoken::Validation::new(header.alg);
+    validation.set_issuer(&[&auth.issuer]);
+    validation.validate_aud = false;
+    validation.validate_exp = false;
+    validation.set_required_spec_claims(&["iss", "aud", "sid"]);
+    Ok(jsonwebtoken::decode::<Hint>(token, &key, &validation)
+        .ok()
+        .map(|data| (data.claims.aud, data.claims.sid)))
 }

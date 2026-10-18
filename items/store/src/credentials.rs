@@ -21,6 +21,9 @@ pub enum CredentialKind {
     PhoneOtp,
     /// Log in through an identity provider; see [`federated_identifier`].
     Federated,
+    /// An OIDC client acting as a service principal (client credentials);
+    /// the identifier is the client id.
+    Client,
 }
 
 impl CredentialKind {
@@ -32,6 +35,7 @@ impl CredentialKind {
             Self::EmailLink => "email_link",
             Self::PhoneOtp => "phone_otp",
             Self::Federated => "federated",
+            Self::Client => "client",
         }
     }
 }
@@ -129,6 +133,7 @@ pub enum CredentialData {
     EmailLink,
     PhoneOtp,
     Federated(FederatedData),
+    Client,
 }
 
 impl CredentialData {
@@ -140,6 +145,7 @@ impl CredentialData {
             Self::EmailLink => CredentialKind::EmailLink,
             Self::PhoneOtp => CredentialKind::PhoneOtp,
             Self::Federated(_) => CredentialKind::Federated,
+            Self::Client => CredentialKind::Client,
         }
     }
 
@@ -148,7 +154,7 @@ impl CredentialData {
             Self::Password(data) => serde_json::to_value(data),
             Self::SecretKey(data) => serde_json::to_value(data),
             Self::Federated(data) => serde_json::to_value(data),
-            Self::EmailLink | Self::PhoneOtp => Ok(serde_json::json!({})),
+            Self::EmailLink | Self::PhoneOtp | Self::Client => Ok(serde_json::json!({})),
         }
         .expect("credential data serializes")
     }
@@ -160,6 +166,7 @@ impl CredentialData {
             "email_link" => Ok(Self::EmailLink),
             "phone_otp" => Ok(Self::PhoneOtp),
             "federated" => serde_json::from_value(data).map(Self::Federated),
+            "client" => Ok(Self::Client),
             other => {
                 return Err(diesel::result::Error::DeserializationError(
                     format!("unknown credential kind {other}").into(),

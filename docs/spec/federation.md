@@ -6,8 +6,8 @@ applications and other Conclave instances. Federation between Conclave
 instances builds on both and adds a few capabilities only peers have.
 
 Status: identity providers, claim mapping, break-glass credentials and the
-OpenID provider (authorization code flow, refresh, userinfo) are
-implemented. The client credentials grant, logout, peering and workload
+OpenID provider (authorization code flow, refresh, userinfo, client
+credentials, revocation and logout) are implemented. Peering and workload
 federation are specified only. The rationale and the decisions behind
 these rules are in
 [`../architecture/oidc-and-federation.md`](../architecture/oidc-and-federation.md).
@@ -134,6 +134,11 @@ that the client's registration allows it to see, and no others.
 r[oidc.provider.client-credentials]
 Service principals MUST be able to obtain access tokens with the client
 credentials grant, authenticating with a client secret or `private_key_jwt`.
+
+r[oidc.provider.revocation]
+Clients MUST be able to revoke a refresh or access token they were issued
+(RFC 7009), which MUST end the session behind it. Revoking an unknown token
+MUST succeed without effect.
 
 r[oidc.provider.logout]
 Conclave MUST support RP-initiated logout, and MUST send back-channel logout

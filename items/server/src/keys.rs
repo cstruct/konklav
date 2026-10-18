@@ -94,7 +94,7 @@ pub fn is_publishable(key: &StoredKey, now: DateTime<Utc>, max_token_ttl: Durati
             .is_none_or(|retired| retired + max_token_ttl > now)
 }
 
-fn to_verifying_key(key: &StoredKey) -> Option<VerifyingKey> {
+pub(crate) fn to_verifying_key(key: &StoredKey) -> Option<VerifyingKey> {
     let bytes: [u8; 32] = key.public_key.as_slice().try_into().ok()?;
     VerifyingKey::from_bytes(&bytes).ok()
 }
