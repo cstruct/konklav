@@ -22,7 +22,10 @@ tokens {
     signing_key_file "config/dev.signing-key.pem"
 }
 
+// Origins whose pages may use browser sign-in with the refresh cookie. The
+// console (`mise run console:serve`) serves on 127.0.0.1:8083 and proxies
+// /v1 and /control/v1 here, so Conclave sees requests from that origin.
 browser {
-    allowed_origins ("http://localhost:5173")
+    allowed_origins ("http://localhost:5173" "http://127.0.0.1:8083")
     secure_cookies false
 }

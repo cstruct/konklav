@@ -11,6 +11,9 @@ uv = "0.8.24"
 # identity-provider client. Runs in memory; see the `hydra` task.
 # The SQLite builds, which run in memory (`DSN=memory`).
 "github:ory/hydra" = { version = "25.4.0", platforms = { macos-arm64 = { asset_pattern = "hydra_*-macOS_sqlite_arm64.tar.gz" }, macos-x64 = { asset_pattern = "hydra_*-macOS_sqlite_64bit.tar.gz" }, linux-x64 = { asset_pattern = "hydra_*-linux_sqlite_64bit.tar.gz" }, linux-arm64 = { asset_pattern = "hydra_*-linux_sqlite_arm64.tar.gz" } } }
+# Builds and serves the console (items/console) as a WASM app; fetches the
+# matching wasm-bindgen CLI by itself.
+"github:trunk-rs/trunk" = "0.21.14"
 "cargo:diesel_cli" = { version = "2.3.14", default-features = false, features = "postgres-bundled" }
 
 [env]
@@ -49,7 +52,7 @@ run = "cargo build --workspace"
 
 [tasks.test]
 description = "Run every test; database tests use isolated databases on the local Postgres"
-depends = ["db:up", "py:test"]
+depends = ["db:up", "py:test", "console:smoke"]
 run = "cargo test --workspace"
 
 [tasks."py:test"]
@@ -63,10 +66,31 @@ run = [
     "cargo fmt --all --check",
     "cargo clippy --workspace --all-targets -- -D warnings",
     "cargo build -q -p conclave-relying --target wasm32-unknown-unknown",
+    "cargo clippy -q -p conclave-console --target wasm32-unknown-unknown -- -D warnings",
     "cargo fmt --manifest-path items/py/Cargo.toml --check",
     "PYO3_PYTHON=$(cd items/py && uv python find) cargo clippy --manifest-path items/py/Cargo.toml -- -D warnings",
     "tracey query validate",
 ]
+
+[tasks."console:serve"]
+description = "Serve the console on http://127.0.0.1:8083, proxying to `mise run serve`"
+dir = "items/console"
+run = "trunk serve"
+
+[tasks."console:build"]
+description = "Build the console for release into target/console/dist"
+dir = "items/console"
+run = "trunk build --release"
+
+[tasks."console:smoke"]
+description = "Build the console with trunk and check the bundle it produces"
+dir = "items/console"
+run = """
+trunk build --dist ../../target/console/smoke
+test -s ../../target/console/smoke/index.html
+grep -q 'conclave-console' ../../target/console/smoke/index.html
+ls ../../target/console/smoke/*.wasm >/dev/null
+"""
 
 [tasks.migrate]
 description = "Apply pending migrations to the local database"

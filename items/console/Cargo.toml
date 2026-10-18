@@ -1,0 +1,22 @@
+[package]
+name = "conclave-console"
+description = "The Conclave console: a browser UI for operating the control plane"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64.workspace = true
+futures-util.workspace = true
+gloo-net = { version = "0.7.0", default-features = false, features = ["http", "json"] }
+js-sys = "0.3.106"
+leptos = { version = "0.8.22", features = ["csr"] }
+leptos_router = "0.8.12"
+percent-encoding.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+web-sys = { version = "0.3.106", features = ["Crypto", "Window"] }
+
+[lints]
+workspace = true

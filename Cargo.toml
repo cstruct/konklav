@@ -2,6 +2,7 @@
 members = [
     "items/authn",
     "items/authz",
+    "items/console",
     "items/core",
     "items/relying",
     "items/relying-client",
@@ -23,6 +24,7 @@ publish = false
 [workspace.dependencies]
 conclave-authn = { path = "items/authn" }
 conclave-authz = { path = "items/authz" }
+conclave-console = { path = "items/console" }
 conclave-core = { path = "items/core", default-features = false }
 conclave-relying = { path = "items/relying" }
 conclave-relying-client = { path = "items/relying-client" }

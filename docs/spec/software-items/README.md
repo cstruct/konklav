@@ -27,6 +27,7 @@ Planned software items for v2 (see
 - `server`
 - `token`
 - [`relying`](relying.md)
+- [`console`](console.md)
 - `relying-client`
 - `py` (built separately by maturin)
 - `cli`

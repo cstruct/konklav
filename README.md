@@ -84,6 +84,7 @@ v1, a prototype backed by Feldera, is preserved at tag `v1`.
   - `relying`: the sans-I/O relying core
   - `relying-client`: the native Rust host
   - `py`: the Python binding (maturin)
+  - `console`: the operators' web UI (Leptos, WASM)
   - `test-support`: shared test helpers
 - `config/`: development configuration.
 - `dev/`: local services for development.
@@ -105,6 +106,10 @@ local setup. Everyday tasks:
 
 - `mise run serve` starts Postgres, migrates it and serves on ports 8080 to
   8082.
+- `mise run console:serve` serves the operators' console on
+  <http://127.0.0.1:8083> against that server. Trunk, installed by mise,
+  builds it. `console:build` makes a release build. See
+  [`items/console`](items/console/README.md).
 - `mise run test` runs every test, each database test in its own database.
   OIDC interoperability tests run against independent implementations:
   - Ory Hydra, installed by mise, as an identity provider for Conclave
@@ -113,8 +118,8 @@ local setup. Everyday tasks:
     provider (`items/server/tests/openidconnect.rs`)
 - `mise run hydra` runs Hydra in memory (public `:4444`, admin `:4445`) for
   trying identity-provider logins by hand.
-- `mise run lint` checks formatting, clippy (warnings are errors) and Tracey
-  validation.
+- `mise run lint` checks formatting, clippy (warnings are errors, including
+  for the console's WASM target) and Tracey validation.
 - `mise run migrate` applies migrations; `mise run db:schema` regenerates the
   Diesel schema.
 
@@ -136,3 +141,4 @@ To use another port, set `CONCLAVE_DEV_PG_PORT`, for example in an untracked
 - `ordna` for layered configuration with separate secrets
 - Ed25519 JWTs published through JWKS
 - pyo3 for the Python relying binding
+- Leptos and Trunk for the console
