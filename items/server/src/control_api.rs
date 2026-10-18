@@ -12,7 +12,7 @@ use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use diesel_async::AsyncConnection;
-use konklav_authn::generate_secret;
+use konklav_authn::{PasswordHasher, generate_secret};
 use konklav_core::{CredentialId, Cursor, SessionId, SubjectId};
 use konklav_store::credentials::{
     self, Credential, CredentialData, CredentialKind, NewCredential, PasswordData, SecretKeyData,
@@ -393,10 +393,12 @@ impl From<Credential> for CredentialView {
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum CreateCredential {
+    /// With either `password` or an Argon2id `password_hash`.
     Password {
         id: Option<CredentialId>,
         identifier: String,
-        password: String,
+        password: Option<String>,
+        password_hash: Option<String>,
         #[serde(default)]
         mfa_factors_required: i16,
     },
@@ -469,6 +471,39 @@ async fn hash(state: &AppState, secret: String) -> Result<String, ApiError> {
 
 const MIN_PASSWORD_LENGTH: usize = 8;
 
+/// The stored hash for a new password credential: `password` hashed here,
+/// or an Argon2id `password_hash` hashed elsewhere, kept as given.
+// r[impl credential.password.hash-input]
+async fn password_hash_for(
+    state: &AppState,
+    password: Option<String>,
+    password_hash: Option<String>,
+) -> Result<String, ApiError> {
+    match (password, password_hash) {
+        (Some(password), None) => {
+            if password.chars().count() < MIN_PASSWORD_LENGTH {
+                return Err(ApiError::invalid_request(format!(
+                    "passwords need at least {MIN_PASSWORD_LENGTH} characters"
+                )));
+            }
+            hash(state, password).await
+        }
+        (None, Some(stored)) => {
+            let stored = stored.trim().to_owned();
+            if PasswordHasher::is_argon2id(&stored) {
+                Ok(stored)
+            } else {
+                Err(ApiError::invalid_request(
+                    "password_hash must be an Argon2id PHC string",
+                ))
+            }
+        }
+        _ => Err(ApiError::invalid_request(
+            "give either password or password_hash",
+        )),
+    }
+}
+
 /// `POST /v1/subjects/{id}/credentials`
 async fn create_credential(
     State(state): State<AppState>,
@@ -487,6 +522,7 @@ async fn create_credential(
             id,
             identifier,
             password,
+            password_hash,
             mfa_factors_required,
         } => {
             if subject.kind != SubjectKind::Human {
@@ -497,17 +533,12 @@ async fn create_credential(
             if identifier.trim().is_empty() {
                 return Err(ApiError::invalid_request("identifier must not be empty"));
             }
-            if password.chars().count() < MIN_PASSWORD_LENGTH {
-                return Err(ApiError::invalid_request(format!(
-                    "passwords need at least {MIN_PASSWORD_LENGTH} characters"
-                )));
-            }
             if mfa_factors_required < 0 {
                 return Err(ApiError::invalid_request(
                     "mfa_factors_required must not be negative",
                 ));
             }
-            let hash = hash(&state, password).await?;
+            let hash = password_hash_for(&state, password, password_hash).await?;
             let new = NewCredential {
                 id: id.unwrap_or_else(CredentialId::new_v7),
                 subject_id,

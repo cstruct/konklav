@@ -334,7 +334,8 @@ fn Credentials(
     .into_any()
 }
 
-/// The control plane's credential body for `kind`.
+/// The control plane's credential body for `kind`. For `password_hash`,
+/// `password` holds an Argon2id hash made elsewhere.
 fn credential_body(
     kind: &str,
     identifier: &str,
@@ -343,7 +344,7 @@ fn credential_body(
 ) -> Result<Value, crate::api::ApiError> {
     let identifier = identifier.trim();
     match kind {
-        "password" => {
+        "password" | "password_hash" => {
             let mfa: i16 = if mfa.trim().is_empty() {
                 0
             } else {
@@ -351,9 +352,14 @@ fn credential_body(
                     .parse()
                     .map_err(|_| invalid_input("MFA factors must be a number"))?
             };
-            Ok(
-                json!({"kind": "password", "identifier": identifier, "password": password, "mfa_factors_required": mfa}),
-            )
+            let mut body =
+                json!({"kind": "password", "identifier": identifier, "mfa_factors_required": mfa});
+            if kind == "password" {
+                body["password"] = json!(password);
+            } else {
+                body["password_hash"] = json!(password.trim());
+            }
+            Ok(body)
         }
         "secret_key" => Ok(json!({"kind": "secret_key"})),
         "email_link" | "phone_otp" => Ok(json!({"kind": kind, "identifier": identifier})),
@@ -405,6 +411,7 @@ fn AddCredential(
     let options = if human {
         view! {
             <option value="password">"password"</option>
+            <option value="password_hash">"password (Argon2id hash)"</option>
             <option value="email_link">"email magic link"</option>
             <option value="phone_otp">"phone code"</option>
         }
@@ -418,16 +425,29 @@ fn AddCredential(
             <div class="row">
                 <label class="field">
                     <span>"Kind"</span>
-                    <select on:change=move |ev| chosen.set(event_target_value(&ev))>{options}</select>
+                    <select on:change=move |ev| {
+                        password.set(String::new());
+                        chosen.set(event_target_value(&ev));
+                    }>{options}</select>
                 </label>
                 {move || (chosen.get() != "secret_key").then(|| view! {
                     <Field label="Login identifier" value=identifier placeholder="email address or +E.164 phone"/>
                 })}
-                {move || (chosen.get() == "password").then(|| view! {
-                    <Field label="Password" value=password kind="password"/>
-                    <Field label="MFA factors required" value=mfa placeholder="0"/>
-                })}
+                {move || match chosen.get().as_str() {
+                    "password" => Some(view! {
+                        <Field label="Password" value=password kind="password"/>
+                        <Field label="MFA factors required" value=mfa placeholder="0"/>
+                    }.into_any()),
+                    "password_hash" => Some(view! {
+                        <Field label="Argon2id hash" value=password placeholder="$argon2id$v=19$m=65536,t=3,p=4$…"/>
+                        <Field label="MFA factors required" value=mfa placeholder="0"/>
+                    }.into_any()),
+                    _ => None,
+                }}
             </div>
+            {move || (chosen.get() == "password_hash").then(|| view! {
+                <p class="muted">"The hash is stored as given, so the password never reaches Konklav. Konklav rehashes it under its own parameters at the first login."</p>
+            })}
             <Problem error/>
             <button type="submit">"Add"</button>
         </form>
@@ -449,6 +469,10 @@ mod tests {
             0
         );
         assert!(credential_body("password", "ada", "pw", "two").is_err());
+        assert_eq!(
+            credential_body("password_hash", "ada", " $argon2id$x ", "").unwrap(),
+            json!({"kind": "password", "identifier": "ada", "password_hash": "$argon2id$x", "mfa_factors_required": 0})
+        );
         assert_eq!(
             credential_body("secret_key", "ignored", "", "").unwrap(),
             json!({"kind": "secret_key"})

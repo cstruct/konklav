@@ -598,3 +598,54 @@ async fn creating_subjects_is_idempotent() {
         .await;
     assert_eq!(bad.code(), "INVALID_REQUEST");
 }
+
+// r[verify credential.password.hash-input]
+#[tokio::test(flavor = "multi_thread")]
+async fn password_credentials_can_be_created_from_an_argon2id_hash() {
+    let app = TestApp::new().await;
+    let subject = uuid::Uuid::now_v7();
+    app.control(
+        Method::PUT,
+        &format!("/v1/subjects/{subject}"),
+        Some(json!({"kind": "human"})),
+    )
+    .await;
+    let create = |body: serde_json::Value| {
+        let app = &app;
+        async move {
+            app.control(
+                Method::POST,
+                &format!("/v1/subjects/{subject}/credentials"),
+                Some(body),
+            )
+            .await
+        }
+    };
+
+    let argon2i = "$argon2i$v=19$m=16,t=2,p=1$c29tZXNhbHQ$Iv7FuOybn2c7RtUrVZWQjQ";
+    let bcrypt = "$2b$12$R9h/cIPz0gi.URNNX3kh2OPST9/PgBkqquzi.Ss7KIUgO2t0jWMUW";
+    for invalid in [
+        json!({"kind": "password", "identifier": EMAIL, "password_hash": bcrypt}),
+        json!({"kind": "password", "identifier": EMAIL, "password_hash": argon2i}),
+        json!({"kind": "password", "identifier": EMAIL, "password_hash": "$argon2id$v=19$m=bad"}),
+        json!({"kind": "password", "identifier": EMAIL, "password": PASSWORD, "password_hash": "x"}),
+        json!({"kind": "password", "identifier": EMAIL}),
+    ] {
+        let reply = create(invalid.clone()).await;
+        assert_eq!(reply.code(), "INVALID_REQUEST", "{invalid}");
+    }
+
+    // Cheap parameters, so the login below verifies and then rehashes.
+    let hashed = konklav_authn::PasswordHasher::new(8, 1, 1)
+        .unwrap()
+        .hash(PASSWORD);
+    let created =
+        create(json!({"kind": "password", "identifier": EMAIL, "password_hash": hashed})).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+    let login = app.login(EMAIL, PASSWORD).await;
+    assert_eq!(login.status, StatusCode::OK, "{:?}", login.body);
+    assert_eq!(
+        app.login(EMAIL, "wrong password").await.code(),
+        "INVALID_CREDENTIALS"
+    );
+}

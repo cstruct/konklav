@@ -70,6 +70,13 @@ Password credentials MUST be stored with a memory-hard password hash
 systems that use compatible Argon2id encodings, and MUST rehash them under
 current parameters on successful login.
 
+r[credential.password.hash-input]
+Creating a password credential through the control plane MUST accept
+either a password or an Argon2id PHC hash, but not both. A hash MUST be
+rejected as an invalid request unless it parses as Argon2id with valid
+parameters. Konklav then stores it as given, so the password never has to
+reach Konklav.
+
 r[credential.secret-key.dual]
 Secret-key credentials MUST support two independently rotatable keys with
 their own creation and expiry times, so that a service principal can rotate

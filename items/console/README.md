@@ -19,8 +19,9 @@ token.
   `konklav:` capabilities; areas they lack one for say which capability
   is missing, and so do control-plane refusals.
 - Views over the control plane:
-  - subjects, with their credentials (add, revoke, replace a password,
-    rotate a secret-key slot, mark break-glass), sessions, global roles and
+  - subjects, with their credentials (add, including a password from an
+    Argon2id hash, revoke, replace a password, rotate a secret-key slot,
+    mark break-glass), sessions, global roles and
     entitlements
   - tenants (create, facts, state, children) and memberships (create,
     facts, end, role assignments)

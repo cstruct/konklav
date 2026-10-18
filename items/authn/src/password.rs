@@ -79,6 +79,19 @@ impl PasswordHasher {
         }
     }
 
+    /// Whether `stored` is an Argon2id PHC string with valid parameters, as
+    /// [`Self::verify`] can check secrets against.
+    // r[impl credential.password.hash-input]
+    #[must_use]
+    pub fn is_argon2id(stored: &str) -> bool {
+        PasswordHash::new(stored).is_ok_and(|parsed| {
+            parsed.algorithm.as_str() == "argon2id"
+                && parsed.hash.is_some()
+                && parsed.salt.is_some()
+                && Params::try_from(&parsed).is_ok()
+        })
+    }
+
     /// Spends the same effort as a real verification without any stored
     /// hash, so that failures for unknown identifiers take as long as
     /// failures for wrong secrets.

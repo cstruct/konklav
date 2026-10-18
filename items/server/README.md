@@ -40,7 +40,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - `/v1/check`, which decides from current state, session validity included
 - Control-plane surface (`/v1`):
   - subjects (idempotent `PUT`, disable and enable)
-  - credentials (create, revoke, replace a password, rotate a secret-key slot)
+  - credentials (create, revoke, replace a password, rotate a secret-key slot). A password credential can be created from an Argon2id `password_hash` made elsewhere instead of a `password`.
   - sessions (list, get, revoke by filter)
   - signing keys (list, break-glass revoke)
   - the catalog
