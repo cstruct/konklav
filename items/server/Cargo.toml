@@ -42,7 +42,8 @@ tracing-subscriber.workspace = true
 uuid = { workspace = true, features = ["v4", "v7"] }
 
 [dev-dependencies]
-reqwest.workspace = true
+openidconnect = "4.0.1"
+reqwest = { workspace = true, features = ["cookies"] }
 chrono.workspace = true
 conclave-authz.workspace = true
 conclave-test-support.workspace = true

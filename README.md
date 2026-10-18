@@ -106,6 +106,13 @@ local setup. Everyday tasks:
 - `mise run serve` starts Postgres, migrates it and serves on ports 8080 to
   8082.
 - `mise run test` runs every test, each database test in its own database.
+  OIDC interoperability tests run against independent implementations:
+  - Ory Hydra, installed by mise, as an identity provider for Conclave
+    (`items/server/tests/hydra.rs`; skipped if `hydra` isn't on the PATH)
+  - the `openidconnect` client library against Conclave as an OpenID
+    provider (`items/server/tests/openidconnect.rs`)
+- `mise run hydra` runs Hydra in memory (public `:4444`, admin `:4445`) for
+  trying identity-provider logins by hand.
 - `mise run lint` checks formatting, clippy (warnings are errors) and Tracey
   validation.
 - `mise run migrate` applies migrations; `mise run db:schema` regenerates the

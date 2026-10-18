@@ -7,6 +7,10 @@ rust = { version = "1.99.0", components = "rustfmt,clippy,rust-analyzer,rust-src
 # system Postgres client libraries are needed.
 # Builds and tests the Python relying binding (items/py).
 uv = "0.8.24"
+# An independent OpenID provider for integration tests of Conclave as an
+# identity-provider client. Runs in memory; see the `hydra` task.
+# The SQLite builds, which run in memory (`DSN=memory`).
+"github:ory/hydra" = { version = "25.4.0", platforms = { macos-arm64 = { asset_pattern = "hydra_*-macOS_sqlite_arm64.tar.gz" }, macos-x64 = { asset_pattern = "hydra_*-macOS_sqlite_64bit.tar.gz" }, linux-x64 = { asset_pattern = "hydra_*-linux_sqlite_64bit.tar.gz" }, linux-arm64 = { asset_pattern = "hydra_*-linux_sqlite_arm64.tar.gz" } } }
 "cargo:diesel_cli" = { version = "2.3.14", default-features = false, features = "postgres-bundled" }
 
 [env]
@@ -68,6 +72,17 @@ run = [
 description = "Apply pending migrations to the local database"
 depends = ["db:up"]
 run = "cargo run -q -p conclave-server -- migrate"
+
+[tasks.hydra]
+description = "Run Ory Hydra in memory (public :4444, admin :4445) to try identity-provider logins by hand"
+run = "hydra serve all --dev"
+
+[tasks.hydra.env]
+DSN = "memory"
+URLS_SELF_ISSUER = "http://127.0.0.1:4444"
+URLS_LOGIN = "http://127.0.0.1:3000/login"
+URLS_CONSENT = "http://127.0.0.1:3000/consent"
+SECRETS_SYSTEM = "conclave-dev-only-hydra-system-secret"
 
 [tasks."dev:signing-key"]
 description = "Create the untracked development signing key if it is missing"

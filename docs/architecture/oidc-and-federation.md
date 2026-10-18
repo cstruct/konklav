@@ -392,6 +392,28 @@ Proposed defaults, to confirm before implementation:
 5. **Peering and workloads** (done): the client-scoped peer feed, key
    pinning, the JWT bearer grant.
 
+## Interoperability
+
+Besides tests against Conclave's own fakes and against a second Conclave,
+two suites run against independent implementations:
+
+- **Ory Hydra as the identity provider.** Hydra is installed by mise and
+  started in memory per test. The test plays its login and consent app
+  through the admin API. It covers:
+  - sign-in with Hydra's RS256 ID tokens and keys, over real HTTP
+  - mapping its `amr` and custom claims
+  - a refused login
+  - Hydra's JWT client-credentials tokens accepted through the JWT bearer
+    grant
+- **The `openidconnect` crate as the client.** It covers:
+  - discovery, including the JWKS with both Ed25519 and P-256 keys
+  - the code flow with PKCE and the hand-off
+  - ES256 and EdDSA ID-token verification
+  - userinfo and refresh
+
+  Its revocation helper requires HTTPS, so revocation is sent directly in
+  the local test.
+
 ## Open points
 
 - The claims hook for profile claims beyond login identifiers and groups.
