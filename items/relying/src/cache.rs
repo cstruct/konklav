@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use conclave_authz::{Decision, DenyReason, EntitlementSet, Requirements, evaluate};
-use conclave_core::feed::{EntitlementsChanged, FeedEvent, FeedPayload, SessionChanged};
-use conclave_core::{Cursor, SessionId, SubjectId, TenantId};
-use conclave_token::{AccessClaims, JwkSet, VerifyOptions};
+use konklav_authz::{Decision, DenyReason, EntitlementSet, Requirements, evaluate};
+use konklav_core::feed::{EntitlementsChanged, FeedEvent, FeedPayload, SessionChanged};
+use konklav_core::{Cursor, SessionId, SubjectId, TenantId};
+use konklav_token::{AccessClaims, JwkSet, VerifyOptions};
 use serde::{Deserialize, Serialize};
 
 use crate::Config;
@@ -50,7 +50,7 @@ pub enum Outcome {
 pub enum Verification {
     /// The token verifies and its session is current.
     Verified {
-        claims: Box<conclave_token::AccessClaims>,
+        claims: Box<konklav_token::AccessClaims>,
     },
     /// The token doesn't verify, or its session has ended or moved on.
     Invalid,
@@ -185,7 +185,7 @@ impl Relying {
             });
         }
 
-        let Ok(kid) = conclave_token::decode_unverified_kid(token) else {
+        let Ok(kid) = konklav_token::decode_unverified_kid(token) else {
             return Err(invalid());
         };
         let key = self.jwks.as_ref().and_then(|jwks| jwks.find(&kid));
@@ -208,7 +208,7 @@ impl Relying {
             now: now_seconds,
             leeway: self.config.leeway_seconds,
         };
-        let Ok(claims) = conclave_token::verify(token, |_| Some(key), &options) else {
+        let Ok(claims) = konklav_token::verify(token, |_| Some(key), &options) else {
             return Err(invalid());
         };
 

@@ -22,16 +22,16 @@ rust-version = "1.88"
 publish = false
 
 [workspace.dependencies]
-conclave-authn = { path = "items/authn" }
-conclave-authz = { path = "items/authz" }
-conclave-console = { path = "items/console" }
-conclave-core = { path = "items/core", default-features = false }
-conclave-relying = { path = "items/relying" }
-conclave-relying-client = { path = "items/relying-client" }
-conclave-server = { path = "items/server" }
-conclave-store = { path = "items/store" }
-conclave-test-support = { path = "items/test-support" }
-conclave-token = { path = "items/token" }
+konklav-authn = { path = "items/authn" }
+konklav-authz = { path = "items/authz" }
+konklav-console = { path = "items/console" }
+konklav-core = { path = "items/core", default-features = false }
+konklav-relying = { path = "items/relying" }
+konklav-relying-client = { path = "items/relying-client" }
+konklav-server = { path = "items/server" }
+konklav-store = { path = "items/store" }
+konklav-test-support = { path = "items/test-support" }
+konklav-token = { path = "items/token" }
 
 aes-gcm = "0.11.1"
 argon2 = "0.6.0"

@@ -8,15 +8,15 @@ use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use chrono::{Duration, Utc};
-use conclave_authn::{PasswordCheck, RefreshToken};
-use conclave_core::{Cursor, SessionId};
-use conclave_store::credentials::{self, Credential, CredentialData, CredentialKind};
-use conclave_store::sessions::{
+use konklav_authn::{PasswordCheck, RefreshToken};
+use konklav_core::{Cursor, SessionId};
+use konklav_store::credentials::{self, Credential, CredentialData, CredentialKind};
+use konklav_store::sessions::{
     self, ClientKind, NewSession, Rotation, Session, SessionFilter, Stage,
 };
-use conclave_store::subjects::{self, SubjectKind, SubjectState};
-use conclave_store::{Connection, catalog, login_attempts, memberships, tenants};
-use conclave_token::{AccessClaims, VerifyOptions};
+use konklav_store::subjects::{self, SubjectKind, SubjectState};
+use konklav_store::{Connection, catalog, login_attempts, memberships, tenants};
+use konklav_token::{AccessClaims, VerifyOptions};
 use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 
@@ -261,7 +261,7 @@ pub(crate) async fn create_session(
                 return Ok((session, cursor));
             }
             // r[impl federation.break-glass]
-            let cursor = conclave_store::events::append(
+            let cursor = konklav_store::events::append(
                 conn,
                 "break_glass.used",
                 serde_json::json!({
@@ -620,7 +620,7 @@ pub(crate) async fn verify_access_token_for(
             "missing or invalid access token",
         )
     };
-    let kid = conclave_token::decode_unverified_kid(token).map_err(|_| unauthenticated())?;
+    let kid = konklav_token::decode_unverified_kid(token).map_err(|_| unauthenticated())?;
     let key = keys::verifying_key(conn, &kid, state.auth.access_ttl).await?;
     let options = VerifyOptions {
         issuer: &state.auth.issuer,
@@ -628,7 +628,7 @@ pub(crate) async fn verify_access_token_for(
         now: Utc::now().timestamp(),
         leeway: 30,
     };
-    let claims = conclave_token::verify(token, |_| key, &options).map_err(|_| unauthenticated())?;
+    let claims = konklav_token::verify(token, |_| key, &options).map_err(|_| unauthenticated())?;
     let session = sessions::get(conn, claims.sid)
         .await
         .map_err(|_| session_ended())?;

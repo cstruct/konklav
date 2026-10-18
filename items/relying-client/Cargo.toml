@@ -1,5 +1,5 @@
 [package]
-name = "conclave-relying-client"
+name = "konklav-relying-client"
 description = "Native Rust host binding for the relying core: HTTP, the change feed and background refresh on tokio"
 version.workspace = true
 edition.workspace = true
@@ -7,10 +7,10 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-conclave-authz.workspace = true
-conclave-core.workspace = true
-conclave-relying.workspace = true
-conclave-token.workspace = true
+konklav-authz.workspace = true
+konklav-core.workspace = true
+konklav-relying.workspace = true
+konklav-token.workspace = true
 futures-util.workspace = true
 reqwest.workspace = true
 serde.workspace = true
@@ -20,12 +20,12 @@ tokio = { workspace = true, features = ["time"] }
 tracing.workspace = true
 
 [dev-dependencies]
-conclave-authn.workspace = true
+konklav-authn.workspace = true
 chrono.workspace = true
-conclave-core = { workspace = true, features = ["generate"] }
-conclave-server.workspace = true
-conclave-store.workspace = true
-conclave-test-support.workspace = true
+konklav-core = { workspace = true, features = ["generate"] }
+konklav-server.workspace = true
+konklav-store.workspace = true
+konklav-test-support.workspace = true
 ed25519-dalek.workspace = true
 uuid = { workspace = true, features = ["v7"] }
 

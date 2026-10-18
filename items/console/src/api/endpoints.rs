@@ -415,7 +415,7 @@ pub fn revoke_signing_key(kid: &str) -> Request {
 ///
 /// ```
 /// assert_eq!(
-///     conclave_console::api::endpoints::list("admin, viewer  billing,"),
+///     konklav_console::api::endpoints::list("admin, viewer  billing,"),
 ///     vec!["admin", "viewer", "billing"],
 /// );
 /// ```

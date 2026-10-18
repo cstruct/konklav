@@ -1,5 +1,5 @@
 [package]
-name = "conclave-authn"
+name = "konklav-authn"
 description = "Conclave authentication primitives: password and secret-key hashing, refresh tokens"
 version.workspace = true
 edition.workspace = true
@@ -9,7 +9,7 @@ publish.workspace = true
 [dependencies]
 serde.workspace = true
 aes-gcm.workspace = true
-conclave-core = { workspace = true, features = ["generate"] }
+konklav-core = { workspace = true, features = ["generate"] }
 argon2.workspace = true
 base64.workspace = true
 getrandom.workspace = true

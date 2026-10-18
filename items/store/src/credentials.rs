@@ -2,7 +2,7 @@
 //! JSON-Schema-validated `jsonb` column.
 
 use chrono::{DateTime, Utc};
-use conclave_core::{CredentialId, SubjectId};
+use konklav_core::{CredentialId, SubjectId};
 use diesel::prelude::*;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use serde::{Deserialize, Serialize};

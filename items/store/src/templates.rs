@@ -1,7 +1,7 @@
 //! Templates: reusable role blueprints that cannot be assigned.
 
 use chrono::{DateTime, Utc};
-use conclave_authz::{Effect, Policy};
+use konklav_authz::{Effect, Policy};
 use diesel::prelude::*;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 use serde::Serialize;

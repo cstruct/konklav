@@ -1,14 +1,14 @@
 //! Python bindings for the relying core.
 //!
 //! The binding is deliberately thin: values cross the boundary as JSON, and
-//! every rule stays in `conclave-relying`. The Python package
-//! `conclave_relying` adds the I/O (httpx, asyncio) around it.
+//! every rule stays in `konklav-relying`. The Python package
+//! `konklav_relying` adds the I/O (httpx, asyncio) around it.
 
-use conclave_authz::{EntitlementSet, Requirements};
-use conclave_core::Cursor;
-use conclave_core::feed::{FeedEvent, SessionChanged};
-use conclave_relying::{Config, Key, Need, Relying};
-use conclave_token::JwkSet;
+use konklav_authz::{EntitlementSet, Requirements};
+use konklav_core::Cursor;
+use konklav_core::feed::{FeedEvent, SessionChanged};
+use konklav_relying::{Config, Key, Need, Relying};
+use konklav_token::JwkSet;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -21,7 +21,7 @@ fn dump<T: serde::Serialize>(value: &T) -> PyResult<String> {
 }
 
 /// The relying core. Times are Unix milliseconds; values are JSON strings.
-#[pyclass(module = "conclave_relying._core")]
+#[pyclass(module = "konklav_relying._core")]
 struct Core {
     inner: Relying,
 }

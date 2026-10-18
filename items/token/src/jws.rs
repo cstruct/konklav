@@ -186,7 +186,7 @@ pub fn verify(
 mod tests {
     use std::collections::BTreeMap;
 
-    use conclave_core::{SessionId, SubjectId};
+    use konklav_core::{SessionId, SubjectId};
 
     use super::*;
     use crate::{Jwk, JwkSet, TokenKind};

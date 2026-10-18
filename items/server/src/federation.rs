@@ -137,8 +137,8 @@ impl LoginRequest {
     #[must_use]
     pub fn generate() -> Self {
         Self {
-            nonce: conclave_authn::generate_secret(),
-            code_verifier: conclave_authn::generate_secret(),
+            nonce: konklav_authn::generate_secret(),
+            code_verifier: konklav_authn::generate_secret(),
         }
     }
 }

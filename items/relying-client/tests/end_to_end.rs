@@ -6,18 +6,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Duration as ChronoDuration;
-use conclave_authz::{Decision, DenyReason, Requirements};
-use conclave_core::Cursor;
-use conclave_relying::Config;
-use conclave_relying_client::{ClientConfig, RelyingClient};
-use conclave_server::config::Listen;
-use conclave_server::feed::FeedHub;
-use conclave_server::keys::ConfiguredKeys;
-use conclave_server::serve::BoundServer;
-use conclave_server::surface::Surface;
-use conclave_server::{AppState, AuthContext};
-use conclave_test_support::TestDatabase;
-use conclave_token::Signer;
+use konklav_authz::{Decision, DenyReason, Requirements};
+use konklav_core::Cursor;
+use konklav_relying::Config;
+use konklav_relying_client::{ClientConfig, RelyingClient};
+use konklav_server::config::Listen;
+use konklav_server::feed::FeedHub;
+use konklav_server::keys::ConfiguredKeys;
+use konklav_server::serve::BoundServer;
+use konklav_server::surface::Surface;
+use konklav_server::{AppState, AuthContext};
+use konklav_test_support::TestDatabase;
+use konklav_token::Signer;
 use ed25519_dalek::SigningKey;
 use reqwest::Method;
 use serde_json::{Value, json};
@@ -52,13 +52,13 @@ async fn server() -> Server {
             audience: AUDIENCE.into(),
             access_ttl: ChronoDuration::minutes(15),
             session_lifetime: ChronoDuration::days(1),
-            hasher: conclave_authn::PasswordHasher::new(8, 1, 1).unwrap(),
+            hasher: konklav_authn::PasswordHasher::new(8, 1, 1).unwrap(),
             signer: keys.signer,
             browser: None,
             control_token: Some(CONTROL.into()),
-            secrets: conclave_authn::SecretBox::new([]).unwrap(),
-            pacing: conclave_server::pacing::Pacing::NONE,
-            identity_providers: conclave_server::federation::Providers::default(),
+            secrets: konklav_authn::SecretBox::new([]).unwrap(),
+            pacing: konklav_server::pacing::Pacing::NONE,
+            identity_providers: konklav_server::federation::Providers::default(),
             oidc: None,
         }),
         feed: Arc::new(FeedHub::new(Duration::from_millis(100))),
@@ -73,7 +73,7 @@ async fn server() -> Server {
     let addrs = bound.local_addrs().unwrap();
     let addr = |surface| addrs.iter().find(|(_, s)| s.contains(&surface)).unwrap().0;
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-    tokio::spawn(conclave_server::feed::listen(
+    tokio::spawn(konklav_server::feed::listen(
         db.url().to_owned(),
         state.feed.clone(),
     ));

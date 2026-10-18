@@ -2,14 +2,14 @@
 
 use std::collections::BTreeSet;
 
-use conclave_authz::{Effect, Group, Policy, Scope, compile};
-use conclave_core::{Cursor, MembershipId, SubjectId, TenantId};
-use conclave_store::catalog::{self, ActionEntry, CatalogDocument, GroupEntry, ScopeKindEntry};
-use conclave_store::roles::{self, AssignmentTarget, RoleDefinition};
-use conclave_store::subjects::{self, SubjectKind, SubjectState};
-use conclave_store::tenants::{self, ROOT, TenantState};
-use conclave_store::{Connection, StoreError, compile_input, events, memberships, templates};
-use conclave_test_support::TestDatabase;
+use konklav_authz::{Effect, Group, Policy, Scope, compile};
+use konklav_core::{Cursor, MembershipId, SubjectId, TenantId};
+use konklav_store::catalog::{self, ActionEntry, CatalogDocument, GroupEntry, ScopeKindEntry};
+use konklav_store::roles::{self, AssignmentTarget, RoleDefinition};
+use konklav_store::subjects::{self, SubjectKind, SubjectState};
+use konklav_store::tenants::{self, ROOT, TenantState};
+use konklav_store::{Connection, StoreError, compile_input, events, memberships, templates};
+use konklav_test_support::TestDatabase;
 use diesel_async::AsyncConnection;
 use serde_json::json;
 

@@ -127,11 +127,11 @@ impl Entitlements {
 /// An entitlement set as the relying surface serves it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntitlementSet {
-    pub subject_id: conclave_core::SubjectId,
+    pub subject_id: konklav_core::SubjectId,
     /// `None` for global-only sets (tokens without a tenant).
-    pub tenant_id: Option<conclave_core::TenantId>,
+    pub tenant_id: Option<konklav_core::TenantId>,
     /// The change-feed cursor the set was compiled at.
-    pub revision: conclave_core::Cursor,
+    pub revision: konklav_core::Cursor,
     #[serde(flatten)]
     pub entitlements: Entitlements,
     /// Restrictive session flags from the catalog, so the set can be

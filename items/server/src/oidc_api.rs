@@ -21,12 +21,12 @@ use axum::{Json, Router};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
-use conclave_authn::{RefreshToken, generate_secret, hash_challenge_secret};
-use conclave_core::{SessionId, TenantId};
-use conclave_store::challenges::{self, Challenge, NewChallenge, Purpose};
-use conclave_store::oidc_clients::{self, ClientKind, OidcClient};
-use conclave_store::sessions::{self, ClientKind as SessionClient, NewSession, Session, Stage};
-use conclave_store::{Connection, credentials};
+use konklav_authn::{RefreshToken, generate_secret, hash_challenge_secret};
+use konklav_core::{SessionId, TenantId};
+use konklav_store::challenges::{self, Challenge, NewChallenge, Purpose};
+use konklav_store::oidc_clients::{self, ClientKind, OidcClient};
+use konklav_store::sessions::{self, ClientKind as SessionClient, NewSession, Session, Stage};
+use konklav_store::{Connection, credentials};
 use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -594,7 +594,7 @@ async fn authenticate_assertion(
         return None;
     }
     let expires = chrono::DateTime::from_timestamp(claims.exp, 0)?;
-    conclave_store::client_assertions::record(conn, &client_id, &claims.jti, expires)
+    konklav_store::client_assertions::record(conn, &client_id, &claims.jti, expires)
         .await
         .ok()?
         .then_some(client)
@@ -828,8 +828,8 @@ async fn client_credentials_grant(
     else {
         return Ok(unbound());
     };
-    let principal = conclave_store::subjects::get(conn, credential.subject_id).await?;
-    if principal.state != conclave_store::subjects::SubjectState::Active {
+    let principal = konklav_store::subjects::get(conn, credential.subject_id).await?;
+    if principal.state != konklav_store::subjects::SubjectState::Active {
         return Ok(unbound());
     }
     let id = SessionId::new_v7();
@@ -894,7 +894,7 @@ async fn revoke(
     let session = if token.matches('.').count() == 2 {
         // An access token: its signature and audience must check out, but an
         // expired one is fine to revoke.
-        match conclave_token::decode_claims_unverified(token) {
+        match konklav_token::decode_claims_unverified(token) {
             Some(claims) if claims.aud == client.audience => {
                 let verified = subject_api::verify_access_token_for(
                     &state,
@@ -1040,9 +1040,9 @@ async fn jwt_bearer_grant(
             "no service principal has this workload identity",
         ));
     };
-    let principal = conclave_store::subjects::get(conn, credential.subject_id).await?;
-    if principal.kind != conclave_store::subjects::SubjectKind::Service
-        || principal.state != conclave_store::subjects::SubjectState::Active
+    let principal = konklav_store::subjects::get(conn, credential.subject_id).await?;
+    if principal.kind != konklav_store::subjects::SubjectKind::Service
+        || principal.state != konklav_store::subjects::SubjectState::Active
     {
         return Ok(invalid_grant(
             "no service principal has this workload identity",
@@ -1088,7 +1088,7 @@ struct PeerEvent {
     kind: &'static str,
     /// The subject affected; absent when every subject may be.
     #[serde(skip_serializing_if = "Option::is_none")]
-    subject: Option<conclave_core::SubjectId>,
+    subject: Option<konklav_core::SubjectId>,
 }
 
 /// `POST /v1/oauth2/peer/events`: the client's view of the change feed.
@@ -1111,15 +1111,15 @@ async fn peer_events(
     };
     let after = form.after.unwrap_or(0);
     let scanned =
-        conclave_store::events::after(&mut conn, conclave_core::Cursor::new(after), 500).await?;
+        konklav_store::events::after(&mut conn, konklav_core::Cursor::new(after), 500).await?;
     let next = scanned.last().map_or(after, |event| event.cursor);
-    let mut candidates: Vec<(i64, &'static str, Option<conclave_core::SubjectId>)> = Vec::new();
+    let mut candidates: Vec<(i64, &'static str, Option<konklav_core::SubjectId>)> = Vec::new();
     for event in &scanned {
         let parse = |value: &serde_json::Value| {
             value
                 .as_str()
                 .and_then(|s| s.parse::<uuid::Uuid>().ok())
-                .map(conclave_core::SubjectId::from)
+                .map(konklav_core::SubjectId::from)
         };
         match event.kind.as_str() {
             "subject.changed" => {
@@ -1186,20 +1186,20 @@ async fn peer_subject(
         .subject
         .as_deref()
         .and_then(|s| s.parse::<uuid::Uuid>().ok())
-        .map(conclave_core::SubjectId::from)
+        .map(konklav_core::SubjectId::from)
     else {
         return Ok(unknown());
     };
     let Some(latest) = sessions::latest_for_client(&mut conn, &client.id, subject).await? else {
         return Ok(unknown());
     };
-    let principal = conclave_store::subjects::get(&mut conn, subject).await?;
+    let principal = konklav_store::subjects::get(&mut conn, subject).await?;
     let credential = credentials::get(&mut conn, latest.credential_id).await?;
     let claims = oidc::claims(&mut conn, &client, &client.scopes, subject, &credential).await?;
     let mut body = serde_json::to_value(&claims).map_err(ApiError::internal)?;
     body["sub"] = serde_json::json!(subject);
     body["active"] =
-        serde_json::json!(principal.state == conclave_store::subjects::SubjectState::Active);
+        serde_json::json!(principal.state == konklav_store::subjects::SubjectState::Active);
     Ok(([(header::CACHE_CONTROL, "no-store")], Json(body)).into_response())
 }
 
@@ -1222,7 +1222,7 @@ async fn userinfo(State(state): State<AppState>, headers: HeaderMap) -> Result<R
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or_else(unauthenticated)?;
     // Only tokens issued to a client, checked against that client's audience.
-    let claimed = conclave_token::decode_claims_unverified(token).ok_or_else(unauthenticated)?;
+    let claimed = konklav_token::decode_claims_unverified(token).ok_or_else(unauthenticated)?;
     let client_id = sessions::get(&mut conn, claimed.sid)
         .await
         .ok()

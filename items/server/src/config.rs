@@ -5,7 +5,7 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-use conclave_store::ConnectOptions;
+use konklav_store::ConnectOptions;
 use ordna_core::{
     ConfigBuilder, ConfigContexts, ConfigLoadError, ConfigPath, SourceFieldPath, config_contexts,
     config_tree,
@@ -57,7 +57,7 @@ config_tree! {
     pub struct LogConfig {
         pub log: Option<pub struct Log {
             /// A `tracing_subscriber` filter directive, such as `info` or
-            /// `conclave_server=debug,info`.
+            /// `konklav_server=debug,info`.
             pub filter: Option<String>,
         }>,
     }

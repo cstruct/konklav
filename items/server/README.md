@@ -1,4 +1,4 @@
-# conclave-server
+# konklav-server
 
 The Conclave server binary. It serves the subject-facing, relying and control-plane surfaces from one process.
 
@@ -49,7 +49,7 @@ The Conclave server binary. It serves the subject-facing, relying and control-pl
 
 ## Public interface
 
-- CLI: `conclave-server --config <file> --secrets <file> <serve|migrate|check-config>`.
+- CLI: `konklav-server --config <file> --secrets <file> <serve|migrate|check-config>`.
   - The file paths can also come from `KONKLAV_CONFIG` and `KONKLAV_SECRETS`.
 - Configuration: the contexts in `src/config.rs`:
   - `listen`, `database`, `log`
@@ -62,11 +62,11 @@ The Conclave server binary. It serves the subject-facing, relying and control-pl
 
 | Software item | Relationship |
 |---|---|
-| `conclave-store` | Pool, migrations, readiness checks and every repository |
-| `conclave-authn` | Password and secret hashing, refresh tokens |
-| `conclave-token` | Signing access tokens, JWKS |
-| `conclave-authz` | Compiling entitlement sets and evaluating checks |
-| `conclave-test-support` | Isolated databases in tests |
+| `konklav-store` | Pool, migrations, readiness checks and every repository |
+| `konklav-authn` | Password and secret hashing, refresh tokens |
+| `konklav-token` | Signing access tokens, JWKS |
+| `konklav-authz` | Compiling entitlement sets and evaluating checks |
+| `konklav-test-support` | Isolated databases in tests |
 | PostgreSQL | Must be reachable for readiness and for every stateful endpoint |
 
 ## Running

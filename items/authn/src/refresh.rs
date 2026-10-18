@@ -1,4 +1,4 @@
-use conclave_core::SessionId;
+use konklav_core::SessionId;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 

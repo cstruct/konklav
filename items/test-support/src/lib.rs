@@ -16,7 +16,7 @@
 //! }
 //! ```
 
-use conclave_store::{ConnectOptions, Pool};
+use konklav_store::{ConnectOptions, Pool};
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 
 const SERVER_URL_VARS: [&str; 2] = ["KONKLAV_TEST_DATABASE_URL", "DATABASE_URL"];
@@ -51,12 +51,12 @@ impl TestDatabase {
             .await
             .expect("create test database");
 
-        let pool = conclave_store::connect(&ConnectOptions {
+        let pool = konklav_store::connect(&ConnectOptions {
             url: url.clone(),
             max_connections: 4,
         })
         .expect("build test pool");
-        conclave_store::run_pending_migrations(&pool)
+        konklav_store::run_pending_migrations(&pool)
             .await
             .expect("migrate test database");
 

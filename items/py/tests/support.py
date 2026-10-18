@@ -58,7 +58,7 @@ class Keys:
         return f"{signing_input}.{b64(signature)}"
 
 
-class FakeConclave:
+class FakeKonklav:
     """Serves the relying surface from in-memory state; feed events are pushed."""
 
     def __init__(self, keys: Keys, subject: str, tenant: str, session: str) -> None:

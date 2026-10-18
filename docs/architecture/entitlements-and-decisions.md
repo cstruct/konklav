@@ -13,7 +13,7 @@ EntitlementSet {
 
 ## Compilation
 
-`conclave-authz` is a pure function from rows to entitlement sets.
+`konklav-authz` is a pure function from rows to entitlement sets.
 
 1. Collect the active assignments of the subject: global assignments, plus
    the membership's assignments in the tenant.

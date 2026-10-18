@@ -1,13 +1,13 @@
 use chrono::{Duration, Utc};
-use conclave_core::{CredentialId, Cursor, SessionId, SubjectId};
-use conclave_store::credentials::{
+use konklav_core::{CredentialId, Cursor, SessionId, SubjectId};
+use konklav_store::credentials::{
     self, CredentialData, CredentialKind, FederatedData, NewCredential, PasswordData,
     SecretKeyData, SecretSlot, SecretSlotData,
 };
-use conclave_store::sessions::{self, ClientKind, NewSession, Rotation, SessionFilter, Stage};
-use conclave_store::subjects::{self, SubjectKind, SubjectState};
-use conclave_store::{Connection, StoreError, events, signing_keys};
-use conclave_test_support::TestDatabase;
+use konklav_store::sessions::{self, ClientKind, NewSession, Rotation, SessionFilter, Stage};
+use konklav_store::subjects::{self, SubjectKind, SubjectState};
+use konklav_store::{Connection, StoreError, events, signing_keys};
+use konklav_test_support::TestDatabase;
 use diesel_async::RunQueryDsl;
 
 const HASH: &str = "$argon2id$v=19$m=8,t=1,p=1$c29tZXNhbHQ$aGFzaGhhc2hoYXNo";

@@ -34,7 +34,7 @@ unvalidated data can slip through.
 Compared with a base table plus one subtype table per kind, adding a kind is
 a migration that extends `kind` and `credential_data_schema`, with no new
 table, view or join. The schemas mirror the serde types in
-`conclave-store`'s `credentials` module, and the two must change together.
+`konklav-store`'s `credentials` module, and the two must change together.
 
 ## Shape
 
@@ -63,7 +63,7 @@ the current transaction.
 
 ## Entitlement storage
 
-Entitlement sets are compiled on demand by `conclave-authz` from the
+Entitlement sets are compiled on demand by `konklav-authz` from the
 current rows and cached in the server process, keyed by (subject, tenant)
 and invalidated by the server's own outbox events.
 

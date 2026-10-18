@@ -1,6 +1,6 @@
 # Console
 
-Contracts of `conclave-console` (`items/console`), the browser UI for
+Contracts of `konklav-console` (`items/console`), the browser UI for
 operating the control plane. It talks to Conclave only through the
 subject-facing and control-plane surfaces.
 

@@ -2,7 +2,7 @@ import json
 import time
 import uuid
 
-from conclave_relying import Core
+from konklav_relying import Core
 from support import AUDIENCE, ISSUER, Keys
 
 

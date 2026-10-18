@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use conclave_token::{AccessClaims, TokenKind};
+use konklav_token::{AccessClaims, TokenKind};
 use serde::{Deserialize, Serialize};
 
 use crate::{Entitlements, Scope};

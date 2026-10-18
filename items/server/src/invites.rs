@@ -8,15 +8,15 @@ use axum::response::Response;
 use axum::routing::post;
 use axum::{Json, Router};
 use chrono::{Duration, Utc};
-use conclave_authn::{PasswordCheck, generate_secret, hash_challenge_secret};
-use conclave_core::{CredentialId, Cursor, MembershipId, SubjectId};
-use conclave_store::challenges::{self, NewChallenge, Purpose};
-use conclave_store::credentials::{
+use konklav_authn::{PasswordCheck, generate_secret, hash_challenge_secret};
+use konklav_core::{CredentialId, Cursor, MembershipId, SubjectId};
+use konklav_store::challenges::{self, NewChallenge, Purpose};
+use konklav_store::credentials::{
     self, CredentialData, CredentialKind, NewCredential, PasswordData,
 };
-use conclave_store::roles::{self, AssignmentTarget};
-use conclave_store::subjects::{self, SubjectKind};
-use conclave_store::{events, memberships, tenants};
+use konklav_store::roles::{self, AssignmentTarget};
+use konklav_store::subjects::{self, SubjectKind};
+use konklav_store::{events, memberships, tenants};
 use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -175,10 +175,10 @@ struct RedeemInvite {
 /// account proves ownership with that account's password.
 async fn existing_account(
     state: &AppState,
-    conn: &mut conclave_store::Connection,
+    conn: &mut konklav_store::Connection,
     email: &str,
     password: &str,
-) -> Result<Option<conclave_store::credentials::Credential>, ApiError> {
+) -> Result<Option<konklav_store::credentials::Credential>, ApiError> {
     let Some(existing) = credentials::find_active(conn, CredentialKind::Password, email).await?
     else {
         return Ok(None);

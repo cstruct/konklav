@@ -8,8 +8,8 @@ use axum::extract::State;
 use axum::http::header;
 use axum::response::IntoResponse;
 use chrono::{DateTime, Duration, Utc};
-use conclave_store::signing_keys::{self, SigningKey as StoredKey};
-use conclave_token::{Jwk, JwkSet, Signer};
+use konklav_store::signing_keys::{self, SigningKey as StoredKey};
+use konklav_token::{Jwk, JwkSet, Signer};
 use ed25519_dalek::pkcs8::DecodePrivateKey;
 use ed25519_dalek::{SigningKey, VerifyingKey};
 
@@ -63,12 +63,12 @@ impl ConfiguredKeys {
     /// activates the signer and retires previously active keys.
     pub async fn sync(
         &self,
-        conn: &mut conclave_store::Connection,
-    ) -> Result<(), conclave_store::StoreError> {
+        conn: &mut konklav_store::Connection,
+    ) -> Result<(), konklav_store::StoreError> {
         let published = self
             .published
             .iter()
-            .map(|key| (conclave_token::kid_for(key), key.as_bytes().to_vec()))
+            .map(|key| (konklav_token::kid_for(key), key.as_bytes().to_vec()))
             .collect::<Vec<_>>();
         let keys = signing_keys::sync_configured(conn, &published, self.signer.kid()).await?;
         if !keys
@@ -101,7 +101,7 @@ pub(crate) fn to_verifying_key(key: &StoredKey) -> Option<VerifyingKey> {
 
 /// The verification key for `kid`, if it is currently publishable.
 pub async fn verifying_key(
-    conn: &mut conclave_store::Connection,
+    conn: &mut konklav_store::Connection,
     kid: &str,
     max_token_ttl: Duration,
 ) -> Result<Option<VerifyingKey>, ApiError> {

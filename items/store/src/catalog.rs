@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use conclave_authz::Group;
+use konklav_authz::Group;
 use diesel::prelude::*;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 use serde::{Deserialize, Serialize};
@@ -152,8 +152,8 @@ pub struct CatalogDocument {
 impl CatalogDocument {
     /// The catalog as the compiler needs it.
     #[must_use]
-    pub fn compile_catalog(&self) -> conclave_authz::Catalog {
-        conclave_authz::Catalog {
+    pub fn compile_catalog(&self) -> konklav_authz::Catalog {
+        konklav_authz::Catalog {
             actions: self.actions.iter().map(|a| a.name.clone()).collect(),
             groups: self
                 .groups

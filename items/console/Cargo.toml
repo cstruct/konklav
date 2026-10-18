@@ -1,5 +1,5 @@
 [package]
-name = "conclave-console"
+name = "konklav-console"
 description = "The Conclave console: a browser UI for operating the control plane"
 version.workspace = true
 edition.workspace = true

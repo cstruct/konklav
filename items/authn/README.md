@@ -1,6 +1,6 @@
-# conclave-authn
+# konklav-authn
 
-Library crate with Conclave's authentication primitives. Everything here is computation only; persistence and request handling live in `conclave-store` and `conclave-server`.
+Library crate with Conclave's authentication primitives. Everything here is computation only; persistence and request handling live in `konklav-store` and `konklav-server`.
 
 ## Responsibilities
 
@@ -15,8 +15,8 @@ Library crate with Conclave's authentication primitives. Everything here is comp
 
 | Software item | Relationship |
 |---|---|
-| `conclave-core` | `SessionId` inside refresh tokens |
-| `conclave-server` | Hashes and verifies credentials, and issues refresh tokens |
+| `konklav-core` | `SessionId` inside refresh tokens |
+| `konklav-server` | Hashes and verifies credentials, and issues refresh tokens |
 
 ## Running
 
@@ -25,7 +25,7 @@ This is a library and can't run on its own.
 ## Testing
 
 ```sh
-cargo test -p conclave-authn
+cargo test -p konklav-authn
 ```
 
 - Direct coverage:

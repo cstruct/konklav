@@ -10,7 +10,7 @@ use axum::extract::{FromRequest, OptionalFromRequest, Request};
 use axum::http::StatusCode;
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
-use conclave_store::{PoolError, StoreError};
+use konklav_store::{PoolError, StoreError};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -142,8 +142,8 @@ impl From<diesel::result::Error> for ApiError {
     }
 }
 
-impl From<conclave_store::Checkout> for ApiError {
-    fn from(error: conclave_store::Checkout) -> Self {
+impl From<konklav_store::Checkout> for ApiError {
+    fn from(error: konklav_store::Checkout) -> Self {
         PoolError::from(error).into()
     }
 }

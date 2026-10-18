@@ -1,7 +1,7 @@
 //! Challenges: single-use, short-lived secrets, stored as hashes.
 
 use chrono::{DateTime, Utc};
-use conclave_core::{CredentialId, SessionId, SubjectId};
+use konklav_core::{CredentialId, SessionId, SubjectId};
 use diesel::prelude::*;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use serde::{Deserialize, Serialize};

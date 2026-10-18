@@ -1,5 +1,5 @@
 [package]
-name = "conclave-token"
+name = "konklav-token"
 description = "Conclave access-token claims, EdDSA JWS signing and verification, and JWKS"
 version.workspace = true
 edition.workspace = true
@@ -7,7 +7,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-conclave-core.workspace = true
+konklav-core.workspace = true
 base64.workspace = true
 ed25519-dalek.workspace = true
 serde.workspace = true
@@ -16,7 +16,7 @@ sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-conclave-core = { workspace = true, features = ["generate"] }
+konklav-core = { workspace = true, features = ["generate"] }
 
 [lints]
 workspace = true

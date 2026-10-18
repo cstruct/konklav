@@ -1,4 +1,4 @@
-# conclave-test-support
+# konklav-test-support
 
 Library crate with test helpers shared by Conclave's software items. It is only used as a dev-dependency.
 
@@ -12,8 +12,8 @@ Library crate with test helpers shared by Conclave's software items. It is only 
 
 | Software item | Relationship |
 |---|---|
-| `conclave-store` | Provides the pool and migrations |
-| `conclave-store`, `conclave-server` tests | Use it for isolated databases |
+| `konklav-store` | Provides the pool and migrations |
+| `konklav-store`, `konklav-server` tests | Use it for isolated databases |
 | PostgreSQL | The server from `KONKLAV_TEST_DATABASE_URL`, falling back to `DATABASE_URL` (which mise sets) |
 
 ## Usage
@@ -21,7 +21,7 @@ Library crate with test helpers shared by Conclave's software items. It is only 
 ```rust
 #[tokio::test(flavor = "multi_thread")]
 async fn stores_things() {
-    let db = conclave_test_support::TestDatabase::new().await;
+    let db = konklav_test_support::TestDatabase::new().await;
     let pool = db.pool();
     // ...
 }
@@ -36,7 +36,7 @@ This is a library and can't run on its own.
 ## Testing
 
 ```sh
-cargo test -p conclave-test-support
+cargo test -p konklav-test-support
 ```
 
 - Direct coverage: database URL rewriting.

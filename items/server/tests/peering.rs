@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use axum::http::{Method, StatusCode, header};
 use common::{ISSUER, ORIGIN, TestApp};
-use conclave_server::federation::{Providers, Provisioning, Settings};
-use conclave_server::oidc::OpenIdProvider;
+use konklav_server::federation::{Providers, Provisioning, Settings};
+use konklav_server::oidc::OpenIdProvider;
 use serde_json::{Value, json};
 
 const ID_TOKEN_KEY: &str = "-----BEGIN PRIVATE KEY-----
@@ -139,8 +139,8 @@ impl Federation {
             return_urls: vec![DOWN_RETURN.into()],
             provisioning: Provisioning::Create,
             grants: vec![
-                conclave_server::claim_mapping::Rule::from_config(
-                    &conclave_server::config::ClaimGrant {
+                konklav_server::claim_mapping::Rule::from_config(
+                    &konklav_server::config::ClaimGrant {
                         claim: "groups".into(),
                         equals: None,
                         contains: Some("sre".into()),
@@ -274,7 +274,7 @@ async fn downstreams_follow_the_upstream_feed() {
         .get("ops")
         .unwrap()
         .clone();
-    conclave_server::peering::sync(&down.state, &provider)
+    konklav_server::peering::sync(&down.state, &provider)
         .await
         .unwrap();
     let assignments = federation
@@ -293,7 +293,7 @@ async fn downstreams_follow_the_upstream_feed() {
         None,
     )
     .await;
-    let applied = conclave_server::peering::sync(&down.state, &provider)
+    let applied = konklav_server::peering::sync(&down.state, &provider)
         .await
         .unwrap();
     assert!(applied >= 1);
@@ -310,13 +310,13 @@ async fn downstreams_follow_the_upstream_feed() {
         None,
     )
     .await;
-    conclave_server::peering::sync(&down.state, &provider)
+    konklav_server::peering::sync(&down.state, &provider)
         .await
         .unwrap();
     let after = refresh(&down, &signed_in).await;
     assert_eq!(after.code(), "SESSION_ENDED");
     assert_eq!(
-        conclave_server::peering::sync(&down.state, &provider)
+        konklav_server::peering::sync(&down.state, &provider)
             .await
             .unwrap(),
         0,

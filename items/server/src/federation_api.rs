@@ -15,14 +15,14 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use chrono::{Duration, Utc};
-use conclave_authn::{generate_secret, hash_challenge_secret};
-use conclave_core::{CredentialId, SubjectId};
-use conclave_store::challenges::{self, Challenge, NewChallenge, Purpose};
-use conclave_store::credentials::{
+use konklav_authn::{generate_secret, hash_challenge_secret};
+use konklav_core::{CredentialId, SubjectId};
+use konklav_store::challenges::{self, Challenge, NewChallenge, Purpose};
+use konklav_store::credentials::{
     self, CredentialData, CredentialKind, FederatedData, NewCredential, federated_identifier,
 };
-use conclave_store::subjects::{self, SubjectKind, SubjectState};
-use conclave_store::{Connection, StoreError, sessions::Stage};
+use konklav_store::subjects::{self, SubjectKind, SubjectState};
+use konklav_store::{Connection, StoreError, sessions::Stage};
 use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;

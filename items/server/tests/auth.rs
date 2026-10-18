@@ -2,7 +2,7 @@ mod common;
 
 use axum::http::{Method, StatusCode};
 use common::{ORIGIN, TestApp};
-use conclave_token::TokenKind;
+use konklav_token::TokenKind;
 use serde_json::json;
 
 const EMAIL: &str = "ada@example.com";

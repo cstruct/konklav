@@ -1,4 +1,4 @@
-# conclave-authz
+# konklav-authz
 
 Library crate for Conclave authorization without I/O. It compiles role assignments into entitlement sets, and evaluates an operation's requirements against a token and an entitlement set.
 
@@ -19,10 +19,10 @@ The server compiles; relying systems evaluate locally (M4) using the same `evalu
 
 | Software item | Relationship |
 |---|---|
-| `conclave-token` | `AccessClaims` and `TokenKind` in evaluation |
-| `conclave-store` | Loads compile input (`compile_input`) and catalog types |
-| `conclave-server` | Serves entitlement sets and the check API |
-| `conclave-relying` (planned) | Evaluates locally |
+| `konklav-token` | `AccessClaims` and `TokenKind` in evaluation |
+| `konklav-store` | Loads compile input (`compile_input`) and catalog types |
+| `konklav-server` | Serves entitlement sets and the check API |
+| `konklav-relying` (planned) | Evaluates locally |
 
 ## Running
 
@@ -31,7 +31,7 @@ This is a library and can't run on its own.
 ## Testing
 
 ```sh
-cargo test -p conclave-authz
+cargo test -p konklav-authz
 ```
 
 - Direct coverage:

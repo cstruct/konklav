@@ -11,15 +11,15 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
-use conclave_authn::generate_secret;
-use conclave_core::{CredentialId, Cursor, SessionId, SubjectId};
-use conclave_store::credentials::{
+use konklav_authn::generate_secret;
+use konklav_core::{CredentialId, Cursor, SessionId, SubjectId};
+use konklav_store::credentials::{
     self, Credential, CredentialData, CredentialKind, NewCredential, PasswordData, SecretKeyData,
     SecretSlot, SecretSlotData,
 };
-use conclave_store::sessions::{self, Session, SessionFilter};
-use conclave_store::subjects::{self, Subject, SubjectKind, SubjectState};
-use conclave_store::{StoreError, signing_keys};
+use konklav_store::sessions::{self, Session, SessionFilter};
+use konklav_store::subjects::{self, Subject, SubjectKind, SubjectState};
+use konklav_store::{StoreError, signing_keys};
 use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -115,7 +115,7 @@ async fn authorize_operator(
                 "missing or invalid control-plane credentials",
             )
         })?;
-    if session.stage == conclave_store::sessions::Stage::Partial {
+    if session.stage == konklav_store::sessions::Stage::Partial {
         return Err(ApiError::new(ErrorCode::Forbidden, "complete MFA first"));
     }
     if capabilities::holds(&mut conn, session.subject_id, capabilities::CONTROL_ALL).await?
@@ -859,7 +859,7 @@ async fn revoke_signing_key(
 // r[impl federation.jwt-bearer]
 fn workload_credential(
     state: &AppState,
-    subject: &conclave_store::subjects::Subject,
+    subject: &konklav_store::subjects::Subject,
     id: Option<CredentialId>,
     provider: String,
     upstream: String,

@@ -8,7 +8,7 @@ use axum::http::{Method, StatusCode, header};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use common::{ISSUER, ORIGIN, TestApp};
-use conclave_server::oidc::OpenIdProvider;
+use konklav_server::oidc::OpenIdProvider;
 use jsonwebtoken::jwk::Jwk;
 use jsonwebtoken::{DecodingKey, Validation};
 use serde_json::{Value, json};
@@ -274,7 +274,7 @@ async fn clients_sign_subjects_in_with_the_code_flow() {
     );
 
     let access = tokens.body["access_token"].as_str().unwrap();
-    let claims = conclave_token::decode_claims_unverified(access).unwrap();
+    let claims = konklav_token::decode_claims_unverified(access).unwrap();
     assert_eq!(claims.aud, "console", "the client's audience");
     let info = app
         .with_bearer(Method::GET, "/v1/oauth2/userinfo", access)
@@ -593,7 +593,7 @@ async fn bound_clients_get_service_tokens_with_private_key_jwt() {
     assert!(tokens.body.get("refresh_token").is_none());
     assert!(tokens.body.get("id_token").is_none());
     let claims =
-        conclave_token::decode_claims_unverified(tokens.body["access_token"].as_str().unwrap())
+        konklav_token::decode_claims_unverified(tokens.body["access_token"].as_str().unwrap())
             .unwrap();
     assert_eq!(claims.sub.to_string(), principal.to_string());
     assert_eq!(claims.aud, "robot-api");
@@ -737,7 +737,7 @@ async fn logout_ends_the_sign_in_and_notifies_clients() {
     assert_eq!(own.code(), "SESSION_ENDED");
 
     let http = reqwest::Client::new();
-    let tried = conclave_server::oidc::deliver_logouts(&app.state, &http)
+    let tried = konklav_server::oidc::deliver_logouts(&app.state, &http)
         .await
         .unwrap();
     assert_eq!(tried, 1);
@@ -752,7 +752,7 @@ async fn logout_ends_the_sign_in_and_notifies_clients() {
     assert_eq!(claims["sid"], sid);
     assert!(claims["events"]["http://schemas.openid.net/event/backchannel-logout"].is_object());
     assert_eq!(
-        conclave_server::oidc::deliver_logouts(&app.state, &http)
+        konklav_server::oidc::deliver_logouts(&app.state, &http)
             .await
             .unwrap(),
         0,

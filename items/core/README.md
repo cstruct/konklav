@@ -1,4 +1,4 @@
-# conclave-core
+# konklav-core
 
 Library crate with the identifiers and small value types that several Conclave software items have to agree on.
 
@@ -13,8 +13,8 @@ It doesn't own domain models, persistence types or HTTP DTOs. Those stay with th
 
 | Software item | Relationship |
 |---|---|
-| `conclave-store` | Uses these identifiers in repositories |
-| `conclave-server` | Uses them at the HTTP boundary (from M2) |
+| `konklav-store` | Uses these identifiers in repositories |
+| `konklav-server` | Uses them at the HTTP boundary (from M2) |
 
 ## Running
 
@@ -23,7 +23,7 @@ This is a library and can't run on its own. It is exercised through its dependen
 ## Testing
 
 ```sh
-cargo test -p conclave-core
+cargo test -p konklav-core
 ```
 
 - Direct coverage: identifier round-trips, serde shape and ordering.

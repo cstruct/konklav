@@ -9,13 +9,13 @@ use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
-use conclave_core::{CredentialId, MembershipId, SessionId, SubjectId, TenantId};
-use conclave_store::credentials::{
+use konklav_core::{CredentialId, MembershipId, SessionId, SubjectId, TenantId};
+use konklav_store::credentials::{
     self, CredentialData, NewCredential, PasswordData, SecretKeyData, SecretSlotData,
 };
-use conclave_store::mfa::{self, EmailCodeData, FactorData, TotpData};
-use conclave_store::sessions::{self, ClientKind, ImportedSession, NewSession, Stage};
-use conclave_store::subjects::{self, SubjectKind, SubjectState};
+use konklav_store::mfa::{self, EmailCodeData, FactorData, TotpData};
+use konklav_store::sessions::{self, ClientKind, ImportedSession, NewSession, Stage};
+use konklav_store::subjects::{self, SubjectKind, SubjectState};
 use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 

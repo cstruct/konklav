@@ -1,5 +1,5 @@
 [package]
-name = "conclave-server"
+name = "konklav-server"
 description = "The Conclave server: subject-facing, relying and control-plane HTTP surfaces"
 version.workspace = true
 edition.workspace = true
@@ -11,11 +11,11 @@ axum.workspace = true
 base64.workspace = true
 chrono.workspace = true
 clap.workspace = true
-conclave-authn.workspace = true
-conclave-authz.workspace = true
-conclave-core = { workspace = true, features = ["generate"] }
-conclave-store.workspace = true
-conclave-token.workspace = true
+konklav-authn.workspace = true
+konklav-authz.workspace = true
+konklav-core = { workspace = true, features = ["generate"] }
+konklav-store.workspace = true
+konklav-token.workspace = true
 diesel.workspace = true
 diesel-async.workspace = true
 ed25519-dalek.workspace = true
@@ -45,8 +45,8 @@ uuid = { workspace = true, features = ["v4", "v7"] }
 openidconnect = "4.0.1"
 reqwest = { workspace = true, features = ["cookies"] }
 chrono.workspace = true
-conclave-authz.workspace = true
-conclave-test-support.workspace = true
+konklav-authz.workspace = true
+konklav-test-support.workspace = true
 diesel-async.workspace = true
 http-body-util.workspace = true
 tower = { workspace = true, features = ["util"] }

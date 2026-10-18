@@ -12,7 +12,7 @@ use axum::routing::{get, post};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use common::{ORIGIN, TestApp};
-use conclave_server::federation::{Providers, Provisioning, Settings};
+use konklav_server::federation::{Providers, Provisioning, Settings};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -580,7 +580,7 @@ async fn claim_mapping_manages_only_its_own_grants() {
                 global_role: Option<&str>,
                 tenant: Option<String>,
                 roles: &[&str]| {
-        conclave_server::claim_mapping::Rule::from_config(&conclave_server::config::ClaimGrant {
+        konklav_server::claim_mapping::Rule::from_config(&konklav_server::config::ClaimGrant {
             claim: claim.into(),
             equals: None,
             contains: Some(contains.into()),

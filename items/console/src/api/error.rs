@@ -64,7 +64,7 @@ impl ApiError {
     /// The capability a control-plane refusal names.
     ///
     /// ```
-    /// use conclave_console::api::ApiError;
+    /// use konklav_console::api::ApiError;
     /// let error = ApiError::from_response(
     ///     403,
     ///     r#"{"error":{"code":"FORBIDDEN","message":"missing capability konklav:keys:manage"}}"#,

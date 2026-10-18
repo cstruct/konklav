@@ -5,7 +5,7 @@
 ```
            ┌──────────────────────────────────────────────┐
  host app ─▶ host binding (Python / Rust / later JS)       │  HTTP, timers, tasks
-           │   └─ conclave-relying (sans-I/O core)         │  verify, evaluate,
+           │   └─ konklav-relying (sans-I/O core)         │  verify, evaluate,
            │        cache + feed state machine, scheduler  │  cache, fallback
            └──────────────────────────────────────────────┘
 ```
@@ -41,11 +41,11 @@ back, and sleep until `next_wakeup` or until a new event arrives.
 
 ## Bindings
 
-- **Python (`conclave-py`, first):** pyo3 and maturin with abi3 wheels. The
+- **Python (`konklav-py`, first):** pyo3 and maturin with abi3 wheels. The
   I/O layer is Python: an httpx client and an asyncio background task for
   the SSE stream and fetches. Decisions are synchronous calls into Rust
   under a short lock, so the request path does not cross threads.
-- **Rust (`conclave-relying-client`):** reqwest and tokio.
+- **Rust (`konklav-relying-client`):** reqwest and tokio.
 - **JS (later):** a wasm build of the core with a small TS I/O layer, for
   Node services or browser-side UI gating. Browser use can only hide UI
   elements; enforcement always happens on the server.

@@ -20,14 +20,14 @@ pub async fn healthz() -> Json<Status> {
 
 /// Readiness: the database answers and no migrations are pending.
 pub async fn readyz(State(state): State<AppState>) -> Result<Json<Status>, ApiError> {
-    conclave_store::ping(&state.pool).await.map_err(|error| {
+    konklav_store::ping(&state.pool).await.map_err(|error| {
         tracing::warn!(%error, "readiness: database unavailable");
         ApiError::new(
             ErrorCode::DatabaseUnavailable,
             "the database is unavailable",
         )
     })?;
-    let pending = conclave_store::pending_migrations(&state.pool)
+    let pending = konklav_store::pending_migrations(&state.pool)
         .await
         .map_err(|error| {
             tracing::warn!(%error, "readiness: could not check migrations");

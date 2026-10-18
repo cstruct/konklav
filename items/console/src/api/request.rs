@@ -109,7 +109,7 @@ impl Request {
     /// The URL relative to the console's origin.
     ///
     /// ```
-    /// use conclave_console::api::{Method, Request};
+    /// use konklav_console::api::{Method, Request};
     /// let request = Request::control(Method::Get, "/subjects")
     ///     .query("identifier", Some("ada+ops@example.com"))
     ///     .query("before", None::<String>);

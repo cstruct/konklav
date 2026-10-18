@@ -2,15 +2,15 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use conclave_server::AppState;
-use conclave_server::AuthContext;
-use conclave_server::config::{
+use konklav_server::AppState;
+use konklav_server::AuthContext;
+use konklav_server::config::{
     self, BrowserConfig, ControlConfig, DatabaseConfig, FeedConfig, ListenConfig, LogConfig,
     MfaConfig, MigrateContexts, ServeContexts, ServerContexts, TokensConfig,
 };
-use conclave_server::feed::FeedHub;
-use conclave_server::keys::ConfiguredKeys;
-use conclave_server::serve::{BoundServer, shutdown_signal};
+use konklav_server::feed::FeedHub;
+use konklav_server::keys::ConfiguredKeys;
+use konklav_server::serve::{BoundServer, shutdown_signal};
 use ordna_core::ConfigContexts;
 use std::path::Path;
 use std::sync::Arc;
@@ -85,8 +85,8 @@ fn load<X: ConfigContexts<ServerContexts>>(cli: &Cli) -> Result<X, ExitCode> {
 }
 
 async fn migrate(config: DatabaseConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let pool = conclave_store::connect(&config.database.connect_options())?;
-    let applied = conclave_store::run_pending_migrations(&pool).await?;
+    let pool = konklav_store::connect(&config.database.connect_options())?;
+    let applied = konklav_store::run_pending_migrations(&pool).await?;
     if applied.is_empty() {
         tracing::info!("no pending migrations");
     }
@@ -108,9 +108,9 @@ async fn serve(
     let oidc = tokens
         .oidc_provider
         .as_ref()
-        .map(|config| conclave_server::oidc::OpenIdProvider::load(config, &tokens.tokens.issuer))
+        .map(|config| konklav_server::oidc::OpenIdProvider::load(config, &tokens.tokens.issuer))
         .transpose()?;
-    let pacing = conclave_server::pacing::Pacing {
+    let pacing = konklav_server::pacing::Pacing {
         floor: tokens.pacing_floor(),
         jitter: tokens.pacing_jitter(),
     };
@@ -119,8 +119,8 @@ async fn serve(
         Path::new(&tokens.signing_key_file),
         &tokens.published_key_files,
     )?;
-    let pool = conclave_store::connect(&database.database.connect_options())?;
-    match conclave_store::pending_migrations(&pool).await {
+    let pool = konklav_store::connect(&database.database.connect_options())?;
+    match konklav_store::pending_migrations(&pool).await {
         Ok(pending) if !pending.is_empty() => tracing::warn!(
             count = pending.len(),
             "migrations are pending; readiness will fail until `migrate` runs"
@@ -134,7 +134,7 @@ async fn serve(
     }
     let mut auth = AuthContext::new(&tokens, browser.browser.as_ref(), &control, keys.signer);
     if let Some(mfa) = &mfa.mfa {
-        auth.secrets = conclave_authn::SecretBox::new(
+        auth.secrets = konklav_authn::SecretBox::new(
             mfa.totp_keys
                 .iter()
                 .map(|key| (key.id.as_str(), key.key.as_str())),
@@ -142,22 +142,22 @@ async fn serve(
     }
     auth.pacing = pacing;
     auth.oidc = oidc;
-    auth.identity_providers = conclave_server::federation::Providers::from_config(&browser)?;
+    auth.identity_providers = konklav_server::federation::Providers::from_config(&browser)?;
     let hub = Arc::new(FeedHub::new(feed.poll_interval()));
-    tokio::spawn(conclave_server::feed::listen(
+    tokio::spawn(konklav_server::feed::listen(
         database.database.connect_options().url,
         hub.clone(),
     ));
-    tokio::spawn(conclave_server::feed::prune(pool.clone(), feed.retention()));
+    tokio::spawn(konklav_server::feed::prune(pool.clone(), feed.retention()));
     let state = AppState {
         pool,
         auth: Arc::new(auth),
         feed: hub,
     };
-    tokio::spawn(conclave_server::oidc::deliver_logouts_forever(
+    tokio::spawn(konklav_server::oidc::deliver_logouts_forever(
         state.clone(),
     ));
-    tokio::spawn(conclave_server::peering::sync_forever(state.clone()));
+    tokio::spawn(konklav_server::peering::sync_forever(state.clone()));
     let server = BoundServer::bind(&listen.listen, state).await?;
     server.run(shutdown_signal()).await?;
     Ok(())

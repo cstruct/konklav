@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use conclave_authz::{
+use konklav_authz::{
     Decision, DenyReason, Entitlements, Requirements, Scope, ScopeRequirement, StepUp, evaluate,
 };
-use conclave_core::{SessionId, SubjectId, TenantId};
-use conclave_token::{AccessClaims, TokenKind};
+use konklav_core::{SessionId, SubjectId, TenantId};
+use konklav_token::{AccessClaims, TokenKind};
 
 const NOW: i64 = 10_000;
 

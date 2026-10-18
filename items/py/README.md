@@ -1,11 +1,11 @@
-# conclave-py (`conclave-relying` on PyPI)
+# konklav-py (`konklav-relying` on PyPI)
 
 Python bindings for the relying core, plus an asyncio/httpx host.
 
 ## Responsibilities
 
-- `conclave_relying._core.Core`: pyo3 bindings over `conclave-relying`. Values cross as JSON strings and times as Unix ms.
-- `conclave_relying.RelyingClient`: the Python I/O layer.
+- `konklav_relying._core.Core`: pyo3 bindings over `konklav-relying`. Values cross as JSON strings and times as Unix ms.
+- `konklav_relying.RelyingClient`: the Python I/O layer.
   - Logs in as a service principal and follows the change feed.
   - Runs background refreshes.
   - Decides locally, falling back to `/v1/check` when caches can't be trusted.

@@ -44,15 +44,15 @@ and spec-first development with Tracey.
 
 | Item | Responsibility |
 |---|---|
-| `conclave-core` | Identifiers, nomenclature types, action names and selectors |
-| `conclave-store` | Diesel schema, migrations, repositories, event outbox |
-| `conclave-authz` | Pure compilation of entitlement sets and evaluation of requirements |
-| `conclave-token` | Access-token claims, EdDSA JWS signing and verification, JWKS (shared by the issuer and the relying core) |
-| `conclave-authn` | Password and secret-key hashing, refresh tokens; TOTP and challenges later |
-| `conclave-server` | axum surfaces, wiring, background workers |
-| `conclave-relying` | Sans-I/O relying core |
-| `conclave-relying-client` | Native Rust host binding (reqwest + tokio) |
-| `conclave-py` | pyo3 host binding |
+| `konklav-core` | Identifiers, nomenclature types, action names and selectors |
+| `konklav-store` | Diesel schema, migrations, repositories, event outbox |
+| `konklav-authz` | Pure compilation of entitlement sets and evaluation of requirements |
+| `konklav-token` | Access-token claims, EdDSA JWS signing and verification, JWKS (shared by the issuer and the relying core) |
+| `konklav-authn` | Password and secret-key hashing, refresh tokens; TOTP and challenges later |
+| `konklav-server` | axum surfaces, wiring, background workers |
+| `konklav-relying` | Sans-I/O relying core |
+| `konklav-relying-client` | Native Rust host binding (reqwest + tokio) |
+| `konklav-py` | pyo3 host binding |
 | `conclave-cli` | Admin tooling and importers |
 
 Dependencies point inward: `server` → `authn`/`authz`/`store` → `core`.

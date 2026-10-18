@@ -1,8 +1,8 @@
 //! Loading everything the compiler needs for one subject in one tenant, from
 //! one consistent snapshot.
 
-use conclave_authz::{Assignment, Catalog, Level, Policy, Scope};
-use conclave_core::{Cursor, SubjectId, TenantId};
+use konklav_authz::{Assignment, Catalog, Level, Policy, Scope};
+use konklav_core::{Cursor, SubjectId, TenantId};
 use diesel::prelude::*;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
 

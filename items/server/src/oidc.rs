@@ -3,12 +3,12 @@
 
 use std::path::Path;
 
-use conclave_core::SubjectId;
-use conclave_store::credentials::{Credential, CredentialData};
-use conclave_store::oidc_clients::{IdTokenAlgorithm, OidcClient};
-use conclave_store::sessions::Session;
-use conclave_store::{Connection, roles, tenants};
-use conclave_token::Jwk;
+use konklav_core::SubjectId;
+use konklav_store::credentials::{Credential, CredentialData};
+use konklav_store::oidc_clients::{IdTokenAlgorithm, OidcClient};
+use konklav_store::sessions::Session;
+use konklav_store::{Connection, roles, tenants};
+use konklav_token::Jwk;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use p256::pkcs8::DecodePrivateKey;
 use serde::Serialize;
@@ -175,7 +175,7 @@ struct IdTokenClaims<'a> {
     nonce: Option<&'a str>,
     amr: &'a [String],
     acr: &'static str,
-    sid: conclave_core::SessionId,
+    sid: konklav_core::SessionId,
     #[serde(flatten)]
     claims: &'a Claims,
 }
@@ -242,7 +242,7 @@ pub fn logout_token(
     provider: &OpenIdProvider,
     client: &OidcClient,
     subject: SubjectId,
-    session: conclave_core::SessionId,
+    session: konklav_core::SessionId,
 ) -> String {
     let claims = serde_json::json!({
         "iss": auth.issuer,
@@ -270,11 +270,11 @@ pub async fn deliver_logouts(
         return Ok(0);
     };
     let mut conn = state.pool.get().await?;
-    let pending = conclave_store::backchannel::lease(&mut conn, 50).await?;
+    let pending = konklav_store::backchannel::lease(&mut conn, 50).await?;
     for logout in &pending {
-        let client = conclave_store::oidc_clients::get(&mut conn, &logout.client_id).await?;
+        let client = konklav_store::oidc_clients::get(&mut conn, &logout.client_id).await?;
         let Some(uri) = &client.backchannel_logout_uri else {
-            conclave_store::backchannel::complete(&mut conn, logout.id).await?;
+            konklav_store::backchannel::complete(&mut conn, logout.id).await?;
             continue;
         };
         let token = logout_token(
@@ -291,16 +291,16 @@ pub async fn deliver_logouts(
             .await
             .and_then(reqwest::Response::error_for_status);
         match sent {
-            Ok(_) => conclave_store::backchannel::complete(&mut conn, logout.id).await?,
+            Ok(_) => konklav_store::backchannel::complete(&mut conn, logout.id).await?,
             Err(error) if logout.attempts + 1 >= LOGOUT_ATTEMPTS => {
                 tracing::warn!(client = %client.id, session = %logout.session_id, %error, "giving up on a back-channel logout");
-                conclave_store::backchannel::complete(&mut conn, logout.id).await?;
+                konklav_store::backchannel::complete(&mut conn, logout.id).await?;
             }
             Err(error) => {
                 let backoff =
                     chrono::Duration::seconds(10 * 2_i64.pow(logout.attempts.unsigned_abs()));
                 let retry_at = chrono::Utc::now() + backoff.min(chrono::Duration::hours(1));
-                conclave_store::backchannel::retry(
+                konklav_store::backchannel::retry(
                     &mut conn,
                     logout.id,
                     &error.to_string(),
@@ -338,14 +338,14 @@ pub async fn verify_own_id_token(
     auth: &AuthContext,
     provider: &OpenIdProvider,
     token: &str,
-) -> Result<Option<(String, conclave_core::SessionId)>, ApiError> {
+) -> Result<Option<(String, konklav_core::SessionId)>, ApiError> {
     #[derive(serde::Deserialize)]
     struct Hint {
         aud: String,
-        sid: conclave_core::SessionId,
+        sid: konklav_core::SessionId,
     }
     let now = chrono::Utc::now();
-    let mut keys: Vec<Jwk> = conclave_store::signing_keys::list(conn)
+    let mut keys: Vec<Jwk> = konklav_store::signing_keys::list(conn)
         .await?
         .iter()
         .filter(|key| crate::keys::is_publishable(key, now, auth.access_ttl))

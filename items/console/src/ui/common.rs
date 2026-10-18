@@ -34,7 +34,7 @@ pub fn pretty(value: &Value) -> String {
 /// An RFC 3339 timestamp to the minute, in UTC.
 ///
 /// ```
-/// use conclave_console::ui::common::timestamp;
+/// use konklav_console::ui::common::timestamp;
 /// assert_eq!(timestamp("2026-10-18T02:12:48.831317Z"), "2026-10-18 02:12");
 /// assert_eq!(timestamp("soon"), "soon");
 /// ```
@@ -49,7 +49,7 @@ pub fn timestamp(value: &str) -> String {
 /// The start of an identifier, which is usually enough to tell it apart.
 ///
 /// ```
-/// use conclave_console::ui::common::short;
+/// use konklav_console::ui::common::short;
 /// assert_eq!(short("0193a2f1-0000-7fff-bfff-ffffffffffff"), "0193a2f1…");
 /// assert_eq!(short("root"), "root");
 /// ```

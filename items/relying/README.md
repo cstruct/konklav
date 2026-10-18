@@ -1,4 +1,4 @@
-# conclave-relying
+# konklav-relying
 
 The relying core: a sans-I/O library with everything a relying system needs to decide locally. It is shared by every host binding.
 
@@ -27,11 +27,11 @@ The core never makes network calls, reads clocks, spawns tasks or sleeps. Hosts 
 
 | Software item | Relationship |
 |---|---|
-| `conclave-token` | Token verification and JWKS |
-| `conclave-authz` | `evaluate`, `Requirements`, `EntitlementSet` |
-| `conclave-core` | Ids, cursors, feed wire types (without id generation, so it builds for wasm) |
-| `conclave-relying-client` | Native Rust host |
-| `conclave-py` | Python host |
+| `konklav-token` | Token verification and JWKS |
+| `konklav-authz` | `evaluate`, `Requirements`, `EntitlementSet` |
+| `konklav-core` | Ids, cursors, feed wire types (without id generation, so it builds for wasm) |
+| `konklav-relying-client` | Native Rust host |
+| `konklav-py` | Python host |
 
 ## Running
 
@@ -40,8 +40,8 @@ This is a library and can't run on its own.
 ## Testing
 
 ```sh
-cargo test -p conclave-relying
-cargo build -p conclave-relying --target wasm32-unknown-unknown
+cargo test -p konklav-relying
+cargo build -p konklav-relying --target wasm32-unknown-unknown
 ```
 
 - Direct coverage: deterministic tests with injected time, covering:

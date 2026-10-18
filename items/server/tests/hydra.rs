@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use axum::http::{Method, StatusCode, header};
 use common::{ISSUER, ORIGIN, TestApp};
-use conclave_server::federation::{Providers, Provisioning, Settings};
-use conclave_server::oidc::OpenIdProvider;
+use konklav_server::federation::{Providers, Provisioning, Settings};
+use konklav_server::oidc::OpenIdProvider;
 use serde_json::{Value, json};
 
 const CALLBACK: &str = "https://auth.example/v1/login/oidc/hydra/callback";
@@ -263,8 +263,8 @@ async fn conclave_signs_people_in_through_hydra() {
     let settings = Settings {
         methods: vec![("hwk".into(), "hwk".into())],
         grants: vec![
-            conclave_server::claim_mapping::Rule::from_config(
-                &conclave_server::config::ClaimGrant {
+            konklav_server::claim_mapping::Rule::from_config(
+                &konklav_server::config::ClaimGrant {
                     claim: "groups".into(),
                     equals: None,
                     contains: Some("sre".into()),

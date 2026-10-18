@@ -29,9 +29,9 @@ pub mod surface;
 use std::sync::Arc;
 
 use chrono::Duration;
-use conclave_authn::PasswordHasher;
-use conclave_store::Pool;
-use conclave_token::Signer;
+use konklav_authn::PasswordHasher;
+use konklav_store::Pool;
+use konklav_token::Signer;
 
 /// State shared by every handler.
 #[derive(Clone)]
@@ -53,7 +53,7 @@ pub struct AuthContext {
     /// The bootstrap control-plane token, if configured.
     pub control_token: Option<String>,
     /// Encrypts TOTP seeds.
-    pub secrets: conclave_authn::SecretBox,
+    pub secrets: konklav_authn::SecretBox,
     /// How long authentication endpoints take at least.
     pub pacing: pacing::Pacing,
     /// Identity providers browser clients can sign in through.
@@ -94,7 +94,7 @@ impl AuthContext {
                 secure_cookies: browser.secure_cookies,
             }),
             control_token: control.bootstrap_token(),
-            secrets: conclave_authn::SecretBox::new([]).expect("an empty key set is valid"),
+            secrets: konklav_authn::SecretBox::new([]).expect("an empty key set is valid"),
             pacing: pacing::Pacing::DEFAULT,
             identity_providers: federation::Providers::default(),
             oidc: None,

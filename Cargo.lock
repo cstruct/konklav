@@ -598,180 +598,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "conclave-authn"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "argon2",
- "base64 0.23.1",
- "conclave-core",
- "getrandom 0.4.3",
- "hmac 0.13.0",
- "serde",
- "sha1",
- "sha2 0.11.1",
- "subtle",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "conclave-authz"
-version = "0.1.0"
-dependencies = [
- "conclave-core",
- "conclave-token",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "conclave-console"
-version = "0.1.0"
-dependencies = [
- "base64 0.23.1",
- "futures-util",
- "gloo-net 0.7.0",
- "js-sys",
- "leptos",
- "leptos_router",
- "percent-encoding",
- "serde",
- "serde_json",
- "web-sys",
-]
-
-[[package]]
-name = "conclave-core"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "conclave-relying"
-version = "0.1.0"
-dependencies = [
- "conclave-authz",
- "conclave-core",
- "conclave-token",
- "ed25519-dalek 3.0.0",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "conclave-relying-client"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "conclave-authn",
- "conclave-authz",
- "conclave-core",
- "conclave-relying",
- "conclave-server",
- "conclave-store",
- "conclave-test-support",
- "conclave-token",
- "ed25519-dalek 3.0.0",
- "futures-util",
- "reqwest 0.13.5",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "conclave-server"
-version = "0.1.0"
-dependencies = [
- "axum",
- "base64 0.23.1",
- "chrono",
- "clap",
- "conclave-authn",
- "conclave-authz",
- "conclave-core",
- "conclave-store",
- "conclave-test-support",
- "conclave-token",
- "diesel",
- "diesel-async",
- "ed25519-dalek 3.0.0",
- "facet",
- "futures-util",
- "getrandom 0.4.3",
- "http-body-util",
- "jsonwebtoken",
- "openidconnect",
- "ordna-core",
- "ordna-source-env",
- "ordna-source-file",
- "ordna-source-styx",
- "p256",
- "percent-encoding",
- "reqwest 0.13.5",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "subtle",
- "thiserror 2.0.21",
- "tokio",
- "tokio-postgres",
- "tower",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "conclave-store"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "conclave-authz",
- "conclave-core",
- "conclave-test-support",
- "diesel",
- "diesel-async",
- "diesel_migrations",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "conclave-test-support"
-version = "0.1.0"
-dependencies = [
- "conclave-store",
- "diesel",
- "diesel-async",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "conclave-token"
-version = "0.1.0"
-dependencies = [
- "base64 0.23.1",
- "conclave-core",
- "ed25519-dalek 3.0.0",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "config"
 version = "0.15.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2504,6 +2330,180 @@ dependencies = [
  "signature 2.2.0",
  "simple_asn1",
  "zeroize",
+]
+
+[[package]]
+name = "konklav-authn"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "argon2",
+ "base64 0.23.1",
+ "getrandom 0.4.3",
+ "hmac 0.13.0",
+ "konklav-core",
+ "serde",
+ "sha1",
+ "sha2 0.11.1",
+ "subtle",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "konklav-authz"
+version = "0.1.0"
+dependencies = [
+ "konklav-core",
+ "konklav-token",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "konklav-console"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "futures-util",
+ "gloo-net 0.7.0",
+ "js-sys",
+ "leptos",
+ "leptos_router",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "web-sys",
+]
+
+[[package]]
+name = "konklav-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "konklav-relying"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek 3.0.0",
+ "konklav-authz",
+ "konklav-core",
+ "konklav-token",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "konklav-relying-client"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "ed25519-dalek 3.0.0",
+ "futures-util",
+ "konklav-authn",
+ "konklav-authz",
+ "konklav-core",
+ "konklav-relying",
+ "konklav-server",
+ "konklav-store",
+ "konklav-test-support",
+ "konklav-token",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "konklav-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.23.1",
+ "chrono",
+ "clap",
+ "diesel",
+ "diesel-async",
+ "ed25519-dalek 3.0.0",
+ "facet",
+ "futures-util",
+ "getrandom 0.4.3",
+ "http-body-util",
+ "jsonwebtoken",
+ "konklav-authn",
+ "konklav-authz",
+ "konklav-core",
+ "konklav-store",
+ "konklav-test-support",
+ "konklav-token",
+ "openidconnect",
+ "ordna-core",
+ "ordna-source-env",
+ "ordna-source-file",
+ "ordna-source-styx",
+ "p256",
+ "percent-encoding",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "subtle",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-postgres",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "konklav-store"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "diesel",
+ "diesel-async",
+ "diesel_migrations",
+ "konklav-authz",
+ "konklav-core",
+ "konklav-test-support",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "konklav-test-support"
+version = "0.1.0"
+dependencies = [
+ "diesel",
+ "diesel-async",
+ "konklav-store",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "konklav-token"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "ed25519-dalek 3.0.0",
+ "konklav-core",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

@@ -4,9 +4,9 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::routing::{get, post};
-use conclave_store::credentials::{self, CredentialData, CredentialKind};
-use conclave_store::oidc_clients::{self, ClientDefinition, ClientKind, OidcClient};
-use conclave_store::{sessions, subjects};
+use konklav_store::credentials::{self, CredentialData, CredentialKind};
+use konklav_store::oidc_clients::{self, ClientDefinition, ClientKind, OidcClient};
+use konklav_store::{sessions, subjects};
 use diesel_async::AsyncConnection;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -85,7 +85,7 @@ async fn put_client(
 /// (and its sessions) when the binding is removed.
 // r[impl oidc.provider.client-credentials]
 async fn bind_service_subject(
-    conn: &mut conclave_store::Connection,
+    conn: &mut konklav_store::Connection,
     client: &OidcClient,
 ) -> Result<(), ApiError> {
     let current = credentials::find_active(conn, CredentialKind::Client, &client.id).await?;
@@ -116,7 +116,7 @@ async fn bind_service_subject(
     credentials::insert(
         conn,
         credentials::NewCredential {
-            id: conclave_core::CredentialId::new_v7(),
+            id: konklav_core::CredentialId::new_v7(),
             subject_id: subject,
             identifier: client.id.clone(),
             data: CredentialData::Client,
@@ -164,7 +164,7 @@ async fn new_secret(
     if client.kind != ClientKind::Confidential {
         return Err(ApiError::invalid_request("public clients have no secret"));
     }
-    let secret = conclave_authn::generate_secret();
+    let secret = konklav_authn::generate_secret();
     oidc_clients::set_secret_hash(&mut conn, &id, &Sha256::digest(secret.as_bytes())).await?;
     Ok(Json(NewSecret {
         client_secret: secret,

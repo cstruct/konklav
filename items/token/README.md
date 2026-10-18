@@ -1,4 +1,4 @@
-# conclave-token
+# konklav-token
 
 Library crate for Conclave access tokens: the claims, compact EdDSA (Ed25519) JWS signing and verification, key ids, and JWKS documents.
 
@@ -15,9 +15,9 @@ It performs no I/O and reads no clock: callers pass the current time. That lets 
 
 | Software item | Relationship |
 |---|---|
-| `conclave-core` | Identifier types in the claims |
-| `conclave-server` | Issues tokens and serves JWKS |
-| `conclave-relying` (planned) | Verifies tokens in relying systems |
+| `konklav-core` | Identifier types in the claims |
+| `konklav-server` | Issues tokens and serves JWKS |
+| `konklav-relying` (planned) | Verifies tokens in relying systems |
 
 ## Running
 
@@ -26,7 +26,7 @@ This is a library and can't run on its own.
 ## Testing
 
 ```sh
-cargo test -p conclave-token
+cargo test -p konklav-token
 ```
 
 - Direct coverage: sign and verify round-trips, unknown keys, forged signatures, tampered payloads, other algorithms, time, issuer and audience checks, and kid derivation.

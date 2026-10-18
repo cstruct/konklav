@@ -3,11 +3,11 @@ import uuid
 
 import httpx
 
-from conclave_relying import RelyingClient
-from support import AUDIENCE, ISSUER, FakeConclave, Keys
+from konklav_relying import RelyingClient
+from support import AUDIENCE, ISSUER, FakeKonklav, Keys
 
 
-def client_for(fake: FakeConclave) -> RelyingClient:
+def client_for(fake: FakeKonklav) -> RelyingClient:
     http = httpx.AsyncClient(transport=httpx.MockTransport(fake.handle))
     return RelyingClient(
         relying_url="http://conclave",
@@ -34,7 +34,7 @@ def test_falls_back_to_check_then_decides_locally_and_follows_the_feed() -> None
     async def scenario() -> None:
         keys = Keys()
         subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
-        fake = FakeConclave(keys, subject, tenant, session)
+        fake = FakeKonklav(keys, subject, tenant, session)
         client = client_for(fake)
         token = keys.token(subject=subject, session=session, tenant=tenant)
         requirements = {"tenant": ["workspace:read"]}
@@ -74,7 +74,7 @@ def test_tokens_for_unknown_sessions_are_denied() -> None:
     async def scenario() -> None:
         keys = Keys()
         subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
-        fake = FakeConclave(keys, subject, tenant, session)
+        fake = FakeKonklav(keys, subject, tenant, session)
         client = client_for(fake)
         await client.start()
         try:
@@ -91,7 +91,7 @@ def test_verifies_tokens_and_reads_entitlements() -> None:
     async def scenario() -> None:
         keys = Keys()
         subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
-        fake = FakeConclave(keys, subject, tenant, session)
+        fake = FakeKonklav(keys, subject, tenant, session)
         client = client_for(fake)
         await client.start()
         try:

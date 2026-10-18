@@ -140,7 +140,7 @@ async fn resuming_from_a_pruned_cursor_starts_with_a_reset() {
     login(&app, "ada@example.com").await;
     {
         let mut conn = app.db.pool().get().await.unwrap();
-        let watermark = conclave_store::events::prune_before(
+        let watermark = konklav_store::events::prune_before(
             &mut conn,
             chrono::Utc::now() + chrono::Duration::seconds(1),
         )

@@ -8,13 +8,13 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use chrono::Duration;
-use conclave_authn::PasswordHasher;
-use conclave_server::feed::FeedHub;
-use conclave_server::keys::ConfiguredKeys;
-use conclave_server::surface::{self, Surface};
-use conclave_server::{AppState, AuthContext, BrowserSettings};
-use conclave_test_support::TestDatabase;
-use conclave_token::{AccessClaims, JwkSet, Signer, VerifyOptions};
+use konklav_authn::PasswordHasher;
+use konklav_server::feed::FeedHub;
+use konklav_server::keys::ConfiguredKeys;
+use konklav_server::surface::{self, Surface};
+use konklav_server::{AppState, AuthContext, BrowserSettings};
+use konklav_test_support::TestDatabase;
+use konklav_token::{AccessClaims, JwkSet, Signer, VerifyOptions};
 use ed25519_dalek::SigningKey;
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
@@ -66,10 +66,10 @@ pub fn auth_context(signer: Signer) -> AuthContext {
             secure_cookies: true,
         }),
         control_token: Some(CONTROL_TOKEN.into()),
-        secrets: conclave_authn::SecretBox::new([("test", TOTP_KEY)]).unwrap(),
+        secrets: konklav_authn::SecretBox::new([("test", TOTP_KEY)]).unwrap(),
         // Tests that are about pacing set their own.
-        pacing: conclave_server::pacing::Pacing::NONE,
-        identity_providers: conclave_server::federation::Providers::default(),
+        pacing: konklav_server::pacing::Pacing::NONE,
+        identity_providers: konklav_server::federation::Providers::default(),
         oidc: None,
     }
 }
@@ -129,7 +129,7 @@ impl TestApp {
     }
 
     /// An app that is also an OpenID provider.
-    pub async fn with_openid_provider(provider: conclave_server::oidc::OpenIdProvider) -> Self {
+    pub async fn with_openid_provider(provider: konklav_server::oidc::OpenIdProvider) -> Self {
         let app = Self::with_key(1).await;
         let mut auth = auth_context(Signer::new(SigningKey::from_bytes(&[1; 32])));
         auth.oidc = Some(provider);
@@ -193,7 +193,7 @@ impl TestApp {
 
     /// An app that signs browsers in through `providers`.
     pub async fn with_identity_providers(
-        providers: conclave_server::federation::Providers,
+        providers: konklav_server::federation::Providers,
     ) -> Self {
         let app = Self::with_key(1).await;
         let mut auth = auth_context(Signer::new(SigningKey::from_bytes(&[1; 32])));
@@ -211,7 +211,7 @@ impl TestApp {
     }
 
     /// An app whose authentication endpoints are paced by `pacing`.
-    pub async fn with_pacing(pacing: conclave_server::pacing::Pacing) -> Self {
+    pub async fn with_pacing(pacing: konklav_server::pacing::Pacing) -> Self {
         let app = Self::with_key(1).await;
         let mut auth = auth_context(Signer::new(SigningKey::from_bytes(&[1; 32])));
         auth.pacing = pacing;
@@ -339,12 +339,12 @@ impl TestApp {
             now: chrono::Utc::now().timestamp(),
             leeway: 5,
         };
-        conclave_token::verify(token, |kid| jwks.find(kid), &options).unwrap()
+        konklav_token::verify(token, |kid| jwks.find(kid), &options).unwrap()
     }
 }
 
 /// App state over `pool`, with a fixed signing key and test settings.
-pub fn state(pool: conclave_store::Pool) -> AppState {
+pub fn state(pool: konklav_store::Pool) -> AppState {
     AppState {
         pool,
         auth: Arc::new(auth_context(Signer::new(SigningKey::from_bytes(&[1; 32])))),
@@ -405,8 +405,8 @@ impl TestApp {
     /// Serves this app's state over real sockets, waking feeds through a
     /// Postgres listener like production does.
     pub async fn serve(&self) -> Running {
-        use conclave_server::config::Listen;
-        use conclave_server::serve::BoundServer;
+        use konklav_server::config::Listen;
+        use konklav_server::serve::BoundServer;
         let any = "127.0.0.1:0".parse().unwrap();
         let listen = Listen {
             subject: any,
@@ -420,7 +420,7 @@ impl TestApp {
         let addr_of =
             |surface: Surface| addrs.iter().find(|(_, s)| s.contains(&surface)).unwrap().0;
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-        tokio::spawn(conclave_server::feed::listen(
+        tokio::spawn(konklav_server::feed::listen(
             self.db.url().to_owned(),
             self.state.feed.clone(),
         ));

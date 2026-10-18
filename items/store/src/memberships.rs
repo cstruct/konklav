@@ -1,7 +1,7 @@
 //! Memberships: a subject's presence in a tenant.
 
 use chrono::{DateTime, Utc};
-use conclave_core::{MembershipId, SubjectId, TenantId};
+use konklav_core::{MembershipId, SubjectId, TenantId};
 use diesel::prelude::*;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use serde::{Deserialize, Serialize};

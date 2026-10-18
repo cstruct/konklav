@@ -1,5 +1,5 @@
 [package]
-name = "conclave-core"
+name = "konklav-core"
 description = "Identifiers and small value types shared across Conclave software items"
 version.workspace = true
 edition.workspace = true

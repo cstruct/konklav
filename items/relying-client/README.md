@@ -1,4 +1,4 @@
-# conclave-relying-client
+# konklav-relying-client
 
 Native Rust host binding for the relying core, on tokio and reqwest.
 
@@ -19,8 +19,8 @@ Native Rust host binding for the relying core, on tokio and reqwest.
 
 | Software item | Relationship |
 |---|---|
-| `conclave-relying` | All decision and cache rules |
-| `conclave-server` | The relying and subject-facing surfaces it talks to |
+| `konklav-relying` | All decision and cache rules |
+| `konklav-server` | The relying and subject-facing surfaces it talks to |
 
 ## Running
 
@@ -30,7 +30,7 @@ This is a library; construct a `RelyingClient` and call `start()`.
 
 ```sh
 mise run db:up
-cargo test -p conclave-relying-client
+cargo test -p konklav-relying-client
 ```
 
 - Direct coverage: end to end against a real server on ephemeral ports:

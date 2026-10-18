@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use conclave_core::{MembershipId, SessionId, SubjectId, TenantId};
+use konklav_core::{MembershipId, SessionId, SubjectId, TenantId};
 use serde::{Deserialize, Serialize};
 
 /// What an access token may be used for.
@@ -43,7 +43,7 @@ pub struct AccessClaims {
     pub sid: SessionId,
     /// The credential the session was established with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cid: Option<conclave_core::CredentialId>,
+    pub cid: Option<konklav_core::CredentialId>,
     /// The session version the token was issued at.
     pub sv: i64,
     pub amr: Vec<String>,

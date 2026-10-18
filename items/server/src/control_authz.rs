@@ -6,15 +6,15 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
-use conclave_authz::{Policy, Scope, compile};
-use conclave_core::{MembershipId, SubjectId, TenantId};
-use conclave_store::catalog::{self, CatalogDocument, FactTarget};
-use conclave_store::memberships::{self, Membership};
-use conclave_store::roles::{self, AssignmentTarget, Role, RoleAssignment, RoleDefinition};
-use conclave_store::sessions::{self, SessionFilter};
-use conclave_store::templates::{self, Template};
-use conclave_store::tenants::{self, Tenant, TenantState};
-use conclave_store::{Connection, StoreError, compile_input, events, subjects};
+use konklav_authz::{Policy, Scope, compile};
+use konklav_core::{MembershipId, SubjectId, TenantId};
+use konklav_store::catalog::{self, CatalogDocument, FactTarget};
+use konklav_store::memberships::{self, Membership};
+use konklav_store::roles::{self, AssignmentTarget, Role, RoleAssignment, RoleDefinition};
+use konklav_store::sessions::{self, SessionFilter};
+use konklav_store::templates::{self, Template};
+use konklav_store::tenants::{self, Tenant, TenantState};
+use konklav_store::{Connection, StoreError, compile_input, events, subjects};
 use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 
@@ -622,7 +622,7 @@ async fn subject_entitlements(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(query): Query<EntitlementQuery>,
-) -> Result<Json<conclave_authz::Entitlements>, ApiError> {
+) -> Result<Json<konklav_authz::Entitlements>, ApiError> {
     let id: SubjectId = parse_id(&id, "subject id")?;
     let tenant = query.tenant.as_deref().map(tenant_ref).transpose()?;
     let mut conn = state.pool.get().await?;
@@ -689,12 +689,12 @@ async fn explain_entitlement(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(query): Query<ExplainQuery>,
-) -> Result<Json<conclave_authz::Explanation>, ApiError> {
+) -> Result<Json<konklav_authz::Explanation>, ApiError> {
     let id: SubjectId = parse_id(&id, "subject id")?;
     let tenant = query.tenant.as_deref().map(tenant_ref).transpose()?;
     let mut conn = state.pool.get().await?;
     let input = compile_input::load(&mut conn, id, tenant).await?;
-    Ok(Json(conclave_authz::explain(
+    Ok(Json(konklav_authz::explain(
         &input.catalog,
         &input.assignments,
         &query.action,

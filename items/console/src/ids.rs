@@ -8,7 +8,7 @@ use std::fmt::Write;
 /// Formats a `UUIDv7` from a Unix time in milliseconds and ten random bytes.
 ///
 /// ```
-/// let id = conclave_console::ids::uuid_v7(0x0193_a2f1_0000, [0xff; 10]);
+/// let id = konklav_console::ids::uuid_v7(0x0193_a2f1_0000, [0xff; 10]);
 /// assert_eq!(id, "0193a2f1-0000-7fff-bfff-ffffffffffff");
 /// ```
 #[must_use]

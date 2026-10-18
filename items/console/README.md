@@ -1,6 +1,6 @@
 # Console
 
-`conclave-console` is a browser UI for operating Conclave's control plane.
+`konklav-console` is a browser UI for operating Conclave's control plane.
 It's a client-side Leptos app, compiled to WASM and bundled by
 [Trunk](https://trunkrs.dev). Operators sign in with their own Conclave
 credentials, and the console calls the control plane with their access
@@ -63,7 +63,7 @@ Out of scope:
 
 | Software item | Relationship |
 | --- | --- |
-| `conclave-server` (over HTTP) | The only backend. The console uses the subject-facing surface to sign in and the control-plane surface for everything else. It shares no Rust types with the server and keeps its own DTOs. |
+| `konklav-server` (over HTTP) | The only backend. The console uses the subject-facing surface to sign in and the control-plane surface for everything else. It shares no Rust types with the server and keeps its own DTOs. |
 | Leptos, `leptos_router` | Rendering, fine-grained reactivity and client-side routing. |
 | Trunk | Compiles the WASM, runs `wasm-bindgen`, bundles the page, and proxies Conclave during development. |
 
@@ -114,7 +114,7 @@ builds are large, so the first load takes a few seconds.
 ## Testing
 
 ```sh
-cargo test -p conclave-console   # request building, errors, DTOs, grants, token decisions
+cargo test -p konklav-console   # request building, errors, DTOs, grants, token decisions
 mise run console:smoke           # builds the app with trunk and checks the bundle
 ```
 

@@ -6,10 +6,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use conclave_core::{MembershipId, SubjectId, TenantId};
-use conclave_store::roles::{self, AssignmentTarget};
-use conclave_store::sessions::{self, SessionFilter};
-use conclave_store::{Connection, StoreError, memberships, tenants};
+use konklav_core::{MembershipId, SubjectId, TenantId};
+use konklav_store::roles::{self, AssignmentTarget};
+use konklav_store::sessions::{self, SessionFilter};
+use konklav_store::{Connection, StoreError, memberships, tenants};
 use serde_json::Value;
 
 use crate::config::ClaimGrant;

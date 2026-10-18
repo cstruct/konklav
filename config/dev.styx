@@ -13,7 +13,7 @@ database {
 }
 
 log {
-    filter "info,conclave_server=debug"
+    filter "info,konklav_server=debug"
 }
 
 tokens {

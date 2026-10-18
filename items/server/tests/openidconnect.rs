@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use axum::http::{Method, StatusCode, header};
 use common::{ORIGIN, TestApp};
-use conclave_server::oidc::OpenIdProvider;
+use konklav_server::oidc::OpenIdProvider;
 use openidconnect::core::{
     CoreAuthenticationFlow, CoreClient, CoreProviderMetadata, CoreUserInfoClaims,
 };

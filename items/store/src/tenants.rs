@@ -2,7 +2,7 @@
 //! parent and its lifecycle state.
 
 use chrono::{DateTime, Utc};
-use conclave_core::TenantId;
+use konklav_core::TenantId;
 use diesel::prelude::*;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use serde::{Deserialize, Serialize};

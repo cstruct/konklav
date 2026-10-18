@@ -1,3 +1,3 @@
 fn main() {
-    conclave_console::ui::mount();
+    konklav_console::ui::mount();
 }

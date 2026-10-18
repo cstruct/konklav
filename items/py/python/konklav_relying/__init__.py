@@ -37,16 +37,16 @@ from typing import Any
 
 import httpx
 
-from conclave_relying._core import Core
+from konklav_relying._core import Core
 
-__all__ = ["ConclaveError", "Core", "RelyingClient"]
+__all__ = ["KonklavError", "Core", "RelyingClient"]
 
 _log = logging.getLogger(__name__)
 
 Decision = dict[str, Any]
 
 
-class ConclaveError(Exception):
+class KonklavError(Exception):
     """Conclave could not be reached or answered with an error. Treat as deny."""
 
 
@@ -109,7 +109,7 @@ class RelyingClient:
         Decide `requirements` for an access token presented to this system.
 
         Returns a decision such as `{"decision": "allow"}`. Raises
-        `ConclaveError` when no decision can be reached; callers must deny.
+        `KonklavError` when no decision can be reached; callers must deny.
         """
         encoded = json.dumps(requirements)
         for _ in range(4):
@@ -121,12 +121,12 @@ class RelyingClient:
             if any(need["need"] == "check" for need in needs):
                 return await self._check(token, requirements)
             await asyncio.gather(*(self._fetch(need) for need in needs))
-        raise ConclaveError("could not reach a decision")
+        raise KonklavError("could not reach a decision")
 
     async def verify(self, token: str) -> dict[str, Any] | None:
         """
         Verify a token and its session; return its claims, or None if it is
-        not valid. Raises `ConclaveError` when it can't be verified now.
+        not valid. Raises `KonklavError` when it can't be verified now.
         """
         for _ in range(4):
             with self._lock:
@@ -138,7 +138,7 @@ class RelyingClient:
             if any(need["need"] == "check" for need in outcome["needs"]):
                 return await self._verify_centrally(token)
             await asyncio.gather(*(self._fetch(need) for need in outcome["needs"]))
-        raise ConclaveError("could not verify the token")
+        raise KonklavError("could not verify the token")
 
     async def _verify_centrally(self, token: str) -> dict[str, Any] | None:
         decision = await self._check(token, {"token_kinds": ["partial", "identity", "tenant", "reset_password", "invite"]})
@@ -160,7 +160,7 @@ class RelyingClient:
                 path = f"/v1/entitlements/{subject}" + (f"/{tenant}" if tenant else "")
                 return _checked(await self._get(path)).json()
             await asyncio.gather(*(self._fetch(need) for need in needs))
-        raise ConclaveError("could not load entitlements")
+        raise KonklavError("could not load entitlements")
 
     async def events(self, after: int, kinds: list[str] | None = None, limit: int = 100) -> dict[str, Any]:
         """
@@ -308,4 +308,4 @@ class RelyingClient:
 def _checked(response: httpx.Response) -> httpx.Response:
     if response.is_success:
         return response
-    raise ConclaveError(f"conclave answered {response.status_code}: {response.text}")
+    raise KonklavError(f"conclave answered {response.status_code}: {response.text}")

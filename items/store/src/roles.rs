@@ -2,8 +2,8 @@
 //! assignments.
 
 use chrono::{DateTime, Utc};
-use conclave_authz::{Policy, Scope};
-use conclave_core::{MembershipId, SubjectId, TenantId};
+use konklav_authz::{Policy, Scope};
+use konklav_core::{MembershipId, SubjectId, TenantId};
 use diesel::prelude::*;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 use serde::Serialize;

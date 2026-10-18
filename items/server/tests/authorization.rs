@@ -4,7 +4,7 @@ mod common;
 
 use axum::http::{Method, StatusCode};
 use common::TestApp;
-use conclave_token::TokenKind;
+use konklav_token::TokenKind;
 use serde_json::{Value, json};
 
 const PASSWORD: &str = "correct horse battery";
@@ -530,7 +530,7 @@ async fn local_evaluation_matches_the_check_api() {
         )
         .await
         .body;
-    let entitlements: conclave_authz::Entitlements = serde_json::from_value(set.clone()).unwrap();
+    let entitlements: konklav_authz::Entitlements = serde_json::from_value(set.clone()).unwrap();
     let restrictive: std::collections::BTreeSet<String> =
         serde_json::from_value(set["restrictive_flags"].clone()).unwrap();
 
@@ -543,9 +543,9 @@ async fn local_evaluation_matches_the_check_api() {
         json!({"step_up": {"min_methods": 2}, "admit_flags": ["personal_only"]}),
     ];
     for requirements in cases {
-        let parsed: conclave_authz::Requirements =
+        let parsed: konklav_authz::Requirements =
             serde_json::from_value(requirements.clone()).unwrap();
-        let local = conclave_authz::evaluate(
+        let local = konklav_authz::evaluate(
             &parsed,
             &claims,
             &restrictive,

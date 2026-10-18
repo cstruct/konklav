@@ -2,10 +2,10 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
-use conclave_server::AppState;
-use conclave_server::surface::{self, Surface};
-use conclave_store::ConnectOptions;
-use conclave_test_support::TestDatabase;
+use konklav_server::AppState;
+use konklav_server::surface::{self, Surface};
+use konklav_store::ConnectOptions;
+use konklav_test_support::TestDatabase;
 use diesel_async::RunQueryDsl;
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
@@ -27,9 +27,9 @@ async fn call(state: AppState, method: Method, uri: &str) -> (StatusCode, Value)
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
-fn unreachable_pool() -> conclave_store::Pool {
+fn unreachable_pool() -> konklav_store::Pool {
     // Port 1 is reserved and never runs Postgres.
-    conclave_store::connect(&ConnectOptions {
+    konklav_store::connect(&ConnectOptions {
         url: "postgres://konklav:konklav@127.0.0.1:1/konklav".into(),
         max_connections: 1,
     })

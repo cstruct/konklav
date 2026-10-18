@@ -6,10 +6,10 @@ use axum::http::HeaderMap;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
-use conclave_authz::{Decision, EntitlementSet, Requirements, compile, evaluate};
-use conclave_core::{Cursor, SubjectId, TenantId};
-use conclave_store::subjects::{self, SubjectKind};
-use conclave_store::{Connection, compile_input, tenants};
+use konklav_authz::{Decision, EntitlementSet, Requirements, compile, evaluate};
+use konklav_core::{Cursor, SubjectId, TenantId};
+use konklav_store::subjects::{self, SubjectKind};
+use konklav_store::{Connection, compile_input, tenants};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
@@ -125,7 +125,7 @@ async fn check(
         {
             return Ok(Json(CheckResponse {
                 decision: Decision::Deny {
-                    reason: conclave_authz::DenyReason::InvalidToken,
+                    reason: konklav_authz::DenyReason::InvalidToken,
                 },
                 revision: None,
             }));

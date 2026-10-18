@@ -9,19 +9,19 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use chrono::{Duration, Utc};
-use conclave_authn::{
+use konklav_authn::{
     PasswordCheck, RefreshToken, TotpSecret, generate_code, generate_secret, hash_challenge_secret,
     verify_totp,
 };
-use conclave_core::{CredentialId, Cursor, SessionId, SubjectId};
-use conclave_store::challenges::{self, NewChallenge, Purpose};
-use conclave_store::credentials::{
+use konklav_core::{CredentialId, Cursor, SessionId, SubjectId};
+use konklav_store::challenges::{self, NewChallenge, Purpose};
+use konklav_store::credentials::{
     self, Credential, CredentialData, CredentialKind, NewCredential, PasswordData,
 };
-use conclave_store::mfa::{self, EmailCodeData, Factor, FactorData, FactorKind, TotpData};
-use conclave_store::sessions::{self, ClientKind, NewSession, Session, SessionFilter, Stage};
-use conclave_store::subjects::{self, SubjectKind, SubjectState};
-use conclave_store::{Connection, events, memberships, tenants};
+use konklav_store::mfa::{self, EmailCodeData, Factor, FactorData, FactorKind, TotpData};
+use konklav_store::sessions::{self, ClientKind, NewSession, Session, SessionFilter, Stage};
+use konklav_store::subjects::{self, SubjectKind, SubjectState};
+use konklav_store::{Connection, events, memberships, tenants};
 use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -374,7 +374,7 @@ async fn verify_factor(
             let seed = state
                 .auth
                 .secrets
-                .decrypt(&conclave_authn::EncryptedSecret {
+                .decrypt(&konklav_authn::EncryptedSecret {
                     key_id: data.key_id.clone(),
                     nonce: data.nonce.clone(),
                     ciphertext: data.ciphertext.clone(),

@@ -4,10 +4,10 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::routing::get;
 use axum::{Json, Router};
-use conclave_authz::compile;
-use conclave_core::SubjectId;
-use conclave_store::sessions::Stage;
-use conclave_store::{Connection, compile_input};
+use konklav_authz::compile;
+use konklav_core::SubjectId;
+use konklav_store::sessions::Stage;
+use konklav_store::{Connection, compile_input};
 use serde::Serialize;
 
 use crate::AppState;

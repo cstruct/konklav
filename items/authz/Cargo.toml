@@ -1,5 +1,5 @@
 [package]
-name = "conclave-authz"
+name = "konklav-authz"
 description = "Conclave authorization: entitlement compilation and decision evaluation, without I/O"
 version.workspace = true
 edition.workspace = true
@@ -7,12 +7,12 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-conclave-core.workspace = true
-conclave-token.workspace = true
+konklav-core.workspace = true
+konklav-token.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
-conclave-core = { workspace = true, features = ["generate"] }
+konklav-core = { workspace = true, features = ["generate"] }
 serde_json.workspace = true
 
 [lints]

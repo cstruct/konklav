@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use conclave_authz::{Decision, DenyReason, EntitlementSet, Entitlements, Requirements};
-use conclave_core::feed::{FeedEvent, SessionChanged};
-use conclave_core::{Cursor, SessionId, SubjectId, TenantId};
-use conclave_relying::{Config, Key, Need, Outcome, Relying};
-use conclave_token::{AccessClaims, Jwk, JwkSet, Signer, TokenKind};
+use konklav_authz::{Decision, DenyReason, EntitlementSet, Entitlements, Requirements};
+use konklav_core::feed::{FeedEvent, SessionChanged};
+use konklav_core::{Cursor, SessionId, SubjectId, TenantId};
+use konklav_relying::{Config, Key, Need, Outcome, Relying};
+use konklav_token::{AccessClaims, Jwk, JwkSet, Signer, TokenKind};
 use ed25519_dalek::SigningKey;
 use serde_json::json;
 
@@ -417,7 +417,7 @@ fn wildcard_invalidations_sweep_in_batches() {
         payload: json!({"all": true}),
     };
     core.on_feed_event(&event, T0).unwrap();
-    let entitlements = |work: &conclave_relying::Work| {
+    let entitlements = |work: &konklav_relying::Work| {
         work.fetch
             .iter()
             .filter(|n| matches!(n, Need::Entitlements { .. }))
@@ -462,7 +462,7 @@ fn malformed_known_events_are_errors() {
 
 #[test]
 fn verifies_tokens_without_needing_entitlements() {
-    use conclave_relying::Verification;
+    use konklav_relying::Verification;
     let mut f = Fixture::new();
     f.core.on_session(f.session_state(1, false));
     let token = f.token(1, T0);

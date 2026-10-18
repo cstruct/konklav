@@ -3,11 +3,11 @@
 use std::collections::BTreeMap;
 
 use chrono::Utc;
-use conclave_store::Connection;
-use conclave_store::catalog::{self, FactTarget};
-use conclave_store::sessions::{self, Session, Stage};
-use conclave_store::{memberships, oidc_clients, signing_keys, tenants};
-use conclave_token::{AccessClaims, Actor, TokenKind};
+use konklav_store::Connection;
+use konklav_store::catalog::{self, FactTarget};
+use konklav_store::sessions::{self, Session, Stage};
+use konklav_store::{memberships, oidc_clients, signing_keys, tenants};
+use konklav_token::{AccessClaims, Actor, TokenKind};
 use serde::Serialize;
 
 use crate::AuthContext;
@@ -19,7 +19,7 @@ pub struct IssuedToken {
     pub token_type: &'static str,
     pub token_kind: TokenKind,
     pub expires_in: i64,
-    pub session_id: conclave_core::SessionId,
+    pub session_id: konklav_core::SessionId,
 }
 
 /// The portable facts of the session's tenant and membership.

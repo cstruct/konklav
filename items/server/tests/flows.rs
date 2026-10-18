@@ -4,7 +4,7 @@ mod common;
 
 use axum::http::{Method, StatusCode};
 use common::TestApp;
-use conclave_authn::TotpSecret;
+use konklav_authn::TotpSecret;
 use diesel_async::RunQueryDsl;
 use serde_json::{Value, json};
 

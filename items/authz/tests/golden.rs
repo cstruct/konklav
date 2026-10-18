@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use conclave_authz::{
+use konklav_authz::{
     Assignment, Catalog, Effect, Entitlements, Group, Level, Policy, Scope, compile,
 };
 
@@ -294,7 +294,7 @@ fn serde_json_like(entitlements: &Entitlements) -> String {
 // r[verify authz.explain]
 #[test]
 fn explanations_name_every_contributing_policy() {
-    use conclave_authz::explain;
+    use konklav_authz::explain;
     let w1 = workspace("w1");
     let assignments = [
         role(Level::Tenant, 1, vec![allow("tenant:all")]),

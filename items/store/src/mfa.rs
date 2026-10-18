@@ -1,7 +1,7 @@
 //! MFA factors.
 
 use chrono::{DateTime, Utc};
-use conclave_core::SubjectId;
+use konklav_core::SubjectId;
 use diesel::prelude::*;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use serde::{Deserialize, Serialize};

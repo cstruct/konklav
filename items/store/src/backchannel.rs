@@ -1,7 +1,7 @@
 //! Back-channel logout tokens waiting for delivery. Rows are queued by a
 //! trigger when a client session is revoked.
 
-use conclave_core::{SessionId, SubjectId};
+use konklav_core::{SessionId, SubjectId};
 use diesel::prelude::*;
 use diesel::sql_types::{Int4, Text, Timestamptz, Uuid as SqlUuid};
 use diesel_async::{AsyncPgConnection, RunQueryDsl};

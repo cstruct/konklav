@@ -1,4 +1,4 @@
-use conclave_test_support::TestDatabase;
+use konklav_test_support::TestDatabase;
 use diesel_async::RunQueryDsl;
 
 // r[verify platform.storage.forward-migrations]
@@ -7,11 +7,11 @@ async fn a_migrated_database_has_no_pending_migrations() {
     let db = TestDatabase::new().await;
     let none = Vec::<String>::new();
     assert_eq!(
-        conclave_store::pending_migrations(db.pool()).await.unwrap(),
+        konklav_store::pending_migrations(db.pool()).await.unwrap(),
         none
     );
     assert_eq!(
-        conclave_store::run_pending_migrations(db.pool())
+        konklav_store::run_pending_migrations(db.pool())
             .await
             .unwrap(),
         none,
@@ -33,16 +33,16 @@ async fn an_unmigrated_database_reports_and_applies_every_migration() {
     }
     drop(conn);
 
-    let pending = conclave_store::pending_migrations(db.pool()).await.unwrap();
+    let pending = konklav_store::pending_migrations(db.pool()).await.unwrap();
     assert!(
         pending
             .iter()
             .any(|name| name.ends_with("create_event_outbox"))
     );
 
-    let applied = conclave_store::run_pending_migrations(db.pool())
+    let applied = konklav_store::run_pending_migrations(db.pool())
         .await
         .unwrap();
     assert_eq!(applied.len(), pending.len());
-    conclave_store::ping(db.pool()).await.unwrap();
+    konklav_store::ping(db.pool()).await.unwrap();
 }

@@ -10,9 +10,9 @@
 
 use std::time::Duration;
 
-use conclave_store::credentials::{self, Credential, CredentialData, CredentialKind};
-use conclave_store::sessions::{self, SessionFilter};
-use conclave_store::{Connection, StoreError, peer_cursors};
+use konklav_store::credentials::{self, Credential, CredentialData, CredentialKind};
+use konklav_store::sessions::{self, SessionFilter};
+use konklav_store::{Connection, StoreError, peer_cursors};
 use diesel_async::AsyncConnection;
 
 use crate::AppState;

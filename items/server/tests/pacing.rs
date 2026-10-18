@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use axum::http::{Method, StatusCode};
 use common::TestApp;
-use conclave_server::pacing::Pacing;
+use konklav_server::pacing::Pacing;
 use serde_json::json;
 
 const PACING: Pacing = Pacing {

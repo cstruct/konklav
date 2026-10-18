@@ -1,24 +1,24 @@
 # Relying Core Software Item
 
-Stable implementation contracts owned by `conclave-relying`, the relying
+Stable implementation contracts owned by `konklav-relying`, the relying
 core.
 
 r[item.relying.sans-io]
-`conclave-relying` MUST NOT perform network I/O, read clocks, spawn tasks or
+`konklav-relying` MUST NOT perform network I/O, read clocks, spawn tasks or
 sleep. The host binding supplies the current time, JWKS documents,
 entitlement responses, feed events and check-API responses.
 
 r[item.relying.scheduler]
-`conclave-relying` MUST expose its pending work (fetches to perform and the
+`konklav-relying` MUST expose its pending work (fetches to perform and the
 earliest time each is due) so that host bindings can run them and feed the
 results back.
 
 r[item.relying.portable]
-`conclave-relying` MUST compile for native targets and for `wasm32`, with no
+`konklav-relying` MUST compile for native targets and for `wasm32`, with no
 platform-specific dependencies in its default feature set.
 
 r[item.relying.request-descriptor]
-The verification API of `conclave-relying` MUST accept an optional request
+The verification API of `konklav-relying` MUST accept an optional request
 descriptor (method and URL) so that sender-constrained tokens can be
 verified later without breaking the API.
 

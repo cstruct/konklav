@@ -2,10 +2,10 @@ mod common;
 
 use std::net::SocketAddr;
 
-use conclave_server::config::Listen;
-use conclave_server::serve::BoundServer;
-use conclave_server::surface::Surface;
-use conclave_test_support::TestDatabase;
+use konklav_server::config::Listen;
+use konklav_server::serve::BoundServer;
+use konklav_server::surface::Surface;
+use konklav_test_support::TestDatabase;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 

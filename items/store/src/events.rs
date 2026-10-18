@@ -1,6 +1,6 @@
 //! The change-feed outbox.
 
-use conclave_core::Cursor;
+use konklav_core::Cursor;
 use diesel::prelude::*;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
 

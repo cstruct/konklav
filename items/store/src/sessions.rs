@@ -3,7 +3,7 @@
 //! transaction.
 
 use chrono::{DateTime, Utc};
-use conclave_core::{CredentialId, Cursor, MembershipId, SessionId, SubjectId, TenantId};
+use konklav_core::{CredentialId, Cursor, MembershipId, SessionId, SubjectId, TenantId};
 use diesel::prelude::*;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 use serde::{Deserialize, Serialize};

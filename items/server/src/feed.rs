@@ -10,9 +10,9 @@ use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
 use axum::{Json, Router};
-use conclave_core::feed::{FeedEvent, RESET, SessionChanged};
-use conclave_core::{Cursor, SessionId};
-use conclave_store::{Pool, events, sessions};
+use konklav_core::feed::{FeedEvent, RESET, SessionChanged};
+use konklav_core::{Cursor, SessionId};
+use konklav_store::{Pool, events, sessions};
 use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -126,7 +126,7 @@ fn kinds(query: &FeedQuery) -> Option<BTreeSet<String>> {
 /// Where a consumer starts: its cursor, or a reset to the watermark when the
 /// cursor can't be resumed (pruned, or ahead of the outbox).
 async fn resume_point(
-    conn: &mut conclave_store::Connection,
+    conn: &mut konklav_store::Connection,
     requested: Option<Cursor>,
 ) -> Result<(Cursor, bool), ApiError> {
     let head = events::head(conn).await?;

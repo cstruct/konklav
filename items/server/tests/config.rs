@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use conclave_server::config::{self, ConfigError, MigrateContexts, ServeContexts, ServerContexts};
+use konklav_server::config::{self, ConfigError, MigrateContexts, ServeContexts, ServerContexts};
 use ordna_core::ConfigContexts;
 use ordna_core::ConfigLoadError;
 use ordna_source_env::EnvSource;
@@ -265,7 +265,7 @@ identity_providers ({{
         Some("urn:hwk")
     );
     assert_eq!(browser.identity_provider_secrets[0].client_secret, "shh");
-    assert!(conclave_server::federation::Providers::from_config(&browser).is_ok());
+    assert!(konklav_server::federation::Providers::from_config(&browser).is_ok());
 
     let misplaced = load(
         &files.write(
@@ -283,7 +283,7 @@ identity_providers ({{
         &[],
     )
     .unwrap();
-    let missing = conclave_server::federation::Providers::from_config(&browser).err();
+    let missing = konklav_server::federation::Providers::from_config(&browser).err();
     assert_eq!(
         missing.as_deref(),
         Some("identity provider `ops` has no client secret")
@@ -329,7 +329,7 @@ identity_providers ({{
             &[],
         )
         .unwrap();
-        let error = conclave_server::federation::Providers::from_config(&browser)
+        let error = konklav_server::federation::Providers::from_config(&browser)
             .err()
             .unwrap_or_default();
         assert!(error.contains(expected), "{extra}: {error}");
@@ -343,7 +343,7 @@ identity_providers ({{
         &[],
     )
     .unwrap();
-    assert!(conclave_server::federation::Providers::from_config(&browser).is_ok());
+    assert!(konklav_server::federation::Providers::from_config(&browser).is_ok());
 }
 
 // r[verify oidc.provider.algorithms]
@@ -371,7 +371,7 @@ p1XNGpwF1zXMHj8NrRZRBsdiy2jZvNVSLlPqzmK3P4YLDAtSoKNCeXst
     .unwrap();
     let config = tokens.oidc_provider.expect("the section loads");
     let provider =
-        conclave_server::oidc::OpenIdProvider::load(&config, &tokens.tokens.issuer).unwrap();
+        konklav_server::oidc::OpenIdProvider::load(&config, &tokens.tokens.issuer).unwrap();
     assert_eq!(provider.jwk.alg, "ES256");
     assert_eq!(
         provider.jwk.x,
@@ -415,7 +415,7 @@ identity_providers ({{
         &[],
     )
     .unwrap();
-    let providers = conclave_server::federation::Providers::from_config(&browser).unwrap();
+    let providers = konklav_server::federation::Providers::from_config(&browser).unwrap();
     let ops = providers.get("ops").unwrap();
     assert_eq!(ops.settings.pinned_keys.as_ref().unwrap().keys.len(), 1);
     assert!(ops.settings.peering && ops.settings.workloads);
@@ -426,5 +426,5 @@ identity_providers ({{
         &[],
     )
     .unwrap();
-    assert!(conclave_server::federation::Providers::from_config(&browser).is_err());
+    assert!(konklav_server::federation::Providers::from_config(&browser).is_err());
 }

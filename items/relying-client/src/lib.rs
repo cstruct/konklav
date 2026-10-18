@@ -10,16 +10,16 @@
 //!   the core still needs, or asking `/v1/check` when the core says the
 //!   caches can't be trusted.
 //!
-//! The decision rules live in `conclave-relying`; this crate only moves bytes.
+//! The decision rules live in `konklav-relying`; this crate only moves bytes.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use conclave_authz::{Decision, EntitlementSet, Requirements};
-use conclave_core::Cursor;
-use conclave_core::feed::{FeedEvent, SessionChanged};
-use conclave_relying::{Config, Key, Need, Outcome, Relying};
-use conclave_token::JwkSet;
+use konklav_authz::{Decision, EntitlementSet, Requirements};
+use konklav_core::Cursor;
+use konklav_core::feed::{FeedEvent, SessionChanged};
+use konklav_relying::{Config, Key, Need, Outcome, Relying};
+use konklav_token::JwkSet;
 use futures_util::StreamExt;
 use serde::Deserialize;
 use tokio::sync::Notify;
