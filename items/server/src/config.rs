@@ -98,7 +98,8 @@ config_tree! {
 }
 
 config_tree! {
-    /// Browser clients. Without this section, browser logins are refused.
+    /// Browser clients, and the identity providers they can sign in
+    /// through. Without `browser`, browser logins are refused.
     #[derive(Debug, Clone, PartialEq)]
     pub struct BrowserConfig {
         pub browser: Option<pub struct Browser {
@@ -108,6 +109,46 @@ config_tree! {
             /// Set to `false` only for local development over plain HTTP.
             #[facet(default = true)]
             pub secure_cookies: bool,
+        }>,
+        /// OpenID providers browser clients can sign in through. A section
+        /// of its own, loaded with `browser` (contexts are limited in
+        /// number).
+        #[facet(default)]
+        pub identity_providers: Vec<pub struct IdentityProvider {
+            /// Used in URLs and credential identifiers; lowercase.
+            pub id: String,
+            /// The provider's issuer; endpoints and keys come from its
+            /// discovery document.
+            pub issuer: String,
+            pub client_id: String,
+            /// This instance's `/v1/login/oidc/{id}/callback` URL, as
+            /// registered at the provider.
+            pub redirect_uri: String,
+            /// Defaults to `openid email`.
+            #[facet(default)]
+            pub scopes: Vec<String>,
+            /// Pages a login may return to; the first is the default.
+            pub return_urls: Vec<String>,
+            /// Provider `amr` or `acr` values credited as Conclave
+            /// authentication methods.
+            #[facet(default)]
+            pub methods: Vec<pub struct MethodMapping {
+                pub from: String,
+                pub to: String,
+            }>,
+            /// Required `acr`, requested as `acr_values`.
+            pub require_acr: Option<String>,
+            /// Required authentication recency, requested as `max_age`.
+            pub max_age_seconds: Option<u32>,
+            /// Caps sessions started through this provider.
+            pub session_lifetime_seconds: Option<u32>,
+        }>,
+        /// Client secrets for `identity_providers`, by provider id.
+        #[config(secret)]
+        #[facet(default)]
+        pub identity_provider_secrets: Vec<pub struct IdentityProviderSecret {
+            pub provider: String,
+            pub client_secret: String,
         }>,
     }
 }

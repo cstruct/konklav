@@ -229,3 +229,63 @@ fn migrating_still_rejects_unknown_keys() {
     .unwrap_err();
     assert!(error.to_string().contains("listen.subjct"), "{error}");
 }
+
+// r[verify federation.idp.config]
+#[test]
+fn identity_providers_load_with_secrets_from_the_secrets_file() {
+    let files = Files::new("identity-providers");
+    let public = format!(
+        r#"{CONFIG}
+browser {{
+    allowed_origins ("https://app.example")
+}}
+identity_providers ({{
+    id ops
+    issuer "https://ops.example"
+    client_id prod-eu
+    redirect_uri "https://auth.example/v1/login/oidc/ops/callback"
+    return_urls ("https://app.example/")
+    methods ({{from hwk, to hwk}})
+    require_acr "urn:hwk"
+    session_lifetime_seconds 3600
+}})
+"#
+    );
+    let secrets =
+        format!("{SECRETS}identity_provider_secrets ({{provider ops, client_secret shh}})\n");
+    let (.., browser, _, _, _) = load(
+        &files.write("c.styx", &public),
+        &files.write("s.styx", &secrets),
+        &[],
+    )
+    .unwrap();
+    assert_eq!(browser.identity_providers.len(), 1);
+    assert_eq!(
+        browser.identity_providers[0].require_acr.as_deref(),
+        Some("urn:hwk")
+    );
+    assert_eq!(browser.identity_provider_secrets[0].client_secret, "shh");
+    assert!(conclave_server::federation::Providers::from_config(&browser).is_ok());
+
+    let misplaced = load(
+        &files.write(
+            "c.styx",
+            &format!("{public}identity_provider_secrets ({{provider ops, client_secret shh}})\n"),
+        ),
+        &files.write("s.styx", SECRETS),
+        &[],
+    );
+    assert!(misplaced.is_err(), "client secrets only load from secrets");
+
+    let (.., browser, _, _, _) = load(
+        &files.write("c.styx", &public),
+        &files.write("s.styx", SECRETS),
+        &[],
+    )
+    .unwrap();
+    let missing = conclave_server::federation::Providers::from_config(&browser).err();
+    assert_eq!(
+        missing.as_deref(),
+        Some("identity provider `ops` has no client secret")
+    );
+}

@@ -136,6 +136,7 @@ async fn serve(
         )?;
     }
     auth.pacing = pacing;
+    auth.identity_providers = conclave_server::federation::Providers::from_config(&browser)?;
     let hub = Arc::new(FeedHub::new(feed.poll_interval()));
     tokio::spawn(conclave_server::feed::listen(
         database.database.connect_options().url,

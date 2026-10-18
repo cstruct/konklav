@@ -17,6 +17,10 @@ pub enum Purpose {
     MfaEmailCode,
     Invite,
     ResetPassword,
+    /// A federated login in progress.
+    OidcLogin,
+    /// Linking an identity-provider account to a signed-in subject.
+    OidcLink,
 }
 
 impl Purpose {
@@ -28,6 +32,8 @@ impl Purpose {
             Self::MfaEmailCode => "mfa_email_code",
             Self::Invite => "invite",
             Self::ResetPassword => "reset_password",
+            Self::OidcLogin => "oidc_login",
+            Self::OidcLink => "oidc_link",
         }
     }
 }

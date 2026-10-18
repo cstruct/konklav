@@ -1,7 +1,8 @@
 use chrono::{Duration, Utc};
 use conclave_core::{CredentialId, Cursor, SessionId, SubjectId};
 use conclave_store::credentials::{
-    self, CredentialData, NewCredential, PasswordData, SecretKeyData, SecretSlot, SecretSlotData,
+    self, CredentialData, CredentialKind, FederatedData, NewCredential, PasswordData,
+    SecretKeyData, SecretSlot, SecretSlotData,
 };
 use conclave_store::sessions::{self, ClientKind, NewSession, Rotation, SessionFilter, Stage};
 use conclave_store::subjects::{self, SubjectKind, SubjectState};
@@ -123,6 +124,8 @@ async fn the_database_rejects_credential_data_that_violates_its_schema() {
             "secret_key",
             r#"{"c": {"hash": "$argon2id$x", "created_at": "2026-01-01T00:00:00Z"}}"#,
         ),
+        ("federated", r#"{"provider": "ops"}"#),
+        ("federated", r#"{"provider": "ops", "subject": ""}"#),
         ("telepathy", r"{}"),
     ] {
         let result = diesel::sql_query(format!(
@@ -169,6 +172,56 @@ async fn secret_keys_round_trip_through_the_schema() {
     .await
     .unwrap();
     assert_eq!(credentials::get(&mut conn, id).await.unwrap(), stored);
+}
+
+// r[verify federation.credential]
+#[tokio::test(flavor = "multi_thread")]
+async fn federated_credentials_are_found_by_provider_and_case_sensitive_subject() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let subject = subject(&mut conn).await;
+    let account = |sub: &str| {
+        CredentialData::Federated(FederatedData {
+            provider: "ops".into(),
+            subject: sub.into(),
+            email: Some("ada@example.com".into()),
+            email_verified: Some(true),
+        })
+    };
+    let id = CredentialId::new_v7();
+    let stored = credentials::insert(
+        &mut conn,
+        NewCredential {
+            id,
+            subject_id: subject,
+            identifier: credentials::federated_identifier("ops", "AbC"),
+            data: account("AbC"),
+            mfa_factors_required: 0,
+            replaces: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(credentials::get(&mut conn, id).await.unwrap(), stored);
+    let found = credentials::find_active(
+        &mut conn,
+        CredentialKind::Federated,
+        &credentials::federated_identifier("ops", "AbC"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(found.map(|c| c.id), Some(id));
+    let other_case = credentials::find_active(
+        &mut conn,
+        CredentialKind::Federated,
+        &credentials::federated_identifier("ops", "abc"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        other_case, None,
+        "subjects that differ in case are different accounts"
+    );
 }
 
 // r[verify credential.identifier.unique]

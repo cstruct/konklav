@@ -1,0 +1,482 @@
+#![allow(clippy::too_many_lines)]
+
+mod common;
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use axum::Router;
+use axum::extract::{Form, State};
+use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::routing::{get, post};
+use base64::Engine;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use common::{ORIGIN, TestApp};
+use conclave_server::federation::{Providers, Settings};
+use jsonwebtoken::{Algorithm, EncodingKey, Header};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+
+const PROVIDER_KEY: &str = "-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgUoptOOQL2DZqHV4Q
+GpDMUYd6rsbhOjYqdxTU6xh4DmahRANCAARjr/UQTOoK84SKa5ZB1Rg9mLRWjzyy
+p1XNGpwF1zXMHj8NrRZRBsdiy2jZvNVSLlPqzmK3P4YLDAtSoKNCeXst
+-----END PRIVATE KEY-----";
+const PROVIDER_X: &str = "Y6_1EEzqCvOEimuWQdUYPZi0Vo88sqdVzRqcBdc1zB4";
+const PROVIDER_Y: &str = "Pw2tFlEGx2LLaNm81VIuU-rOYrc_hgsMC1Kgo0J5ey0";
+const CLIENT_ID: &str = "conclave-test";
+const CLIENT_SECRET: &str = "client secret";
+const RETURN: &str = "https://app.example/signed-in";
+const UPSTREAM_SUB: &str = "Upstream-Ada";
+
+/// An authorization the fake provider will exchange a code for.
+#[derive(Clone)]
+struct Grant {
+    code_challenge: String,
+    /// Claims of the ID token; `iss`, `aud`, `exp` and `iat` are filled in
+    /// unless present.
+    claims: Value,
+    /// How to sign the ID token.
+    signing: Signing,
+}
+
+#[derive(Clone, Copy)]
+enum Signing {
+    Provider,
+    UnknownKey,
+    Symmetric,
+}
+
+#[derive(Default)]
+struct Fake {
+    issuer: String,
+    grants: HashMap<String, Grant>,
+}
+
+/// A minimal OpenID provider: discovery, keys and the token endpoint.
+/// Authorization is simulated by registering grants directly.
+struct FakeProvider {
+    issuer: String,
+    state: Arc<Mutex<Fake>>,
+}
+
+impl FakeProvider {
+    async fn start() -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let issuer = format!("http://{}", listener.local_addr().unwrap());
+        let state = Arc::new(Mutex::new(Fake {
+            issuer: issuer.clone(),
+            ..Fake::default()
+        }));
+        let router = Router::new()
+            .route("/.well-known/openid-configuration", get(discovery))
+            .route("/jwks", get(jwks))
+            .route("/token", post(token))
+            .with_state(state.clone());
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        Self { issuer, state }
+    }
+
+    fn settings(&self) -> Settings {
+        Settings {
+            id: "ops".into(),
+            issuer: self.issuer.clone(),
+            client_id: CLIENT_ID.into(),
+            client_secret: CLIENT_SECRET.into(),
+            redirect_uri: "https://auth.example/v1/login/oidc/ops/callback".into(),
+            scopes: vec![],
+            return_urls: vec![RETURN.into()],
+            methods: vec![("hwk".into(), "hwk".into())],
+            require_acr: None,
+            max_age: None,
+            session_lifetime: None,
+        }
+    }
+
+    /// Simulates the subject signing in at the provider for the
+    /// authorization request at `url`, returning the code.
+    fn authorize(&self, url: &str, claims: Value, signing: Signing) -> String {
+        let params = query(url);
+        let mut claims = claims;
+        if claims.get("nonce").is_none() {
+            claims["nonce"] = json!(params["nonce"]);
+        }
+        let code = uuid::Uuid::now_v7().to_string();
+        self.state.lock().unwrap().grants.insert(
+            code.clone(),
+            Grant {
+                code_challenge: params["code_challenge"].clone(),
+                claims,
+                signing,
+            },
+        );
+        code
+    }
+}
+
+async fn discovery(State(state): State<Arc<Mutex<Fake>>>) -> axum::Json<Value> {
+    let issuer = state.lock().unwrap().issuer.clone();
+    axum::Json(json!({
+        "issuer": issuer,
+        "authorization_endpoint": format!("{issuer}/authorize"),
+        "token_endpoint": format!("{issuer}/token"),
+        "jwks_uri": format!("{issuer}/jwks"),
+    }))
+}
+
+async fn jwks() -> axum::Json<Value> {
+    axum::Json(json!({"keys": [{
+        "kty": "EC", "crv": "P-256", "kid": "k1", "alg": "ES256", "use": "sig",
+        "x": PROVIDER_X, "y": PROVIDER_Y,
+    }]}))
+}
+
+async fn token(
+    State(state): State<Arc<Mutex<Fake>>>,
+    headers: HeaderMap,
+    Form(form): Form<HashMap<String, String>>,
+) -> Result<axum::Json<Value>, StatusCode> {
+    let expected = format!(
+        "Basic {}",
+        STANDARD.encode(format!("{CLIENT_ID}:{CLIENT_SECRET}"))
+    );
+    if headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        != Some(&expected)
+    {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let (issuer, grant) = {
+        let mut fake = state.lock().unwrap();
+        let grant = fake
+            .grants
+            .remove(&form["code"])
+            .ok_or(StatusCode::BAD_REQUEST)?;
+        (fake.issuer.clone(), grant)
+    };
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(form["code_verifier"].as_bytes()));
+    if challenge != grant.code_challenge {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let now = chrono::Utc::now().timestamp();
+    let mut claims = json!({"iss": issuer, "aud": CLIENT_ID, "iat": now, "exp": now + 300});
+    for (key, value) in grant.claims.as_object().unwrap() {
+        claims[key] = value.clone();
+    }
+    let id_token = match grant.signing {
+        Signing::Provider | Signing::UnknownKey => {
+            let mut header = Header::new(Algorithm::ES256);
+            header.kid = Some(match grant.signing {
+                Signing::Provider => "k1".into(),
+                _ => "missing".into(),
+            });
+            let key = EncodingKey::from_ec_pem(PROVIDER_KEY.as_bytes()).unwrap();
+            jsonwebtoken::encode(&header, &claims, &key).unwrap()
+        }
+        Signing::Symmetric => {
+            let mut header = Header::new(Algorithm::HS256);
+            header.kid = Some("k1".into());
+            jsonwebtoken::encode(&header, &claims, &EncodingKey::from_secret(b"shared")).unwrap()
+        }
+    };
+    Ok(axum::Json(
+        json!({"id_token": id_token, "token_type": "Bearer"}),
+    ))
+}
+
+fn query(url: &str) -> HashMap<String, String> {
+    reqwest::Url::parse(url)
+        .unwrap()
+        .query_pairs()
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect()
+}
+
+fn location(reply: &common::Reply) -> String {
+    reply.headers[header::LOCATION].to_str().unwrap().to_owned()
+}
+
+/// The `name=value` part of a Set-Cookie header for `name`.
+fn cookie(reply: &common::Reply, name: &str) -> Option<String> {
+    reply
+        .set_cookies()
+        .into_iter()
+        .find(|c| c.starts_with(&format!("{name}=")))
+        .map(|c| c.split(';').next().unwrap().to_owned())
+}
+
+/// Starts a federated login, returning the provider URL and the browser's
+/// state cookie.
+async fn start(app: &TestApp) -> (String, String) {
+    let reply = app
+        .send(Method::GET, "/v1/login/oidc/ops/start", &[], None)
+        .await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER, "{:?}", reply.body);
+    (location(&reply), cookie(&reply, "conclave_oidc").unwrap())
+}
+
+async fn callback(
+    app: &TestApp,
+    url: &str,
+    code: &str,
+    state_cookie: Option<&str>,
+) -> common::Reply {
+    let state = query(url)["state"].clone();
+    let uri = format!("/v1/login/oidc/ops/callback?state={state}&code={code}");
+    let headers: Vec<(&str, &str)> = state_cookie.map(|c| ("cookie", c)).into_iter().collect();
+    app.send(Method::GET, &uri, &headers, None).await
+}
+
+/// Links the provider account `sub` to the subject signed in with `token`.
+async fn link(app: &TestApp, provider: &FakeProvider, token: &str, claims: Value) -> common::Reply {
+    let auth = format!("Bearer {token}");
+    let started = app
+        .send(
+            Method::POST,
+            "/v1/credentials/oidc/ops/link",
+            &[
+                ("authorization", &auth),
+                ("origin", ORIGIN),
+                ("x-conclave-client", "web"),
+            ],
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(started.status, StatusCode::OK, "{:?}", started.body);
+    let url = started.body["authorization_url"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let code = provider.authorize(&url, claims, Signing::Provider);
+    let state_cookie = cookie(&started, "conclave_oidc").unwrap();
+    callback(app, &url, &code, Some(&state_cookie)).await
+}
+
+async fn signed_in(app: &TestApp) -> String {
+    let subject = app.human("ada@example.com", "correct horse battery").await;
+    let login = app.login("ada@example.com", "correct horse battery").await;
+    let _ = subject;
+    login.body["access_token"].as_str().unwrap().to_owned()
+}
+
+// r[verify federation.idp.code-flow]
+// r[verify federation.linking]
+// r[verify federation.session]
+// r[verify federation.methods]
+#[tokio::test(flavor = "multi_thread")]
+async fn linked_provider_accounts_sign_in_with_a_browser_session() {
+    let provider = FakeProvider::start().await;
+    let app =
+        TestApp::with_identity_providers(Providers::from_settings([provider.settings()])).await;
+    let token = signed_in(&app).await;
+    let subject = app.verify(&token).await.sub;
+
+    let linked = link(&app, &provider, &token, json!({"sub": UPSTREAM_SUB})).await;
+    assert_eq!(linked.status, StatusCode::SEE_OTHER);
+    assert_eq!(location(&linked), format!("{RETURN}?linked=true"));
+    assert!(
+        cookie(&linked, "conclave_oidc").is_some_and(|c| c == "conclave_oidc="),
+        "the state cookie is cleared"
+    );
+
+    let (url, state_cookie) = start(&app).await;
+    let params = query(&url);
+    assert!(url.starts_with(&format!("{}/authorize?", provider.issuer)));
+    assert_eq!(params["code_challenge_method"], "S256");
+    assert_eq!(params["client_id"], CLIENT_ID);
+    let code = provider.authorize(
+        &url,
+        json!({"sub": UPSTREAM_SUB, "amr": ["hwk", "face"]}),
+        Signing::Provider,
+    );
+    let done = callback(&app, &url, &code, Some(&state_cookie)).await;
+    assert_eq!(done.status, StatusCode::SEE_OTHER, "{:?}", done.body);
+    assert_eq!(location(&done), format!("{RETURN}?signed_in=true"));
+    let refresh_cookie = cookie(&done, "conclave_refresh").expect("a refresh cookie");
+
+    let refreshed = app
+        .send(
+            Method::POST,
+            "/v1/refresh",
+            &[
+                ("cookie", &refresh_cookie),
+                ("origin", ORIGIN),
+                ("x-conclave-client", "web"),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(refreshed.status, StatusCode::OK, "{:?}", refreshed.body);
+    let claims = app
+        .verify(refreshed.body["access_token"].as_str().unwrap())
+        .await;
+    assert_eq!(claims.sub, subject);
+    assert_eq!(
+        claims.amr,
+        ["fed", "hwk"],
+        "unmapped methods aren't credited"
+    );
+
+    // Replaying the same state fails, as does a callback from another browser.
+    let replayed = callback(&app, &url, &code, Some(&state_cookie)).await;
+    assert_eq!(replayed.status, StatusCode::BAD_REQUEST);
+    let (url, _) = start(&app).await;
+    let code = provider.authorize(&url, json!({"sub": UPSTREAM_SUB}), Signing::Provider);
+    assert_eq!(
+        callback(&app, &url, &code, None).await.status,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+// r[verify federation.idp.id-token]
+// r[verify federation.provisioning]
+#[tokio::test(flavor = "multi_thread")]
+async fn invalid_id_tokens_and_unlinked_accounts_are_refused() {
+    let provider = FakeProvider::start().await;
+    let app =
+        TestApp::with_identity_providers(Providers::from_settings([provider.settings()])).await;
+    let token = signed_in(&app).await;
+    link(&app, &provider, &token, json!({"sub": UPSTREAM_SUB})).await;
+
+    for (claims, signing, error) in [
+        (
+            json!({"sub": "nobody"}),
+            Signing::Provider,
+            "account_not_linked",
+        ),
+        (
+            json!({"sub": UPSTREAM_SUB, "nonce": "other"}),
+            Signing::Provider,
+            "invalid_id_token",
+        ),
+        (
+            json!({"sub": UPSTREAM_SUB, "aud": "someone-else"}),
+            Signing::Provider,
+            "invalid_id_token",
+        ),
+        (
+            json!({"sub": UPSTREAM_SUB, "iss": "https://evil.example"}),
+            Signing::Provider,
+            "invalid_id_token",
+        ),
+        (
+            json!({"sub": UPSTREAM_SUB, "aud": [CLIENT_ID, "other"], "azp": "other"}),
+            Signing::Provider,
+            "invalid_id_token",
+        ),
+        (
+            json!({"sub": UPSTREAM_SUB, "exp": 1}),
+            Signing::Provider,
+            "invalid_id_token",
+        ),
+        (
+            json!({"sub": UPSTREAM_SUB}),
+            Signing::UnknownKey,
+            "invalid_id_token",
+        ),
+        (
+            json!({"sub": UPSTREAM_SUB}),
+            Signing::Symmetric,
+            "invalid_id_token",
+        ),
+    ] {
+        let (url, state_cookie) = start(&app).await;
+        let code = provider.authorize(&url, claims.clone(), signing);
+        let reply = callback(&app, &url, &code, Some(&state_cookie)).await;
+        assert_eq!(
+            location(&reply),
+            format!("{RETURN}?error={error}"),
+            "{claims}"
+        );
+        assert!(cookie(&reply, "conclave_refresh").is_none());
+    }
+
+    // An account linked to one subject can't be linked to another.
+    app.human("bo@example.com", "correct horse battery").await;
+    let other = app.login("bo@example.com", "correct horse battery").await;
+    let reply = link(
+        &app,
+        &provider,
+        other.body["access_token"].as_str().unwrap(),
+        json!({"sub": UPSTREAM_SUB}),
+    )
+    .await;
+    assert_eq!(
+        location(&reply),
+        format!("{RETURN}?error=account_linked_elsewhere")
+    );
+}
+
+// r[verify federation.session-lifetime]
+#[tokio::test(flavor = "multi_thread")]
+async fn providers_enforce_their_requirements_and_cap_sessions() {
+    let provider = FakeProvider::start().await;
+    let settings = Settings {
+        require_acr: Some("urn:hwk".into()),
+        session_lifetime: Some(chrono::Duration::seconds(600)),
+        ..provider.settings()
+    };
+    let app = TestApp::with_identity_providers(Providers::from_settings([settings])).await;
+    let token = signed_in(&app).await;
+    link(
+        &app,
+        &provider,
+        &token,
+        json!({"sub": UPSTREAM_SUB, "acr": "urn:hwk"}),
+    )
+    .await;
+
+    let (url, state_cookie) = start(&app).await;
+    assert_eq!(query(&url)["acr_values"], "urn:hwk");
+    let code = provider.authorize(
+        &url,
+        json!({"sub": UPSTREAM_SUB, "acr": "urn:pwd"}),
+        Signing::Provider,
+    );
+    let reply = callback(&app, &url, &code, Some(&state_cookie)).await;
+    assert_eq!(
+        location(&reply),
+        format!("{RETURN}?error=requirements_not_met")
+    );
+
+    let (url, state_cookie) = start(&app).await;
+    let code = provider.authorize(
+        &url,
+        json!({"sub": UPSTREAM_SUB, "acr": "urn:hwk"}),
+        Signing::Provider,
+    );
+    let reply = callback(&app, &url, &code, Some(&state_cookie)).await;
+    let refresh = reply
+        .set_cookies()
+        .into_iter()
+        .find(|c| c.starts_with("conclave_refresh="))
+        .expect("a refresh cookie");
+    let max_age: i64 = refresh
+        .split(';')
+        .find_map(|part| part.trim().strip_prefix("Max-Age="))
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((590..=600).contains(&max_age), "Max-Age={max_age}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn return_urls_must_be_registered() {
+    let provider = FakeProvider::start().await;
+    let app =
+        TestApp::with_identity_providers(Providers::from_settings([provider.settings()])).await;
+    let reply = app
+        .send(
+            Method::GET,
+            "/v1/login/oidc/ops/start?return_to=https://evil.example/",
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(reply.code(), "INVALID_REQUEST");
+    let unknown = app
+        .send(Method::GET, "/v1/login/oidc/nope/start", &[], None)
+        .await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+}

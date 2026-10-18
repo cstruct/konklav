@@ -58,6 +58,7 @@ async fn server() -> Server {
             control_token: Some(CONTROL.into()),
             secrets: conclave_authn::SecretBox::new([]).unwrap(),
             pacing: conclave_server::pacing::Pacing::NONE,
+            identity_providers: conclave_server::federation::Providers::default(),
         }),
         feed: Arc::new(FeedHub::new(Duration::from_millis(100))),
     };

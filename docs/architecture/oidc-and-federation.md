@@ -1,6 +1,7 @@
 # OIDC and federation
 
-Status: proposed. The rules are in
+Status: accepted. Phase 1 (the identity-provider client) is implemented;
+later phases are designed only. The rules are in
 [`../spec/federation.md`](../spec/federation.md); this note explains them
 and lists the decisions still open. It replaces the earlier "federation is
 out of scope" position.
@@ -60,9 +61,18 @@ out of scope" position.
 5. It redirects to the configured return URL. The browser receives the
    refresh cookie exactly as for a password login.
 
-Linking an extra provider to an existing subject happens while signed in
-(`POST /v1/credentials/oidc/{provider}/link/start`), which avoids
-account takeover through a provider that reports an email it doesn't own.
+Linking an extra provider to an existing subject happens while signed in:
+`POST /v1/credentials/oidc/{provider}/link` (with the access token, an
+allowed `Origin` and the client header) returns the provider URL and sets
+the state cookie, and the callback links the account to that subject. Only
+linking while signed in avoids account takeover through a provider that
+reports an email it doesn't own.
+
+The callback redirects to the return URL with `signed_in=true`,
+`linked=true`, or `error=` one of `provider_error`, `invalid_id_token`,
+`requirements_not_met`, `account_not_linked` and
+`account_linked_elsewhere`. Linking enforces the provider's `acr` and
+`max_age` requirements too.
 
 ## Conclave as an OpenID provider
 
@@ -220,9 +230,9 @@ Proposed defaults, to confirm before implementation:
 
 ## Phases
 
-1. **Identity-provider client**: one provider, PKCE, ID-token validation,
-   federated credential, link-only provisioning, method mapping, session
-   cap.
+1. **Identity-provider client** (done): providers in configuration, PKCE,
+   ID-token validation, federated credentials, linking while signed in,
+   link-only provisioning, method mapping, session caps.
 2. **Claim mapping and break-glass**: rules, managed grants, provisioning
    policy, `break_glass.used`. Operator federation works from here.
 3. **OpenID provider**: discovery, clients, login hand-off, codes, ID tokens,

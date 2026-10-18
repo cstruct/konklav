@@ -36,7 +36,8 @@ impersonator?, expires_at, revoked_at?, revoked_reason? }`
     and replay is refused by remembering the last step.
   - Email codes: challenges.
 - `amr` values: `pwd`, `otp` (TOTP), `eml` (email code or magic link),
-  `sms` (phone code), `swk` (secret key).
+  `sms` (phone code), `swk` (secret key), `fed` (an identity provider,
+  plus whatever its `amr`/`acr` map to).
 - Step-up (`POST /v1/step-up`) proves a factor or the password again in the
   same session. It adds the method, resets `auth_time` and bumps the
   version.

@@ -1,2 +1,2 @@
 # Terms that are not code, so `doc_markdown` should not ask for backticks.
-doc-valid-idents = ["EdDSA", "Ed25519", "JWKS", "PostgreSQL", ".."]
+doc-valid-idents = ["EdDSA", "Ed25519", "JWKS", "OpenID", "PostgreSQL", ".."]

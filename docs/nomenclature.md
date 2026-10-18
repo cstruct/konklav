@@ -140,6 +140,7 @@ Terms are introduced in dependency order: each definition only uses terms define
 
 - `authentication method`
   - The RFC 8176 `amr` value recording how a subject proved who it is, such as `pwd`, `otp`, `sms`, or `hwk`.
+  - `fed` records a login through an identity provider; the methods the provider reports are credited only as its configuration maps them.
   - A session records every method used, and when the most recent authentication happened (`auth_time`).
 
 - `challenge`

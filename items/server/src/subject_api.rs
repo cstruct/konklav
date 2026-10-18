@@ -50,7 +50,7 @@ const RATE_LIMITS: [(i64, i64); 3] = [(10 * 60, 30), (60 * 60, 60), (24 * 60 * 6
 // r[impl session.client-kind]
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum Client {
+pub(crate) enum Client {
     Browser,
     #[default]
     Native,
@@ -106,7 +106,7 @@ fn session_ended() -> ApiError {
 /// Checks that a browser request comes from an allowed origin and carries
 /// the client header.
 // r[impl session.browser.csrf]
-fn check_browser_request<'a>(
+pub(crate) fn check_browser_request<'a>(
     auth: &'a AuthContext,
     headers: &HeaderMap,
 ) -> Result<&'a BrowserSettings, ApiError> {
@@ -127,7 +127,11 @@ fn check_browser_request<'a>(
 }
 
 // r[impl session.browser.cookie]
-fn refresh_cookies(browser: &BrowserSettings, value: &str, max_age: i64) -> Vec<HeaderValue> {
+pub(crate) fn refresh_cookies(
+    browser: &BrowserSettings,
+    value: &str,
+    max_age: i64,
+) -> Vec<HeaderValue> {
     let secure = if browser.secure_cookies {
         "; Secure"
     } else {
@@ -156,7 +160,7 @@ fn read_refresh_cookie(headers: &HeaderMap) -> Option<String> {
         })
 }
 
-fn with_cookies(mut response: Response, cookies: Vec<HeaderValue>) -> Response {
+pub(crate) fn with_cookies(mut response: Response, cookies: Vec<HeaderValue>) -> Response {
     for cookie in cookies {
         response.headers_mut().append(header::SET_COOKIE, cookie);
     }
@@ -206,15 +210,23 @@ async fn check_requested_flags(conn: &mut Connection, flags: &[String]) -> Resul
 
 /// Starts a session after a successful first factor and issues its first
 /// tokens.
-async fn start_session(
+/// A new session's refresh token and the change-feed cursor of its event.
+pub(crate) struct Started {
+    pub session: Session,
+    pub refresh: RefreshToken,
+    pub cursor: Cursor,
+}
+
+/// Starts a session for `credential`, at most `lifetime` long.
+pub(crate) async fn create_session(
     state: &AppState,
     conn: &mut Connection,
     credential: &Credential,
-    amr: &str,
+    amr: Vec<String>,
     client: Client,
-    browser: Option<&BrowserSettings>,
     flags: &[String],
-) -> Result<Response, ApiError> {
+    lifetime: chrono::Duration,
+) -> Result<Started, ApiError> {
     let now = Utc::now();
     let id = SessionId::new_v7();
     let refresh = RefreshToken::generate(id);
@@ -235,16 +247,48 @@ async fn start_session(
                 Client::Browser => ClientKind::Browser,
                 Client::Native => ClientKind::Native,
             },
-            amr: vec![amr.to_owned()],
+            amr,
             auth_time: now,
             flags: flags.to_vec(),
             impersonator_subject_id: None,
             parent_session_id: None,
             refresh_hash: refresh.hash(),
-            expires_at: now + state.auth.session_lifetime,
+            expires_at: now + lifetime.min(state.auth.session_lifetime),
         },
     )
     .await?;
+    Ok(Started {
+        session,
+        refresh,
+        cursor,
+    })
+}
+
+async fn start_session(
+    state: &AppState,
+    conn: &mut Connection,
+    credential: &Credential,
+    amr: &str,
+    client: Client,
+    browser: Option<&BrowserSettings>,
+    flags: &[String],
+) -> Result<Response, ApiError> {
+    let now = Utc::now();
+    let Started {
+        session,
+        refresh,
+        cursor,
+    } = create_session(
+        state,
+        conn,
+        credential,
+        vec![amr.to_owned()],
+        client,
+        flags,
+        state.auth.session_lifetime,
+    )
+    .await?;
+    let stage = session.stage;
     let token = issue::access_token(conn, &state.auth, &session).await?;
 
     // A partial session can only complete MFA, so it gets no refresh token.

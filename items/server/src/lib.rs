@@ -6,6 +6,8 @@ pub mod config;
 mod control_api;
 mod control_authz;
 pub mod error;
+pub mod federation;
+mod federation_api;
 pub mod feed;
 mod flows;
 pub mod health;
@@ -49,6 +51,8 @@ pub struct AuthContext {
     pub secrets: conclave_authn::SecretBox,
     /// How long authentication endpoints take at least.
     pub pacing: pacing::Pacing,
+    /// Identity providers browser clients can sign in through.
+    pub identity_providers: federation::Providers,
 }
 
 #[derive(Clone, Debug)]
@@ -85,6 +89,7 @@ impl AuthContext {
             control_token: control.bootstrap_token(),
             secrets: conclave_authn::SecretBox::new([]).expect("an empty key set is valid"),
             pacing: pacing::Pacing::DEFAULT,
+            identity_providers: federation::Providers::default(),
         }
     }
 }

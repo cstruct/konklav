@@ -347,9 +347,10 @@ impl From<Credential> for CredentialView {
                 a: SlotView::from(&data.a),
                 b: SlotView::from(&data.b),
             }),
-            CredentialData::Password(_) | CredentialData::EmailLink | CredentialData::PhoneOtp => {
-                None
-            }
+            CredentialData::Password(_)
+            | CredentialData::EmailLink
+            | CredentialData::PhoneOtp
+            | CredentialData::Federated(_) => None,
         };
         Self {
             id: credential.id,

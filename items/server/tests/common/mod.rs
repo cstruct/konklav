@@ -69,6 +69,7 @@ pub fn auth_context(signer: Signer) -> AuthContext {
         secrets: conclave_authn::SecretBox::new([("test", TOTP_KEY)]).unwrap(),
         // Tests that are about pacing set their own.
         pacing: conclave_server::pacing::Pacing::NONE,
+        identity_providers: conclave_server::federation::Providers::default(),
     }
 }
 
@@ -82,6 +83,25 @@ impl TestApp {
         let app = Self::with_key(1).await;
         let mut auth = auth_context(Signer::new(SigningKey::from_bytes(&[1; 32])));
         auth.control_token = None;
+        let state = AppState {
+            auth: Arc::new(auth),
+            ..app.state.clone()
+        };
+        let router = surface::router(&Surface::ALL, state.clone());
+        Self {
+            db: app.db,
+            state,
+            router,
+        }
+    }
+
+    /// An app that signs browsers in through `providers`.
+    pub async fn with_identity_providers(
+        providers: conclave_server::federation::Providers,
+    ) -> Self {
+        let app = Self::with_key(1).await;
+        let mut auth = auth_context(Signer::new(SigningKey::from_bytes(&[1; 32])));
+        auth.identity_providers = providers;
         let state = AppState {
             auth: Arc::new(auth),
             ..app.state.clone()

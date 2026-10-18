@@ -19,6 +19,8 @@ pub enum CredentialKind {
     EmailLink,
     /// Log in with a code sent to the identifier (an E.164 phone number).
     PhoneOtp,
+    /// Log in through an identity provider; see [`federated_identifier`].
+    Federated,
 }
 
 impl CredentialKind {
@@ -29,8 +31,36 @@ impl CredentialKind {
             Self::SecretKey => "secret_key",
             Self::EmailLink => "email_link",
             Self::PhoneOtp => "phone_otp",
+            Self::Federated => "federated",
         }
     }
+}
+
+/// `data` of a federated credential: the account at the identity provider.
+// r[impl federation.credential]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FederatedData {
+    /// The configured provider id.
+    pub provider: String,
+    /// The provider's `sub`.
+    pub subject: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email_verified: Option<bool>,
+}
+
+/// The login identifier of a federated credential. `sub` is case-sensitive
+/// and identifiers are lowercased, so it is hex-encoded.
+#[must_use]
+pub fn federated_identifier(provider: &str, subject: &str) -> String {
+    use std::fmt::Write;
+    subject
+        .bytes()
+        .fold(format!("{provider}|"), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
 }
 
 /// `data` of a password credential.
@@ -98,6 +128,7 @@ pub enum CredentialData {
     SecretKey(SecretKeyData),
     EmailLink,
     PhoneOtp,
+    Federated(FederatedData),
 }
 
 impl CredentialData {
@@ -108,6 +139,7 @@ impl CredentialData {
             Self::SecretKey(_) => CredentialKind::SecretKey,
             Self::EmailLink => CredentialKind::EmailLink,
             Self::PhoneOtp => CredentialKind::PhoneOtp,
+            Self::Federated(_) => CredentialKind::Federated,
         }
     }
 
@@ -115,6 +147,7 @@ impl CredentialData {
         match self {
             Self::Password(data) => serde_json::to_value(data),
             Self::SecretKey(data) => serde_json::to_value(data),
+            Self::Federated(data) => serde_json::to_value(data),
             Self::EmailLink | Self::PhoneOtp => Ok(serde_json::json!({})),
         }
         .expect("credential data serializes")
@@ -126,6 +159,7 @@ impl CredentialData {
             "secret_key" => serde_json::from_value(data).map(Self::SecretKey),
             "email_link" => Ok(Self::EmailLink),
             "phone_otp" => Ok(Self::PhoneOtp),
+            "federated" => serde_json::from_value(data).map(Self::Federated),
             other => {
                 return Err(diesel::result::Error::DeserializationError(
                     format!("unknown credential kind {other}").into(),
