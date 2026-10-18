@@ -15,6 +15,7 @@ pub const SESSIONS: &str = "conclave:sessions:manage";
 pub const KEYS: &str = "conclave:keys:manage";
 pub const INVITES: &str = "conclave:invites:manage";
 pub const IMPORT: &str = "conclave:import";
+pub const CLIENTS: &str = "conclave:clients:manage";
 pub const DELIVERY_READ: &str = "conclave:delivery:read";
 
 /// Whether `subject` holds `capability` through its global assignments.

@@ -13,6 +13,7 @@ pub mod login_attempts;
 pub mod memberships;
 pub mod mfa;
 mod migrate;
+pub mod oidc_clients;
 mod pool;
 pub mod roles;
 pub mod schema;

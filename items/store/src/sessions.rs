@@ -82,6 +82,10 @@ pub struct Session {
     /// The session this one was started from (impersonation); ending the
     /// parent ends this one.
     pub parent_session_id: Option<SessionId>,
+    /// The OIDC client the session was started for, if any.
+    pub oidc_client_id: Option<String>,
+    /// The scopes granted to that client.
+    pub oidc_scopes: Vec<String>,
     pub version: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -120,6 +124,8 @@ struct Row {
     revoked_reason: Option<String>,
     mfa_factors: Vec<Option<String>>,
     parent_session_id: Option<uuid::Uuid>,
+    oidc_client_id: Option<String>,
+    oidc_scopes: Vec<Option<String>>,
 }
 
 impl From<Row> for Session {
@@ -138,6 +144,8 @@ impl From<Row> for Session {
             impersonator_subject_id: row.impersonator_subject_id.map(Into::into),
             mfa_factors: row.mfa_factors.into_iter().flatten().collect(),
             parent_session_id: row.parent_session_id.map(Into::into),
+            oidc_client_id: row.oidc_client_id,
+            oidc_scopes: row.oidc_scopes.into_iter().flatten().collect(),
             version: row.version,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -437,6 +445,27 @@ pub async fn revoke(
     .await
 }
 
+/// Revokes every active session started for an OIDC client.
+pub async fn revoke_for_client(
+    conn: &mut AsyncPgConnection,
+    client: &str,
+    reason: &str,
+) -> StoreResult<Vec<(Session, Cursor)>> {
+    conn.transaction::<_, StoreError, _>(async |conn| {
+        let ids = session::table
+            .filter(session::oidc_client_id.eq(client))
+            .filter(session::revoked_at.is_null())
+            .select(session::id)
+            .load::<uuid::Uuid>(conn)
+            .await?
+            .into_iter()
+            .map(SessionId::from)
+            .collect::<Vec<_>>();
+        revoke_ids(conn, &ids, reason).await
+    })
+    .await
+}
+
 /// Lists sessions matching `filter`, newest first, `limit` at a time.
 /// Pass the last id of a page as `before` to get the next one.
 // r[impl session.history]
@@ -663,4 +692,22 @@ pub async fn import(conn: &mut AsyncPgConnection, imported: ImportedSession) -> 
         .await
         .map_err(StoreError::from_constraint)?;
     Ok(inserted > 0)
+}
+
+/// Binds a just-created session to the OIDC client it was started for.
+pub async fn bind_client(
+    conn: &mut AsyncPgConnection,
+    id: SessionId,
+    client: &str,
+    scopes: &[String],
+) -> StoreResult<Session> {
+    Ok(diesel::update(session::table.find(id.as_uuid()))
+        .set((
+            session::oidc_client_id.eq(client),
+            session::oidc_scopes.eq(nullable(scopes)),
+        ))
+        .returning(Row::as_returning())
+        .get_result(conn)
+        .await?
+        .into())
 }

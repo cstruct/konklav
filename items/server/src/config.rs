@@ -84,6 +84,19 @@ config_tree! {
             #[facet(default)]
             pub published_key_files: Vec<String>,
         },
+        /// Conclave as an OpenID provider. A section of its own, loaded with
+        /// tokens (contexts are limited in number). Without it, the
+        /// `/v1/oauth2/*` endpoints and discovery answer 404.
+        pub oidc_provider: Option<pub struct OidcProvider {
+            /// PKCS#8 PEM file with the P-256 key that signs `ES256` ID
+            /// tokens.
+            pub id_token_key_file: String,
+            /// Where authorization requests send people to sign in, unless
+            /// the client registered its own login URL.
+            pub login_url: String,
+            /// Defaults to `{issuer}/.well-known/jwks.json`.
+            pub jwks_uri: Option<String>,
+        }>,
         /// How long authentication endpoints take at least, so their
         /// response times don't reveal which identifiers exist. A section
         /// of its own, loaded with tokens (contexts are limited in number).

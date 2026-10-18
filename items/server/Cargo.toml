@@ -22,7 +22,8 @@ ed25519-dalek.workspace = true
 facet.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
-jsonwebtoken.workspace = true
+jsonwebtoken = { workspace = true, features = ["use_pem"] }
+p256.workspace = true
 ordna-core.workspace = true
 ordna-source-env.workspace = true
 ordna-source-file.workspace = true
@@ -41,7 +42,6 @@ tracing-subscriber.workspace = true
 uuid = { workspace = true, features = ["v4", "v7"] }
 
 [dev-dependencies]
-jsonwebtoken = { workspace = true, features = ["use_pem"] }
 reqwest.workspace = true
 chrono.workspace = true
 conclave-authz.workspace = true

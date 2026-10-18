@@ -124,6 +124,24 @@ diesel::table! {
 }
 
 diesel::table! {
+    oidc_client (id) {
+        id -> Text,
+        kind -> Text,
+        secret_hash -> Nullable<Bytea>,
+        redirect_uris -> Array<Nullable<Text>>,
+        scopes -> Array<Nullable<Text>>,
+        audience -> Text,
+        visible_groups -> Array<Nullable<Text>>,
+        login_url -> Nullable<Text>,
+        id_token_alg -> Text,
+        refresh -> Bool,
+        disabled_at -> Nullable<Timestamptz>,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
     role (id) {
         id -> Uuid,
         tenant_id -> Uuid,
@@ -180,6 +198,8 @@ diesel::table! {
         revoked_reason -> Nullable<Text>,
         mfa_factors -> Array<Nullable<Text>>,
         parent_session_id -> Nullable<Uuid>,
+        oidc_client_id -> Nullable<Text>,
+        oidc_scopes -> Array<Nullable<Text>>,
     }
 }
 
@@ -262,6 +282,7 @@ diesel::joinable!(role_policy -> catalog_action (action));
 diesel::joinable!(role_policy -> role (role_id));
 diesel::joinable!(session -> credential (credential_id));
 diesel::joinable!(session -> membership (membership_id));
+diesel::joinable!(session -> oidc_client (oidc_client_id));
 diesel::joinable!(session -> tenant (tenant_id));
 diesel::joinable!(session_previous_refresh -> session (session_id));
 diesel::joinable!(template_policy -> catalog_action (action));
@@ -279,6 +300,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     login_attempt,
     membership,
     mfa_factor,
+    oidc_client,
     role,
     role_assignment,
     role_policy,

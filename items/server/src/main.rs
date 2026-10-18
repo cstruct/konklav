@@ -105,6 +105,11 @@ async fn serve(
     feed: FeedConfig,
     mfa: MfaConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let oidc = tokens
+        .oidc_provider
+        .as_ref()
+        .map(|config| conclave_server::oidc::OpenIdProvider::load(config, &tokens.tokens.issuer))
+        .transpose()?;
     let pacing = conclave_server::pacing::Pacing {
         floor: tokens.pacing_floor(),
         jitter: tokens.pacing_jitter(),
@@ -136,6 +141,7 @@ async fn serve(
         )?;
     }
     auth.pacing = pacing;
+    auth.oidc = oidc;
     auth.identity_providers = conclave_server::federation::Providers::from_config(&browser)?;
     let hub = Arc::new(FeedHub::new(feed.poll_interval()));
     tokio::spawn(conclave_server::feed::listen(

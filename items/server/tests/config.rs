@@ -345,3 +345,40 @@ identity_providers ({{
     .unwrap();
     assert!(conclave_server::federation::Providers::from_config(&browser).is_ok());
 }
+
+// r[verify oidc.provider.algorithms]
+#[test]
+fn the_openid_provider_loads_its_id_token_key() {
+    let files = Files::new("openid-provider");
+    let key = files.write(
+        "id-token.pem",
+        "-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgUoptOOQL2DZqHV4Q
+GpDMUYd6rsbhOjYqdxTU6xh4DmahRANCAARjr/UQTOoK84SKa5ZB1Rg9mLRWjzyy
+p1XNGpwF1zXMHj8NrRZRBsdiy2jZvNVSLlPqzmK3P4YLDAtSoKNCeXst
+-----END PRIVATE KEY-----
+",
+    );
+    let public = format!(
+        "{CONFIG}oidc_provider {{\n    id_token_key_file \"{}\"\n    login_url \"https://login.example/\"\n}}\n",
+        key.display()
+    );
+    let (_, _, _, tokens, ..) = load(
+        &files.write("c.styx", &public),
+        &files.write("s.styx", SECRETS),
+        &[],
+    )
+    .unwrap();
+    let config = tokens.oidc_provider.expect("the section loads");
+    let provider =
+        conclave_server::oidc::OpenIdProvider::load(&config, &tokens.tokens.issuer).unwrap();
+    assert_eq!(provider.jwk.alg, "ES256");
+    assert_eq!(
+        provider.jwk.x,
+        "Y6_1EEzqCvOEimuWQdUYPZi0Vo88sqdVzRqcBdc1zB4"
+    );
+    assert_eq!(
+        provider.jwks_uri,
+        "https://auth.example/.well-known/jwks.json"
+    );
+}

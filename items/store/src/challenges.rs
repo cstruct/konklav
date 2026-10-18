@@ -21,6 +21,11 @@ pub enum Purpose {
     OidcLogin,
     /// Linking an identity-provider account to a signed-in subject.
     OidcLink,
+    /// An authorization request at Conclave's OpenID provider, waiting for
+    /// a login application to sign the subject in.
+    OidcAuthorize,
+    /// An authorization code issued to an OIDC client.
+    OidcCode,
 }
 
 impl Purpose {
@@ -34,6 +39,8 @@ impl Purpose {
             Self::ResetPassword => "reset_password",
             Self::OidcLogin => "oidc_login",
             Self::OidcLink => "oidc_link",
+            Self::OidcAuthorize => "oidc_authorize",
+            Self::OidcCode => "oidc_code",
         }
     }
 }
@@ -211,4 +218,19 @@ pub async fn consume(
         .execute(conn)
         .await?;
     Ok(consumed > 0)
+}
+
+/// Records the session that completed a challenge (such as an accepted
+/// authorization request). Returns false if a session was already recorded.
+pub async fn attach_session(
+    conn: &mut AsyncPgConnection,
+    id: uuid::Uuid,
+    session: SessionId,
+) -> StoreResult<bool> {
+    let updated = diesel::update(challenge::table.find(id))
+        .filter(challenge::session_id.is_null())
+        .set(challenge::session_id.eq(uuid::Uuid::from(session)))
+        .execute(conn)
+        .await?;
+    Ok(updated > 0)
 }

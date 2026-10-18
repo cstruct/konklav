@@ -582,6 +582,7 @@ dependencies = [
  "ordna-source-env",
  "ordna-source-file",
  "ordna-source-styx",
+ "p256",
  "percent-encoding",
  "reqwest",
  "serde",

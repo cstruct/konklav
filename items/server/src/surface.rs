@@ -10,7 +10,7 @@ use axum::routing::get;
 use crate::config::Listen;
 use crate::{
     AppState, control_api, control_authz, error, federation_api, feed, flows, health, import_api,
-    invites, keys, relying_api, subject_api,
+    invites, keys, oidc_api, oidc_clients_api, relying_api, subject_api,
 };
 
 /// One of Conclave's groups of endpoints.
@@ -33,13 +33,15 @@ impl Surface {
         match self {
             Self::Subject => subject_api::routes(state)
                 .merge(federation_api::routes())
+                .merge(oidc_api::routes())
                 .merge(flows::routes(state))
                 .merge(invites::subject_routes(state)),
             Self::Relying => relying_api::routes().merge(feed::routes()),
             Self::Control => control_api::routes(state)
                 .merge(control_authz::routes(state))
                 .merge(invites::control_routes(state))
-                .merge(import_api::routes(state)),
+                .merge(import_api::routes(state))
+                .merge(oidc_clients_api::routes(state)),
         }
     }
 
@@ -47,7 +49,11 @@ impl Surface {
     fn root_routes(self) -> Router<AppState> {
         match self {
             Self::Relying => Router::new().route("/.well-known/jwks.json", get(keys::jwks)),
-            Self::Subject | Self::Control => Router::new(),
+            Self::Subject => Router::new().route(
+                "/.well-known/openid-configuration",
+                get(oidc_api::discovery),
+            ),
+            Self::Control => Router::new(),
         }
     }
 }

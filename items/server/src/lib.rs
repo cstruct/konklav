@@ -16,6 +16,9 @@ mod import_api;
 mod invites;
 mod issue;
 pub mod keys;
+pub mod oidc;
+mod oidc_api;
+mod oidc_clients_api;
 pub mod pacing;
 mod relying_api;
 pub mod serve;
@@ -54,6 +57,8 @@ pub struct AuthContext {
     pub pacing: pacing::Pacing,
     /// Identity providers browser clients can sign in through.
     pub identity_providers: federation::Providers,
+    /// Conclave's OpenID provider role, when configured.
+    pub oidc: Option<oidc::OpenIdProvider>,
 }
 
 #[derive(Clone, Debug)]
@@ -91,6 +96,7 @@ impl AuthContext {
             secrets: conclave_authn::SecretBox::new([]).expect("an empty key set is valid"),
             pacing: pacing::Pacing::DEFAULT,
             identity_providers: federation::Providers::default(),
+            oidc: None,
         }
     }
 }

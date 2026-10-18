@@ -12,7 +12,9 @@ pub fn kid_for(key: &VerifyingKey) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(key.as_bytes()))
 }
 
-/// One public key in a JWKS document (RFC 8037 OKP key).
+/// One public key in a JWKS document: an RFC 8037 OKP key (Ed25519, for
+/// access tokens), or a P-256 EC key (for ID tokens). Relying systems only
+/// use the Ed25519 keys.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Jwk {
     pub kty: String,
@@ -21,8 +23,12 @@ pub struct Jwk {
     #[serde(rename = "use")]
     pub use_: String,
     pub kid: String,
-    /// The raw public key, base64url without padding.
+    /// The raw public key (OKP) or its x coordinate (EC), base64url without
+    /// padding.
     pub x: String,
+    /// The y coordinate of an EC key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<String>,
 }
 
 impl Jwk {
@@ -35,6 +41,25 @@ impl Jwk {
             use_: "sig".into(),
             kid: kid_for(key),
             x: URL_SAFE_NO_PAD.encode(key.as_bytes()),
+            y: None,
+        }
+    }
+
+    /// A P-256 key for `ES256`, from its raw coordinates. Its `kid` is the
+    /// base64url SHA-256 of the coordinates.
+    #[must_use]
+    pub fn es256(x: &[u8], y: &[u8]) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(x);
+        hasher.update(y);
+        Self {
+            kty: "EC".into(),
+            crv: "P-256".into(),
+            alg: "ES256".into(),
+            use_: "sig".into(),
+            kid: URL_SAFE_NO_PAD.encode(hasher.finalize()),
+            x: URL_SAFE_NO_PAD.encode(x),
+            y: Some(URL_SAFE_NO_PAD.encode(y)),
         }
     }
 

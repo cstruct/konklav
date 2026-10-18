@@ -48,6 +48,7 @@ getrandom = "0.4.3"
 hmac = "0.13.0"
 http-body-util = "0.1.5"
 jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
+p256 = { version = "0.13.2", features = ["pkcs8", "pem"] }
 ordna-core = "0.1.3"
 ordna-source-env = "0.1.3"
 ordna-source-file = "0.1.3"

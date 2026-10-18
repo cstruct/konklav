@@ -1,7 +1,8 @@
 # OIDC and federation
 
-Status: accepted. Phases 1 and 2 (identity providers, claim mapping and
-break-glass) are implemented; later phases are designed only. The rules are in
+Status: accepted. Phases 1 to 3 (identity providers, claim mapping,
+break-glass and the OpenID provider) are implemented; later phases are
+designed only. The rules are in
 [`../spec/federation.md`](../spec/federation.md); this note explains them
 and lists the decisions still open. It replaces the earlier "federation is
 out of scope" position.
@@ -77,30 +78,82 @@ The callback redirects to the return URL with `signed_in=true`,
 ## Conclave as an OpenID provider
 
 The provider role reuses sessions, refresh rotation, access tokens and step
-up. New pieces:
+up. Its endpoints live under `/v1/oauth2/` (versioned like every other
+endpoint), with discovery at `/.well-known/openid-configuration` on the
+subject surface. It is off unless `oidc_provider` is configured:
 
-- **Clients**: a control-plane resource (`PUT /v1/oidc/clients/{id}`).
-- **Login requests**: the state of an `/oauth2/authorize` call while the
-  subject signs in.
-- **Authorization codes**: stored hashed, single-use, about 60 seconds.
-- **ID tokens and ES256 keys**: many OIDC libraries can't verify EdDSA, so
-  each signing key set gains an ES256 key, published in JWKS with its `alg`.
-  Access tokens stay EdDSA, because relying systems verify them through the
-  SDK.
+```styx
+oidc_provider {
+    id_token_key_file "/run/secrets/id-token.pem"
+    login_url "https://login.example/"
+}
+```
+
+New pieces:
+
+- **Clients**: a control-plane resource. `PUT /v1/oidc/clients/{id}`
+  registers or replaces a client (needs `conclave:clients:manage`) with its:
+  - kind (`confidential` or `public`)
+  - redirect URIs (exact match)
+  - scopes (`openid`, `email`, `phone`, `groups`, and `tenant` to allow
+    `tenant:<id>`)
+  - access-token audience
+  - visible groups (exact keys or `prefix*`)
+  - an optional login URL
+  - ID-token algorithm (`ES256` or `EdDSA`)
+  - whether refresh is allowed
+
+  `POST …/secret` issues a confidential client's secret once; Conclave
+  keeps only its SHA-256. `DELETE` disables the client and revokes its
+  sessions, keeping the registration as history.
+- **Login requests** and **authorization codes** are challenges: hashed,
+  single-use, ten minutes and sixty seconds.
+- **Client sessions**: exchanging a code starts a new session for the
+  client. It's a child of the login application's session, with the same
+  subject, credential, tenant and authentication, and it ends with it. It
+  records the client and the granted scopes. Its access tokens carry the
+  client's audience, and its refresh tokens only work at the token endpoint
+  for that client. Conclave's own API refuses its access tokens.
+- **ID tokens and the ES256 key**: many OIDC libraries can't verify EdDSA,
+  so ID tokens default to ES256 with a P-256 key loaded from
+  `id_token_key_file` and published in JWKS next to the Ed25519 keys. The
+  relying SDK ignores it. Access tokens stay EdDSA. Rotating the ES256 key
+  means replacing the file; publishing the next key ahead of a rotation, as
+  the Ed25519 keys allow, is not built yet.
+- **`acr`**: `urn:conclave:acr:1` for sessions with one authentication
+  method and `urn:conclave:acr:2` for two or more (an identity-provider
+  login counts the methods it was credited with). `acr_values` asks for
+  `2`.
 
 ### Login hand-off instead of a hosted page
 
-Conclave has no user interface, and `/oauth2/authorize` doesn't add one:
+Conclave has no user interface, and `/v1/oauth2/authorize` doesn't add one:
 
-1. The client redirects to `/oauth2/authorize`. Conclave validates the
-   client, redirect URI and PKCE, stores a login request, and redirects to
-   the login URL with `login_request=<id>`.
+1. The client redirects to `/v1/oauth2/authorize`, with:
+   - the authorization code response type
+   - PKCE `S256`
+   - optionally `nonce`, `max_age`, `acr_values` and a `tenant:<id>` scope
+
+   Conclave validates the client and redirect URI; until both check out,
+   errors go to the browser rather than to the redirect URI. It then keeps
+   the request as a challenge, sets a cookie binding it to the browser, and
+   redirects to the login URL with `login_request=<id>`.
 2. The login application (a relying system's frontend, or a small
-   operators' login app) signs the subject in through the existing `/v1`
-   API, including MFA, step-up and tenant selection.
+   operators' login app) reads `GET /v1/oauth2/login-requests/{id}`. It
+   signs the subject in through the existing `/v1` API, including MFA,
+   step-up and tenant selection.
 3. It calls `POST /v1/oauth2/login-requests/{id}/accept` with the session's
-   access token. Conclave checks `max_age` and `acr_values` against the
-   session, issues the code, and returns the redirect URL to the client.
+   access token (and the usual browser `Origin` and client header).
+   Conclave checks `max_age`, `acr_values` and the requested tenant against
+   the session, and returns `redirect_to`.
+4. The browser follows it to `/v1/oauth2/authorize/resume`. Conclave
+   checks the cookie, so only the browser that started the request
+   finishes it, then redirects to the client with a code, the client's
+   `state` and `iss`.
+5. The client calls `POST /v1/oauth2/token` with the code, the redirect
+   URI, the PKCE verifier and its credentials (HTTP basic or form; none for
+   public clients). The response holds an access token, an ID token and,
+   if allowed, a refresh token.
 
 Consent screens are left to the login application. First-party clients are
 registered as pre-consented.
@@ -109,14 +162,18 @@ registered as pre-consented.
 
 Conclave holds no profile data, so it can only serve:
 - the subject id
-- login identifiers (email, phone), with whether they were verified
-- groups
+- login identifiers, with whether they were verified:
+  - `email` from email-link (verified), password (not verified) and
+    federated credentials (as the provider reported)
+  - `phone_number` from phone-code credentials (verified)
+- `groups`
 
 `groups` lists the subject's global roles that the client's registration
-lets it see, such as roles named `ops:*` for environments. Richer profile
-claims come from an optional claims hook: a relying-system endpoint that
-Conclave calls with the subject id. That keeps
-`r[platform.repo.relying-agnostic]`.
+lets it see, such as roles named `ops-*` for environments. ID tokens and
+`/v1/oauth2/userinfo` carry the same claims for the granted scopes. Richer
+profile claims come from an optional claims hook, which isn't built yet: a
+relying-system endpoint that Conclave would call with the subject id. That
+keeps `r[platform.repo.relying-agnostic]`.
 
 ## Claim mapping
 
@@ -203,7 +260,7 @@ Losing the upstream mustn't lock operators out of production:
 
 CI and tools acting across environments get a token from the upstream
 (client credentials) and exchange it downstream with the JWT bearer grant
-(`/oauth2/token`, `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`).
+(`/v1/oauth2/token`, `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`).
 The downstream maps the upstream issuer and `sub` to a local service
 principal, so no long-lived secret keys sit in every environment. Token
 exchange (RFC 8693) for acting on behalf of a person is deferred.
@@ -221,12 +278,12 @@ exchange (RFC 8693) for acting on behalf of a person is deferred.
 | Part | Change |
 |---|---|
 | Credentials | New kind `federated` with data `{provider, sub, email?, email_verified?}` |
-| Sessions | `federation` (provider, upstream subject) recorded with the session; per-provider lifetime cap |
+| Sessions | Provider and upstream subject through the federated credential; per-provider lifetime cap; the OIDC client and granted scopes for client sessions |
 | Grants | `managed_by` on memberships and role assignments |
-| Signing keys | A second algorithm (ES256), `alg` in JWKS |
-| Control plane | OIDC clients; break-glass credentials flagged |
+| Signing keys | An ES256 key for ID tokens, in JWKS with its `alg` |
+| Control plane | OIDC clients (`conclave:clients:manage`); break-glass credentials flagged |
 | Subject surface | `/v1/login/oidc/*`, linking, login-request acceptance |
-| New surface paths | `/.well-known/openid-configuration`, `/oauth2/authorize`, `/oauth2/token`, `/oauth2/userinfo`, `/oauth2/revoke`, `/oauth2/logout` |
+| New surface paths | `/.well-known/openid-configuration`, `/v1/oauth2/authorize` (and `/resume`), `/v1/oauth2/login-requests/{id}` (and `/accept`), `/v1/oauth2/token`, `/v1/oauth2/userinfo`; later `/v1/oauth2/revoke`, `/v1/oauth2/logout` |
 | Feed | `break_glass.used`, and `subject.changed` for peering |
 
 ## Decisions
@@ -253,8 +310,8 @@ Proposed defaults, to confirm before implementation:
 2. **Claim mapping and break-glass** (done): rules, managed grants,
    provisioning policy and verified-email linking, `break_glass.used`.
    Operator federation works from here.
-3. **OpenID provider**: discovery, clients, login hand-off, codes, ID tokens,
-   ES256, userinfo with groups, refresh.
+3. **OpenID provider** (done): discovery, clients, login hand-off, codes,
+   ID tokens, ES256, userinfo with groups, refresh.
 4. **Provider extras**: client credentials, RP-initiated and back-channel
    logout, revocation.
 5. **Peering and workloads**: following the upstream feed, key pinning, the

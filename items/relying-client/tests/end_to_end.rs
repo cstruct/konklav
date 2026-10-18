@@ -59,6 +59,7 @@ async fn server() -> Server {
             secrets: conclave_authn::SecretBox::new([]).unwrap(),
             pacing: conclave_server::pacing::Pacing::NONE,
             identity_providers: conclave_server::federation::Providers::default(),
+            oidc: None,
         }),
         feed: Arc::new(FeedHub::new(Duration::from_millis(100))),
     };

@@ -473,7 +473,10 @@ async fn login_secret_key(
 
 /// Ends `session` if its subject or credential is no longer usable.
 // r[impl session.refresh.recompute]
-async fn still_valid(conn: &mut Connection, session: &Session) -> Result<bool, ApiError> {
+pub(crate) async fn still_valid(
+    conn: &mut Connection,
+    session: &Session,
+) -> Result<bool, ApiError> {
     let subject = subjects::get(conn, session.subject_id).await?;
     let credential = credentials::get(conn, session.credential_id).await?;
     if subject.state == SubjectState::Active && credential.is_active() {
@@ -485,6 +488,46 @@ async fn still_valid(conn: &mut Connection, session: &Session) -> Result<bool, A
     };
     sessions::revoke(conn, &filter, None, "no_longer_valid").await?;
     Ok(false)
+}
+
+/// Rotates a refresh token, checking that its session is still usable and,
+/// when `client` is given, that it belongs to that OIDC client.
+pub(crate) async fn rotate(
+    conn: &mut Connection,
+    presented: &str,
+    client: Option<&str>,
+) -> Result<Started, ApiError> {
+    let presented = RefreshToken::parse(presented).map_err(|_| session_ended())?;
+    let current = sessions::get(conn, presented.session())
+        .await
+        .map_err(|_| session_ended())?;
+    if current.stage == Stage::Partial
+        || current.oidc_client_id.as_deref() != client
+        || !still_valid(conn, &current).await?
+    {
+        return Err(session_ended());
+    }
+    let next = RefreshToken::generate(presented.session());
+    let rotation = sessions::rotate_refresh(
+        conn,
+        presented.session(),
+        &presented.hash(),
+        &next.hash(),
+        Utc::now(),
+    )
+    .await?;
+    match rotation {
+        Rotation::Rotated(session, cursor) => Ok(Started {
+            session,
+            refresh: next,
+            cursor,
+        }),
+        Rotation::Reused(session, _) => {
+            tracing::warn!(session = %session.id, "refresh token reused; session revoked");
+            Err(session_ended())
+        }
+        Rotation::Ended(_) | Rotation::Invalid => Err(session_ended()),
+    }
 }
 
 /// `POST /v1/refresh`: native clients send `refresh_token` in the body;
@@ -504,33 +547,12 @@ async fn refresh(
             (token, Some(browser))
         }
     };
-    let presented = RefreshToken::parse(&presented).map_err(|_| session_ended())?;
-
     let mut conn = state.pool.get().await?;
-    let current = sessions::get(&mut conn, presented.session())
-        .await
-        .map_err(|_| session_ended())?;
-    if current.stage == Stage::Partial || !still_valid(&mut conn, &current).await? {
-        return Err(session_ended());
-    }
-
-    let next = RefreshToken::generate(presented.session());
-    let rotation = sessions::rotate_refresh(
-        &mut conn,
-        presented.session(),
-        &presented.hash(),
-        &next.hash(),
-        Utc::now(),
-    )
-    .await?;
-    let (session, cursor) = match rotation {
-        Rotation::Rotated(session, cursor) => (session, cursor),
-        Rotation::Reused(session, _) => {
-            tracing::warn!(session = %session.id, "refresh token reused; session revoked");
-            return Err(session_ended());
-        }
-        Rotation::Ended(_) | Rotation::Invalid => return Err(session_ended()),
-    };
+    let Started {
+        session,
+        refresh: next,
+        cursor,
+    } = rotate(&mut conn, &presented, None).await?;
     let token = issue::access_token(&mut conn, &state.auth, &session).await?;
     let now = Utc::now();
     let (refresh_token, cookies) = match &browser {
@@ -581,6 +603,17 @@ pub(crate) async fn verify_access_token(
     conn: &mut Connection,
     token: &str,
 ) -> Result<(AccessClaims, Session), ApiError> {
+    verify_access_token_for(state, conn, token, &state.auth.audience).await
+}
+
+/// [`verify_access_token`] for tokens with another audience, such as those
+/// issued to an OIDC client.
+pub(crate) async fn verify_access_token_for(
+    state: &AppState,
+    conn: &mut Connection,
+    token: &str,
+    audience: &str,
+) -> Result<(AccessClaims, Session), ApiError> {
     let unauthenticated = || {
         ApiError::new(
             ErrorCode::Unauthenticated,
@@ -591,7 +624,7 @@ pub(crate) async fn verify_access_token(
     let key = keys::verifying_key(conn, &kid, state.auth.access_ttl).await?;
     let options = VerifyOptions {
         issuer: &state.auth.issuer,
-        audience: &state.auth.audience,
+        audience,
         now: Utc::now().timestamp(),
         leeway: 30,
     };

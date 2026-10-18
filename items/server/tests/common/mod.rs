@@ -70,6 +70,7 @@ pub fn auth_context(signer: Signer) -> AuthContext {
         // Tests that are about pacing set their own.
         pacing: conclave_server::pacing::Pacing::NONE,
         identity_providers: conclave_server::federation::Providers::default(),
+        oidc: None,
     }
 }
 
@@ -92,6 +93,69 @@ impl TestApp {
             db: app.db,
             state,
             router,
+        }
+    }
+
+    /// An app that is also an OpenID provider.
+    pub async fn with_openid_provider(provider: conclave_server::oidc::OpenIdProvider) -> Self {
+        let app = Self::with_key(1).await;
+        let mut auth = auth_context(Signer::new(SigningKey::from_bytes(&[1; 32])));
+        auth.oidc = Some(provider);
+        let state = AppState {
+            auth: Arc::new(auth),
+            ..app.state.clone()
+        };
+        let router = surface::router(&Surface::ALL, state.clone());
+        Self {
+            db: app.db,
+            state,
+            router,
+        }
+    }
+
+    /// Sends an `application/x-www-form-urlencoded` body.
+    pub async fn send_form(
+        &self,
+        uri: &str,
+        headers: &[(&str, &str)],
+        form: &[(&str, &str)],
+    ) -> Reply {
+        let body = form
+            .iter()
+            .map(|(k, v)| {
+                format!(
+                    "{}={}",
+                    percent_encoding::utf8_percent_encode(k, percent_encoding::NON_ALPHANUMERIC),
+                    percent_encoding::utf8_percent_encode(v, percent_encoding::NON_ALPHANUMERIC)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        let mut request = Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header("content-type", "application/x-www-form-urlencoded");
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let response = self
+            .router
+            .clone()
+            .oneshot(request.body(Body::from(body)).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body = if bytes.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&bytes).unwrap()
+        };
+        Reply {
+            status,
+            headers,
+            body,
         }
     }
 

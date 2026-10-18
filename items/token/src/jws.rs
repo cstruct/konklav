@@ -43,6 +43,16 @@ impl Signer {
     /// Never in practice: the header and claims always serialize.
     #[must_use]
     pub fn sign(&self, claims: &AccessClaims) -> String {
+        self.sign_json(claims)
+    }
+
+    /// Signs any claims, such as an OpenID Connect ID token.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the header and claims always serialize.
+    #[must_use]
+    pub fn sign_json<T: serde::Serialize>(&self, claims: &T) -> String {
         let header = Header {
             alg: "EdDSA".into(),
             typ: "JWT".into(),

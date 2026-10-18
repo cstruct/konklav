@@ -6,7 +6,7 @@ use chrono::Utc;
 use conclave_store::Connection;
 use conclave_store::catalog::{self, FactTarget};
 use conclave_store::sessions::{self, Session, Stage};
-use conclave_store::{memberships, signing_keys, tenants};
+use conclave_store::{memberships, oidc_clients, signing_keys, tenants};
 use conclave_token::{AccessClaims, Actor, TokenKind};
 use serde::Serialize;
 
@@ -72,9 +72,14 @@ pub async fn access_token(
         Stage::Identity => TokenKind::Identity,
         Stage::Tenant => TokenKind::Tenant,
     };
+    // r[impl oidc.provider.tokens]
+    let aud = match &session.oidc_client_id {
+        Some(client) => oidc_clients::get(conn, client).await?.audience.clone(),
+        None => auth.audience.clone(),
+    };
     let claims = AccessClaims {
         iss: auth.issuer.clone(),
-        aud: auth.audience.clone(),
+        aud,
         sub: session.subject_id,
         jti: uuid::Uuid::now_v7().to_string(),
         iat: now.timestamp(),
