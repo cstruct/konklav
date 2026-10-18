@@ -844,7 +844,7 @@ async fn client_credentials_grant(
                     credential_id: credential.id,
                     stage: Stage::Identity,
                     client_kind: SessionClient::Native,
-                    amr: vec!["swk".to_owned()],
+                    amr: vec!["sk".to_owned()],
                     auth_time: now,
                     flags: Vec::new(),
                     impersonator_subject_id: None,

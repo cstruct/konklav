@@ -140,7 +140,8 @@ Terms are introduced in dependency order: each definition only uses terms define
   - A credential declares how many MFA factors it requires before login completes.
 
 - `authentication method`
-  - The RFC 8176 `amr` value recording how a subject proved who it is, such as `pwd`, `otp`, `sms`, or `hwk`.
+  - The `amr` value recording how a subject proved who it is. RFC 8176 values are used where one fits, such as `pwd`, `otp`, `sms`, or `hwk`.
+  - Konklav-specific values cover methods RFC 8176 has no fitting value for: `eml` (email code or magic link), `fed` (see below) and `sk` (a service principal's secret key or OIDC client secret). `swk` is reserved for software-held proof-of-possession keys and never means a shared secret.
   - `fed` records a login through an identity provider; the methods the provider reports are credited only as its configuration maps them.
   - A session records every method used, and when the most recent authentication happened (`auth_time`).
 

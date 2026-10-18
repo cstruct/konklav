@@ -57,8 +57,10 @@ the client can offer one to complete login with. It MUST NOT see inactive
 factors or enroll, activate or remove any.
 
 r[authn.mfa.amr]
-Every session MUST record the authentication methods used, as RFC 8176
-`amr` values, together with the time of the last authentication.
+Every session MUST record the authentication methods used, as `amr`
+values, together with the time of the last authentication. A method MUST use
+its RFC 8176 value where one fits, and otherwise a Konklav-specific value
+listed in the nomenclature.
 
 r[authn.step-up.demand]
 When an operation requires authentication methods or recency that the

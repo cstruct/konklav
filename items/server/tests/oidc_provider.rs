@@ -597,7 +597,7 @@ async fn bound_clients_get_service_tokens_with_private_key_jwt() {
             .unwrap();
     assert_eq!(claims.sub.to_string(), principal.to_string());
     assert_eq!(claims.aud, "robot-api");
-    assert_eq!(claims.amr, ["swk"]);
+    assert_eq!(claims.amr, ["sk"]);
 
     let replayed = grant(assertion("robot", "jti-1")).await;
     assert_eq!(

@@ -334,7 +334,7 @@ async fn service_principals_log_in_with_either_secret_key_slot() {
 
     let with_a = login(old_a.clone()).await;
     assert_eq!(with_a.status, StatusCode::OK, "{:?}", with_a.body);
-    assert_eq!(app.verify(&token(&with_a)).await.amr, vec!["swk"]);
+    assert_eq!(app.verify(&token(&with_a)).await.amr, vec!["sk"]);
     assert_eq!(login(b.clone()).await.status, StatusCode::OK);
 
     // Rotating a replaces only a: b keeps working throughout.

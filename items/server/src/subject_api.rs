@@ -463,7 +463,7 @@ async fn login_secret_key(
         &state,
         &mut conn,
         &credential,
-        "swk",
+        "sk",
         Client::Native,
         None,
         &[],
