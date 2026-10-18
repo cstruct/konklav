@@ -216,7 +216,7 @@ fn Roles(tenant: RwSignal<String>) -> impl IntoView {
             <button type="submit">"Show roles"</button>
         </form>
         {move || (shown.get() == "root").then(|| view! {
-            <p class="muted">"Roles of the root tenant are global roles; they're assigned to subjects directly, and only they can grant " <code>"konklav:"</code> " capabilities."</p>
+            <p class="muted">"Roles of the root tenant are global roles; they're assigned to subjects directly, and only they can grant " <code>"konklav:"</code> " capabilities. Roles whose keys start with " <code>"konklav."</code> " are built in: Konklav defines them, and they can be assigned but not changed."</p>
         })}
         {loaded(roles, move |roles: Vec<Role>| {
             if roles.is_empty() {
@@ -243,11 +243,18 @@ fn Roles(tenant: RwSignal<String>) -> impl IntoView {
                                     <td>{policy_summary(&role.policies)}</td>
                                     <td>{timestamp(&role.updated_at)}</td>
                                     <td class="actions">
-                                        <button class="small secondary" on:click=move |_| {
-                                            key.set(edit_key.clone());
-                                            body.set(edit_body.clone());
-                                        }>"Edit"</button>
-                                        <button class="small danger" on:click=move |_| delete(delete_key.clone())>"Delete"</button>
+                                        {if role.builtin {
+                                            view! { <span class="muted">"built in"</span> }.into_any()
+                                        } else {
+                                            view! {
+                                                <button class="small secondary" on:click=move |_| {
+                                                    key.set(edit_key.clone());
+                                                    body.set(edit_body.clone());
+                                                }>"Edit"</button>
+                                                <button class="small danger" on:click=move |_| delete(delete_key.clone())>"Delete"</button>
+                                            }
+                                            .into_any()
+                                        }}
                                     </td>
                                 </tr>
                             }

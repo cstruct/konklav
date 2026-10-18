@@ -184,6 +184,7 @@ diesel::table! {
         metadata -> Jsonb,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
+        builtin -> Bool,
     }
 }
 

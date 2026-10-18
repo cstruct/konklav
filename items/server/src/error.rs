@@ -121,6 +121,7 @@ impl From<StoreError> for ApiError {
         match error {
             StoreError::NotFound => Self::new(ErrorCode::NotFound, "not found"),
             StoreError::Conflict(message) => Self::new(ErrorCode::Conflict, message),
+            StoreError::Reserved(message) => Self::new(ErrorCode::InvalidRequest, message),
             StoreError::Database(error) => Self::internal(error),
         }
     }

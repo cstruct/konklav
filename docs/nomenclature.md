@@ -65,6 +65,7 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `operator`
   - A human subject operating the Konklav control plane.
   - Examples: platform admin, support engineer, developer operating the system.
+  - Operators usually get their control-plane capabilities from a built-in role (see Authorization).
 
 - `service principal`
   - A subject of kind `service`, representing software rather than a person.
@@ -269,6 +270,14 @@ Terms are introduced in dependency order: each definition only uses terms define
   - A built-in action in the `konklav:` namespace that governs Konklav's own control-plane operations.
   - Examples: creating tenants, revoking sessions, impersonating subjects.
   - Capabilities can only be granted through global assignments.
+
+- `built-in role`
+  - A global role that Konklav defines and ships, granting a fixed set of control-plane capabilities.
+  - Its key carries the reserved `konklav.` prefix. Built-in roles can be assigned like any global role, but they cannot be created, changed, or deleted through the API.
+  - Examples: `konklav.admin`, `konklav.support`, `konklav.delivery`.
+
+- `reserved role key`
+  - A role key that starts with `konklav.`. Only built-in roles may use one, in any tenant.
 
 - `compilation`
   - Turning assignments, roles, templates, policies, and action groups into entitlement sets.

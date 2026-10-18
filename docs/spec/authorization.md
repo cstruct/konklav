@@ -50,6 +50,23 @@ r[authz.role.instantiate]
 Creating a tenant MUST be able to instantiate roles from a list of templates
 atomically with the tenant itself.
 
+r[authz.role.builtin]
+Konklav MUST ship built-in global roles whose policies only it defines.
+They MUST be assignable like any other global role, and the control plane
+MUST NOT create, change or delete them.
+
+r[authz.role.reserved-key]
+Role keys starting with `konklav.` MUST be reserved for built-in roles in
+every tenant. Writing a role with a reserved key MUST fail as an invalid
+request.
+
+r[authz.role.builtin.set]
+The built-in roles MUST be exactly these:
+
+- `konklav.admin`, which allows `konklav:control:all`. It MUST NOT grant
+  impersonation or reading delivery requests.
+- `konklav.delivery`, which allows `konklav:delivery:read`.
+
 r[authz.policy.shape]
 A policy MUST consist of an action or action group, an effect (`allow` or
 `deny`) and a scope-bound flag.

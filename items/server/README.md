@@ -52,7 +52,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - an operator view of a subject's entitlements, with explanations (`/v1/subjects/{id}/explain`)
   - listings of subjects (by kind or login identifier), tenants (by parent) and a tenant's memberships
 
-  Each area requires a `konklav:` capability, held through a global role (`konklav:control:all` covers everything). An optional bootstrap token from the secrets file is also accepted; use it to create the first operator, then remove it.
+  Each area requires a `konklav:` capability, held through a global role (`konklav:control:all` covers everything). Two built-in global roles ship with every instance and can be assigned but not changed: `konklav.admin` (`konklav:control:all`) and `konklav.delivery` (`konklav:delivery:read`). Role keys starting with `konklav.` are reserved for them. An optional bootstrap token from the secrets file is also accepted. Use it to create the first operator (a human subject with a password credential and the `konklav.admin` global role), then remove it.
 
 ## Public interface
 

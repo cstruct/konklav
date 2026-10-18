@@ -23,6 +23,8 @@ pub struct Role {
     pub metadata: serde_json::Value,
     /// The role's own policies, which override its template's.
     pub policies: Vec<Policy>,
+    /// Defined by Konklav, under a reserved key; it can't be written.
+    pub builtin: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -34,9 +36,40 @@ type Row = (
     Option<String>,
     i32,
     serde_json::Value,
+    bool,
     DateTime<Utc>,
     DateTime<Utc>,
 );
+
+/// The key prefix reserved for built-in roles, in every tenant.
+pub const RESERVED_PREFIX: &str = "konklav.";
+
+/// The built-in roles of the root tenant and the capability each allows.
+/// The `add_builtin_roles` migration seeds them; changing one takes a new
+/// migration.
+// r[impl authz.role.builtin.set]
+pub const BUILTIN: &[(&str, &str)] = &[
+    ("konklav.admin", "konklav:control:all"),
+    ("konklav.delivery", "konklav:delivery:read"),
+];
+
+/// Whether `key` is reserved for a built-in role.
+#[must_use]
+pub fn is_reserved(key: &str) -> bool {
+    key.starts_with(RESERVED_PREFIX)
+}
+
+// r[impl authz.role.builtin]
+// r[impl authz.role.reserved-key]
+fn writable(key: &str) -> StoreResult<()> {
+    if is_reserved(key) {
+        Err(StoreError::Reserved(format!(
+            "role keys starting with `{RESERVED_PREFIX}` are reserved for built-in roles"
+        )))
+    } else {
+        Ok(())
+    }
+}
 
 pub(crate) async fn policies_of(
     conn: &mut AsyncPgConnection,
@@ -80,6 +113,7 @@ async fn load(
             template::key.nullable(),
             role::priority,
             role::metadata,
+            role::builtin,
             role::created_at,
             role::updated_at,
         ))
@@ -91,7 +125,17 @@ async fn load(
     Ok(rows
         .into_iter()
         .map(
-            |(id, tenant_id, key, template, priority, metadata, created_at, updated_at)| Role {
+            |(
+                id,
+                tenant_id,
+                key,
+                template,
+                priority,
+                metadata,
+                builtin,
+                created_at,
+                updated_at,
+            )| Role {
                 id,
                 tenant_id: tenant_id.into(),
                 key,
@@ -103,6 +147,7 @@ async fn load(
                     .filter(|(role, _)| *role == id)
                     .map(|(_, policy)| policy.clone())
                     .collect(),
+                builtin,
                 created_at,
                 updated_at,
             },
@@ -156,6 +201,7 @@ pub async fn put(
     key: &str,
     definition: &RoleDefinition,
 ) -> StoreResult<Role> {
+    writable(key)?;
     conn.transaction::<_, StoreError, _>(async |conn| {
         let template_id = match &definition.template {
             Some(template_key) => Some(
@@ -239,6 +285,7 @@ pub async fn delete(
     tenant: TenantId,
     key: &str,
 ) -> StoreResult<bool> {
+    writable(key)?;
     let deleted = diesel::delete(
         role::table
             .filter(role::tenant_id.eq(tenant.as_uuid()))

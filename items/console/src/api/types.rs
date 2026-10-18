@@ -220,6 +220,8 @@ pub struct Role {
     pub priority: i32,
     pub metadata: Value,
     pub policies: Value,
+    #[serde(default)]
+    pub builtin: bool,
     pub updated_at: String,
 }
 

@@ -24,8 +24,9 @@ token.
     entitlements
   - tenants (create, facts, state, children) and memberships (create,
     facts, end, role assignments)
-  - roles per tenant (the root tenant's are global), templates, the
-    catalog, and entitlement explanations
+  - roles per tenant (the root tenant's are global, and built-in
+    `konklav.` roles are shown read-only), templates, the catalog, and
+    entitlement explanations
   - sessions, revoked one at a time or by filter
   - invites
   - OIDC clients: register or replace, issue a new secret, disable

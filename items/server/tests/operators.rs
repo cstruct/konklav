@@ -329,3 +329,153 @@ async fn operators_read_their_own_capabilities() {
     let anonymous = app.send(Method::GET, "/v1/capabilities", &[], None).await;
     assert_eq!(anonymous.code(), "UNAUTHENTICATED");
 }
+
+/// A human operator assigned the built-in role `role`, and their access
+/// token.
+async fn builtin_operator(app: &TestApp, email: &str, role: &str) -> (String, String) {
+    let subject = app.human(email, PASSWORD).await;
+    let assigned = app
+        .control(
+            Method::POST,
+            &format!("/v1/subjects/{subject}/global-assignments"),
+            Some(json!({"role": role})),
+        )
+        .await;
+    assert_eq!(assigned.status, StatusCode::CREATED, "{:?}", assigned.body);
+    let token = app.login(email, PASSWORD).await.body["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    (subject, token)
+}
+
+// r[verify authz.role.builtin]
+// r[verify authz.role.builtin.set]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_builtin_admin_role_runs_the_control_plane_but_not_impersonation() {
+    let app = TestApp::new().await;
+    let roles = app
+        .control(Method::GET, "/v1/tenants/root/roles", None)
+        .await;
+    let builtin: Vec<_> = roles
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|role| role["builtin"] == json!(true))
+        .map(|role| role["key"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(builtin, ["konklav.admin", "konklav.delivery"]);
+
+    let (admin, token) = builtin_operator(&app, "admin@example.com", "konklav.admin").await;
+    for uri in [
+        "/v1/sessions",
+        "/v1/signing-keys",
+        "/v1/tenants",
+        "/v1/catalog",
+    ] {
+        let reply = as_operator(&app, &token, Method::GET, uri, None).await;
+        assert_eq!(reply.status, StatusCode::OK, "{uri}: {:?}", reply.body);
+    }
+    let invite = as_operator(
+        &app,
+        &token,
+        Method::POST,
+        "/v1/invites",
+        Some(json!({"email": "new@example.com"})),
+    )
+    .await;
+    assert_eq!(invite.status, StatusCode::CREATED, "{:?}", invite.body);
+
+    let target = app.human("someone@example.com", PASSWORD).await;
+    let impersonating = as_operator(
+        &app,
+        &token,
+        Method::POST,
+        "/v1/impersonate",
+        Some(json!({"subject": target})),
+    )
+    .await;
+    assert_eq!(impersonating.code(), "FORBIDDEN");
+    let capabilities = as_operator(&app, &token, Method::GET, "/v1/capabilities", None).await;
+    let held = capabilities.body["capabilities"].to_string();
+    assert!(!held.contains("konklav:delivery:read"), "{held}");
+
+    let explained = app
+        .control(
+            Method::GET,
+            &format!("/v1/subjects/{admin}/explain?action=konklav:control:all"),
+            None,
+        )
+        .await;
+    assert_eq!(explained.status, StatusCode::OK, "{:?}", explained.body);
+    assert!(
+        explained.body["contributions"][0]["assignment"]
+            .as_str()
+            .unwrap()
+            .starts_with("konklav.admin (")
+    );
+}
+
+// r[verify authz.role.builtin]
+// r[verify authz.role.reserved-key]
+#[tokio::test(flavor = "multi_thread")]
+async fn builtin_roles_and_reserved_keys_cannot_be_written() {
+    let app = TestApp::new().await;
+    let before = app
+        .control(Method::GET, "/v1/tenants/root/roles/konklav.admin", None)
+        .await;
+    assert_eq!(before.status, StatusCode::OK, "{:?}", before.body);
+
+    let replaced = app
+        .control(
+            Method::PUT,
+            "/v1/tenants/root/roles/konklav.admin",
+            Some(json!({"policies": []})),
+        )
+        .await;
+    assert_eq!(replaced.code(), "INVALID_REQUEST");
+    let deleted = app
+        .control(Method::DELETE, "/v1/tenants/root/roles/konklav.admin", None)
+        .await;
+    assert_eq!(deleted.code(), "INVALID_REQUEST");
+    let created = app
+        .control(
+            Method::PUT,
+            "/v1/tenants/root/roles/konklav.custom",
+            Some(json!({"policies": []})),
+        )
+        .await;
+    assert_eq!(created.code(), "INVALID_REQUEST");
+
+    let tenant = uuid::Uuid::now_v7();
+    app.control(
+        Method::PUT,
+        &format!("/v1/tenants/{tenant}"),
+        Some(json!({})),
+    )
+    .await;
+    let local = app
+        .control(
+            Method::PUT,
+            &format!("/v1/tenants/{tenant}/roles/konklav.local"),
+            Some(json!({"policies": []})),
+        )
+        .await;
+    assert_eq!(local.code(), "INVALID_REQUEST");
+
+    // Replacing the catalog leaves built-in roles granting.
+    app.control(
+        Method::PUT,
+        "/v1/catalog",
+        Some(json!({"actions": [{"name": "x:y"}]})),
+    )
+    .await;
+    let after = app
+        .control(Method::GET, "/v1/tenants/root/roles/konklav.admin", None)
+        .await;
+    assert_eq!(after.body, before.body);
+    let (_, token) = builtin_operator(&app, "admin@example.com", "konklav.admin").await;
+    let sessions = as_operator(&app, &token, Method::GET, "/v1/sessions", None).await;
+    assert_eq!(sessions.status, StatusCode::OK, "{:?}", sessions.body);
+}

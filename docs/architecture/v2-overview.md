@@ -67,6 +67,12 @@ capabilities that operators hold through global roles:
 - `konklav:subject:impersonate` and `konklav:delivery:read` for the
   matching flows
 
+Konklav also ships built-in roles in the root tenant, under the reserved
+`konklav.` key prefix. `konklav.admin` grants `konklav:control:all`, and
+`konklav.delivery` grants `konklav:delivery:read` for the service principal
+that delivers challenges. Built-in roles can be assigned, but they can't be
+edited or deleted.
+
 An optional bootstrap token from the secrets file is accepted for
 everything. It exists to create the first operator and should then be
 removed.

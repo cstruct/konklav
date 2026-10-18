@@ -485,3 +485,45 @@ async fn writes_invalidate_entitlements_through_triggers() {
         "a transaction that wrote nothing has no cursor"
     );
 }
+
+// r[verify authz.role.builtin.set]
+// r[verify authz.role.reserved-key]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_migrations_seed_exactly_the_builtin_roles() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let seeded: Vec<(String, Vec<Policy>)> = roles::list(&mut conn, ROOT)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|role| role.builtin)
+        .map(|role| (role.key, role.policies))
+        .collect();
+    let expected: Vec<(String, Vec<Policy>)> = roles::BUILTIN
+        .iter()
+        .map(|(key, capability)| {
+            (
+                (*key).to_owned(),
+                vec![Policy {
+                    action: (*capability).to_owned(),
+                    effect: Effect::Allow,
+                    scope_bound: false,
+                }],
+            )
+        })
+        .collect();
+    assert_eq!(seeded, expected);
+
+    let refused = roles::put(&mut conn, ROOT, "konklav.admin", &RoleDefinition::default()).await;
+    assert!(matches!(refused, Err(StoreError::Reserved(_))));
+    let refused = roles::delete(&mut conn, ROOT, "konklav.delivery").await;
+    assert!(matches!(refused, Err(StoreError::Reserved(_))));
+    assert_eq!(
+        roles::get(&mut conn, ROOT, "konklav.admin")
+            .await
+            .unwrap()
+            .policies
+            .len(),
+        1
+    );
+}

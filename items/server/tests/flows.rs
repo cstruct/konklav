@@ -13,20 +13,15 @@ const PASSWORD: &str = "correct horse battery";
 
 /// A service principal allowed to read delivery requests, like a relying
 /// system's mailer.
+// r[verify authz.role.builtin.set]
 async fn mailer(app: &TestApp) -> String {
-    app.control(
-        Method::PUT,
-        "/v1/tenants/root/roles/delivery",
-        Some(json!({"policies": [{"action": "konklav:delivery:read", "effect": "allow"}]})),
-    )
-    .await;
     let token = app.service_token().await;
     let claims = app.verify(&token).await;
     let assigned = app
         .control(
             Method::POST,
             &format!("/v1/subjects/{}/global-assignments", claims.sub),
-            Some(json!({"role": "delivery"})),
+            Some(json!({"role": "konklav.delivery"})),
         )
         .await;
     assert_eq!(assigned.status, StatusCode::CREATED, "{:?}", assigned.body);

@@ -250,9 +250,9 @@ The client secret goes in the secrets file, as
   An existing membership is reused rather than taken over.
 - A rule naming a role or tenant that doesn't exist is skipped with a
   warning, so a stale rule doesn't block logins.
-- Mapping to capabilities goes through roles (for example `operator`
-  granting `konklav:control:all`), so the catalog still says what each
-  capability means.
+- Mapping to capabilities goes through roles, so the catalog still says
+  what each capability means. The built-in `konklav.admin` role, which
+  grants `konklav:control:all`, is the usual target for an operators group.
 
 ## Deprovisioning
 

@@ -39,6 +39,9 @@ pub enum StoreError {
     /// different content or an identifier that is already taken.
     #[error("conflict: {0}")]
     Conflict(String),
+    /// A write to something only Konklav defines, such as a built-in role.
+    #[error("reserved: {0}")]
+    Reserved(String),
     #[error("database error: {0}")]
     Database(#[from] diesel::result::Error),
 }
