@@ -26,6 +26,13 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - browser clients get the refresh token as an `HttpOnly` cookie and must pass Origin and `X-Konklav-Client` checks
 - Subject-facing `login/tenant` moves a session into a tenant where the subject has an active membership. The new token carries `tid`, `mid` and portable facts. Logins may request restrictive session flags that the catalog marks as requestable.
 - `GET /v1/capabilities`: the `konklav:` capabilities the caller holds, for operator tools such as the console.
+- Passkeys (`src/passkeys.rs` wraps `webauthn-rs`; routes in `src/passkeys_api.rs`):
+  - registering from a recently authenticated full session (`passkeys/registration/options`, then `passkeys/registration`)
+  - usernameless login (`login/passkey/options`, then `login/passkey`), recording `swk` and `mfa`
+  - step-up (`step-up/passkey/options`, then `POST /v1/step-up` with `ceremony` and `passkey`)
+  - listing and removing the caller's own passkeys (`GET /v1/passkeys`, `DELETE /v1/passkeys/{id}`)
+
+  Each ceremony's `webauthn-rs` state lives in a single-use challenge until the second call; the stored key is versioned opaque JSON in the credential's data.
 - MFA (TOTP and email-code factors; partial sessions can list their active factors, and browsers get their cookie when MFA completes), step-up, magic-link and phone-code login, password reset and change, invite redemption, and impersonation. These emit `delivery.requested` for anything a relying system must send.
 - Relying surface, for service principals only:
   - `/.well-known/jwks.json`
@@ -54,7 +61,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
 - Configuration: the contexts in `src/config.rs`:
   - `listen`, `database`, `log`
   - `tokens`: issuer, audience, lifetimes and signing-key PEM files
-  - `browser`: allowed origins, cookie security
+  - `browser`: allowed origins, cookie security, and the `passkeys` section (relying party ID and name, origins)
   - `control`: the bootstrap token (secret) The development config is in `config/dev.styx` and `config/dev.secrets.styx`.
 - HTTP: health endpoints at the root; versioned endpoints under `/v1`. Each surface's routes are in `src/surface.rs`.
 
@@ -66,6 +73,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
 | `konklav-authn` | Password and secret hashing, refresh tokens |
 | `konklav-token` | Signing access tokens, JWKS |
 | `konklav-authz` | Compiling entitlement sets and evaluating checks |
+| `webauthn-rs` | Passkey ceremonies. It links OpenSSL, so it stays in this crate: `konklav-authn` is a dependency of relying systems |
 | `konklav-test-support` | Isolated databases in tests |
 | PostgreSQL | Must be reachable for readiness and for every stateful endpoint |
 
@@ -93,12 +101,14 @@ mise run test
     - secret-key slots
     - credential replacement, subject disabling, MFA-required partial tokens
     - session administration, signing-key revocation
+    - passkey registration, login, step-up and removal, with a software authenticator (`tests/passkeys.rs`)
 - Indirect coverage: none yet.
 
 ## Behavior notes
 
 - Surfaces on port `0` always get a listener of their own, because the OS picks a distinct port for each.
 - Key files in `tokens` are resolved relative to the working directory.
+- Building needs OpenSSL headers (for example `brew install openssl@3`), for `webauthn-rs`.
 - `serve` doesn't apply migrations. It warns about pending ones, and readiness fails until `migrate` runs.
 
 ## Traceability and related docs

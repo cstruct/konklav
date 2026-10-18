@@ -1,5 +1,5 @@
-//! Signing in: the operator's own password, MFA if their credential needs
-//! it, or the bootstrap token on a first run.
+//! Signing in: the operator's own password (and MFA if their credential
+//! needs it), a passkey, or the bootstrap token on a first run.
 
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
@@ -8,12 +8,14 @@ use leptos::task::spawn_local;
 use super::common::{Field, Problem, invalid_input};
 use super::console::{send, use_console};
 use crate::api::endpoints;
-use crate::api::types::{Factor, TokenResponse};
+use crate::api::types::{Ceremony, Factor, TokenResponse};
 use crate::operator::{AfterLogin, Operator, after_login};
+use crate::webauthn;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Password,
+    Passkey,
     Bootstrap,
 }
 
@@ -27,12 +29,16 @@ pub fn SignIn() -> impl IntoView {
                 <button class:active=move || mode.get() == Mode::Password on:click=move |_| mode.set(Mode::Password)>
                     "Operator sign-in"
                 </button>
+                <button class:active=move || mode.get() == Mode::Passkey on:click=move |_| mode.set(Mode::Passkey)>
+                    "Passkey"
+                </button>
                 <button class:active=move || mode.get() == Mode::Bootstrap on:click=move |_| mode.set(Mode::Bootstrap)>
                     "Bootstrap token"
                 </button>
             </div>
             {move || match mode.get() {
                 Mode::Password => view! { <PasswordSignIn/> }.into_any(),
+                Mode::Passkey => view! { <PasskeySignIn/> }.into_any(),
                 Mode::Bootstrap => view! { <BootstrapSignIn/> }.into_any(),
             }}
         </main>
@@ -100,6 +106,39 @@ fn PasswordSignIn() -> impl IntoView {
             </form>
         }
         .into_any(),
+    }
+}
+
+#[component]
+fn PasskeySignIn() -> impl IntoView {
+    let console = use_console();
+    let error = RwSignal::new(None);
+    let busy = RwSignal::new(false);
+    let submit = move |event: SubmitEvent| {
+        event.prevent_default();
+        error.set(None);
+        busy.set(true);
+        spawn_local(async move {
+            let result = async {
+                let started: Ceremony = send(&endpoints::passkey_login_options(), None).await?;
+                let credential = webauthn::sign(&started.options).await?;
+                let login = endpoints::login_passkey(&started.ceremony, &credential);
+                let token: TokenResponse = send(&login, None).await?;
+                console.complete_sign_in(token).await
+            }
+            .await;
+            if let Err(failure) = result {
+                error.set(Some(failure));
+            }
+            busy.set(false);
+        });
+    };
+    view! {
+        <form class="card" on:submit=submit>
+            <p>"Sign in with a passkey saved on this device or in your password manager."</p>
+            <Problem error/>
+            <button type="submit" disabled=move || busy.get()>"Sign in with a passkey"</button>
+        </form>
     }
 }
 

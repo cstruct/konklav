@@ -96,7 +96,7 @@ struct CursorResponse {
     cursor: Option<Cursor>,
 }
 
-fn invalid_credentials() -> ApiError {
+pub(crate) fn invalid_credentials() -> ApiError {
     ApiError::new(ErrorCode::InvalidCredentials, "invalid credentials")
 }
 
@@ -168,7 +168,7 @@ pub(crate) fn with_cookies(mut response: Response, cookies: Vec<HeaderValue>) ->
     response
 }
 
-async fn enforce_rate_limit(
+pub(crate) async fn enforce_rate_limit(
     conn: &mut Connection,
     kind: CredentialKind,
     identifier: &str,
@@ -190,7 +190,10 @@ async fn enforce_rate_limit(
 
 /// Only requestable (restrictive) catalog flags may be asked for at login.
 // r[impl session.flags.origin]
-async fn check_requested_flags(conn: &mut Connection, flags: &[String]) -> Result<(), ApiError> {
+pub(crate) async fn check_requested_flags(
+    conn: &mut Connection,
+    flags: &[String],
+) -> Result<(), ApiError> {
     if flags.is_empty() {
         return Ok(());
     }
@@ -283,11 +286,11 @@ pub(crate) async fn create_session(
     })
 }
 
-async fn start_session(
+pub(crate) async fn start_session(
     state: &AppState,
     conn: &mut Connection,
     credential: &Credential,
-    amr: &str,
+    amr: &[&str],
     client: Client,
     browser: Option<&BrowserSettings>,
     flags: &[String],
@@ -301,7 +304,7 @@ async fn start_session(
         state,
         conn,
         credential,
-        vec![amr.to_owned()],
+        amr.iter().map(|method| (*method).to_owned()).collect(),
         client,
         flags,
         state.auth.session_lifetime,
@@ -397,7 +400,7 @@ async fn login_password(
         &state,
         &mut conn,
         &credential,
-        "pwd",
+        &["pwd"],
         body.client,
         browser.as_ref(),
         &body.flags,
@@ -463,7 +466,7 @@ async fn login_secret_key(
         &state,
         &mut conn,
         &credential,
-        "sk",
+        &["sk"],
         Client::Native,
         None,
         &[],
@@ -751,5 +754,5 @@ pub(crate) async fn start_passwordless_session(
     {
         return Err(invalid_credentials());
     }
-    start_session(state, conn, credential, amr, Client::Native, None, &[]).await
+    start_session(state, conn, credential, &[amr], Client::Native, None, &[]).await
 }

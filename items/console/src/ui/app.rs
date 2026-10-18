@@ -6,7 +6,7 @@ use leptos_router::path;
 
 use super::common::{Id, Loading};
 use super::console::{Console, Phase, use_console};
-use super::{authz, clients, home, invites, keys, sessions, sign_in, subjects, tenants};
+use super::{authz, clients, home, invites, keys, passkeys, sessions, sign_in, subjects, tenants};
 use crate::grants::Capability;
 
 #[component]
@@ -36,6 +36,7 @@ fn Shell() -> impl IntoView {
         <header class="top">
             <A href="/" attr:class="brand">"Konklav" <span>"console"</span></A>
             <span class="who">{who}</span>
+            <A href="/passkeys" attr:class="link">"Passkeys"</A>
             <button class="link" on:click=move |_| console.sign_out()>"Sign out"</button>
         </header>
         <div class="layout">
@@ -61,6 +62,7 @@ fn Shell() -> impl IntoView {
                     <Route path=path!("/invites") view=invites::Invites/>
                     <Route path=path!("/clients") view=clients::Clients/>
                     <Route path=path!("/keys") view=keys::Keys/>
+                    <Route path=path!("/passkeys") view=passkeys::Passkeys/>
                 </Routes>
             </main>
         </div>

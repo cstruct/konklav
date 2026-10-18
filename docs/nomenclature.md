@@ -125,13 +125,14 @@ Terms are introduced in dependency order: each definition only uses terms define
     - `phone_otp`: a one-time code sent to a phone number
     - `email_link`: a magic link sent to an email address
     - `secret_key`: a generated key for service principals, with two independently rotatable slots
-    - `public_key`: reserved for future proof-of-possession credentials
+    - `public_key`: a key pair held by the subject's authenticator, of which Konklav stores only the public key; today always a `passkey`
     - `federated`: an account at an `identity provider` (see Federation)
     - `client`: an `OIDC client` acting as a service principal (see Federation)
   - Replaced or revoked credentials are kept as history, never overwritten in place.
 
 - `login identifier`
-  - The value used to look up a credential: an email address, a phone number, or a key id.
+  - The value used to look up a credential: an email address, a phone number, a key id, or a WebAuthn credential ID.
+  - Email addresses and phone numbers are compared case-insensitively; credential IDs are unpadded base64url and compared exactly.
   - It is stored on the credential, not as subject profile data, and is unique among active credentials of the same kind.
 
 - `MFA factor`
@@ -141,9 +142,25 @@ Terms are introduced in dependency order: each definition only uses terms define
 
 - `authentication method`
   - The `amr` value recording how a subject proved who it is. RFC 8176 values are used where one fits, such as `pwd`, `otp`, `sms`, or `hwk`.
-  - Konklav-specific values cover methods RFC 8176 has no fitting value for: `eml` (email code or magic link), `fed` (see below) and `sk` (a service principal's secret key or OIDC client secret). `swk` is reserved for software-held proof-of-possession keys and never means a shared secret.
+  - Konklav-specific values cover methods RFC 8176 has no fitting value for: `eml` (email code or magic link), `fed` (see below) and `sk` (a service principal's secret key or OIDC client secret). `swk` means a software-held proof-of-possession key, such as a passkey, and never a shared secret.
   - `fed` records a login through an identity provider; the methods the provider reports are credited only as its configuration maps them.
   - A session records every method used, and when the most recent authentication happened (`auth_time`).
+
+- `passkey`
+  - A discoverable `public_key` credential used through WebAuthn: the browser or device keeps the private key and proves possession by signing a challenge, after verifying the user with a biometric or PIN.
+  - A passkey login records `swk` and `mfa`.
+
+- `relying party ID`
+  - The domain Konklav's passkeys are scoped to (WebAuthn's RP ID), such as `example.com`. It is WebAuthn's term and has nothing to do with a `relying system`; prefer the full phrase `relying party ID`.
+
+- `user handle`
+  - The opaque identifier an authenticator stores with a passkey and returns when used. Konklav uses the subject id.
+
+- `signature counter`
+  - A counter some authenticators increase on every use, so a cloned key can be detected. Synced passkeys usually report zero.
+
+- `attestation`
+  - A statement from an authenticator about what kind of device created a key. Konklav currently requests none and records the format it got.
 
 - `challenge`
   - A short-lived, single-use secret that Konklav creates and the subject proves back to it.

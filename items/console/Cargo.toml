@@ -16,6 +16,8 @@ leptos_router = "0.8.12"
 percent-encoding.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4.79"
 web-sys = { version = "0.3.106", features = ["Crypto", "Window"] }
 
 [lints]

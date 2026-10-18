@@ -6,8 +6,8 @@ Login, MFA, step-up, sessions, session flags, challenges and delivery.
 
 r[authn.login.methods]
 Konklav MUST support login with a password credential, with a phone
-one-time code, with an email magic link, and with a secret-key credential
-for service principals.
+one-time code, with an email magic link, with a passkey, and with a
+secret-key credential for service principals.
 
 r[authn.login.staged]
 Login MUST proceed through explicit stages, each issuing a token that is
@@ -70,6 +70,41 @@ requirement, not a plain denial.
 r[authn.step-up.in-session]
 Completing step-up MUST update the existing session's `amr` and
 authentication time and bump its version. It MUST NOT create a new session.
+
+## Passkeys
+
+r[authn.passkey.registration]
+A human subject MUST be able to register a passkey only from a full session
+(identity or tenant stage) that authenticated recently. The
+ceremony's challenge MUST be single-use, bound to that session, and expire.
+Passkeys MUST NOT be created any other way.
+
+r[authn.passkey.discoverable]
+Passkey login MUST NOT require a login identifier. Konklav MUST find the
+credential by the credential ID the authenticator returns, and MUST refuse
+the assertion unless its user handle names the credential's subject.
+
+r[authn.passkey.origin]
+Registrations and assertions MUST be refused unless the client data's origin
+is a configured passkey origin and the authenticator data's RP ID hash
+matches the configured relying party ID.
+
+r[authn.passkey.user-verification]
+Registrations and assertions MUST be refused unless the authenticator
+reports user verification.
+
+r[authn.passkey.counter]
+When the stored or the presented signature counter is non-zero, an assertion
+whose counter does not exceed the stored one MUST be refused. A successful
+assertion MUST persist the updated counter.
+
+r[authn.passkey.amr]
+A passkey login or step-up MUST record the methods `swk` and `mfa`, since
+user verification adds a second factor to possession of the key.
+
+r[authn.passkey.management]
+A subject MUST be able to list and revoke its own passkeys from a full
+session. Revoking MUST require a session that authenticated recently.
 
 ## Sessions
 

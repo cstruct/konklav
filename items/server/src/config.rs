@@ -123,6 +123,20 @@ config_tree! {
             #[facet(default = true)]
             pub secure_cookies: bool,
         }>,
+        /// Passkey login and registration. A section of its own, loaded with
+        /// `browser`. Without it, the passkey endpoints answer 404.
+        pub passkeys: Option<pub struct Passkeys {
+            /// The relying party ID: the domain passkeys are scoped to, such
+            /// as `example.com`. WebAuthn does not allow IP addresses.
+            pub rp_id: String,
+            /// The name browsers show when a passkey is created.
+            pub rp_name: String,
+            /// Origins whose pages may use passkeys; each must be the relying
+            /// party ID or a subdomain of it. Defaults to
+            /// `browser.allowed_origins`.
+            #[facet(default)]
+            pub origins: Vec<String>,
+        }>,
         /// OpenID providers browser clients can sign in through. A section
         /// of its own, loaded with `browser` (contexts are limited in
         /// number).

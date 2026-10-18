@@ -30,6 +30,61 @@ pub fn complete_mfa(factor: &str, code: &str) -> Request {
         .json(json!({"factor_id": factor, "code": code.trim()}))
 }
 
+/// Starts a passkey login; no identifier is needed.
+#[must_use]
+pub fn passkey_login_options() -> Request {
+    Request::subject(Method::Post, "/login/passkey/options")
+        .json(json!({}))
+        .anonymous()
+}
+
+/// A browser login with the passkey the browser returned.
+#[must_use]
+pub fn login_passkey(ceremony: &str, credential: &Value) -> Request {
+    Request::subject(Method::Post, "/login/passkey")
+        .json(json!({"ceremony": ceremony, "credential": credential, "client": "browser"}))
+        .anonymous()
+}
+
+/// The signed-in operator's own passkeys.
+#[must_use]
+pub fn own_passkeys() -> Request {
+    Request::subject(Method::Get, "/passkeys")
+}
+
+#[must_use]
+pub fn passkey_registration_options(label: &str) -> Request {
+    Request::subject(Method::Post, "/passkeys/registration/options")
+        .json(json!({"label": label.trim()}))
+}
+
+#[must_use]
+pub fn register_passkey(ceremony: &str, credential: &Value) -> Request {
+    Request::subject(Method::Post, "/passkeys/registration")
+        .json(json!({"ceremony": ceremony, "credential": credential}))
+}
+
+#[must_use]
+pub fn remove_passkey(id: &str) -> Request {
+    Request::subject(Method::Delete, format!("/passkeys/{}", encode(id)))
+}
+
+#[must_use]
+pub fn step_up_passkey_options() -> Request {
+    Request::subject(Method::Post, "/step-up/passkey/options").json(json!({}))
+}
+
+#[must_use]
+pub fn step_up_password(password: &str) -> Request {
+    Request::subject(Method::Post, "/step-up").json(json!({"password": password}))
+}
+
+#[must_use]
+pub fn step_up_passkey(ceremony: &str, credential: &Value) -> Request {
+    Request::subject(Method::Post, "/step-up")
+        .json(json!({"ceremony": ceremony, "passkey": credential}))
+}
+
 /// Exchanges the refresh cookie for a new access token.
 #[must_use]
 pub fn refresh() -> Request {

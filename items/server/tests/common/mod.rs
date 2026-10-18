@@ -71,6 +71,7 @@ pub fn auth_context(signer: Signer) -> AuthContext {
         pacing: konklav_server::pacing::Pacing::NONE,
         identity_providers: konklav_server::federation::Providers::default(),
         oidc: None,
+        passkeys: None,
     }
 }
 

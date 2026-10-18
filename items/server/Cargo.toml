@@ -40,6 +40,8 @@ tokio-postgres.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid = { workspace = true, features = ["v4", "v7"] }
+webauthn-rs.workspace = true
+webauthn-rs-proto.workspace = true
 
 [dev-dependencies]
 openidconnect = "4.0.1"
@@ -50,6 +52,7 @@ konklav-test-support.workspace = true
 diesel-async.workspace = true
 http-body-util.workspace = true
 tower = { workspace = true, features = ["util"] }
+webauthn-authenticator-rs = { version = "0.5.5", features = ["softpasskey"] }
 
 [lints]
 workspace = true

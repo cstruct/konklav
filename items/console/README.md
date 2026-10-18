@@ -9,9 +9,12 @@ token.
 ## Responsibilities
 
 - Signing operators in through the subject-facing surface: password login
-  as a browser client, MFA when the credential requires it, and restoring
-  the session from the refresh cookie on reload. The bootstrap token is
+  as a browser client, MFA when the credential requires it, passkey login,
+  and restoring the session from the refresh cookie on reload. The bootstrap token is
   accepted as a first-run option.
+- The operator's own passkeys (**Passkeys** in the header): adding,
+  listing and removing them, confirming with the password or a passkey
+  first when Konklav asks for a fresher sign-in.
 - Showing what the operator may do. `GET /v1/capabilities` lists their
   `konklav:` capabilities; areas they lack one for say which capability
   is missing, and so do control-plane refusals.
@@ -97,6 +100,10 @@ mise run serve            # Konklav on 8080–8082
 mise run console:serve    # the console on http://127.0.0.1:8083
 ```
 
+Passkeys need the console at `http://localhost:8083` instead: WebAuthn
+doesn't accept IP addresses, and the dev config's relying party ID is
+`localhost`.
+
 On a fresh database, choose **Bootstrap token** and paste the
 `control.bootstrap_token` from `config/dev.secrets.styx`. Then:
 
@@ -146,6 +153,10 @@ Coverage shape:
   signs the operator out.
 - Secrets that Konklav shows only once (secret keys, rotated slots and
   OIDC client secrets) are shown once and never stored.
+- Passkey ceremonies go through the browser's JSON forms
+  (`PublicKeyCredential.parseCreationOptionsFromJSON`,
+  `parseRequestOptionsFromJSON` and `toJSON()`, in `src/webauthn.rs`), so
+  they need a browser that has them; older ones get a clear error.
 - Destructive actions ask for confirmation, and the confirmation says
   what else ends, such as sessions, tokens or assignments.
 

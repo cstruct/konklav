@@ -14,6 +14,7 @@ mod console;
 mod home;
 mod invites;
 mod keys;
+mod passkeys;
 mod sessions;
 mod sign_in;
 mod subjects;

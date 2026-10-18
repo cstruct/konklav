@@ -601,19 +601,21 @@ pub async fn verify_mfa_factor(
     .await
 }
 
-/// Records a step-up: adds the method, resets the authentication time and
-/// bumps the version, in the same session.
+/// Records a step-up: adds the methods, resets the authentication time
+/// and bumps the version, in the same session.
 // r[impl authn.step-up.in-session]
 pub async fn step_up(
     conn: &mut AsyncPgConnection,
     id: SessionId,
-    amr: &str,
+    amr: &[&str],
 ) -> StoreResult<(Session, Cursor)> {
     conn.transaction::<_, StoreError, _>(async |conn| {
         let current = get(conn, id).await?;
         let mut amr_values = current.amr;
-        if !amr_values.iter().any(|m| m == amr) {
-            amr_values.push(amr.to_owned());
+        for method in amr {
+            if !amr_values.iter().any(|m| m == method) {
+                amr_values.push((*method).to_owned());
+            }
         }
         let row = diesel::update(session::table.find(id.as_uuid()))
             .filter(session::revoked_at.is_null())

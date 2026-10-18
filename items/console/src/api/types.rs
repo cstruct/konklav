@@ -451,3 +451,19 @@ mod tests {
         assert_eq!(key.status(), "revoked");
     }
 }
+
+/// Browser options for a passkey ceremony, and the token that finishes it.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Ceremony {
+    pub ceremony: String,
+    pub options: serde_json::Value,
+}
+
+/// One of the operator's own passkeys.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Passkey {
+    pub id: String,
+    pub label: String,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
+}

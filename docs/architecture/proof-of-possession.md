@@ -1,6 +1,9 @@
 # Proof-of-possession credentials (outline)
 
-Status: outline only, not scheduled. Federation, including national eID
+Status: passkeys are implemented: WebAuthn through `webauthn-rs`, with no
+attestation (see `authn.passkey.*` in the authentication spec). Hardware
+attestation, assertive flags, smart cards and DPoP remain an outline, not
+scheduled. Federation, including national eID
 schemes through OIDC brokers, is covered by
 [OIDC and federation](oidc-and-federation.md). This note captures the
 generic building block that covers both software and hardware keys, so that
@@ -34,7 +37,8 @@ The result becomes credential facts such as `hardware_backed=true` or
 ## Authentication
 
 - The subject signs a Konklav nonce.
-- On success the session gets `amr` values (`hwk` or `swk`, per RFC 8176)
+- On success the session gets `amr` values (`hwk` or `swk`, per RFC 8176;
+  passkeys record `swk` and `mfa` until attestation can prove hardware)
   and, if the catalog says so, assertive flags such as `device_bound`.
 - Relying operations can then require these through ordinary step-up
   requirements and flag requirements. No new decision concept is needed.

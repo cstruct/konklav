@@ -31,7 +31,7 @@ use crate::issue::{self, IssuedToken};
 use crate::subject_api::{
     authenticate, check_browser_request, refresh_cookies, start_passwordless_session, with_cookies,
 };
-use crate::{AppState, capabilities, pacing};
+use crate::{AppState, capabilities, pacing, passkeys_api};
 
 pub fn routes(state: &AppState) -> Router<AppState> {
     let paced = Router::new()
@@ -539,10 +539,13 @@ struct StepUpRequest {
     factor_id: Option<uuid::Uuid>,
     code: Option<String>,
     password: Option<String>,
+    /// From `POST /v1/step-up/passkey/options`, with `passkey`.
+    ceremony: Option<String>,
+    passkey: Option<webauthn_rs::prelude::PublicKeyCredential>,
 }
 
-/// `POST /v1/step-up`: proves a factor or the password again within the
-/// current session, refreshing its authentication time.
+/// `POST /v1/step-up`: proves a factor, the password or a passkey again
+/// within the current session, refreshing its authentication time.
 async fn step_up(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -550,26 +553,31 @@ async fn step_up(
 ) -> Result<Json<TokenBody>, ApiError> {
     let mut conn = state.pool.get().await?;
     let session = full_session(&state, &mut conn, &headers).await?;
-    let amr = match (body.factor_id, body.code, body.password) {
-        (Some(factor_id), Some(code), None) => {
+    let passkey = body.ceremony.zip(body.passkey);
+    let amr: Vec<&str> = match (body.factor_id, body.code, body.password, passkey) {
+        (Some(factor_id), Some(code), None, None) => {
             let factor = mfa::get(&mut conn, session.subject_id, factor_id)
                 .await
                 .ok()
                 .filter(|f| f.active)
                 .ok_or_else(invalid_code)?;
-            verify_factor(&state, &mut conn, &factor, &code).await?
+            vec![verify_factor(&state, &mut conn, &factor, &code).await?]
         }
-        (None, None, Some(password)) => {
+        (None, None, Some(password), None) => {
             verify_password_of(&state, &mut conn, session.subject_id, &password).await?;
-            "pwd"
+            vec!["pwd"]
+        }
+        (None, None, None, Some((ceremony, passkey))) => {
+            passkeys_api::verify_step_up(&state, &mut conn, &session, &ceremony, &passkey).await?;
+            passkeys_api::PASSKEY_AMR.to_vec()
         }
         _ => {
             return Err(ApiError::invalid_request(
-                "give either factor_id and code, or password",
+                "give either factor_id and code, password, or ceremony and passkey",
             ));
         }
     };
-    let (session, cursor) = sessions::step_up(&mut conn, session.id, amr).await?;
+    let (session, cursor) = sessions::step_up(&mut conn, session.id, &amr).await?;
     let token = issue::access_token(&mut conn, &state.auth, &session).await?;
     Ok(Json(TokenBody {
         token,

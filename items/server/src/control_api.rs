@@ -325,6 +325,12 @@ struct SlotsView {
     b: SlotView,
 }
 
+#[derive(Serialize)]
+struct PasskeyView {
+    label: String,
+    last_used_at: Option<DateTime<Utc>>,
+}
+
 /// A credential without any secret material.
 #[derive(Serialize)]
 struct CredentialView {
@@ -335,6 +341,8 @@ struct CredentialView {
     mfa_factors_required: i16,
     #[serde(skip_serializing_if = "Option::is_none")]
     slots: Option<SlotsView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    passkey: Option<PasskeyView>,
     replaces: Option<CredentialId>,
     created_at: DateTime<Utc>,
     revoked_at: Option<DateTime<Utc>>,
@@ -344,16 +352,26 @@ struct CredentialView {
 
 impl From<Credential> for CredentialView {
     fn from(credential: Credential) -> Self {
-        let slots = match &credential.data {
-            CredentialData::SecretKey(data) => Some(SlotsView {
-                a: SlotView::from(&data.a),
-                b: SlotView::from(&data.b),
-            }),
+        let (slots, passkey) = match &credential.data {
+            CredentialData::SecretKey(data) => (
+                Some(SlotsView {
+                    a: SlotView::from(&data.a),
+                    b: SlotView::from(&data.b),
+                }),
+                None,
+            ),
+            CredentialData::PublicKey(data) => (
+                None,
+                Some(PasskeyView {
+                    label: data.label.clone(),
+                    last_used_at: data.last_used_at,
+                }),
+            ),
             CredentialData::Password(_)
             | CredentialData::EmailLink
             | CredentialData::PhoneOtp
             | CredentialData::Federated(_)
-            | CredentialData::Client => None,
+            | CredentialData::Client => (None, None),
         };
         Self {
             id: credential.id,
@@ -362,6 +380,7 @@ impl From<Credential> for CredentialView {
             identifier: credential.identifier,
             mfa_factors_required: credential.mfa_factors_required,
             slots,
+            passkey,
             replaces: credential.replaces,
             created_at: credential.created_at,
             revoked_at: credential.revoked_at,

@@ -60,6 +60,7 @@ async fn server() -> Server {
             pacing: konklav_server::pacing::Pacing::NONE,
             identity_providers: konklav_server::federation::Providers::default(),
             oidc: None,
+            passkeys: None,
         }),
         feed: Arc::new(FeedHub::new(Duration::from_millis(100))),
     };

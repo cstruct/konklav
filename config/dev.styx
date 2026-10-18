@@ -23,9 +23,17 @@ tokens {
 }
 
 // Origins whose pages may use browser sign-in with the refresh cookie. The
-// console (`mise run console:serve`) serves on 127.0.0.1:8083 and proxies
-// /v1 and /control/v1 here, so Konklav sees requests from that origin.
+// console (`mise run console:serve`) serves on port 8083 and proxies /v1
+// and /control/v1 here, so Konklav sees requests from that origin.
 browser {
-    allowed_origins ("http://localhost:5173" "http://127.0.0.1:8083")
+    allowed_origins ("http://localhost:5173" "http://127.0.0.1:8083" "http://localhost:8083")
     secure_cookies false
+}
+
+// WebAuthn does not accept IP addresses, so open the console at
+// http://localhost:8083 to use passkeys.
+passkeys {
+    rp_id localhost
+    rp_name "Konklav (dev)"
+    origins ("http://localhost:8083" "http://localhost:5173")
 }

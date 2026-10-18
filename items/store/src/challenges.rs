@@ -26,6 +26,10 @@ pub enum Purpose {
     OidcAuthorize,
     /// An authorization code issued to an OIDC client.
     OidcCode,
+    /// Registering a passkey from a signed-in session.
+    PasskeyRegister,
+    /// Logging in, or stepping up, with a passkey.
+    PasskeyLogin,
 }
 
 impl Purpose {
@@ -41,6 +45,8 @@ impl Purpose {
             Self::OidcLink => "oidc_link",
             Self::OidcAuthorize => "oidc_authorize",
             Self::OidcCode => "oidc_code",
+            Self::PasskeyRegister => "passkey_register",
+            Self::PasskeyLogin => "passkey_login",
         }
     }
 }

@@ -143,6 +143,13 @@ async fn serve(
     auth.pacing = pacing;
     auth.oidc = oidc;
     auth.identity_providers = konklav_server::federation::Providers::from_config(&browser)?;
+    auth.passkeys = browser
+        .passkeys
+        .as_ref()
+        .map(|passkeys| {
+            konklav_server::passkeys::Verifier::from_config(passkeys, browser.browser.as_ref())
+        })
+        .transpose()?;
     let hub = Arc::new(FeedHub::new(feed.poll_interval()));
     tokio::spawn(konklav_server::feed::listen(
         database.database.connect_options().url,

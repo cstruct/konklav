@@ -8,3 +8,4 @@ pub mod grants;
 pub mod ids;
 pub mod operator;
 pub mod ui;
+pub mod webauthn;

@@ -2,8 +2,8 @@ use chrono::{Duration, Utc};
 use diesel_async::RunQueryDsl;
 use konklav_core::{CredentialId, Cursor, SessionId, SubjectId};
 use konklav_store::credentials::{
-    self, CredentialData, CredentialKind, FederatedData, NewCredential, PasswordData,
-    SecretKeyData, SecretSlot, SecretSlotData,
+    self, CredentialData, CredentialKind, FederatedData, NewCredential, PUBLIC_KEY_STATE_VERSION,
+    PasswordData, PublicKeyData, SecretKeyData, SecretSlot, SecretSlotData,
 };
 use konklav_store::sessions::{self, ClientKind, NewSession, Rotation, SessionFilter, Stage};
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
@@ -126,6 +126,19 @@ async fn the_database_rejects_credential_data_that_violates_its_schema() {
         ),
         ("federated", r#"{"provider": "ops"}"#),
         ("federated", r#"{"provider": "ops", "subject": ""}"#),
+        ("public_key", r"{}"),
+        (
+            "public_key",
+            r#"{"label": "", "attestation_format": "none", "state_version": 1, "state": {}}"#,
+        ),
+        (
+            "public_key",
+            r#"{"label": "Phone", "attestation_format": "none", "state_version": 2, "state": {}}"#,
+        ),
+        (
+            "public_key",
+            r#"{"label": "Phone", "attestation_format": "none", "state_version": 1, "state": "key"}"#,
+        ),
         ("telepathy", r"{}"),
     ] {
         let result = diesel::sql_query(format!(
@@ -172,6 +185,44 @@ async fn secret_keys_round_trip_through_the_schema() {
     .await
     .unwrap();
     assert_eq!(credentials::get(&mut conn, id).await.unwrap(), stored);
+}
+
+// r[verify credential.public-key.stored]
+#[tokio::test(flavor = "multi_thread")]
+async fn passkeys_are_found_by_their_exact_credential_id() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let subject = subject(&mut conn).await;
+    let id = CredentialId::new_v7();
+    let stored = credentials::insert(
+        &mut conn,
+        NewCredential {
+            id,
+            subject_id: subject,
+            identifier: "AbC-_x".into(),
+            data: CredentialData::PublicKey(PublicKeyData {
+                label: "Laptop".into(),
+                attestation_format: "none".into(),
+                last_used_at: None,
+                state_version: PUBLIC_KEY_STATE_VERSION,
+                state: serde_json::json!({"cred": {"counter": 0}}),
+            }),
+            mfa_factors_required: 0,
+            replaces: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(stored.identifier, "AbC-_x");
+    assert_eq!(credentials::get(&mut conn, id).await.unwrap(), stored);
+    let found = credentials::find_active(&mut conn, CredentialKind::PublicKey, "AbC-_x")
+        .await
+        .unwrap();
+    assert_eq!(found.map(|credential| credential.id), Some(id));
+    let other_case = credentials::find_active(&mut conn, CredentialKind::PublicKey, "abc-_x")
+        .await
+        .unwrap();
+    assert_eq!(other_case, None);
 }
 
 // r[verify federation.credential]

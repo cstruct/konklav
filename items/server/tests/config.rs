@@ -172,6 +172,10 @@ fn the_dev_config_loads() {
     let (_, database, _, _, browser, _, _, mfa) =
         load(&root.join("dev.styx"), &root.join("dev.secrets.styx"), &[]).unwrap();
     assert_eq!(database.database.port, 55432);
+    let passkeys = browser.passkeys.as_ref().unwrap();
+    assert!(
+        konklav_server::passkeys::Verifier::from_config(passkeys, browser.browser.as_ref()).is_ok()
+    );
     assert!(!browser.browser.unwrap().secure_cookies);
     assert_eq!(mfa.mfa.unwrap().totp_keys.len(), 1);
 }
@@ -427,4 +431,52 @@ identity_providers ({{
     )
     .unwrap();
     assert!(konklav_server::federation::Providers::from_config(&browser).is_err());
+}
+
+// r[verify authn.passkey.origin]
+#[test]
+fn passkeys_default_to_the_browser_origins_within_their_relying_party_id() {
+    let files = Files::new("passkeys");
+    let public = |origins: &str| {
+        format!(
+            r#"{CONFIG}
+browser {{
+    allowed_origins ("https://app.example" "https://admin.app.example")
+}}
+passkeys {{
+    rp_id app.example
+    rp_name Konklav{origins}
+}}
+"#
+        )
+    };
+    let (.., browser, _, _, _) = load(
+        &files.write("c.styx", &public("")),
+        &files.write("s.styx", SECRETS),
+        &[],
+    )
+    .unwrap();
+    let passkeys = browser.passkeys.as_ref().unwrap();
+    assert_eq!(passkeys.rp_id, "app.example");
+    assert_eq!(passkeys.origins, Vec::<String>::new());
+    assert!(
+        konklav_server::passkeys::Verifier::from_config(passkeys, browser.browser.as_ref()).is_ok()
+    );
+
+    let (.., browser, _, _, _) = load(
+        &files.write(
+            "c.styx",
+            &public("\n    origins (\"https://elsewhere.example\")"),
+        ),
+        &files.write("s.styx", SECRETS),
+        &[],
+    )
+    .unwrap();
+    let error = konklav_server::passkeys::Verifier::from_config(
+        browser.passkeys.as_ref().unwrap(),
+        browser.browser.as_ref(),
+    )
+    .err()
+    .unwrap();
+    assert!(error.contains("not within relying party ID"), "{error}");
 }

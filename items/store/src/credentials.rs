@@ -24,6 +24,9 @@ pub enum CredentialKind {
     /// An OIDC client acting as a service principal (client credentials);
     /// the identifier is the client id.
     Client,
+    /// A passkey; the identifier is its WebAuthn credential ID in unpadded
+    /// base64url, compared exactly.
+    PublicKey,
 }
 
 impl CredentialKind {
@@ -36,6 +39,7 @@ impl CredentialKind {
             Self::PhoneOtp => "phone_otp",
             Self::Federated => "federated",
             Self::Client => "client",
+            Self::PublicKey => "public_key",
         }
     }
 }
@@ -125,6 +129,27 @@ impl SecretKeyData {
     }
 }
 
+/// `data` of a public-key credential (a passkey). Only public material is
+/// stored.
+// r[impl credential.public-key.stored]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicKeyData {
+    /// Chosen by the subject when registering.
+    pub label: String,
+    /// The attestation format the authenticator returned, such as `none`.
+    pub attestation_format: String,
+    #[serde(default)]
+    pub last_used_at: Option<DateTime<Utc>>,
+    /// The version of `state`'s encoding; see [`PUBLIC_KEY_STATE_VERSION`].
+    pub state_version: u32,
+    /// The verifier's view of the key (public key, algorithm, signature
+    /// counter). The store does not interpret it.
+    pub state: serde_json::Value,
+}
+
+/// The current encoding of [`PublicKeyData::state`].
+pub const PUBLIC_KEY_STATE_VERSION: u32 = 1;
+
 /// Kind-specific credential data, stored as `kind` plus `data`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CredentialData {
@@ -134,6 +159,7 @@ pub enum CredentialData {
     PhoneOtp,
     Federated(FederatedData),
     Client,
+    PublicKey(PublicKeyData),
 }
 
 impl CredentialData {
@@ -146,6 +172,7 @@ impl CredentialData {
             Self::PhoneOtp => CredentialKind::PhoneOtp,
             Self::Federated(_) => CredentialKind::Federated,
             Self::Client => CredentialKind::Client,
+            Self::PublicKey(_) => CredentialKind::PublicKey,
         }
     }
 
@@ -154,6 +181,7 @@ impl CredentialData {
             Self::Password(data) => serde_json::to_value(data),
             Self::SecretKey(data) => serde_json::to_value(data),
             Self::Federated(data) => serde_json::to_value(data),
+            Self::PublicKey(data) => serde_json::to_value(data),
             Self::EmailLink | Self::PhoneOtp | Self::Client => Ok(serde_json::json!({})),
         }
         .expect("credential data serializes")
@@ -167,6 +195,7 @@ impl CredentialData {
             "phone_otp" => Ok(Self::PhoneOtp),
             "federated" => serde_json::from_value(data).map(Self::Federated),
             "client" => Ok(Self::Client),
+            "public_key" => serde_json::from_value(data).map(Self::PublicKey),
             other => {
                 return Err(diesel::result::Error::DeserializationError(
                     format!("unknown credential kind {other}").into(),
@@ -246,11 +275,21 @@ pub fn normalize_identifier(identifier: &str) -> String {
     identifier.trim().to_lowercase()
 }
 
+/// The identifier as stored for `kind`: normalized, except for
+/// credential IDs, which are case-sensitive.
+fn stored_identifier(kind: CredentialKind, identifier: &str) -> String {
+    match kind {
+        CredentialKind::PublicKey => identifier.to_owned(),
+        _ => normalize_identifier(identifier),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct NewCredential {
     pub id: CredentialId,
     pub subject_id: SubjectId,
-    /// Normalized with [`normalize_identifier`] before storing.
+    /// Normalized with [`normalize_identifier`] before storing, except for
+    /// public-key credentials.
     pub identifier: String,
     pub data: CredentialData,
     pub mfa_factors_required: i16,
@@ -265,7 +304,7 @@ pub async fn insert(conn: &mut AsyncPgConnection, new: NewCredential) -> StoreRe
             credential::id.eq(new.id.as_uuid()),
             credential::subject_id.eq(new.subject_id.as_uuid()),
             credential::kind.eq(new.data.kind().as_str()),
-            credential::identifier.eq(normalize_identifier(&new.identifier)),
+            credential::identifier.eq(stored_identifier(new.data.kind(), &new.identifier)),
             credential::data.eq(new.data.to_json()),
             credential::mfa_factors_required.eq(new.mfa_factors_required),
             credential::replaces.eq(new.replaces.map(uuid::Uuid::from)),
@@ -316,7 +355,7 @@ pub async fn find_active(
 ) -> StoreResult<Option<Credential>> {
     credential::table
         .filter(credential::kind.eq(kind.as_str()))
-        .filter(credential::identifier.eq(normalize_identifier(identifier)))
+        .filter(credential::identifier.eq(stored_identifier(kind, identifier)))
         .filter(credential::revoked_at.is_null())
         .select(Row::as_select())
         .first(conn)
@@ -399,7 +438,7 @@ pub async fn insert_if_absent(
             credential::id.eq(new.id.as_uuid()),
             credential::subject_id.eq(new.subject_id.as_uuid()),
             credential::kind.eq(new.data.kind().as_str()),
-            credential::identifier.eq(normalize_identifier(&new.identifier)),
+            credential::identifier.eq(stored_identifier(new.data.kind(), &new.identifier)),
             credential::data.eq(new.data.to_json()),
             credential::mfa_factors_required.eq(new.mfa_factors_required),
             credential::replaces.eq(new.replaces.map(uuid::Uuid::from)),

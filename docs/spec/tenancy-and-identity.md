@@ -79,6 +79,16 @@ r[credential.secret-key.hashed]
 Secret-key values MUST only be shown once, when created, and MUST be stored
 as hashes.
 
+r[credential.public-key.stored]
+Public-key credentials MUST store only public material: the public key and
+its algorithm, the signature counter, the attestation format and a label
+chosen by the subject. Their login identifier is the credential ID in
+unpadded base64url, compared case-sensitively.
+
+r[credential.public-key.no-mfa]
+Public-key credentials MUST NOT require MFA factors, because user
+verification already makes a passkey login multi-factor.
+
 r[credential.mfa-requirement]
 A credential MUST be able to declare how many MFA factors it requires
 before login completes.

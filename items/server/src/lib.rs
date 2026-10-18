@@ -20,6 +20,8 @@ pub mod oidc;
 mod oidc_api;
 mod oidc_clients_api;
 pub mod pacing;
+pub mod passkeys;
+mod passkeys_api;
 pub mod peering;
 mod relying_api;
 pub mod serve;
@@ -60,6 +62,8 @@ pub struct AuthContext {
     pub identity_providers: federation::Providers,
     /// Konklav's OpenID provider role, when configured.
     pub oidc: Option<oidc::OpenIdProvider>,
+    /// Passkey support, when configured.
+    pub passkeys: Option<passkeys::Verifier>,
 }
 
 #[derive(Clone, Debug)]
@@ -98,6 +102,7 @@ impl AuthContext {
             pacing: pacing::Pacing::DEFAULT,
             identity_providers: federation::Providers::default(),
             oidc: None,
+            passkeys: None,
         }
     }
 }
