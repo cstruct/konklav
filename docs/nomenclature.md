@@ -126,6 +126,7 @@ Terms are introduced in dependency order: each definition only uses terms define
     - `email_link`: a magic link sent to an email address
     - `secret_key`: a generated key for service principals, with two independently rotatable slots
     - `public_key`: reserved for future proof-of-possession credentials
+    - `federated`: an account at an `identity provider` (see Federation)
   - Replaced or revoked credentials are kept as history, never overwritten in place.
 
 - `login identifier`
@@ -330,6 +331,42 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `read-your-writes`
   - The guarantee that a relying system, after changing something in Conclave, sees that change in its next decision.
   - The relying SDK provides it by waiting until it has applied events up to the cursor that the write returned.
+
+## Federation
+
+- `OpenID Connect` (OIDC)
+  - The standard protocol Conclave uses for federation, in both directions.
+
+- `identity provider`
+  - An external service that Conclave trusts to authenticate subjects, such as a corporate directory, a national eID broker, or another Conclave instance.
+  - Each one is configured with its own provisioning policy, authentication-method mapping and claim mapping rules.
+
+- `federated credential`
+  - A credential that proves a subject through an identity provider.
+  - It is identified by the provider and the provider's subject identifier (`sub`), never by an email address.
+
+- `claim mapping`
+  - Rules that turn claims from an identity provider, such as group names, into global roles, memberships and role assignments.
+  - Grants created this way are `managed` by the provider: re-evaluating the rules adds and removes only those grants.
+
+- `OpenID provider`
+  - Conclave's role when other software signs subjects in through it with OIDC.
+
+- `OIDC client`
+  - A registration at Conclave's OpenID provider, for a relying system, tool or other Conclave instance, with its own redirect URIs, audience and visible claims.
+  - Prefer `relying system` when the software's role, not its registration, is what matters.
+
+- `login hand-off`
+  - How Conclave's OpenID provider gets a subject signed in without its own user interface: it redirects to a configured login application, which signs the subject in through the subject-facing surface and then completes the pending login request.
+
+- `upstream` and `downstream` instance
+  - In federation between Conclave instances, the upstream is the OpenID provider (for example, an operators' instance) and each downstream (dev, staging, a production region) trusts it as an identity provider.
+
+- `peering`
+  - Optional federation between Conclave instances beyond OIDC: a downstream follows the upstream's change feed as a relying system, so subjects disabled or regrouped upstream lose access downstream within seconds.
+
+- `break-glass credential`
+  - A local operator credential that works while every upstream is unavailable. Every use is recorded as an event.
 
 ## Software architecture and traceability
 

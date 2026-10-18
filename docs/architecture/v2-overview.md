@@ -37,7 +37,7 @@ and spec-first development with Tracey.
 | Relying SDK | Sans-I/O Rust core; pyo3 binding first, wasm later | [relying SDK](relying-sdk.md) |
 | Tenants | Conclave is authoritative; relying systems keep projections | [tenant projections](tenant-projections.md) |
 | Messaging | Conclave emits delivery requests; relying systems send the messages | [change feed](change-feed.md) |
-| Federation | Out of scope for now; proof-of-possession outlined | [proof of possession](proof-of-possession.md) |
+| Federation | OIDC in both roles (identity providers and OpenID provider) with claim mapping; Conclave instances federate, optionally peering through the change feed. Specified, not implemented | [OIDC and federation](oidc-and-federation.md), [proof of possession](proof-of-possession.md) |
 | Managed config | Deferred; catalog and templates go through the control-plane API first | |
 
 ## Software items

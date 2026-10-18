@@ -23,6 +23,8 @@ Product specs:
 - [change feed](change-feed.md): events, cursors and transport
 - [relying systems](relying-systems.md): obligations on the relying core and
   host bindings
+- [federation](federation.md): identity providers, the OpenID provider role,
+  claim mapping, and federation between Conclave instances
 
 Software-item implementation specs live under
 [`software-items/`](software-items/README.md).

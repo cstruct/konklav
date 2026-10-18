@@ -1,9 +1,10 @@
 # Proof-of-possession credentials (outline)
 
-Status: outline only, not scheduled. Federation (OIDC, SAML, national eID
-schemes) is out of scope for now. This note captures the generic building
-block that covers both software and hardware keys, so that earlier designs
-don't rule it out.
+Status: outline only, not scheduled. Federation, including national eID
+schemes through OIDC brokers, is covered by
+[OIDC and federation](oidc-and-federation.md). This note captures the
+generic building block that covers both software and hardware keys, so that
+earlier designs don't rule it out.
 
 ## Credential kind `public_key`
 
@@ -52,5 +53,6 @@ The result becomes credential facts such as `hardware_backed=true` or
 - Account recovery when the only credential is a lost hardware key.
 - Trust-store management beyond static configuration.
 - Whether smart-card login runs through a browser (WebAuthn or TLS client
-  certificates) or through a native helper. This matters for national eID
-  schemes and is therefore deferred together with federation.
+  certificates) or through a native helper. For national eID schemes, an
+  OIDC broker (see [OIDC and federation](oidc-and-federation.md)) avoids
+  the question.
