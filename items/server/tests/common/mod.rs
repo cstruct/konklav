@@ -67,6 +67,8 @@ pub fn auth_context(signer: Signer) -> AuthContext {
         }),
         control_token: Some(CONTROL_TOKEN.into()),
         secrets: conclave_authn::SecretBox::new([("test", TOTP_KEY)]).unwrap(),
+        // Tests that are about pacing set their own.
+        pacing: conclave_server::pacing::Pacing::NONE,
     }
 }
 
@@ -80,6 +82,23 @@ impl TestApp {
         let app = Self::with_key(1).await;
         let mut auth = auth_context(Signer::new(SigningKey::from_bytes(&[1; 32])));
         auth.control_token = None;
+        let state = AppState {
+            auth: Arc::new(auth),
+            ..app.state.clone()
+        };
+        let router = surface::router(&Surface::ALL, state.clone());
+        Self {
+            db: app.db,
+            state,
+            router,
+        }
+    }
+
+    /// An app whose authentication endpoints are paced by `pacing`.
+    pub async fn with_pacing(pacing: conclave_server::pacing::Pacing) -> Self {
+        let app = Self::with_key(1).await;
+        let mut auth = auth_context(Signer::new(SigningKey::from_bytes(&[1; 32])));
+        auth.pacing = pacing;
         let state = AppState {
             auth: Arc::new(auth),
             ..app.state.clone()

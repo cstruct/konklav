@@ -4,6 +4,7 @@
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
@@ -28,16 +29,10 @@ use subtle::ConstantTimeEq;
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::issue::{self, IssuedToken};
 use crate::subject_api::{authenticate, start_passwordless_session};
-use crate::{AppState, capabilities};
+use crate::{AppState, capabilities, pacing};
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/mfa", get(list_factors))
-        .route("/mfa/totp", post(enroll_totp))
-        .route("/mfa/email", post(enroll_email))
-        .route("/mfa/{id}/activate", post(activate_factor))
-        .route("/mfa/{id}/send", post(send_factor_code))
-        .route("/mfa/{id}", delete(remove_factor))
+pub fn routes(state: &AppState) -> Router<AppState> {
+    let paced = Router::new()
         .route("/login/mfa", post(complete_mfa))
         .route("/step-up", post(step_up))
         .route("/login/email-link/start", post(start_email_link))
@@ -47,6 +42,15 @@ pub fn routes() -> Router<AppState> {
         .route("/password-reset/start", post(start_reset))
         .route("/password-reset/complete", post(complete_reset))
         .route("/password/change", post(change_password))
+        .route_layer(middleware::from_fn_with_state(state.clone(), pacing::pace));
+    Router::new()
+        .merge(paced)
+        .route("/mfa", get(list_factors))
+        .route("/mfa/totp", post(enroll_totp))
+        .route("/mfa/email", post(enroll_email))
+        .route("/mfa/{id}/activate", post(activate_factor))
+        .route("/mfa/{id}/send", post(send_factor_code))
+        .route("/mfa/{id}", delete(remove_factor))
         .route("/impersonate", post(impersonate))
 }
 

@@ -31,9 +31,9 @@ impl Surface {
     /// share a listener are merged, so their paths must not overlap.
     fn v1_routes(self, state: &AppState) -> Router<AppState> {
         match self {
-            Self::Subject => subject_api::routes()
-                .merge(flows::routes())
-                .merge(invites::subject_routes()),
+            Self::Subject => subject_api::routes(state)
+                .merge(flows::routes(state))
+                .merge(invites::subject_routes(state)),
             Self::Relying => relying_api::routes().merge(feed::routes()),
             Self::Control => control_api::routes(state)
                 .merge(control_authz::routes(state))

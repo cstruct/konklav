@@ -105,6 +105,10 @@ async fn serve(
     feed: FeedConfig,
     mfa: MfaConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let pacing = conclave_server::pacing::Pacing {
+        floor: tokens.pacing_floor(),
+        jitter: tokens.pacing_jitter(),
+    };
     let tokens = tokens.tokens;
     let keys = ConfiguredKeys::load(
         Path::new(&tokens.signing_key_file),
@@ -131,6 +135,7 @@ async fn serve(
                 .map(|key| (key.id.as_str(), key.key.as_str())),
         )?;
     }
+    auth.pacing = pacing;
     let hub = Arc::new(FeedHub::new(feed.poll_interval()));
     tokio::spawn(conclave_server::feed::listen(
         database.database.connect_options().url,

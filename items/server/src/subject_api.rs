@@ -4,6 +4,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, header};
+use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use chrono::{Duration, Utc};
@@ -20,12 +21,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::issue::{self, IssuedToken};
-use crate::{AppState, AuthContext, BrowserSettings, keys};
+use crate::{AppState, AuthContext, BrowserSettings, keys, pacing};
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
+pub fn routes(state: &AppState) -> Router<AppState> {
+    let paced = Router::new()
         .route("/login/password", post(login_password))
         .route("/login/secret-key", post(login_secret_key))
+        .route_layer(middleware::from_fn_with_state(state.clone(), pacing::pace));
+    Router::new()
+        .merge(paced)
         .route("/refresh", post(refresh))
         .route("/login/tenant", post(select_tenant))
         .route("/sign-out", post(sign_out))

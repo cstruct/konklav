@@ -64,7 +64,7 @@ config_tree! {
 }
 
 config_tree! {
-    /// Access-token issuance and session lifetimes.
+    /// Access-token issuance, session lifetimes and response pacing.
     #[derive(Debug, Clone, PartialEq)]
     pub struct TokensConfig {
         pub tokens: pub struct Tokens {
@@ -84,6 +84,16 @@ config_tree! {
             #[facet(default)]
             pub published_key_files: Vec<String>,
         },
+        /// How long authentication endpoints take at least, so their
+        /// response times don't reveal which identifiers exist. A section
+        /// of its own, loaded with tokens (contexts are limited in number).
+        pub pacing: Option<pub struct Pacing {
+            #[facet(default = 1500)]
+            pub floor_ms: u32,
+            /// Each response waits the floor plus or minus up to this much.
+            #[facet(default = 250)]
+            pub jitter_ms: u32,
+        }>,
     }
 }
 
@@ -160,6 +170,22 @@ config_tree! {
                 pub key: String,
             }>,
         }>,
+    }
+}
+
+impl TokensConfig {
+    #[must_use]
+    pub fn pacing_floor(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(u64::from(
+            self.pacing.as_ref().map_or(1500, |p| p.floor_ms),
+        ))
+    }
+
+    #[must_use]
+    pub fn pacing_jitter(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(u64::from(
+            self.pacing.as_ref().map_or(250, |p| p.jitter_ms),
+        ))
     }
 }
 

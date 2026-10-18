@@ -13,6 +13,7 @@ mod import_api;
 mod invites;
 mod issue;
 pub mod keys;
+pub mod pacing;
 mod relying_api;
 pub mod serve;
 mod subject_api;
@@ -46,6 +47,8 @@ pub struct AuthContext {
     pub control_token: Option<String>,
     /// Encrypts TOTP seeds.
     pub secrets: conclave_authn::SecretBox,
+    /// How long authentication endpoints take at least.
+    pub pacing: pacing::Pacing,
 }
 
 #[derive(Clone, Debug)]
@@ -81,6 +84,7 @@ impl AuthContext {
             }),
             control_token: control.bootstrap_token(),
             secrets: conclave_authn::SecretBox::new([]).expect("an empty key set is valid"),
+            pacing: pacing::Pacing::DEFAULT,
         }
     }
 }

@@ -3,6 +3,7 @@
 
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::middleware;
 use axum::response::Response;
 use axum::routing::post;
 use axum::{Json, Router};
@@ -23,7 +24,7 @@ use subtle::ConstantTimeEq;
 use crate::control_api::guard;
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::subject_api::start_passwordless_session;
-use crate::{AppState, capabilities};
+use crate::{AppState, capabilities, pacing};
 
 pub fn control_routes(state: &AppState) -> Router<AppState> {
     Router::new()
@@ -31,8 +32,10 @@ pub fn control_routes(state: &AppState) -> Router<AppState> {
         .route_layer(guard(state, capabilities::INVITES))
 }
 
-pub fn subject_routes() -> Router<AppState> {
-    Router::new().route("/invites/redeem", post(redeem_invite))
+pub fn subject_routes(state: &AppState) -> Router<AppState> {
+    Router::new()
+        .route("/invites/redeem", post(redeem_invite))
+        .route_layer(middleware::from_fn_with_state(state.clone(), pacing::pace))
 }
 
 #[derive(Serialize, Deserialize, Default)]

@@ -510,6 +510,7 @@ dependencies = [
  "ed25519-dalek",
  "facet",
  "futures-util",
+ "getrandom",
  "http-body-util",
  "ordna-core",
  "ordna-source-env",

@@ -20,6 +20,7 @@ diesel-async.workspace = true
 ed25519-dalek.workspace = true
 facet.workspace = true
 futures-util.workspace = true
+getrandom.workspace = true
 ordna-core.workspace = true
 ordna-source-env.workspace = true
 ordna-source-file.workspace = true

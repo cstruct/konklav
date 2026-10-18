@@ -33,6 +33,15 @@ r[authn.login.timing]
 Failed and successful first-factor attempts MUST NOT be distinguishable by
 response time beyond a configured jitter.
 
+r[authn.pacing]
+Endpoints whose response time could reveal whether a login identifier,
+subject or credential exists (first-factor login, MFA completion, step-up,
+starting and completing passwordless login and password reset, password
+change and invite redemption) MUST NOT respond before a configured floor
+plus or minus a random jitter, measured from the request's arrival. The
+work and the wait MUST run concurrently, so the floor adds no latency when
+the work takes longer.
+
 ## MFA and step-up
 
 r[authn.mfa.factors]

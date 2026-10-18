@@ -61,6 +61,24 @@ principals holding `conclave:delivery:read` see those events, and the
 material is stripped once the challenge has expired. Start endpoints always
 answer 202, so they reveal nothing about which identifiers exist.
 
+## Response pacing
+
+Endpoints whose timing could reveal whether an identifier exists are paced.
+These are first-factor login, MFA completion, step-up, the passwordless and
+password-reset start and complete pairs, password change and invite
+redemption:
+
+- A middleware starts a timer of 1.5 s ± 0.25 s (configurable under
+  `pacing`) when the request arrives, and responds when both the timer and
+  the handler are done.
+- The handler's work runs during the wait, so the floor costs nothing when
+  the work is slower. The wait holds no database connection.
+- The dummy hash for unknown identifiers stays. It keeps CPU cost even, so
+  paced responses don't leak through load.
+- Refresh, tenant selection, sign-out and factor management are not paced:
+  they need a valid session or token, which an attacker probing for
+  accounts doesn't have.
+
 ## Session flags
 
 Flags are catalog-declared labels that Conclave copies into `sfl` without
