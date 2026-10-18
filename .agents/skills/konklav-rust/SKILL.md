@@ -1,9 +1,9 @@
 ---
-name: conclave-rust
-description: Rust conventions for Conclave Rust workspace members. Use when editing Rust code in this repo, especially when introducing new modules, shared types, or representation boundaries.
+name: konklav-rust
+description: Rust conventions for Konklav Rust workspace members. Use when editing Rust code in this repo, especially when introducing new modules, shared types, or representation boundaries.
 ---
 
-# Conclave Rust
+# Konklav Rust
 
 - Read `docs/nomenclature.md` first when a Rust change touches auth, tenancy, API terms, or docs.
 - Prefer small facade modules that re-export focused submodules once a file mixes multiple concerns.

@@ -10,8 +10,8 @@ from support import AUDIENCE, ISSUER, FakeKonklav, Keys
 def client_for(fake: FakeKonklav) -> RelyingClient:
     http = httpx.AsyncClient(transport=httpx.MockTransport(fake.handle))
     return RelyingClient(
-        relying_url="http://conclave",
-        subject_url="http://conclave",
+        relying_url="http://konklav",
+        subject_url="http://konklav",
         key_id="key",
         secret="secret",
         issuer=ISSUER,

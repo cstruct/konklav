@@ -27,7 +27,7 @@ pub struct Actor {
     pub tid: Option<TenantId>,
 }
 
-/// The claims of a Conclave access token. Times are Unix seconds.
+/// The claims of a Konklav access token. Times are Unix seconds.
 // r[impl token.access.standard-claims]
 // r[impl token.access.session-claims]
 // r[impl token.access.no-grants]

@@ -49,7 +49,7 @@ before continuing. Consumers MUST treat a reset as "every cached state may be
 stale".
 
 r[feed.batch]
-Conclave MUST also serve the feed as paged JSON (`after` a cursor, limited
+Konklav MUST also serve the feed as paged JSON (`after` a cursor, limited
 page size) for consumers that cannot hold a stream open.
 
 r[feed.at-least-once]

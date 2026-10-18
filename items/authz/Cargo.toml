@@ -1,6 +1,6 @@
 [package]
 name = "konklav-authz"
-description = "Conclave authorization: entitlement compilation and decision evaluation, without I/O"
+description = "Konklav authorization: entitlement compilation and decision evaluation, without I/O"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

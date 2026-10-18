@@ -68,7 +68,7 @@ token ──verify (JWKS)──▶ claims
 ```
 
 When the cache is untrusted (feed lagging or disconnected), every decision
-goes to `POST /v1/check`. Without Conclave, the result is deny.
+goes to `POST /v1/check`. Without Konklav, the result is deny.
 
 ## Compiling on read, invalidating by trigger
 

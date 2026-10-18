@@ -1,4 +1,4 @@
-//! Identifiers and small value types shared across Conclave software items.
+//! Identifiers and small value types shared across Konklav software items.
 //!
 //! Keep this crate tiny: only types that several software items need to agree
 //! on belong here.

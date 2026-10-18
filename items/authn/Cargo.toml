@@ -1,6 +1,6 @@
 [package]
 name = "konklav-authn"
-description = "Conclave authentication primitives: password and secret-key hashing, refresh tokens"
+description = "Konklav authentication primitives: password and secret-key hashing, refresh tokens"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

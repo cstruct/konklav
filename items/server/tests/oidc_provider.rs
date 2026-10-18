@@ -8,9 +8,9 @@ use axum::http::{Method, StatusCode, header};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use common::{ISSUER, ORIGIN, TestApp};
-use konklav_server::oidc::OpenIdProvider;
 use jsonwebtoken::jwk::Jwk;
 use jsonwebtoken::{DecodingKey, Validation};
+use konklav_server::oidc::OpenIdProvider;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -511,7 +511,7 @@ async fn public_clients_use_pkce_alone_and_can_get_eddsa_id_tokens() {
         .claims;
     assert_eq!(claims["aud"], "spa");
 
-    // A client's access token isn't accepted by Conclave's own API.
+    // A client's access token isn't accepted by Konklav's own API.
     let access = tokens.body["access_token"].as_str().unwrap();
     let auth = format!("Bearer {access}");
     let own = app

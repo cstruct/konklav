@@ -12,8 +12,8 @@ use axum::routing::{get, post};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use common::{ORIGIN, TestApp};
-use konklav_server::federation::{Providers, Provisioning, Settings};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
+use konklav_server::federation::{Providers, Provisioning, Settings};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -24,7 +24,7 @@ p1XNGpwF1zXMHj8NrRZRBsdiy2jZvNVSLlPqzmK3P4YLDAtSoKNCeXst
 -----END PRIVATE KEY-----";
 const PROVIDER_X: &str = "Y6_1EEzqCvOEimuWQdUYPZi0Vo88sqdVzRqcBdc1zB4";
 const PROVIDER_Y: &str = "Pw2tFlEGx2LLaNm81VIuU-rOYrc_hgsMC1Kgo0J5ey0";
-const CLIENT_ID: &str = "conclave-test";
+const CLIENT_ID: &str = "konklav-test";
 const CLIENT_SECRET: &str = "client secret";
 const RETURN: &str = "https://app.example/signed-in";
 const UPSTREAM_SUB: &str = "Upstream-Ada";

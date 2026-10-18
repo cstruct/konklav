@@ -6,7 +6,7 @@ use super::error::ApiError;
 use super::request::{CLIENT_HEADER, Method, Request};
 
 /// Sends `request`, presenting `token` when it's authenticated, and returns
-/// the status and body. Cookies go along because the console and Conclave
+/// the status and body. Cookies go along because the console and Konklav
 /// share an origin.
 pub async fn send(request: &Request, token: Option<&str>) -> Result<(u16, String), ApiError> {
     let url = request.url();

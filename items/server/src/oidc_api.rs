@@ -1,4 +1,4 @@
-//! Conclave as an OpenID provider: authorization with a login hand-off,
+//! Konklav as an OpenID provider: authorization with a login hand-off,
 //! the token endpoint, userinfo and discovery.
 //!
 //! 1. `GET /v1/oauth2/authorize` validates the client and request, keeps
@@ -6,7 +6,7 @@
 //!    the login application with `login_request=<id>`.
 //! 2. The login application signs the subject in through the `/v1` API and
 //!    calls `POST /v1/oauth2/login-requests/{id}/accept` with that session's
-//!    access token. Conclave checks `max_age`, `acr_values` and any requested
+//!    access token. Konklav checks `max_age`, `acr_values` and any requested
 //!    tenant, and answers with the URL to send the browser to.
 //! 3. `GET /v1/oauth2/authorize/resume` checks the browser is the one that
 //!    started, and redirects to the client with a single-use code.
@@ -21,13 +21,13 @@ use axum::{Json, Router};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
+use diesel_async::AsyncConnection;
 use konklav_authn::{RefreshToken, generate_secret, hash_challenge_secret};
 use konklav_core::{SessionId, TenantId};
 use konklav_store::challenges::{self, Challenge, NewChallenge, Purpose};
 use konklav_store::oidc_clients::{self, ClientKind, OidcClient};
 use konklav_store::sessions::{self, ClientKind as SessionClient, NewSession, Session, Stage};
 use konklav_store::{Connection, credentials};
-use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;

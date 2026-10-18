@@ -3,9 +3,9 @@
 //! transaction.
 
 use chrono::{DateTime, Utc};
-use konklav_core::{CredentialId, Cursor, MembershipId, SessionId, SubjectId, TenantId};
 use diesel::prelude::*;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
+use konklav_core::{CredentialId, Cursor, MembershipId, SessionId, SubjectId, TenantId};
 use serde::{Deserialize, Serialize};
 
 use crate::schema::{session, session_previous_refresh};

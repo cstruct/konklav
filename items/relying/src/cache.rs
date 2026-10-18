@@ -102,7 +102,7 @@ pub struct Relying {
     jwks_wanted: bool,
     jwks_in_flight: bool,
     sessions: BTreeMap<SessionId, SessionChanged>,
-    /// Sessions Conclave doesn't know: tokens for them are never valid.
+    /// Sessions Konklav doesn't know: tokens for them are never valid.
     unknown_sessions: BTreeSet<SessionId>,
     entries: BTreeMap<Key, Entry>,
     feed: Feed,
@@ -312,7 +312,7 @@ impl Relying {
         }
     }
 
-    /// Conclave has no such session (a forged or long-pruned one).
+    /// Konklav has no such session (a forged or long-pruned one).
     pub fn on_session_unknown(&mut self, session: SessionId) {
         self.unknown_sessions.insert(session);
     }

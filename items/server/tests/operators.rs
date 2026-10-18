@@ -318,10 +318,7 @@ async fn operators_read_their_own_capabilities() {
         .with_bearer(Method::GET, "/v1/capabilities", &people)
         .await;
     assert_eq!(own.status, StatusCode::OK, "{:?}", own.body);
-    assert_eq!(
-        own.body["capabilities"],
-        json!(["konklav:subjects:manage"])
-    );
+    assert_eq!(own.body["capabilities"], json!(["konklav:subjects:manage"]));
     let claims = app.verify(&people).await;
     assert_eq!(own.body["subject"], claims.sub.to_string());
 

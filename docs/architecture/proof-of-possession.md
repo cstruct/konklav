@@ -9,9 +9,9 @@ earlier designs don't rule it out.
 ## Credential kind `public_key`
 
 - **Registration:**
-  1. Conclave issues a challenge.
+  1. Konklav issues a challenge.
   2. The authenticator signs it, optionally with an attestation.
-  3. Conclave stores the public key, algorithm, attestation result and a
+  3. Konklav stores the public key, algorithm, attestation result and a
      signature counter where the authenticator has one.
 - **Software keys:** platform keystores (Secure Enclave, Android Keystore,
   TPM-backed OS keys) and passkeys.
@@ -33,7 +33,7 @@ The result becomes credential facts such as `hardware_backed=true` or
 
 ## Authentication
 
-- The subject signs a Conclave nonce.
+- The subject signs a Konklav nonce.
 - On success the session gets `amr` values (`hwk` or `swk`, per RFC 8176)
   and, if the catalog says so, assertive flags such as `device_bound`.
 - Relying operations can then require these through ordinary step-up

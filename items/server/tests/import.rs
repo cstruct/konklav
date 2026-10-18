@@ -154,7 +154,7 @@ async fn reimported_secret_keys_take_rotated_slots_but_passwords_do_not() {
     assert_eq!(
         app.login("rotating@example.com", "hunter2").await.status,
         StatusCode::OK,
-        "passwords keep the hash Conclave has"
+        "passwords keep the hash Konklav has"
     );
 }
 

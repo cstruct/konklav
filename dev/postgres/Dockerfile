@@ -1,4 +1,4 @@
-# Postgres with the extensions Conclave's schema requires.
+# Postgres with the extensions Konklav's schema requires.
 FROM postgres:18.6-trixie
 
 ARG TARGETARCH

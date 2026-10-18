@@ -5,7 +5,7 @@ Login, MFA, step-up, sessions, session flags, challenges and delivery.
 ## Login
 
 r[authn.login.methods]
-Conclave MUST support login with a password credential, with a phone
+Konklav MUST support login with a password credential, with a phone
 one-time code, with an email magic link, and with a secret-key credential
 for service principals.
 
@@ -45,7 +45,7 @@ the work takes longer.
 ## MFA and step-up
 
 r[authn.mfa.factors]
-Conclave MUST support TOTP and emailed one-time codes as MFA factors.
+Konklav MUST support TOTP and emailed one-time codes as MFA factors.
 
 r[authn.mfa.secrets-encrypted]
 TOTP secrets MUST be stored encrypted under keys from secret configuration,
@@ -113,7 +113,7 @@ with filters for subject, credential, membership and tenant.
 
 r[session.flags.catalog]
 Session flags MUST be declared in the action catalog as either restrictive
-or assertive. Conclave MUST NOT interpret flag names.
+or assertive. Konklav MUST NOT interpret flag names.
 
 r[session.flags.origin]
 Flags MUST be set only by the flow that creates or steps up a session,
@@ -161,7 +161,7 @@ Code challenges MUST limit verification attempts and invalidate the code
 when the limit is reached.
 
 r[challenge.delivery.event]
-Conclave MUST NOT send messages. To deliver a challenge it MUST emit a
+Konklav MUST NOT send messages. To deliver a challenge it MUST emit a
 `delivery.requested` event with the channel, recipient, purpose, challenge
 material and the subject, if any.
 

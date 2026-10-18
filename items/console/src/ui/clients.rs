@@ -1,4 +1,4 @@
-//! OIDC clients of Conclave's OpenID provider.
+//! OIDC clients of Konklav's OpenID provider.
 
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;

@@ -1,6 +1,6 @@
 [package]
 name = "konklav-store"
-description = "Conclave's Postgres schema, migrations, connection pool and repositories"
+description = "Konklav's Postgres schema, migrations, connection pool and repositories"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

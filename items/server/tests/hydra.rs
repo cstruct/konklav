@@ -1,9 +1,9 @@
-//! Conclave as a client of an independent OpenID provider, Ory Hydra.
+//! Konklav as a client of an independent OpenID provider, Ory Hydra.
 //!
 //! Each test starts Hydra in memory on free ports (`hydra` comes from mise),
-//! registers Conclave as a Hydra client, and plays Hydra's login and consent
+//! registers Konklav as a Hydra client, and plays Hydra's login and consent
 //! application through its admin API. The browser's hops are followed with
-//! a cookie-keeping HTTP client; Conclave reaches Hydra's token endpoint and
+//! a cookie-keeping HTTP client; Konklav reaches Hydra's token endpoint and
 //! keys over real HTTP. Without `hydra` on the PATH the tests are skipped.
 
 #![allow(clippy::too_many_lines)]
@@ -141,7 +141,7 @@ impl Hydra {
         }
     }
 
-    /// Follows the browser from the authorization URL to Conclave's
+    /// Follows the browser from the authorization URL to Konklav's
     /// callback, accepting the login as `subject` with `id_token` claims (or
     /// rejecting it). Returns the callback URL.
     async fn authorize(&self, url: &str, subject: &str, id_token: Option<Value>) -> String {
@@ -226,7 +226,7 @@ fn cookie(reply: &common::Reply, name: &str) -> Option<String> {
         .map(|c| c.split(';').next().unwrap().to_owned())
 }
 
-/// Starts a Conclave login through Hydra and finishes it at the callback.
+/// Starts a Konklav login through Hydra and finishes it at the callback.
 async fn login(
     app: &TestApp,
     hydra: &Hydra,
@@ -245,7 +245,7 @@ async fn login(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn conclave_signs_people_in_through_hydra() {
+async fn konklav_signs_people_in_through_hydra() {
     let Some(hydra) = hydra().await else {
         return;
     };
@@ -263,16 +263,14 @@ async fn conclave_signs_people_in_through_hydra() {
     let settings = Settings {
         methods: vec![("hwk".into(), "hwk".into())],
         grants: vec![
-            konklav_server::claim_mapping::Rule::from_config(
-                &konklav_server::config::ClaimGrant {
-                    claim: "groups".into(),
-                    equals: None,
-                    contains: Some("sre".into()),
-                    global_role: Some("operator".into()),
-                    tenant: None,
-                    roles: vec![],
-                },
-            )
+            konklav_server::claim_mapping::Rule::from_config(&konklav_server::config::ClaimGrant {
+                claim: "groups".into(),
+                equals: None,
+                contains: Some("sre".into()),
+                global_role: Some("operator".into()),
+                tenant: None,
+                roles: vec![],
+            })
             .unwrap(),
         ],
         ..hydra.provider()

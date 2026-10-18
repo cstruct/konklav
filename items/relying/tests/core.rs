@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use ed25519_dalek::SigningKey;
 use konklav_authz::{Decision, DenyReason, EntitlementSet, Entitlements, Requirements};
 use konklav_core::feed::{FeedEvent, SessionChanged};
 use konklav_core::{Cursor, SessionId, SubjectId, TenantId};
 use konklav_relying::{Config, Key, Need, Outcome, Relying};
 use konklav_token::{AccessClaims, Jwk, JwkSet, Signer, TokenKind};
-use ed25519_dalek::SigningKey;
 use serde_json::json;
 
 const T0: u64 = 1_800_000_000_000;

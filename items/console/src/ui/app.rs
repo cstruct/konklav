@@ -34,7 +34,7 @@ fn Shell() -> impl IntoView {
     };
     view! {
         <header class="top">
-            <A href="/" attr:class="brand">"Conclave" <span>"console"</span></A>
+            <A href="/" attr:class="brand">"Konklav" <span>"console"</span></A>
             <span class="who">{who}</span>
             <button class="link" on:click=move |_| console.sign_out()>"Sign out"</button>
         </header>

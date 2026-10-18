@@ -4,10 +4,10 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::routing::{get, post};
+use diesel_async::AsyncConnection;
 use konklav_store::credentials::{self, CredentialData, CredentialKind};
 use konklav_store::oidc_clients::{self, ClientDefinition, ClientKind, OidcClient};
 use konklav_store::{sessions, subjects};
-use diesel_async::AsyncConnection;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 

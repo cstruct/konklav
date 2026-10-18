@@ -9,14 +9,14 @@ User-facing capabilities MUST be described in Tracey-managed specifications
 under `docs/spec/` before they are treated as implementation targets.
 
 r[platform.repo.relying-agnostic]
-Conclave code, specs and architecture notes MUST NOT depend on or name a
+Konklav code, specs and architecture notes MUST NOT depend on or name a
 specific relying system. Relying-system concepts such as scope kinds, action
-names, fact keys and session flags MUST enter Conclave only as catalog data.
+names, fact keys and session flags MUST enter Konklav only as catalog data.
 
 ## Runtime
 
 r[platform.server.single-binary]
-Conclave MUST run as one server binary that serves the subject-facing,
+Konklav MUST run as one server binary that serves the subject-facing,
 relying and control-plane surfaces.
 
 r[platform.server.surface-separation]
@@ -50,7 +50,7 @@ misplaced secrets, decode errors) together, not just the first one.
 ## Storage
 
 r[platform.storage.postgres]
-Conclave MUST persist its authoritative state in a PostgreSQL database that
+Konklav MUST persist its authoritative state in a PostgreSQL database that
 it owns exclusively. Relying systems MUST NOT read or write that database
 directly.
 
@@ -89,7 +89,7 @@ own writes to propagate.
 ## Import
 
 r[import.idempotent]
-Conclave MUST offer a bulk import of subjects, credentials, MFA factors and
+Konklav MUST offer a bulk import of subjects, credentials, MFA factors and
 sessions that keeps the imported identifiers and can be re-run: records
 whose identifiers already exist are skipped. Import MUST require a
 dedicated control-plane capability.
@@ -105,7 +105,7 @@ cutover stays in step. Other credential kinds MUST NOT be changed by a
 re-import.
 
 r[import.mfa]
-Imported TOTP seeds MUST be encrypted with Conclave's own keys on arrival.
+Imported TOTP seeds MUST be encrypted with Konklav's own keys on arrival.
 
 r[import.sessions]
 Imported sessions MUST keep their identifiers, versions and expiry, with a

@@ -1,6 +1,6 @@
 # konklav-test-support
 
-Library crate with test helpers shared by Conclave's software items. It is only used as a dev-dependency.
+Library crate with test helpers shared by Konklav's software items. It is only used as a dev-dependency.
 
 ## Responsibilities
 

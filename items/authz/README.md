@@ -1,6 +1,6 @@
 # konklav-authz
 
-Library crate for Conclave authorization without I/O. It compiles role assignments into entitlement sets, and evaluates an operation's requirements against a token and an entitlement set.
+Library crate for Konklav authorization without I/O. It compiles role assignments into entitlement sets, and evaluates an operation's requirements against a token and an entitlement set.
 
 ## Responsibilities
 

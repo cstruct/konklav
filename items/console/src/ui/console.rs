@@ -1,4 +1,4 @@
-//! The console's shared state: the operator and how calls reach Conclave.
+//! The console's shared state: the operator and how calls reach Konklav.
 
 use futures_util::FutureExt;
 use futures_util::future::{LocalBoxFuture, Shared};
@@ -88,7 +88,7 @@ impl Console {
             .with_untracked(|operator| operator.as_ref().map(|o| o.token.clone()))
     }
 
-    /// Calls Conclave as the operator. A rejected access token is refreshed
+    /// Calls Konklav as the operator. A rejected access token is refreshed
     /// once; if that fails the operator is signed out.
     pub async fn call<T: DeserializeOwned>(self, request: Request) -> Result<T, ApiError> {
         let used = self.token();
@@ -107,7 +107,7 @@ impl Console {
         }
     }
 
-    /// Calls Conclave in the background, reporting failure in `error` and
+    /// Calls Konklav in the background, reporting failure in `error` and
     /// handing success to `done`.
     pub fn act<T: DeserializeOwned + 'static>(
         self,

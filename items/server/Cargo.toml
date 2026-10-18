@@ -1,6 +1,6 @@
 [package]
 name = "konklav-server"
-description = "The Conclave server: subject-facing, relying and control-plane HTTP surfaces"
+description = "The Konklav server: subject-facing, relying and control-plane HTTP surfaces"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

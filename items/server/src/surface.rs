@@ -13,14 +13,14 @@ use crate::{
     import_api, invites, keys, oidc_api, oidc_clients_api, relying_api, subject_api,
 };
 
-/// One of Conclave's groups of endpoints.
+/// One of Konklav's groups of endpoints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Surface {
     /// Login and session flows used by people and software.
     Subject,
     /// Keys, entitlements, checks and events for relying systems.
     Relying,
-    /// Administration of the Conclave control plane.
+    /// Administration of the Konklav control plane.
     Control,
 }
 

@@ -1,8 +1,8 @@
 //! The change-feed outbox.
 
-use konklav_core::Cursor;
 use diesel::prelude::*;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
+use konklav_core::Cursor;
 
 use crate::schema::{event, feed_watermark};
 

@@ -84,7 +84,7 @@ redemption:
 
 ## Session flags
 
-Flags are catalog-declared labels that Conclave copies into `sfl` without
+Flags are catalog-declared labels that Konklav copies into `sfl` without
 interpreting them.
 
 - **Restrictive** flags (for example, a session limited to a subject's
@@ -107,10 +107,10 @@ Relying systems never set or clear flags on existing sessions.
 - The refresh token is a cookie with these attributes:
   - `HttpOnly; Secure; SameSite=Strict`
   - `Path=/v1/refresh`, plus a second cookie path for `/v1/sign-out`
-  - scoped to Conclave's host
+  - scoped to Konklav's host
 - The access token is returned in the body and kept in memory by the
   frontend. A reload calls `/v1/refresh` to get a new one.
-- `SameSite=Strict` requires the frontend and Conclave to share a
+- `SameSite=Strict` requires the frontend and Konklav to share a
   registrable domain (for example `app.example` and `auth.example`).
 - CSRF defence in depth: an `Origin` allow-list plus a required custom
   header (for example `X-Konklav-Client: web`), which forces a CORS

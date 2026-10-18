@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use diesel_async::AsyncConnection;
 use konklav_authz::{Effect, Group, Policy, Scope, compile};
 use konklav_core::{Cursor, MembershipId, SubjectId, TenantId};
 use konklav_store::catalog::{self, ActionEntry, CatalogDocument, GroupEntry, ScopeKindEntry};
@@ -10,7 +11,6 @@ use konklav_store::subjects::{self, SubjectKind, SubjectState};
 use konklav_store::tenants::{self, ROOT, TenantState};
 use konklav_store::{Connection, StoreError, compile_input, events, memberships, templates};
 use konklav_test_support::TestDatabase;
-use diesel_async::AsyncConnection;
 use serde_json::json;
 
 fn document() -> CatalogDocument {

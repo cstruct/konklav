@@ -1,6 +1,6 @@
 [package]
 name = "konklav-core"
-description = "Identifiers and small value types shared across Conclave software items"
+description = "Identifiers and small value types shared across Konklav software items"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

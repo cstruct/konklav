@@ -14,8 +14,8 @@ listen {
 database {
     host localhost
     port 5432
-    name conclave
-    user conclave
+    name konklav
+    user konklav
 }
 tokens {
     issuer "https://auth.example"
@@ -104,8 +104,8 @@ fn environment_overrides_the_config_file() {
 fn rejects_secrets_in_the_public_file() {
     let files = Files::new("secret-in-public");
     let public = CONFIG.replace(
-        "    user conclave\n",
-        "    user conclave\n    password leaked\n",
+        "    user konklav\n",
+        "    user konklav\n    password leaked\n",
     );
     let error = load(
         &files.write("c.styx", &public),
@@ -189,7 +189,7 @@ fn reports_values_that_do_not_decode() {
 }
 
 const DATABASE_ONLY: &str =
-    "database {\n    host localhost\n    port 5432\n    name conclave\n    user conclave\n}\n";
+    "database {\n    host localhost\n    port 5432\n    name konklav\n    user konklav\n}\n";
 
 #[test]
 fn migrating_does_not_need_listeners() {

@@ -1,4 +1,4 @@
-//! The Conclave server: one binary serving the subject-facing, relying and
+//! The Konklav server: one binary serving the subject-facing, relying and
 //! control-plane surfaces.
 
 mod capabilities;
@@ -58,7 +58,7 @@ pub struct AuthContext {
     pub pacing: pacing::Pacing,
     /// Identity providers browser clients can sign in through.
     pub identity_providers: federation::Providers,
-    /// Conclave's OpenID provider role, when configured.
+    /// Konklav's OpenID provider role, when configured.
     pub oidc: Option<oidc::OpenIdProvider>,
 }
 

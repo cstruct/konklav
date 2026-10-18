@@ -4,8 +4,8 @@ mod common;
 
 use axum::http::{Method, StatusCode};
 use common::TestApp;
-use konklav_authn::TotpSecret;
 use diesel_async::RunQueryDsl;
+use konklav_authn::TotpSecret;
 use serde_json::{Value, json};
 
 const EMAIL: &str = "ada@example.com";

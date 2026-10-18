@@ -7,7 +7,7 @@ rust = { version = "1.99.0", components = "rustfmt,clippy,rust-analyzer,rust-src
 # system Postgres client libraries are needed.
 # Builds and tests the Python relying binding (items/py).
 uv = "0.8.24"
-# An independent OpenID provider for integration tests of Conclave as an
+# An independent OpenID provider for integration tests of Konklav as an
 # identity-provider client. Runs in memory; see the `hydra` task.
 # The SQLite builds, which run in memory (`DSN=memory`).
 "github:ory/hydra" = { version = "25.4.0", platforms = { macos-arm64 = { asset_pattern = "hydra_*-macOS_sqlite_arm64.tar.gz" }, macos-x64 = { asset_pattern = "hydra_*-macOS_sqlite_64bit.tar.gz" }, linux-x64 = { asset_pattern = "hydra_*-linux_sqlite_64bit.tar.gz" }, linux-arm64 = { asset_pattern = "hydra_*-linux_sqlite_arm64.tar.gz" } } }

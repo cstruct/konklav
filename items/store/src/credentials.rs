@@ -2,9 +2,9 @@
 //! JSON-Schema-validated `jsonb` column.
 
 use chrono::{DateTime, Utc};
-use konklav_core::{CredentialId, SubjectId};
 use diesel::prelude::*;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
+use konklav_core::{CredentialId, SubjectId};
 use serde::{Deserialize, Serialize};
 
 use crate::schema::credential;

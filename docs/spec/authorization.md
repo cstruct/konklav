@@ -7,7 +7,7 @@ API.
 
 r[authz.catalog.data]
 Actions, action groups, scope kinds, fact keys and session flags MUST be
-declared as catalog data supplied through the control plane. Conclave MUST
+declared as catalog data supplied through the control plane. Konklav MUST
 NOT hard-code any of them except the `konklav:` control-plane capabilities.
 
 r[authz.catalog.names]
@@ -71,7 +71,7 @@ regardless of the target tenant.
 
 r[authz.control-plane.capability]
 Built-in capabilities MUST be catalog actions in the `konklav:` namespace
-that only Conclave defines. Catalog documents MUST NOT declare or remove
+that only Konklav defines. Catalog documents MUST NOT declare or remove
 them, and action groups MUST NOT expand to them, so they are only ever
 granted by name. Every control-plane operation, impersonation and reading
 delivery requests MUST each require a capability.
@@ -96,7 +96,7 @@ A scoped assignment MUST use a scope kind declared in the catalog.
 ## Compilation
 
 r[authz.compile.entitlements]
-Conclave MUST compile assignments, roles, templates, policies and action
+Konklav MUST compile assignments, roles, templates, policies and action
 groups into an entitlement set per (subject, tenant), containing global
 actions, tenant-wide actions, and actions per scope.
 
@@ -159,7 +159,7 @@ MUST reach the same decision.
 r[authz.resource-context.external]
 Decisions that depend on relying-system resources (for example, which
 scopes a resource belongs to) MUST be resolved by the relying system into
-scopes before asking Conclave or the relying core.
+scopes before asking Konklav or the relying core.
 
 r[authz.explain]
 The control plane MUST be able to explain an entitlement in terms of the

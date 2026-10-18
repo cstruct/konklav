@@ -1,4 +1,5 @@
 use chrono::{Duration, Utc};
+use diesel_async::RunQueryDsl;
 use konklav_core::{CredentialId, Cursor, SessionId, SubjectId};
 use konklav_store::credentials::{
     self, CredentialData, CredentialKind, FederatedData, NewCredential, PasswordData,
@@ -8,7 +9,6 @@ use konklav_store::sessions::{self, ClientKind, NewSession, Rotation, SessionFil
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
 use konklav_store::{Connection, StoreError, events, signing_keys};
 use konklav_test_support::TestDatabase;
-use diesel_async::RunQueryDsl;
 
 const HASH: &str = "$argon2id$v=19$m=8,t=1,p=1$c29tZXNhbHQ$aGFzaGhhc2hoYXNo";
 

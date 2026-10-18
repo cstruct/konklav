@@ -6,6 +6,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
+use diesel_async::AsyncConnection;
 use konklav_authz::{Policy, Scope, compile};
 use konklav_core::{MembershipId, SubjectId, TenantId};
 use konklav_store::catalog::{self, CatalogDocument, FactTarget};
@@ -15,7 +16,6 @@ use konklav_store::sessions::{self, SessionFilter};
 use konklav_store::templates::{self, Template};
 use konklav_store::tenants::{self, Tenant, TenantState};
 use konklav_store::{Connection, StoreError, compile_input, events, subjects};
-use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 
 use crate::control_api::{Written, guard, parse_id};

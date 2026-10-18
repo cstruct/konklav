@@ -1,4 +1,4 @@
-"""Helpers: Ed25519-signed tokens and a fake Conclave on httpx.MockTransport."""
+"""Helpers: Ed25519-signed tokens and a fake Konklav on httpx.MockTransport."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-//! A Conclave app on an isolated database, driven through its router.
+//! A Konklav app on an isolated database, driven through its router.
 
 #![allow(dead_code)]
 
@@ -8,6 +8,8 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use chrono::Duration;
+use ed25519_dalek::SigningKey;
+use http_body_util::BodyExt;
 use konklav_authn::PasswordHasher;
 use konklav_server::feed::FeedHub;
 use konklav_server::keys::ConfiguredKeys;
@@ -15,8 +17,6 @@ use konklav_server::surface::{self, Surface};
 use konklav_server::{AppState, AuthContext, BrowserSettings};
 use konklav_test_support::TestDatabase;
 use konklav_token::{AccessClaims, JwkSet, Signer, VerifyOptions};
-use ed25519_dalek::SigningKey;
-use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -192,9 +192,7 @@ impl TestApp {
     }
 
     /// An app that signs browsers in through `providers`.
-    pub async fn with_identity_providers(
-        providers: konklav_server::federation::Providers,
-    ) -> Self {
+    pub async fn with_identity_providers(providers: konklav_server::federation::Providers) -> Self {
         let app = Self::with_key(1).await;
         let mut auth = auth_context(Signer::new(SigningKey::from_bytes(&[1; 32])));
         auth.identity_providers = providers;

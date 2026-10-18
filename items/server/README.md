@@ -1,6 +1,6 @@
 # konklav-server
 
-The Conclave server binary. It serves the subject-facing, relying and control-plane surfaces from one process.
+The Konklav server binary. It serves the subject-facing, relying and control-plane surfaces from one process.
 
 ## Responsibilities
 

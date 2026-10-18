@@ -1,6 +1,6 @@
 [package]
 name = "konklav-py"
-description = "Python bindings for the Conclave relying core"
+description = "Python bindings for the Konklav relying core"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"

@@ -14,7 +14,7 @@ addresses = ["127.0.0.1"]
 port = 8083
 open = false
 
-# The console reaches Conclave on its own origin, so the refresh cookie
+# The console reaches Konklav on its own origin, so the refresh cookie
 # (SameSite=Strict, scoped to /v1/refresh and /v1/sign-out) is first-party
 # and no CORS is involved. These match `mise run serve` and config/dev.styx.
 

@@ -1,6 +1,6 @@
 ---
 name: software-item-readme
-description: Create or substantially update a Conclave software-item README. Use when adding a new README for a crate or other software item, or when revising README structure, relationships, run/test instructions, or traceability links.
+description: Create or substantially update a Konklav software-item README. Use when adding a new README for a crate or other software item, or when revising README structure, relationships, run/test instructions, or traceability links.
 ---
 
 # Software Item README

@@ -1,4 +1,4 @@
-//! OIDC clients: registrations at Conclave's OpenID provider.
+//! OIDC clients: registrations at Konklav's OpenID provider.
 
 use chrono::{DateTime, Utc};
 use diesel::prelude::*;

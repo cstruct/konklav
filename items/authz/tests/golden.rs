@@ -1,5 +1,5 @@
 //! Golden cases pinning compilation to the semantics of the authorization
-//! model Conclave replaces: a ranked view of role, template and global
+//! model Konklav replaces: a ranked view of role, template and global
 //! policies followed by per-level deny subtraction.
 
 use std::collections::{BTreeMap, BTreeSet};

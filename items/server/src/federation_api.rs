@@ -15,6 +15,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use chrono::{Duration, Utc};
+use diesel_async::AsyncConnection;
 use konklav_authn::{generate_secret, hash_challenge_secret};
 use konklav_core::{CredentialId, SubjectId};
 use konklav_store::challenges::{self, Challenge, NewChallenge, Purpose};
@@ -23,7 +24,6 @@ use konklav_store::credentials::{
 };
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
 use konklav_store::{Connection, StoreError, sessions::Stage};
-use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 

@@ -1,6 +1,6 @@
--- Applications and instances that sign subjects in through Conclave as an
+-- Applications and instances that sign subjects in through Konklav as an
 -- OpenID provider. Ids are chosen by the caller (they're the OAuth
--- `client_id`); confidential clients authenticate with a secret Conclave
+-- `client_id`); confidential clients authenticate with a secret Konklav
 -- generates, stored as SHA-256.
 create table oidc_client (
     id text primary key check (id ~ '^[A-Za-z0-9._:-]{1,128}$'),

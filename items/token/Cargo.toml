@@ -1,6 +1,6 @@
 [package]
 name = "konklav-token"
-description = "Conclave access-token claims, EdDSA JWS signing and verification, and JWKS"
+description = "Konklav access-token claims, EdDSA JWS signing and verification, and JWKS"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

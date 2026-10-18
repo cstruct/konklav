@@ -1,9 +1,9 @@
 //! Subjects.
 
 use chrono::{DateTime, Utc};
-use konklav_core::SubjectId;
 use diesel::prelude::*;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
+use konklav_core::SubjectId;
 
 use crate::schema::subject;
 use crate::{StoreError, StoreResult};

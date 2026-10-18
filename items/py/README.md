@@ -17,8 +17,8 @@ No decision logic lives in Python.
 
 ```python
 client = RelyingClient(
-    relying_url="https://conclave:8081",
-    subject_url="https://conclave:8080",
+    relying_url="https://konklav:8081",
+    subject_url="https://konklav:8080",
     key_id=key_id,
     secret=secret,
     issuer="https://auth.example",
@@ -38,7 +38,7 @@ mise run py:test
 
 - Direct coverage:
   - the core through the binding: decisions, revocations, flags, check fallback, input validation
-  - the client against an httpx mock of Conclave with a live SSE feed: fallback, local decisions, invalidation, revocation, unknown sessions
+  - the client against an httpx mock of Konklav with a live SSE feed: fallback, local decisions, invalidation, revocation, unknown sessions
 
 ## Traceability and related docs
 

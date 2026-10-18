@@ -21,7 +21,7 @@ whose `sv` is below the session's latest known version.
 
 r[relying.decision.local]
 With a trusted cache, the relying SDK MUST decide locally, without calling
-Conclave, by evaluating the operation's requirements against the cached
+Konklav, by evaluating the operation's requirements against the cached
 entitlement set, session flags and step-up state.
 
 r[relying.decision.requirements]

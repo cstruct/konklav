@@ -16,7 +16,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
-/// The Conclave identity and access server.
+/// The Konklav identity and access server.
 #[derive(Parser)]
 #[command(version)]
 struct Cli {
@@ -154,9 +154,7 @@ async fn serve(
         auth: Arc::new(auth),
         feed: hub,
     };
-    tokio::spawn(konklav_server::oidc::deliver_logouts_forever(
-        state.clone(),
-    ));
+    tokio::spawn(konklav_server::oidc::deliver_logouts_forever(state.clone()));
     tokio::spawn(konklav_server::peering::sync_forever(state.clone()));
     let server = BoundServer::bind(&listen.listen, state).await?;
     server.run(shutdown_signal()).await?;

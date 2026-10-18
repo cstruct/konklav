@@ -1,4 +1,4 @@
-//! Talking to Conclave: requests described as data, the endpoints the
+//! Talking to Konklav: requests described as data, the endpoints the
 //! console uses, the DTOs it reads, and a `fetch` transport.
 
 pub mod endpoints;

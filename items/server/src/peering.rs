@@ -1,4 +1,4 @@
-//! Following Conclave upstreams' peer feeds.
+//! Following Konklav upstreams' peer feeds.
 //!
 //! For each identity provider with `peering`, the instance polls the
 //! upstream's per-client feed. Each event names an upstream subject (or, for
@@ -10,10 +10,10 @@
 
 use std::time::Duration;
 
+use diesel_async::AsyncConnection;
 use konklav_store::credentials::{self, Credential, CredentialData, CredentialKind};
 use konklav_store::sessions::{self, SessionFilter};
 use konklav_store::{Connection, StoreError, peer_cursors};
-use diesel_async::AsyncConnection;
 
 use crate::AppState;
 use crate::claim_mapping;

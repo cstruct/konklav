@@ -22,7 +22,7 @@ pub fn SignIn() -> impl IntoView {
     let mode = RwSignal::new(Mode::Password);
     view! {
         <main class="sign-in">
-            <h1>"Conclave console"</h1>
+            <h1>"Konklav console"</h1>
             <div class="tabs">
                 <button class:active=move || mode.get() == Mode::Password on:click=move |_| mode.set(Mode::Password)>
                     "Operator sign-in"
@@ -203,7 +203,7 @@ fn BootstrapSignIn() -> impl IntoView {
         error.set(None);
         spawn_local(async move {
             let operator = Operator::bootstrap(&token.get_untracked());
-            // Any control-plane read tells whether Conclave accepts it.
+            // Any control-plane read tells whether Konklav accepts it.
             match send::<serde_json::Value>(&endpoints::signing_keys(), Some(&operator.token)).await
             {
                 Ok(_) => console.operator.set(Some(operator)),

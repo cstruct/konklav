@@ -15,19 +15,19 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use futures_util::StreamExt;
 use konklav_authz::{Decision, EntitlementSet, Requirements};
 use konklav_core::Cursor;
 use konklav_core::feed::{FeedEvent, SessionChanged};
 use konklav_relying::{Config, Key, Need, Outcome, Relying};
 use konklav_token::JwkSet;
-use futures_util::StreamExt;
 use serde::Deserialize;
 use tokio::sync::Notify;
 
-/// Where Conclave is and how to authenticate to it.
+/// Where Konklav is and how to authenticate to it.
 #[derive(Clone, Debug)]
 pub struct ClientConfig {
-    /// Base URL of the relying surface, such as `https://conclave:8081`.
+    /// Base URL of the relying surface, such as `https://konklav:8081`.
     pub relying_url: String,
     /// Base URL of the subject-facing surface, for the service login.
     pub subject_url: String,
@@ -41,7 +41,7 @@ pub struct ClientConfig {
 pub enum Error {
     #[error("http: {0}")]
     Http(#[from] reqwest::Error),
-    #[error("conclave answered {status}: {body}")]
+    #[error("konklav answered {status}: {body}")]
     Status { status: u16, body: String },
     #[error("could not reach a decision")]
     Exhausted,
@@ -182,7 +182,7 @@ impl RelyingClient {
         Err(Error::Exhausted)
     }
 
-    /// Asks Conclave's check API, for when local caches can't be trusted.
+    /// Asks Konklav's check API, for when local caches can't be trusted.
     async fn check(&self, token: &str, requirements: &Requirements) -> Result<Decision, Error> {
         let url = format!("{}/v1/check", self.inner.config.relying_url);
         let response = self

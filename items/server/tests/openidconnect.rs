@@ -1,6 +1,6 @@
-//! Conclave as an OpenID provider, driven by an independent client library
+//! Konklav as an OpenID provider, driven by an independent client library
 //! (`openidconnect`): discovery, the code flow with PKCE, ID-token
-//! verification against Conclave's JWKS, userinfo, refresh and revocation.
+//! verification against Konklav's JWKS, userinfo, refresh and revocation.
 //! The login hand-off is played in-process, as a login application would.
 
 #![allow(clippy::too_many_lines)]
@@ -82,7 +82,7 @@ async fn hand_off(app: &TestApp, base: &str, url: &str, login_token: &str) -> St
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_standard_client_library_signs_in_through_conclave() {
+async fn a_standard_client_library_signs_in_through_konklav() {
     let (app, base) = TestApp::serving(|auth, base| {
         auth.oidc = Some(
             OpenIdProvider::from_pem(
@@ -128,7 +128,7 @@ async fn a_standard_client_library_signs_in_through_conclave() {
     let metadata =
         CoreProviderMetadata::discover_async(IssuerUrl::new(base.clone()).unwrap(), &http)
             .await
-            .expect("the client accepts Conclave's discovery document and keys");
+            .expect("the client accepts Konklav's discovery document and keys");
     let client = CoreClient::from_provider_metadata(
         metadata,
         ClientId::new("console".into()),
@@ -160,7 +160,7 @@ async fn a_standard_client_library_signs_in_through_conclave() {
     let id_token = tokens.id_token().expect("an ID token");
     let claims = id_token
         .claims(&client.id_token_verifier(), &nonce)
-        .expect("the ID token verifies against Conclave's JWKS");
+        .expect("the ID token verifies against Konklav's JWKS");
     assert_eq!(claims.subject().as_str(), subject);
     assert_eq!(claims.email().map(|e| e.as_str()), Some("ada@example.com"));
 
@@ -272,5 +272,5 @@ async fn public_clients_verify_eddsa_id_tokens_with_the_library() {
         .id_token()
         .unwrap()
         .claims(&verifier, &nonce)
-        .expect("the EdDSA ID token verifies against Conclave's Ed25519 keys");
+        .expect("the EdDSA ID token verifies against Konklav's Ed25519 keys");
 }

@@ -1,4 +1,4 @@
-# Conclave v2 overview
+# Konklav v2 overview
 
 Status: accepted as direction for v2. This note is not normative; the specs
 in `docs/spec/` are.
@@ -28,16 +28,16 @@ and spec-first development with Tracey.
 
 | Area | v2 decision | Note |
 |---|---|---|
-| Storage | Postgres owned by Conclave, accessed with Diesel (`diesel-async`) | [storage](storage.md) |
+| Storage | Postgres owned by Konklav, accessed with Diesel (`diesel-async`) | [storage](storage.md) |
 | HTTP | axum, one binary, three separately routable surfaces | |
 | Config | `ordna`, Styx files with secrets kept separate | |
 | Tokens | Ed25519 JWTs that carry session data but no grants | [sessions and tokens](sessions-and-tokens.md) |
 | Decisions | Relying SDK with a local entitlement cache, invalidated by the change feed, with the check API as fallback; fails closed | [entitlements and decisions](entitlements-and-decisions.md) |
 | Feed | Transactional outbox served over SSE, resumable by cursor | [change feed](change-feed.md) |
 | Relying SDK | Sans-I/O Rust core; pyo3 binding first, wasm later | [relying SDK](relying-sdk.md) |
-| Tenants | Conclave is authoritative; relying systems keep projections | [tenant projections](tenant-projections.md) |
-| Messaging | Conclave emits delivery requests; relying systems send the messages | [change feed](change-feed.md) |
-| Federation | OIDC in both roles (identity providers and OpenID provider) with claim mapping; Conclave instances federate, optionally peering through the change feed | [OIDC and federation](oidc-and-federation.md), [proof of possession](proof-of-possession.md) |
+| Tenants | Konklav is authoritative; relying systems keep projections | [tenant projections](tenant-projections.md) |
+| Messaging | Konklav emits delivery requests; relying systems send the messages | [change feed](change-feed.md) |
+| Federation | OIDC in both roles (identity providers and OpenID provider) with claim mapping; Konklav instances federate, optionally peering through the change feed | [OIDC and federation](oidc-and-federation.md), [proof of possession](proof-of-possession.md) |
 | Managed config | Deferred; catalog and templates go through the control-plane API first | |
 
 ## Software items
@@ -53,7 +53,7 @@ and spec-first development with Tracey.
 | `konklav-relying` | Sans-I/O relying core |
 | `konklav-relying-client` | Native Rust host binding (reqwest + tokio) |
 | `konklav-py` | pyo3 host binding |
-| `conclave-cli` | Admin tooling and importers |
+| `konklav-cli` | Admin tooling and importers |
 
 Dependencies point inward: `server` → `authn`/`authz`/`store` → `core`.
 `relying` depends only on `core`, `token` and `authz` (for evaluation), and
@@ -74,19 +74,19 @@ removed.
 ## Adoption path for an existing relying system
 
 A relying system that already has its own authentication and authorization
-typically adopts Conclave like this:
+typically adopts Konklav like this:
 
 1. Introduce narrow ports in front of its current implementation.
 2. Switch to asymmetric tokens.
 3. Import its data with a one-off importer that preserves identifiers.
 4. Replay a recorded corpus of decisions against the check API until there
    are no diffs.
-5. Switch the ports over to Conclave.
+5. Switch the ports over to Konklav.
 
-Conclave's side of this is the import API (`/v1/import/*`, capability
+Konklav's side of this is the import API (`/v1/import/*`, capability
 `konklav:import`) plus the idempotent control-plane endpoints. Mapping
 the relying system's tables onto them, and comparing its access decisions
-with Conclave's entitlement sets, belongs in that system's own tooling.
+with Konklav's entitlement sets, belongs in that system's own tooling.
 
 Compilation semantics are pinned by golden tests
 (`r[authz.compile.reference-semantics]`) so that a zero-diff replay stays

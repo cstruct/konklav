@@ -68,7 +68,7 @@ config_tree! {
     #[derive(Debug, Clone, PartialEq)]
     pub struct TokensConfig {
         pub tokens: pub struct Tokens {
-            /// The `iss` claim, usually Conclave's public base URL.
+            /// The `iss` claim, usually Konklav's public base URL.
             pub issuer: String,
             /// The `aud` claim relying systems expect.
             pub audience: String,
@@ -84,7 +84,7 @@ config_tree! {
             #[facet(default)]
             pub published_key_files: Vec<String>,
         },
-        /// Conclave as an OpenID provider. A section of its own, loaded with
+        /// Konklav as an OpenID provider. A section of its own, loaded with
         /// tokens (contexts are limited in number). Without it, the
         /// `/v1/oauth2/*` endpoints and discovery answer 404.
         pub oidc_provider: Option<pub struct OidcProvider {
@@ -142,7 +142,7 @@ config_tree! {
             pub scopes: Vec<String>,
             /// Pages a login may return to; the first is the default.
             pub return_urls: Vec<String>,
-            /// Provider `amr` or `acr` values credited as Conclave
+            /// Provider `amr` or `acr` values credited as Konklav
             /// authentication methods.
             #[facet(default)]
             pub methods: Vec<pub struct MethodMapping {
@@ -161,7 +161,7 @@ config_tree! {
             /// A JWKS file with the provider's signing keys, used instead of
             /// the keys its discovery document names.
             pub pinned_jwks_file: Option<String>,
-            /// Follow the provider's peer feed (a Conclave upstream) to end
+            /// Follow the provider's peer feed (a Konklav upstream) to end
             /// sessions of subjects it disables and re-apply claim mapping
             /// when their claims change.
             #[facet(default)]

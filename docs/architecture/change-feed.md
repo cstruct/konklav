@@ -46,7 +46,7 @@ Every event also carries `cursor`, `kind` and `created_at`.
 
 ## Delivery requests
 
-Conclave mints challenges and emits a `delivery.requested` event for each.
+Konklav mints challenges and emits a `delivery.requested` event for each.
 The relying system's delivery worker:
 
 - reads the batch endpoint with its own cursor
@@ -66,5 +66,5 @@ Only service principals with the delivery capability can read
 SSE is plain HTTP, resumes natively, works through most proxies, and is easy
 to consume from Python, Rust and browsers. Long-poll was the alternative,
 but it needs more client logic for the same outcome. A message bus would
-couple Conclave to one relying system's infrastructure. A relying system can
+couple Konklav to one relying system's infrastructure. A relying system can
 always bridge the feed into its own bus.

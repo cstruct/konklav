@@ -88,7 +88,7 @@ create index mfa_factor_subject_idx on mfa_factor (subject_id) where removed_at 
 
 -- Challenges ----------------------------------------------------------------
 
--- Short-lived, single-use secrets proven back to Conclave: one-time codes,
+-- Short-lived, single-use secrets proven back to Konklav: one-time codes,
 -- magic links, invites and password resets. Only hashes are stored.
 create table challenge (
     id uuid primary key,
@@ -126,7 +126,7 @@ create index session_active_parent_idx on session (parent_session_id) where revo
 -- Built-in capabilities -------------------------------------------------------
 
 -- Control-plane capabilities live in the catalog so roles can grant them,
--- but only Conclave defines them: catalog documents can neither declare nor
+-- but only Konklav defines them: catalog documents can neither declare nor
 -- remove them.
 alter table catalog_action add column builtin boolean not null default false;
 alter table catalog_action drop constraint catalog_action_reserved;

@@ -13,7 +13,7 @@ Native Rust host binding for the relying core, on tokio and reqwest.
   3. Asks `/v1/check` when the core says the caches can't be trusted.
 
   Errors mean deny.
-- `await_cursor` for read-your-writes after a Conclave write.
+- `await_cursor` for read-your-writes after a Konklav write.
 
 ## Relationships
 

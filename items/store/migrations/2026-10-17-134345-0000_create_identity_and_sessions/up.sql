@@ -118,7 +118,7 @@ create table session_previous_refresh (
     primary key (session_id, refresh_hash)
 );
 
--- Public keys of every signing key Conclave has published. Private keys
+-- Public keys of every signing key Konklav has published. Private keys
 -- never reach the database.
 create table signing_key (
     kid text primary key,

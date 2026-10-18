@@ -21,7 +21,7 @@ pub struct Policy {
     pub scope_bound: bool,
 }
 
-/// A resource inside a tenant. Conclave treats the id as opaque.
+/// A resource inside a tenant. Konklav treats the id as opaque.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Scope {
     pub kind: String,

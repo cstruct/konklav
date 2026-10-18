@@ -5,7 +5,7 @@ use subtle::ConstantTimeEq;
 /// An opaque refresh token: `<session id>.<secret>`.
 ///
 /// Only the SHA-256 of the whole token is stored. Embedding the session id
-/// lets Conclave find the session without an index over hashes, and tell a
+/// lets Konklav find the session without an index over hashes, and tell a
 /// replayed (rotated-away) token of a known session from a random guess.
 // r[impl token.refresh.opaque]
 #[derive(Clone, PartialEq, Eq)]

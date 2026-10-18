@@ -1,7 +1,7 @@
 //! New identifiers for the resources the console creates.
 //!
-//! Conclave's creates are idempotent `PUT`s on a client-chosen id, so the
-//! console mints `UUIDv7`s itself, as Conclave does.
+//! Konklav's creates are idempotent `PUT`s on a client-chosen id, so the
+//! console mints `UUIDv7`s itself, as Konklav does.
 
 use std::fmt::Write;
 

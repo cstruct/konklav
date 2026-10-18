@@ -1,8 +1,8 @@
 # Federation
 
-OpenID Connect in both directions: Conclave signing subjects in through
-identity providers, and Conclave acting as an OpenID provider for
-applications and other Conclave instances. Federation between Conclave
+OpenID Connect in both directions: Konklav signing subjects in through
+identity providers, and Konklav acting as an OpenID provider for
+applications and other Konklav instances. Federation between Konklav
 instances builds on both and adds a few capabilities only peers have.
 
 Status: implemented. The rationale and the decisions behind
@@ -46,13 +46,13 @@ provider's provisioning policy allows it; otherwise it MUST fail without
 revealing whether a matching subject exists.
 
 r[federation.methods]
-The provider's `amr` and `acr` values MUST be mapped to Conclave
+The provider's `amr` and `acr` values MUST be mapped to Konklav
 authentication methods through configuration; unmapped values MUST NOT be
 credited. A provider MAY be configured to require `acr_values` and a
 `max_age`, and a login whose ID token doesn't satisfy them MUST fail.
 
 r[federation.session]
-A federated login MUST create an ordinary Conclave session. The provider's
+A federated login MUST create an ordinary Konklav session. The provider's
 tokens MUST NOT be passed to relying systems, and the provider's refresh
 token MUST NOT be stored unless configuration requires it.
 
@@ -75,7 +75,7 @@ change grants that the provider doesn't manage.
 ## OpenID provider
 
 r[oidc.provider.discovery]
-When the provider role is enabled, Conclave MUST publish an OpenID Provider
+When the provider role is enabled, Konklav MUST publish an OpenID Provider
 discovery document listing only the endpoints, grants, algorithms and claims
 it supports.
 
@@ -95,7 +95,7 @@ The authorization endpoint MUST NOT render user interface. It MUST redirect
 to the login URL configured for the client or the instance with an opaque
 login request, which a login application completes by presenting a session
 that satisfies the request (including any `max_age` and `acr_values`).
-Only then MUST Conclave issue the authorization code.
+Only then MUST Konklav issue the authorization code.
 
 r[oidc.provider.id-token]
 ID tokens MUST carry `iss`, `sub` (the subject id), `aud` (the client id),
@@ -108,7 +108,7 @@ each key's `alg`, and ID tokens MUST be signed with the algorithm the client
 is registered for.
 
 r[oidc.provider.tokens]
-Access tokens issued through OIDC MUST be Conclave access tokens with the
+Access tokens issued through OIDC MUST be Konklav access tokens with the
 client's audience, so relying systems verify them unchanged. OIDC refresh
 tokens MUST be the session's refresh tokens, with the same rotation and
 reuse detection.
@@ -119,9 +119,9 @@ or through tenant selection in the login application. Tokens then carry the
 tenant and membership as they do for direct logins.
 
 r[oidc.provider.claims]
-`userinfo` and ID tokens MUST only contain claims Conclave holds (the
+`userinfo` and ID tokens MUST only contain claims Konklav holds (the
 subject id, login identifiers with their verification state, and group
-claims) unless a claims hook is configured. Conclave MUST NOT store profile
+claims) unless a claims hook is configured. Konklav MUST NOT store profile
 data to serve claims.
 
 r[oidc.provider.groups]
@@ -138,19 +138,19 @@ Clients MUST be able to revoke a refresh or access token they were issued
 MUST succeed without effect.
 
 r[oidc.provider.logout]
-Conclave MUST support RP-initiated logout, and MUST send back-channel logout
+Konklav MUST support RP-initiated logout, and MUST send back-channel logout
 tokens to clients that registered a back-channel URI whenever a session
 they received tokens for ends.
 
 ## Federation between instances
 
 r[federation.peer.standard]
-Federation between Conclave instances MUST work with only the rules above,
+Federation between Konklav instances MUST work with only the rules above,
 so an upstream instance can be replaced by another OpenID provider.
 Peer-only capabilities MUST be optional.
 
 r[federation.peer.feed]
-An upstream Conclave MUST offer each OIDC client a view of its change feed
+An upstream Konklav MUST offer each OIDC client a view of its change feed
 limited to subjects that have had a session for that client, and the
 current claims and state of such a subject. A downstream instance MAY
 follow it. When it does, it MUST revoke the sessions of subjects the

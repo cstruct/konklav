@@ -3,9 +3,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use konklav_authz::Group;
 use diesel::prelude::*;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
+use konklav_authz::Group;
 use serde::{Deserialize, Serialize};
 
 use crate::schema::{catalog_action, catalog_fact, catalog_scope_kind, catalog_session_flag};

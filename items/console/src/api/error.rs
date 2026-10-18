@@ -1,4 +1,4 @@
-//! Conclave's error envelope, as the console sees it.
+//! Konklav's error envelope, as the console sees it.
 
 use std::fmt;
 
@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ApiError {
-    /// Conclave answered with an error.
+    /// Konklav answered with an error.
     Api {
         status: u16,
         code: String,
@@ -93,7 +93,7 @@ impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Api { code, message, .. } => write!(f, "{message} ({code})"),
-            Self::Network(message) => write!(f, "Conclave is unreachable: {message}"),
+            Self::Network(message) => write!(f, "Konklav is unreachable: {message}"),
             Self::Decode(message) => write!(f, "unexpected response: {message}"),
         }
     }

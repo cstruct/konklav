@@ -1,4 +1,4 @@
-//! What Conclave returns, as far as the console reads it.
+//! What Konklav returns, as far as the console reads it.
 //!
 //! These are transport DTOs owned by the console, not the server's models:
 //! they keep only the fields the console shows, and documents the operator
@@ -331,7 +331,7 @@ impl<'de> Deserialize<'de> for OidcClient {
 
 impl OidcClient {
     /// The registration as `PUT /v1/oidc/clients/{id}` takes it: without
-    /// the fields Conclave keeps itself.
+    /// the fields Konklav keeps itself.
     #[must_use]
     pub fn definition(&self) -> Value {
         let mut definition = self.raw.clone();
@@ -368,7 +368,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn client_definitions_drop_what_conclave_keeps() {
+    fn client_definitions_drop_what_konklav_keeps() {
         let client: OidcClient = serde_json::from_value(json!({
             "id": "tool",
             "kind": "confidential",

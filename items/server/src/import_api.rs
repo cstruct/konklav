@@ -1,4 +1,4 @@
-//! Bulk import of identity data from a system Conclave replaces: subjects,
+//! Bulk import of identity data from a system Konklav replaces: subjects,
 //! pre-hashed credentials, MFA seeds and sessions, keyed by their existing
 //! ids so imports can be re-run.
 //!
@@ -9,6 +9,7 @@ use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
+use diesel_async::AsyncConnection;
 use konklav_core::{CredentialId, MembershipId, SessionId, SubjectId, TenantId};
 use konklav_store::credentials::{
     self, CredentialData, NewCredential, PasswordData, SecretKeyData, SecretSlotData,
@@ -16,7 +17,6 @@ use konklav_store::credentials::{
 use konklav_store::mfa::{self, EmailCodeData, FactorData, TotpData};
 use konklav_store::sessions::{self, ClientKind, ImportedSession, NewSession, Stage};
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
-use diesel_async::AsyncConnection;
 use serde::{Deserialize, Serialize};
 
 use crate::control_api::guard;
@@ -203,7 +203,7 @@ async fn import_credentials(
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum FactorMaterial {
-    /// The plaintext seed, base32; Conclave encrypts it on arrival.
+    /// The plaintext seed, base32; Konklav encrypts it on arrival.
     Totp {
         seed_base32: String,
     },
@@ -247,7 +247,7 @@ fn decode_base32(input: &str) -> Option<Vec<u8>> {
 }
 
 /// `POST /v1/import/mfa-factors`: TOTP seeds arrive in plaintext over the
-/// control plane and are encrypted with Conclave's current key.
+/// control plane and are encrypted with Konklav's current key.
 // r[impl import.mfa]
 async fn import_factors(
     State(state): State<AppState>,

@@ -14,18 +14,18 @@ out of scope" position.
    and national eID schemes through an OIDC broker, so that eID doesn't need
    native integrations.
 2. **Be an identity provider.** Applications and tools sign in with
-   standard OIDC libraries instead of Conclave's `/v1` API, and each gets
+   standard OIDC libraries instead of Konklav's `/v1` API, and each gets
    its own audience and claims.
 3. **Federate operators across instances.** One operators' instance holds
    the people who run the platform. Dev, staging and each production region
-   run their own Conclave and trust it for operator sign-in and access,
+   run their own Konklav and trust it for operator sign-in and access,
    without copying end-user data between them.
 
 ## Topology for operators
 
 ```
               ┌──────────────────────────┐
-              │ operators' Conclave      │  OpenID provider
+              │ operators' Konklav      │  OpenID provider
               │ subjects: operators      │  clients: one per environment
               │ global roles: sre, dev…  │
               └──┬─────────┬─────────┬───┘
@@ -45,7 +45,7 @@ out of scope" position.
 - End-user data never moves between instances. Only operator identities and
   group claims travel, which keeps regional data residency intact.
 
-## Conclave as a client of identity providers
+## Konklav as a client of identity providers
 
 1. `GET /v1/login/oidc/{provider}/start` creates a challenge holding
    `state`, `nonce` and the PKCE verifier, sets a short-lived cookie
@@ -58,7 +58,7 @@ out of scope" position.
    - linked: use its subject
    - otherwise: link or provision per policy
    - neither allowed: fail with the same error as an unknown account
-4. It maps `amr`/`acr` to Conclave methods, applies claim mapping, and
+4. It maps `amr`/`acr` to Konklav methods, applies claim mapping, and
    starts an ordinary session, with the provider's session-lifetime cap.
 5. It redirects to the configured return URL. The browser receives the
    refresh cookie exactly as for a password login.
@@ -76,7 +76,7 @@ The callback redirects to the return URL with `signed_in=true`,
 `account_linked_elsewhere`. Linking enforces the provider's `acr` and
 `max_age` requirements too.
 
-## Conclave as an OpenID provider
+## Konklav as an OpenID provider
 
 The provider role reuses sessions, refresh rotation, access tokens and step
 up. Its endpoints live under `/v1/oauth2/` (versioned like every other
@@ -104,7 +104,7 @@ New pieces:
   - ID-token algorithm (`ES256` or `EdDSA`)
   - whether refresh is allowed
 
-  `POST …/secret` issues a confidential client's secret once; Conclave
+  `POST …/secret` issues a confidential client's secret once; Konklav
   keeps only its SHA-256. `DELETE` disables the client and revokes its
   sessions, keeping the registration as history.
 - **Login requests** and **authorization codes** are challenges: hashed,
@@ -114,7 +114,7 @@ New pieces:
   subject, credential, tenant and authentication, and it ends with it. It
   records the client and the granted scopes. Its access tokens carry the
   client's audience, and its refresh tokens only work at the token endpoint
-  for that client. Conclave's own API refuses its access tokens.
+  for that client. Konklav's own API refuses its access tokens.
 - **ID tokens and the ES256 key**: many OIDC libraries can't verify EdDSA,
   so ID tokens default to ES256 with a P-256 key loaded from
   `id_token_key_file` and published in JWKS next to the Ed25519 keys. The
@@ -128,14 +128,14 @@ New pieces:
 
 ### Login hand-off instead of a hosted page
 
-Conclave has no user interface, and `/v1/oauth2/authorize` doesn't add one:
+Konklav has no user interface, and `/v1/oauth2/authorize` doesn't add one:
 
 1. The client redirects to `/v1/oauth2/authorize`, with:
    - the authorization code response type
    - PKCE `S256`
    - optionally `nonce`, `max_age`, `acr_values` and a `tenant:<id>` scope
 
-   Conclave validates the client and redirect URI; until both check out,
+   Konklav validates the client and redirect URI; until both check out,
    errors go to the browser rather than to the redirect URI. It then keeps
    the request as a challenge, sets a cookie binding it to the browser, and
    redirects to the login URL with `login_request=<id>`.
@@ -145,9 +145,9 @@ Conclave has no user interface, and `/v1/oauth2/authorize` doesn't add one:
    step-up and tenant selection.
 3. It calls `POST /v1/oauth2/login-requests/{id}/accept` with the session's
    access token (and the usual browser `Origin` and client header).
-   Conclave checks `max_age`, `acr_values` and the requested tenant against
+   Konklav checks `max_age`, `acr_values` and the requested tenant against
    the session, and returns `redirect_to`.
-4. The browser follows it to `/v1/oauth2/authorize/resume`. Conclave
+4. The browser follows it to `/v1/oauth2/authorize/resume`. Konklav
    checks the cookie, so only the browser that started the request
    finishes it, then redirects to the client with a code, the client's
    `state` and `iss`.
@@ -162,7 +162,7 @@ registered as pre-consented.
 ### Client credentials, revocation and logout
 
 - **Client credentials.** A confidential client can name a
-  `service_subject`. Conclave then keeps a `client` credential (identifier:
+  `service_subject`. Konklav then keeps a `client` credential (identifier:
   the client id) on that service principal, moving it if the binding
   changes and revoking it (and its sessions) if the binding is removed. The
   `client_credentials` grant starts a session for the principal that lasts
@@ -179,7 +179,7 @@ registered as pre-consented.
   behind a refresh or access token the client was issued, and answers 200
   for anything else.
 - **RP-initiated logout** (`GET /v1/oauth2/logout`) takes an
-  `id_token_hint`. Conclave checks the hint against its own keys, and
+  `id_token_hint`. Konklav checks the hint against its own keys, and
   accepts it even if it has expired. It then ends the login application's
   session that the client session came from; every client session started
   from it ends with it. Finally it redirects to a registered
@@ -197,7 +197,7 @@ registered as pre-consented.
 
 ### Claims
 
-Conclave holds no profile data, so it can only serve:
+Konklav holds no profile data, so it can only serve:
 - the subject id
 - login identifiers, with whether they were verified:
   - `email` from email-link (verified), password (not verified) and
@@ -209,7 +209,7 @@ Conclave holds no profile data, so it can only serve:
 lets it see, such as roles named `ops-*` for environments. ID tokens and
 `/v1/oauth2/userinfo` carry the same claims for the granted scopes. Richer
 profile claims come from an optional claims hook, which isn't built yet: a
-relying-system endpoint that Conclave would call with the subject id. That
+relying-system endpoint that Konklav would call with the subject id. That
 keeps `r[platform.repo.relying-agnostic]`.
 
 ## Claim mapping
@@ -220,9 +220,9 @@ reviewed and deployed like any other config:
 ```styx
 identity_providers ({
     id operators
-    issuer "https://ops.conclave.example"
+    issuer "https://ops.konklav.example"
     client_id prod-eu
-    redirect_uri "https://prod-eu.conclave.example/v1/login/oidc/operators/callback"
+    redirect_uri "https://prod-eu.konklav.example/v1/login/oidc/operators/callback"
     return_urls ("https://console.prod-eu.example/")
     provisioning create
     session_lifetime_seconds 3600
@@ -289,7 +289,7 @@ keeps downstream sessions until they expire. In increasing strength:
      login.
 
    Access therefore follows upstream changes within seconds, without a new
-   login. Peering only works with a Conclave upstream; other providers
+   login. Peering only works with a Konklav upstream; other providers
    still have the first two mechanisms.
 
 ## Break-glass
@@ -367,14 +367,14 @@ Proposed defaults, to confirm before implementation:
 
 | Decision | Proposed default | Alternatives |
 |---|---|---|
-| Login UI for the provider role | Hand-off to a configured login URL | A minimal hosted login page in Conclave |
+| Login UI for the provider role | Hand-off to a configured login URL | A minimal hosted login page in Konklav |
 | Account linking | Only while signed in; verified-email linking off unless a provider enables it with a domain allow-list | Always allow verified-email linking |
 | Claim mapping location | Provider configuration (Styx), reviewed and deployed with the instance | Control-plane resources editable at runtime |
 | Federated session lifetime | 1 hour for operator providers, configurable per provider | Instance-wide lifetime |
 | Peering in the first release | No: short sessions and back-channel logout first, peering next | Peering from the start |
 | Break-glass credential | Local secret keys with an alerting event; hardware keys once `public_key` exists | Bootstrap token |
 | Second signing algorithm | ES256 | RS256 (wider support, larger keys and tokens) |
-| ID token claims | Subject id, login identifiers and groups; a claims hook for the rest | Store profile data in Conclave |
+| ID token claims | Subject id, login identifiers and groups; a claims hook for the rest | Store profile data in Konklav |
 | SAML | Deferred; brokers translate SAML to OIDC | Native SAML |
 
 ## Phases
@@ -394,7 +394,7 @@ Proposed defaults, to confirm before implementation:
 
 ## Interoperability
 
-Besides tests against Conclave's own fakes and against a second Conclave,
+Besides tests against Konklav's own fakes and against a second Konklav,
 two suites run against independent implementations:
 
 - **Ory Hydra as the identity provider.** Hydra is installed by mise and

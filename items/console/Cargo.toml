@@ -1,6 +1,6 @@
 [package]
 name = "konklav-console"
-description = "The Conclave console: a browser UI for operating the control plane"
+description = "The Konklav console: a browser UI for operating the control plane"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

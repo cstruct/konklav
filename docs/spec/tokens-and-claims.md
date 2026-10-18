@@ -56,7 +56,7 @@ Every signing key MUST have a `kid` derived deterministically from its
 public key (base64url of the SHA-256 of the raw public key).
 
 r[token.keys.jwks]
-Conclave MUST publish all verification keys that can still validate
+Konklav MUST publish all verification keys that can still validate
 unexpired tokens at `/.well-known/jwks.json`.
 
 r[token.keys.rotation-overlap]
@@ -72,7 +72,7 @@ Every change to the set of published keys MUST emit a
 `signing_keys.changed` event.
 
 r[token.keys.private-material]
-Private signing keys MUST come from secret configuration. Conclave MUST NOT
+Private signing keys MUST come from secret configuration. Konklav MUST NOT
 persist private key material in its database.
 
 ## Illustrative payload

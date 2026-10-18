@@ -5,7 +5,7 @@ Tenants, subjects, credentials, memberships and facts.
 ## Tenants
 
 r[tenant.root.bootstrap]
-Conclave MUST always have a root tenant, created before any other tenant.
+Konklav MUST always have a root tenant, created before any other tenant.
 Its identifier is the nil UUID, and APIs MUST also accept `root` for it.
 
 r[tenant.tree.single-parent]
@@ -25,7 +25,7 @@ Moving a tenant out of `active` MUST revoke every session targeting that
 tenant.
 
 r[tenant.authority]
-Conclave MUST be the source of truth for tenant existence, parentage and
+Konklav MUST be the source of truth for tenant existence, parentage and
 lifecycle state. Relying systems MAY keep projections, keyed by the same
 identifier, for their own data.
 
@@ -47,7 +47,7 @@ A subject MUST be either `active` or `disabled`. Disabling a subject MUST
 revoke all of its sessions and block new ones.
 
 r[subject.no-profile]
-Conclave MUST NOT be the system of record for subject profile data such as
+Konklav MUST NOT be the system of record for subject profile data such as
 display names, language or country. It stores only what authentication and
 authorization need.
 
@@ -66,7 +66,7 @@ MUST NOT be overwritten in place.
 
 r[credential.password.hashing]
 Password credentials MUST be stored with a memory-hard password hash
-(Argon2id). Conclave MUST be able to verify hashes imported from earlier
+(Argon2id). Konklav MUST be able to verify hashes imported from earlier
 systems that use compatible Argon2id encodings, and MUST rehash them under
 current parameters on successful login.
 
@@ -121,5 +121,5 @@ Every fact key MUST be declared portable or non-portable. Only portable
 facts may appear in tokens.
 
 r[fact.bounded]
-Conclave MUST enforce a configured size limit on the portable facts that a
+Konklav MUST enforce a configured size limit on the portable facts that a
 token can carry.

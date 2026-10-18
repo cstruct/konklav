@@ -1,4 +1,4 @@
-//! Test helpers shared by Conclave's software items.
+//! Test helpers shared by Konklav's software items.
 //!
 //! Tests get an isolated database each: [`TestDatabase`] creates a fresh,
 //! fully migrated database on the development Postgres server and drops it
@@ -16,8 +16,8 @@
 //! }
 //! ```
 
-use konklav_store::{ConnectOptions, Pool};
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
+use konklav_store::{ConnectOptions, Pool};
 
 const SERVER_URL_VARS: [&str; 2] = ["KONKLAV_TEST_DATABASE_URL", "DATABASE_URL"];
 

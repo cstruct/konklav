@@ -1,4 +1,4 @@
-//! The Conclave endpoints the console calls.
+//! The Konklav endpoints the console calls.
 
 use serde_json::{Value, json};
 
@@ -155,7 +155,7 @@ impl SessionFilter {
         ]
     }
 
-    /// Whether nothing would be filtered, which Conclave refuses for
+    /// Whether nothing would be filtered, which Konklav refuses for
     /// revocation.
     #[must_use]
     pub fn is_empty(&self) -> bool {

@@ -8,7 +8,7 @@ use crate::api::types::{OwnCapabilities, TokenResponse};
 use crate::grants::Grants;
 
 /// The access-token claims the console reads. It never verifies them: the
-/// token is for Conclave, which does.
+/// token is for Konklav, which does.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct Claims {
     pub sub: String,
@@ -80,7 +80,7 @@ impl Operator {
     }
 }
 
-/// What to do when Conclave rejects the access token a request carried.
+/// What to do when Konklav rejects the access token a request carried.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Retry {
     /// Another request refreshed meanwhile: try again with the new token.
@@ -94,7 +94,7 @@ pub enum Retry {
 /// Decides how to recover from a rejected access token, given the token
 /// the request carried and the operator now.
 ///
-/// Every refresh rotates the refresh token, and Conclave revokes the
+/// Every refresh rotates the refresh token, and Konklav revokes the
 /// session when a rotated one is presented again. So a request that lost a
 /// race with another refresh must reuse its result instead of refreshing
 /// again.

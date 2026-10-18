@@ -1,6 +1,6 @@
 # konklav-store
 
-Library crate that owns Conclave's Postgres database: schema, forward-only migrations, connection pool and, from M2, repositories.
+Library crate that owns Konklav's Postgres database: schema, forward-only migrations, connection pool and, from M2, repositories.
 
 ## Responsibilities
 
@@ -36,7 +36,7 @@ The migration functions use Diesel's blocking harness, so they must run on a mul
 | `konklav-core` | Shared identifier types |
 | `konklav-server` | Runs migrations (`migrate`) and checks them for readiness |
 | `konklav-test-support` | Creates isolated, migrated databases for tests |
-| PostgreSQL | Conclave's exclusive, authoritative store. It needs the [pg_jsonschema](https://github.com/supabase/pg_jsonschema) extension; the dev image in `dev/postgres` includes it |
+| PostgreSQL | Konklav's exclusive, authoritative store. It needs the [pg_jsonschema](https://github.com/supabase/pg_jsonschema) extension; the dev image in `dev/postgres` includes it |
 
 ## Usage
 

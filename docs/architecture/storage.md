@@ -2,7 +2,7 @@
 
 ## Postgres with Diesel
 
-Conclave owns one Postgres database. Diesel gives compile-time-checked
+Konklav owns one Postgres database. Diesel gives compile-time-checked
 queries against a generated `schema.rs`. `diesel-async` with a deadpool
 pool keeps the server on tokio, and `diesel_migrations` embeds the
 forward-only migrations so that readiness can confirm none are pending.

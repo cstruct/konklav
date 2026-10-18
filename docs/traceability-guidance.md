@@ -1,8 +1,8 @@
 # Repository Traceability Guidance
 
-This note defines how Conclave repository documentation should be split across Tracey-managed specs, software-item implementation docs, design notes, crate READMEs, and local code comments.
+This note defines how Konklav repository documentation should be split across Tracey-managed specs, software-item implementation docs, design notes, crate READMEs, and local code comments.
 
-It is intended to keep the repository practical for day-to-day development while leaving room for downstream regulated products to map Conclave into broader traceability models.
+It is intended to keep the repository practical for day-to-day development while leaving room for downstream regulated products to map Konklav into broader traceability models.
 
 ## Default boundary
 
@@ -24,7 +24,7 @@ Use `docs/spec/` for stable, normative requirements about product behavior, exte
 
 These docs answer questions such as:
 
-- what Conclave must do
+- what Konklav must do
 - which boundaries or guarantees other software items can depend on
 - which behavior is stable enough to verify and keep traceable over time
 
@@ -105,10 +105,10 @@ That boundary belongs to the team responsible for the actual deployed product or
 
 In that context:
 
-- Conclave as a whole may be treated as one software item within the downstream product or system
-- a subset of Conclave may be treated as one or more software items if the downstream architecture needs finer decomposition
-- repository-level Tracey rules can provide evidence about stable Conclave obligations without claiming to describe the entire regulated product
+- Konklav as a whole may be treated as one software item within the downstream product or system
+- a subset of Konklav may be treated as one or more software items if the downstream architecture needs finer decomposition
+- repository-level Tracey rules can provide evidence about stable Konklav obligations without claiming to describe the entire regulated product
 
-In regulated contexts, including medical-device software lifecycles, downstream teams may also map Conclave into a formal software-system and software-item model.
+In regulated contexts, including medical-device software lifecycles, downstream teams may also map Konklav into a formal software-system and software-item model.
 
-This keeps Conclave's open source documentation honest about its scope while still making it easier for downstream teams to reuse the repository in broader traceability models when they need to.
+This keeps Konklav's open source documentation honest about its scope while still making it easier for downstream teams to reuse the repository in broader traceability models when they need to.

@@ -8,7 +8,7 @@
 //!
 //! - [`Relying::decide`] answers from the caches, or says what is missing
 //!   (`Need`), including [`Need::Check`] when the caches can't be trusted and
-//!   the host must ask Conclave's check API instead.
+//!   the host must ask Konklav's check API instead.
 //! - [`Relying::poll_work`] lists background fetches that are due, and when
 //!   to poll next, so busy entries are refreshed before they expire.
 //! - The `on_*` methods apply what the host fetched or received.

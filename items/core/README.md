@@ -1,6 +1,6 @@
 # konklav-core
 
-Library crate with the identifiers and small value types that several Conclave software items have to agree on.
+Library crate with the identifiers and small value types that several Konklav software items have to agree on.
 
 ## Responsibilities
 

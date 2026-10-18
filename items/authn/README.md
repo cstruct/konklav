@@ -1,6 +1,6 @@
 # konklav-authn
 
-Library crate with Conclave's authentication primitives. Everything here is computation only; persistence and request handling live in `konklav-store` and `konklav-server`.
+Library crate with Konklav's authentication primitives. Everything here is computation only; persistence and request handling live in `konklav-store` and `konklav-server`.
 
 ## Responsibilities
 

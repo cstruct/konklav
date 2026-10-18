@@ -155,7 +155,7 @@ create table template (
     id uuid primary key,
     key text not null unique check (key ~ '^[A-Za-z0-9_.-]+$'),
     description text not null default '',
-    -- Opaque to Conclave; for relying systems' own labels.
+    -- Opaque to Konklav; for relying systems' own labels.
     metadata jsonb not null default '{}' check (jsonb_typeof(metadata) = 'object'),
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()

@@ -1,9 +1,9 @@
-//! Describing calls to Conclave without making them.
+//! Describing calls to Konklav without making them.
 
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::Value;
 
-/// Sent with every request. Conclave requires it on cookie endpoints, where
+/// Sent with every request. Konklav requires it on cookie endpoints, where
 /// it forces a CORS preflight that other sites can't pass.
 pub const CLIENT_HEADER: (&str, &str) = ("x-konklav-client", "console");
 
@@ -22,7 +22,7 @@ pub enum Method {
     Delete,
 }
 
-/// The Conclave surface a request goes to.
+/// The Konklav surface a request goes to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Surface {
     Subject,
@@ -46,7 +46,7 @@ impl Surface {
     }
 }
 
-/// One call to Conclave, independent of how it's sent.
+/// One call to Konklav, independent of how it's sent.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Request {
     pub method: Method,

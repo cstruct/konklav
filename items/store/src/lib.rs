@@ -1,6 +1,6 @@
-//! Conclave's Postgres schema, migrations, connection pool and repositories.
+//! Konklav's Postgres schema, migrations, connection pool and repositories.
 //!
-//! Conclave owns its database exclusively. Every other software item reaches
+//! Konklav owns its database exclusively. Every other software item reaches
 //! it through this crate. Repository functions take a connection so callers
 //! can compose them inside one transaction.
 

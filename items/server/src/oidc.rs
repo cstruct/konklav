@@ -1,15 +1,15 @@
-//! Conclave as an OpenID provider: the ID-token key, ID tokens and the
-//! claims Conclave can serve.
+//! Konklav as an OpenID provider: the ID-token key, ID tokens and the
+//! claims Konklav can serve.
 
 use std::path::Path;
 
+use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use konklav_core::SubjectId;
 use konklav_store::credentials::{Credential, CredentialData};
 use konklav_store::oidc_clients::{IdTokenAlgorithm, OidcClient};
 use konklav_store::sessions::Session;
 use konklav_store::{Connection, roles, tenants};
 use konklav_token::Jwk;
-use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use p256::pkcs8::DecodePrivateKey;
 use serde::Serialize;
 
@@ -82,7 +82,7 @@ pub fn satisfies_acr(session: &Session, requested: &str) -> bool {
         .any(|value| value == ACR_SINGLE || (value == ACR_MULTI && level == ACR_MULTI))
 }
 
-/// The claims Conclave holds for a session's subject, for the scopes
+/// The claims Konklav holds for a session's subject, for the scopes
 /// granted.
 // r[impl oidc.provider.claims]
 #[derive(Default, Serialize)]
@@ -331,7 +331,7 @@ pub async fn deliver_logouts_forever(state: crate::AppState) {
     }
 }
 
-/// The client (`aud`) and session (`sid`) of an ID token Conclave signed,
+/// The client (`aud`) and session (`sid`) of an ID token Konklav signed,
 /// expired or not, as presented in `id_token_hint`.
 pub async fn verify_own_id_token(
     conn: &mut Connection,

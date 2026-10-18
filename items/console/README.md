@@ -1,8 +1,8 @@
 # Console
 
-`konklav-console` is a browser UI for operating Conclave's control plane.
+`konklav-console` is a browser UI for operating Konklav's control plane.
 It's a client-side Leptos app, compiled to WASM and bundled by
-[Trunk](https://trunkrs.dev). Operators sign in with their own Conclave
+[Trunk](https://trunkrs.dev). Operators sign in with their own Konklav
 credentials, and the console calls the control plane with their access
 token.
 
@@ -34,7 +34,7 @@ Out of scope:
   endpoints of its own; it uses the subject-facing and control-plane
   surfaces like any other client.
 - Bulk import (`/v1/import/*`), which is for migration tooling, and
-  delivery (Conclave doesn't send messages).
+  delivery (Konklav doesn't send messages).
 - Serving itself in production. The build is static files.
 
 ## Public interface
@@ -65,7 +65,7 @@ Out of scope:
 | --- | --- |
 | `konklav-server` (over HTTP) | The only backend. The console uses the subject-facing surface to sign in and the control-plane surface for everything else. It shares no Rust types with the server and keeps its own DTOs. |
 | Leptos, `leptos_router` | Rendering, fine-grained reactivity and client-side routing. |
-| Trunk | Compiles the WASM, runs `wasm-bindgen`, bundles the page, and proxies Conclave during development. |
+| Trunk | Compiles the WASM, runs `wasm-bindgen`, bundles the page, and proxies Konklav during development. |
 
 ### Dependent summary
 
@@ -73,7 +73,7 @@ None. Operators use it in a browser.
 
 ## Deployment
 
-The console must reach Conclave on its own origin
+The console must reach Konklav on its own origin
 (`r[item.console.same-origin]`):
 
 - `/v1/` goes to the subject-facing surface, keeping its paths, because
@@ -83,9 +83,9 @@ The console must reach Conclave on its own origin
   fallback for client-side routes.
 
 Same-origin requests keep the `SameSite=Strict` refresh cookie
-first-party, and Conclave serves no CORS. Conclave still checks the
+first-party, and Konklav serves no CORS. Konklav still checks the
 `Origin` of cookie requests, so add the console's origin to
-`browser.allowed_origins`. Conclave also requires an `X-Konklav-Client`
+`browser.allowed_origins`. Konklav also requires an `X-Konklav-Client`
 header, which the console sends on every request. In development, Trunk
 does the routing (see `Trunk.toml`), and `config/dev.styx` allows
 `http://127.0.0.1:8083`.
@@ -93,7 +93,7 @@ does the routing (see `Trunk.toml`), and `config/dev.styx` allows
 ## Running
 
 ```sh
-mise run serve            # Conclave on 8080–8082
+mise run serve            # Konklav on 8080–8082
 mise run console:serve    # the console on http://127.0.0.1:8083
 ```
 
@@ -144,7 +144,7 @@ Coverage shape:
 - A refusal for a missing capability is shown as such. Any other
   `UNAUTHENTICATED` or `SESSION_ENDED` answer that a refresh can't fix
   signs the operator out.
-- Secrets that Conclave shows only once (secret keys, rotated slots and
+- Secrets that Konklav shows only once (secret keys, rotated slots and
   OIDC client secrets) are shown once and never stored.
 - Destructive actions ask for confirmation, and the confirmation says
   what else ends, such as sessions, tokens or assignments.

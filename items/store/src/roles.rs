@@ -2,10 +2,10 @@
 //! assignments.
 
 use chrono::{DateTime, Utc};
-use konklav_authz::{Policy, Scope};
-use konklav_core::{MembershipId, SubjectId, TenantId};
 use diesel::prelude::*;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
+use konklav_authz::{Policy, Scope};
+use konklav_core::{MembershipId, SubjectId, TenantId};
 use serde::Serialize;
 
 use crate::schema::{role, role_assignment, role_policy, template};
@@ -130,7 +130,7 @@ pub async fn list(conn: &mut AsyncPgConnection, tenant: TenantId) -> StoreResult
 pub struct RoleDefinition {
     pub template: Option<String>,
     pub priority: i32,
-    /// An object, opaque to Conclave.
+    /// An object, opaque to Konklav.
     pub metadata: serde_json::Value,
     pub policies: Vec<Policy>,
 }

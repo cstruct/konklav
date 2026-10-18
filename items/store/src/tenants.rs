@@ -1,10 +1,10 @@
-//! Tenants. Conclave is the source of truth for whether a tenant exists, its
+//! Tenants. Konklav is the source of truth for whether a tenant exists, its
 //! parent and its lifecycle state.
 
 use chrono::{DateTime, Utc};
-use konklav_core::TenantId;
 use diesel::prelude::*;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
+use konklav_core::TenantId;
 use serde::{Deserialize, Serialize};
 
 use crate::schema::tenant;

@@ -38,7 +38,7 @@ pub fn Invites() -> impl IntoView {
         <h1>"Invites"</h1>
         <Gated capability=Capability::Invites>
             <p class="muted">
-                "Conclave doesn't send email: the invite token goes out as a delivery request on the change feed, "
+                "Konklav doesn't send email: the invite token goes out as a delivery request on the change feed, "
                 "for a relying system to deliver."
             </p>
             <form class="card" on:submit=submit>

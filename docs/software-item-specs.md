@@ -1,6 +1,6 @@
 # Software-Item Implementation Specs
 
-This note defines the approach for software-item implementation specs in Conclave.
+This note defines the approach for software-item implementation specs in Konklav.
 
 The goal is to capture stable implementation-contract obligations that matter below the product-spec layer without turning every crate detail into a Tracey rule.
 
@@ -8,7 +8,7 @@ The goal is to capture stable implementation-contract obligations that matter be
 
 The existing product specs under `docs/spec/` answer questions such as:
 
-- what Conclave must do
+- what Konklav must do
 - what external or cross-cutting behavior must remain true
 - what long-lived architectural obligations other software items can depend on
 
@@ -123,9 +123,9 @@ Use this heuristic:
 
 Examples in this repository:
 
-- `conclave-managed-config` owns the canonical managed-config bundle and directory-assembly behavior
-- `conclave-relying-auth` owns the JWT signing, verification, JWKS, and offline evaluation boundary
-- `conclave-controlplane-api` owns the shared Rust DTO boundary for control-plane operations
+- `konklav-managed-config` owns the canonical managed-config bundle and directory-assembly behavior
+- `konklav-relying-auth` owns the JWT signing, verification, JWKS, and offline evaluation boundary
+- `konklav-controlplane-api` owns the shared Rust DTO boundary for control-plane operations
 
 ## Repository shape
 
@@ -177,4 +177,4 @@ Do not add a software-item rule when most of the following are true:
 - a local code comment or design note communicates it well enough
 - no other software item or long-lived boundary really depends on it
 
-Shared-boundary software items such as `conclave-managed-config`, `conclave-relying-auth`, and `conclave-controlplane-api` are often good fits for this layer because they own contracts that multiple consumers depend on.
+Shared-boundary software items such as `konklav-managed-config`, `konklav-relying-auth`, and `konklav-controlplane-api` are often good fits for this layer because they own contracts that multiple consumers depend on.

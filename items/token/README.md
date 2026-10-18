@@ -1,6 +1,6 @@
 # konklav-token
 
-Library crate for Conclave access tokens: the claims, compact EdDSA (Ed25519) JWS signing and verification, key ids, and JWKS documents.
+Library crate for Konklav access tokens: the claims, compact EdDSA (Ed25519) JWS signing and verification, key ids, and JWKS documents.
 
 ## Responsibilities
 

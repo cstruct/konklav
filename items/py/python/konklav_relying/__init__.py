@@ -1,16 +1,16 @@
 """
-Decide Conclave authorization locally.
+Decide Konklav authorization locally.
 
 `RelyingClient` wraps the relying core (written in Rust, shared with every
 other binding) and does its I/O with httpx on asyncio: it logs in as a
 service principal, follows the change feed, keeps caches warm in the
-background, and answers `decide` locally, falling back to Conclave's check
+background, and answers `decide` locally, falling back to Konklav's check
 API whenever the core says its caches can't be trusted.
 
 ```python
 client = RelyingClient(
-    relying_url="https://conclave:8081",
-    subject_url="https://conclave:8080",
+    relying_url="https://konklav:8081",
+    subject_url="https://konklav:8080",
     key_id=key_id,
     secret=secret,
     issuer="https://auth.example",
@@ -47,7 +47,7 @@ Decision = dict[str, Any]
 
 
 class KonklavError(Exception):
-    """Conclave could not be reached or answered with an error. Treat as deny."""
+    """Konklav could not be reached or answered with an error. Treat as deny."""
 
 
 def _now() -> int:
@@ -308,4 +308,4 @@ class RelyingClient:
 def _checked(response: httpx.Response) -> httpx.Response:
     if response.is_success:
         return response
-    raise KonklavError(f"conclave answered {response.status_code}: {response.text}")
+    raise KonklavError(f"konklav answered {response.status_code}: {response.text}")

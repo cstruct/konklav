@@ -1,6 +1,6 @@
-# Conclave Specs
+# Konklav Specs
 
-This directory holds the Tracey-managed requirements for Conclave v2.
+This directory holds the Tracey-managed requirements for Konklav v2.
 
 Use the vocabulary in [`../nomenclature.md`](../nomenclature.md). Specs never
 name a specific relying system.
@@ -24,7 +24,7 @@ Product specs:
 - [relying systems](relying-systems.md): obligations on the relying core and
   host bindings
 - [federation](federation.md): identity providers, the OpenID provider role,
-  claim mapping, and federation between Conclave instances
+  claim mapping, and federation between Konklav instances
 
 Software-item implementation specs live under
 [`software-items/`](software-items/README.md).

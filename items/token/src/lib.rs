@@ -1,4 +1,4 @@
-//! Conclave access tokens: claims, compact EdDSA (Ed25519) JWS signing and
+//! Konklav access tokens: claims, compact EdDSA (Ed25519) JWS signing and
 //! verification, key ids, and JWKS documents.
 //!
 //! This crate is shared by the issuer (`konklav-authn` via the server) and by

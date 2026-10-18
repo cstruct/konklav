@@ -1,6 +1,6 @@
-# Conclave
+# Konklav
 
-Conclave is a standalone identity and access service. It owns subjects,
+Konklav is a standalone identity and access service. It owns subjects,
 credentials, sessions, tokens, tenants, memberships, roles and policies.
 Relying systems verify its tokens offline and get authorization decisions
 through a small SDK that caches entitlements and keeps them fresh from a
@@ -11,7 +11,7 @@ It is designed around:
 - **clear tenancy boundaries:** a tenant tree in which a parent grants
   nothing implicitly
 - **agnosticism:** actions, scope kinds, facts and session flags are catalog
-  data; Conclave knows nothing about any relying system's domain
+  data; Konklav knows nothing about any relying system's domain
 - **fast revocation without callbacks:** session and entitlement changes
   reach relying systems over SSE within about a second, and relying systems
   fall back to a central check API and fail closed when they can't keep up
@@ -24,19 +24,19 @@ Milestones M0–M8 are done in code. The cutover itself is an operation the
 relying system's runbook describes, and it remains: publish the Python
 binding, ship the frontends, rehearse, switch over, then clean up.
 
-Beyond the milestones, Conclave federates through OpenID Connect in both
+Beyond the milestones, Konklav federates through OpenID Connect in both
 directions:
 - signing in through identity providers, with claim mapping
 - acting as an OpenID provider, with client credentials, revocation and
   logout
-- peering between Conclave instances
+- peering between Konklav instances
 - workload tokens
 
 See [OIDC and federation](docs/architecture/oidc-and-federation.md).
 
 By milestone:
 
-- M8: the relying system runs on Conclave behind a flag, and a cutover
+- M8: the relying system runs on Konklav behind a flag, and a cutover
   runbook lives in that system's repository. The integration covers:
   - token verification and decisions through the Python binding
   - a transactional sync of its admin writes to the control plane
@@ -112,9 +112,9 @@ local setup. Everyday tasks:
   [`items/console`](items/console/README.md).
 - `mise run test` runs every test, each database test in its own database.
   OIDC interoperability tests run against independent implementations:
-  - Ory Hydra, installed by mise, as an identity provider for Conclave
+  - Ory Hydra, installed by mise, as an identity provider for Konklav
     (`items/server/tests/hydra.rs`; skipped if `hydra` isn't on the PATH)
-  - the `openidconnect` client library against Conclave as an OpenID
+  - the `openidconnect` client library against Konklav as an OpenID
     provider (`items/server/tests/openidconnect.rs`)
 - `mise run hydra` runs Hydra in memory (public `:4444`, admin `:4445`) for
   trying identity-provider logins by hand.

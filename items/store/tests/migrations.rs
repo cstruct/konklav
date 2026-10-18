@@ -1,5 +1,5 @@
-use konklav_test_support::TestDatabase;
 use diesel_async::RunQueryDsl;
+use konklav_test_support::TestDatabase;
 
 // r[verify platform.storage.forward-migrations]
 #[tokio::test(flavor = "multi_thread")]

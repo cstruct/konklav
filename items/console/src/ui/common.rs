@@ -9,7 +9,7 @@ use crate::grants::{CONTROL_ALL, Capability};
 
 pub type Loaded<T> = LocalResource<Result<T, ApiError>>;
 
-/// A form-input problem, reported like a refusal from Conclave.
+/// A form-input problem, reported like a refusal from Konklav.
 pub fn invalid_input(message: impl Into<String>) -> ApiError {
     ApiError::Api {
         status: 0,
@@ -120,7 +120,7 @@ pub fn Gated(capability: Capability, children: ChildrenFn) -> impl IntoView {
     }
 }
 
-/// A secret Conclave shows only once.
+/// A secret Konklav shows only once.
 #[component]
 pub fn Secret(#[prop(into)] label: String, #[prop(into)] value: String) -> impl IntoView {
     view! {

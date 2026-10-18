@@ -1,9 +1,9 @@
 //! Challenges: single-use, short-lived secrets, stored as hashes.
 
 use chrono::{DateTime, Utc};
-use konklav_core::{CredentialId, SessionId, SubjectId};
 use diesel::prelude::*;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
+use konklav_core::{CredentialId, SessionId, SubjectId};
 use serde::{Deserialize, Serialize};
 
 use crate::schema::challenge;
@@ -21,7 +21,7 @@ pub enum Purpose {
     OidcLogin,
     /// Linking an identity-provider account to a signed-in subject.
     OidcLink,
-    /// An authorization request at Conclave's OpenID provider, waiting for
+    /// An authorization request at Konklav's OpenID provider, waiting for
     /// a login application to sign the subject in.
     OidcAuthorize,
     /// An authorization code issued to an OIDC client.

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Duration as ChronoDuration;
+use ed25519_dalek::SigningKey;
 use konklav_authz::{Decision, DenyReason, Requirements};
 use konklav_core::Cursor;
 use konklav_relying::Config;
@@ -18,7 +19,6 @@ use konklav_server::surface::Surface;
 use konklav_server::{AppState, AuthContext};
 use konklav_test_support::TestDatabase;
 use konklav_token::Signer;
-use ed25519_dalek::SigningKey;
 use reqwest::Method;
 use serde_json::{Value, json};
 

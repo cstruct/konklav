@@ -1,10 +1,10 @@
 //! Loading everything the compiler needs for one subject in one tenant, from
 //! one consistent snapshot.
 
-use konklav_authz::{Assignment, Catalog, Level, Policy, Scope};
-use konklav_core::{Cursor, SubjectId, TenantId};
 use diesel::prelude::*;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
+use konklav_authz::{Assignment, Catalog, Level, Policy, Scope};
+use konklav_core::{Cursor, SubjectId, TenantId};
 
 use crate::catalog::{self, CatalogDocument};
 use crate::schema::{membership, role, role_assignment, subject, tenant};

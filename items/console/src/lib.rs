@@ -1,4 +1,4 @@
-//! The Conclave console: a client-side web app for operating Conclave's
+//! The Konklav console: a client-side web app for operating Konklav's
 //! control plane, built with Leptos and served as WASM.
 //!
 //! Everything but [`ui`] is plain Rust, so it's unit-tested natively.

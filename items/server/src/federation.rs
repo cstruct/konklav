@@ -47,7 +47,7 @@ pub struct Settings {
     pub redirect_uri: String,
     pub scopes: Vec<String>,
     pub return_urls: Vec<String>,
-    /// Provider `amr`/`acr` values and the Conclave methods they credit.
+    /// Provider `amr`/`acr` values and the Konklav methods they credit.
     pub methods: Vec<(String, String)>,
     pub require_acr: Option<String>,
     pub max_age: Option<u32>,
@@ -79,7 +79,7 @@ struct Metadata {
     authorization_endpoint: String,
     token_endpoint: String,
     jwks_uri: String,
-    /// Only Conclave upstreams have these.
+    /// Only Konklav upstreams have these.
     #[serde(default)]
     konklav_peer_events_endpoint: Option<String>,
     #[serde(default)]
@@ -102,7 +102,7 @@ pub struct PeerEvent {
     pub subject: Option<String>,
 }
 
-/// The claims Conclave uses from a validated ID token.
+/// The claims Konklav uses from a validated ID token.
 #[derive(Clone, Debug, Deserialize)]
 pub struct IdClaims {
     pub sub: String,
@@ -461,7 +461,7 @@ impl Provider {
         Ok(())
     }
 
-    /// The Conclave authentication methods a login is credited with: the
+    /// The Konklav authentication methods a login is credited with: the
     /// federated marker, plus whatever the provider's `amr` and `acr` map
     /// to. Unmapped values are ignored.
     #[must_use]

@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "konklav-relying"
 version = "0.1.0"
-description = "Decide Conclave authorization locally: token verification, cached entitlements and the change feed"
+description = "Decide Konklav authorization locally: token verification, cached entitlements and the change feed"
 requires-python = ">=3.12"
 dependencies = ["httpx>=0.28"]
 
