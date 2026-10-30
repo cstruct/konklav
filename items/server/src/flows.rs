@@ -31,7 +31,7 @@ use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::issue::{self, IssuedToken};
 use crate::subject_api::{
     authenticate, begin_attempt, check_browser_request, refresh_cookies, refuse_impersonation,
-    start_passwordless_session, with_cookies,
+    require_recent, start_passwordless_session, with_cookies,
 };
 use crate::{AppState, capabilities, pacing, passkeys_api};
 
@@ -265,6 +265,18 @@ async fn own_session(
     Ok(session)
 }
 
+/// [`own_session`] that authenticated recently, for changing factors.
+// r[impl authn.mfa.management]
+async fn recent_own_session(
+    state: &AppState,
+    conn: &mut Connection,
+    headers: &HeaderMap,
+) -> Result<Session, ApiError> {
+    let session = own_session(state, conn, headers).await?;
+    require_recent(&session)?;
+    Ok(session)
+}
+
 /// `GET /v1/mfa`: the subject's factors. A partial session sees only the
 /// active ones, to pick one for completing login.
 // r[impl authn.mfa.partial-factors]
@@ -299,7 +311,7 @@ async fn enroll_totp(
     headers: HeaderMap,
 ) -> Result<Json<TotpEnrollment>, ApiError> {
     let mut conn = state.pool.get().await?;
-    let session = own_session(&state, &mut conn, &headers).await?;
+    let session = recent_own_session(&state, &mut conn, &headers).await?;
     let seed = TotpSecret::generate();
     let sealed = state
         .auth
@@ -340,7 +352,7 @@ async fn enroll_email(
         return Err(ApiError::invalid_request("email must be an email address"));
     }
     let mut conn = state.pool.get().await?;
-    let session = own_session(&state, &mut conn, &headers).await?;
+    let session = recent_own_session(&state, &mut conn, &headers).await?;
     let factor = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let factor = mfa::create(
@@ -477,7 +489,7 @@ async fn activate_factor(
     ApiJson(body): ApiJson<Code>,
 ) -> Result<Json<FactorView>, ApiError> {
     let mut conn = state.pool.get().await?;
-    let session = own_session(&state, &mut conn, &headers).await?;
+    let session = recent_own_session(&state, &mut conn, &headers).await?;
     let factor = mfa::get(&mut conn, session.subject_id, id)
         .await
         .map_err(|_| ApiError::not_found("factor"))?;
@@ -510,7 +522,7 @@ async fn remove_factor(
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let mut conn = state.pool.get().await?;
-    let session = own_session(&state, &mut conn, &headers).await?;
+    let session = recent_own_session(&state, &mut conn, &headers).await?;
     let removed = mfa::remove(&mut conn, session.subject_id, id).await?;
     Ok(Json(serde_json::json!({"removed": removed})))
 }

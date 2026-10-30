@@ -70,6 +70,11 @@ TOTP verification MUST be limited per factor over several windows, counting
 every failed check, and MUST NOT accept the same time step twice, even for
 concurrent requests.
 
+r[authn.mfa.management]
+Enrolling, activating or removing an MFA factor MUST require a full session
+that authenticated recently, so a stolen access token can't add or strip
+factors.
+
 r[authn.mfa.amr]
 Every session MUST record the authentication methods used, as `amr`
 values, together with the time of the last authentication. A method MUST use

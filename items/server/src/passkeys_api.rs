@@ -32,7 +32,7 @@ use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::passkeys::{Rejected, Verifier};
 use crate::subject_api::{
     Client, authenticate, begin_attempt, check_browser_request, check_requested_flags,
-    invalid_credentials, refuse_impersonation, start_session,
+    invalid_credentials, refuse_impersonation, require_recent, start_session,
 };
 use crate::{AppState, pacing};
 
@@ -57,8 +57,6 @@ pub(crate) const PASSKEY_AMR: [&str; 2] = ["swk", "mfa"];
 
 /// How long a ceremony may take; WebAuthn's recommended timeout.
 const CEREMONY_MINUTES: i64 = 5;
-/// Registering or removing a passkey needs an authentication this recent.
-const RECENT_AUTH_MINUTES: i64 = 10;
 /// Registrations a subject may start per 10 minutes.
 const REGISTRATION_LIMIT: i64 = 10;
 const LABEL_MAX: usize = 100;
@@ -191,7 +189,7 @@ async fn full_session(
     Ok(session)
 }
 
-/// A full session that authenticated within [`RECENT_AUTH_MINUTES`].
+/// A full session that authenticated recently.
 async fn recent_session(
     state: &AppState,
     conn: &mut Connection,
@@ -199,12 +197,7 @@ async fn recent_session(
 ) -> Result<Session, ApiError> {
     let session = full_session(state, conn, headers).await?;
     refuse_impersonation(&session)?;
-    if Utc::now() - session.auth_time > Duration::minutes(RECENT_AUTH_MINUTES) {
-        return Err(ApiError::new(
-            ErrorCode::Forbidden,
-            "authenticate again (step up) first",
-        ));
-    }
+    require_recent(&session)?;
     Ok(session)
 }
 

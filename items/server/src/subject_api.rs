@@ -617,6 +617,22 @@ async fn refresh(
     Ok(with_cookies(Json(body).into_response(), cookies))
 }
 
+/// Changing how a subject authenticates (factors, passkeys) needs an
+/// authentication this recent.
+const RECENT_AUTH_MINUTES: i64 = 10;
+
+/// Refuses a session that last authenticated longer ago than
+/// [`RECENT_AUTH_MINUTES`].
+pub(crate) fn require_recent(session: &Session) -> Result<(), ApiError> {
+    if Utc::now() - session.auth_time > Duration::minutes(RECENT_AUTH_MINUTES) {
+        return Err(ApiError::new(
+            ErrorCode::Forbidden,
+            "authenticate again (step up) first",
+        ));
+    }
+    Ok(())
+}
+
 /// Refuses a session started by impersonation, for operations that change
 /// the subject's authentication or act on the control plane.
 // r[impl authn.impersonation.limits]

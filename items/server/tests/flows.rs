@@ -752,6 +752,48 @@ async fn totp_partial(app: &TestApp) -> (String, String, String) {
     (factor, secret, partial)
 }
 
+// r[verify authn.mfa.management]
+#[tokio::test(flavor = "multi_thread")]
+async fn changing_factors_needs_a_recent_authentication() {
+    let app = TestApp::new().await;
+    app.human(EMAIL, PASSWORD).await;
+    let session = token(&app.login(EMAIL, PASSWORD).await);
+    let enrolled = post_bearer(&app, "/v1/mfa/totp", &session, json!({})).await;
+    let factor = enrolled.body["factor_id"].as_str().unwrap().to_owned();
+    {
+        let mut conn = app.db.pool().get().await.unwrap();
+        diesel::sql_query("update session set auth_time = auth_time - interval '20 minutes'")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+    }
+    let auth = format!("Bearer {session}");
+    let removed = app
+        .send(
+            Method::DELETE,
+            &format!("/v1/mfa/{factor}"),
+            &[("authorization", &auth)],
+            None,
+        )
+        .await;
+    assert_eq!(removed.code(), "FORBIDDEN", "{:?}", removed.body);
+    let enrolled = post_bearer(&app, "/v1/mfa/totp", &session, json!({})).await;
+    assert_eq!(enrolled.code(), "FORBIDDEN", "{:?}", enrolled.body);
+
+    let stepped = post_bearer(&app, "/v1/step-up", &session, json!({"password": PASSWORD})).await;
+    assert_eq!(stepped.status, StatusCode::OK, "{:?}", stepped.body);
+    let auth = format!("Bearer {}", token(&stepped));
+    let removed = app
+        .send(
+            Method::DELETE,
+            &format!("/v1/mfa/{factor}"),
+            &[("authorization", &auth)],
+            None,
+        )
+        .await;
+    assert_eq!(removed.body["removed"], true, "{:?}", removed.body);
+}
+
 // r[verify challenge.send-limit]
 #[tokio::test(flavor = "multi_thread")]
 async fn codes_sent_to_one_recipient_are_capped_per_day() {
