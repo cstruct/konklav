@@ -126,3 +126,9 @@ description = "Regenerate items/store/src/schema.rs from the migrations"
 depends = ["db:up"]
 dir = "items/store"
 run = "diesel migration run && diesel print-schema > src/schema.rs"
+
+[tasks.example]
+description = "Run an example from examples/: smtp-delivery, federation or bootstrap"
+depends = ["db:up"]
+usage = 'arg "<name>" help="The example to run"'
+run = "cargo build -q -p konklav-server && cargo run -q -p konklav-examples --bin ${usage_name?}"

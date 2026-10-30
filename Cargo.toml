@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "examples",
     "items/authn",
     "items/authz",
     "items/bootstrap",
@@ -29,6 +30,7 @@ konklav-authz = { path = "items/authz" }
 konklav-bootstrap = { path = "items/bootstrap" }
 konklav-console = { path = "items/console" }
 konklav-core = { path = "items/core", default-features = false }
+konklav-examples = { path = "examples" }
 konklav-relying = { path = "items/relying" }
 konklav-relying-client = { path = "items/relying-client" }
 konklav-server = { path = "items/server" }
@@ -56,6 +58,7 @@ futures-util = "0.3.34"
 getrandom = "0.4.3"
 hmac = "0.13.0"
 http-body-util = "0.1.5"
+lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls", "rustls-native-certs", "aws-lc-rs"] }
 jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
 p256 = { version = "0.13.2", features = ["pkcs8", "pem"] }
 ordna-core = "0.1.3"

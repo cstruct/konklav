@@ -148,6 +148,7 @@ mise run test
     - credential replacement, subject disabling, MFA-required partial tokens
     - session administration, signing-key revocation
     - passkey registration, login, step-up and removal, with a software authenticator (`tests/passkeys.rs`)
+  - the runnable examples in `examples/`, against this build's binary (`tests/examples.rs`)
   - telemetry: spans, metrics and logs exported to a fake OTLP collector, trace propagation in and out, and nothing identifying in what's exported (`tests/telemetry.rs`)
   - retention: what the sweeper deletes and keeps, and its lock (`tests/retention.rs`)
   - the bootstrap command, applying both example sets, re-runs, dry runs, conflicts and located problems (`tests/bootstrap.rs`)

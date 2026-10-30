@@ -88,8 +88,12 @@ v1, a prototype backed by Feldera, is preserved at tag `v1`.
   - `console`: the operators' web UI (Leptos, WASM)
   - `test-support`: shared test helpers
 - `config/`: development configuration.
-- `examples/bootstrap/`: example bootstrap sets, nested and flat, that the
-  tests apply.
+- `examples/`: runnable examples that start real servers and that the tests
+  also run (see [`examples/README.md`](examples/README.md)):
+  - email-link sign-in, delivered over SMTP by a reference delivery worker
+  - one Konklav signing people in to another
+  - seeding a deployment with `bootstrap`
+  - the example bootstrap sets, nested and flat
 - `dev/`: local services for development.
 - `.agents/`: agent skills and the planning standard.
 
@@ -119,6 +123,8 @@ local setup. Everyday tasks:
     (`items/server/tests/hydra.rs`; skipped if `hydra` isn't on the PATH)
   - the `openidconnect` client library against Konklav as an OpenID
     provider (`items/server/tests/openidconnect.rs`)
+- `mise run example <name>` runs one of the examples in `examples/`, such as
+  `smtp-delivery`, against servers it starts on fresh databases.
 - `mise run hydra` runs Hydra in memory (public `:4444`, admin `:4445`) for
   trying identity-provider logins by hand.
 - `mise run lint` checks formatting, clippy (warnings are errors, including
