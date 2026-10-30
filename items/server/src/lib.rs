@@ -1,6 +1,7 @@
 //! The Konklav server: one binary serving the subject-facing, relying and
 //! control-plane surfaces.
 
+pub mod bootstrap;
 mod capabilities;
 pub mod claim_mapping;
 mod client_address;

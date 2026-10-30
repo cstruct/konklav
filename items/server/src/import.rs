@@ -9,8 +9,8 @@ mod records;
 mod tenancy;
 
 pub(crate) use records::{
-    CredentialRecord, FactorRecord, SessionRecord, SubjectRecord, credential, factor, seal_factor,
-    session, subject,
+    CredentialRecord, FactorMaterial, FactorRecord, SessionRecord, SubjectRecord, credential,
+    decode_base32, factor, seal_factor, session, subject,
 };
 pub(crate) use tenancy::{
     assign_global_role, assign_membership_role, create_membership, create_tenant, not_found_as,

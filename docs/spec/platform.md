@@ -158,9 +158,16 @@ Every record's identifier MUST be resolved the same way in both formats:
 - any other identifier is an external id, and MUST become UUID version 5
   of the set's id namespace and `<kind>:<external id>`
 - in nested documents, a record without an identifier is found by its
-  natural key: a tenant's key MUST be treated as its external id, and a
-  subject MUST be the one with an active credential for its login
-  identifier, or else a new subject
+  natural key:
+  - a tenant's key MUST be treated as its external id
+  - a subject MUST be the one with an active credential for its login
+    identifier, or else a new subject, which the set MUST give a credential
+    for that identifier
+  - a credential MUST be the active one of its kind for its login
+    identifier, and a membership the subject's active one in the tenant,
+    or else a new one
+  - an MFA factor MUST be identified by its subject and its position among
+    that subject's factors in the set
 
 A set that uses external ids or tenant keys MUST declare an id namespace.
 Flat tables MUST give every record an identifier.
@@ -168,9 +175,13 @@ Flat tables MUST give every record an identifier.
 r[bootstrap.idempotent]
 Applying a bootstrap set MUST create the records that don't exist and skip
 those that exist with the same content. A record that exists with
-different content MUST be reported as a conflict, except that secret-key
-slots are replaced as `import.credentials.secret-key-rotation` describes.
-Applying MUST NOT delete or change anything the set doesn't name.
+different content MUST be reported as a conflict, with two exceptions:
+secret-key slots are replaced as `import.credentials.secret-key-rotation`
+describes, and a session that exists is skipped, since sessions change as
+they are used. The set's catalog MUST be merged into the stored one: its
+new entries are added, and an entry it declares differently from the
+stored one is a conflict. Applying MUST NOT delete or change anything the
+set doesn't name.
 
 r[bootstrap.validate-first]
 Before writing anything, the command MUST read every file, resolve every

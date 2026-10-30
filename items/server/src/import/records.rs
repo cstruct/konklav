@@ -155,7 +155,7 @@ fn yes() -> bool {
     true
 }
 
-fn decode_base32(input: &str) -> Option<Vec<u8>> {
+pub(crate) fn decode_base32(input: &str) -> Option<Vec<u8>> {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     let (mut buffer, mut bits, mut out) = (0u32, 0, Vec::new());
     for c in input.trim_end_matches('=').bytes() {

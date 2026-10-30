@@ -13,6 +13,7 @@ chrono.workspace = true
 clap.workspace = true
 konklav-authn.workspace = true
 konklav-authz.workspace = true
+konklav-bootstrap.workspace = true
 konklav-core = { workspace = true, features = ["generate"] }
 konklav-store.workspace = true
 konklav-token.workspace = true
@@ -39,7 +40,7 @@ tokio.workspace = true
 tokio-postgres.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-uuid = { workspace = true, features = ["v4", "v7"] }
+uuid = { workspace = true, features = ["v4", "v5", "v7"] }
 webauthn-rs.workspace = true
 webauthn-rs-proto.workspace = true
 

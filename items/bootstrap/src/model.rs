@@ -310,6 +310,7 @@ pub struct Session {
 }
 
 /// Everything one run read, in the order it was read.
+// r[impl bootstrap.contents]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BootstrapSet {
     pub id_namespace: Option<Located<Uuid>>,

@@ -2610,6 +2610,7 @@ dependencies = [
  "jsonwebtoken",
  "konklav-authn",
  "konklav-authz",
+ "konklav-bootstrap",
  "konklav-core",
  "konklav-store",
  "konklav-test-support",

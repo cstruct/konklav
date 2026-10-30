@@ -420,9 +420,12 @@ Terms are introduced in dependency order: each definition only uses terms define
     record's Konklav id from its own.
 
 - `natural key`
-  - What identifies a record that comes with no identifier at all: a
-    tenant's key (a name chosen in the import, treated as an external id),
-    or a subject's login identifier.
+  - What identifies a record that comes with no identifier at all:
+    - a tenant's key (a name chosen in the import, treated as an external id)
+    - a subject's login identifier
+    - a credential's kind and login identifier
+    - a membership's subject and tenant
+    - an MFA factor's subject and its position among that subject's factors
 
 - `bootstrap set`
   - Everything one run of the `bootstrap` command reads from its files:

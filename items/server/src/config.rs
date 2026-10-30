@@ -359,6 +359,10 @@ pub type ServeContexts = (
 /// The contexts `migrate` needs: no listeners.
 pub type MigrateContexts = (DatabaseConfig, LogConfig);
 
+/// The contexts `bootstrap` needs: the database, and the MFA keys that
+/// imported TOTP seeds are encrypted with.
+pub type BootstrapContexts = (DatabaseConfig, LogConfig, MfaConfig);
+
 impl Database {
     /// Builds the libpq connection URL, escaping user and password.
     #[must_use]

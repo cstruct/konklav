@@ -5,8 +5,9 @@ use clap::{Parser, Subcommand};
 use konklav_server::AppState;
 use konklav_server::AuthContext;
 use konklav_server::config::{
-    self, BrowserConfig, ControlConfig, DatabaseConfig, FeedConfig, ListenConfig, LogConfig,
-    MfaConfig, MigrateContexts, ServeContexts, ServerContexts, TokensConfig,
+    self, BootstrapContexts, BrowserConfig, ControlConfig, DatabaseConfig, FeedConfig,
+    ListenConfig, LogConfig, MfaConfig, MigrateContexts, ServeContexts, ServerContexts,
+    TokensConfig,
 };
 use konklav_server::feed::FeedHub;
 use konklav_server::keys::ConfiguredKeys;
@@ -39,12 +40,29 @@ enum Command {
     Migrate,
     /// Load and validate the configuration, then exit.
     CheckConfig,
+    /// Apply a bootstrap set (CSV tables, Styx documents and a
+    /// catalog.json, or directories of them) to the database, then exit.
+    ///
+    /// Exits 0 when the set was applied or a dry run found nothing wrong,
+    /// 1 when the files or records have problems, and 2 when records
+    /// conflict with stored ones.
+    Bootstrap {
+        /// Do everything but commit, and report what would happen.
+        #[arg(long)]
+        dry_run: bool,
+        /// Accept plaintext passwords, for development seeds.
+        #[arg(long)]
+        allow_plaintext_passwords: bool,
+        /// Files and directories to read.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
-    let result = match cli.command {
+    let result = match &cli.command {
         Command::Serve => match load::<ServeContexts>(&cli) {
             Ok((listen, database, log, tokens, browser, control, feed, mfa)) => {
                 init_tracing(&log);
@@ -56,6 +74,21 @@ async fn main() -> ExitCode {
             Ok((database, log)) => {
                 init_tracing(&log);
                 migrate(database).await
+            }
+            Err(code) => return code,
+        },
+        Command::Bootstrap {
+            dry_run,
+            allow_plaintext_passwords,
+            paths,
+        } => match load::<BootstrapContexts>(&cli) {
+            Ok((database, log, mfa)) => {
+                init_tracing(&log);
+                let options = konklav_server::bootstrap::Options {
+                    dry_run: *dry_run,
+                    allow_plaintext_passwords: *allow_plaintext_passwords,
+                };
+                return bootstrap(database, mfa, paths, options).await;
             }
             Err(code) => return code,
         },
@@ -98,6 +131,77 @@ async fn migrate(config: DatabaseConfig) -> Result<(), Box<dyn std::error::Error
         tracing::info!(%version, "applied migration");
     }
     Ok(())
+}
+
+async fn bootstrap(
+    database: DatabaseConfig,
+    mfa: MfaConfig,
+    paths: &[PathBuf],
+    options: konklav_server::bootstrap::Options,
+) -> ExitCode {
+    let set = match konklav_bootstrap::read(paths) {
+        Ok(set) => set,
+        Err(problems) => {
+            for problem in problems {
+                eprintln!("{problem}");
+            }
+            return ExitCode::from(1);
+        }
+    };
+    let secrets = match mfa.mfa.as_ref().map(|mfa| {
+        konklav_authn::SecretBox::new(
+            mfa.totp_keys
+                .iter()
+                .map(|key| (key.id.as_str(), key.key.as_str())),
+        )
+    }) {
+        Some(Ok(secrets)) => secrets,
+        None => konklav_authn::SecretBox::new([]).expect("an empty key set is valid"),
+        Some(Err(error)) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let result = async {
+        let pool = konklav_store::connect(&database.database.connect_options())?;
+        let pending = konklav_store::pending_migrations(&pool).await?;
+        if !pending.is_empty() {
+            return Err(format!(
+                "{} migration(s) pending; run `migrate` first",
+                pending.len()
+            )
+            .into());
+        }
+        let report = konklav_server::bootstrap::run(&pool, &secrets, set, options)
+            .await
+            .map_err(|error| error.message)?;
+        Ok::<_, Box<dyn std::error::Error>>(report)
+    }
+    .await;
+    match result {
+        Ok(report) => {
+            print!("{report}");
+            if !report.problems.is_empty() {
+                ExitCode::from(1)
+            } else if !report.conflicts.is_empty() {
+                ExitCode::from(2)
+            } else {
+                println!(
+                    "{}",
+                    if report.committed {
+                        "applied"
+                    } else {
+                        "dry run: nothing written"
+                    }
+                );
+                ExitCode::SUCCESS
+            }
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 async fn serve(
