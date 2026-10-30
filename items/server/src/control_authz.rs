@@ -11,16 +11,17 @@ use konklav_authz::{Policy, Scope, compile};
 use konklav_core::{MembershipId, SubjectId, TenantId};
 use konklav_store::catalog::{self, CatalogDocument, FactTarget};
 use konklav_store::memberships::{self, Membership};
-use konklav_store::roles::{self, AssignmentTarget, Role, RoleAssignment, RoleDefinition};
+use konklav_store::roles::{self, Role, RoleAssignment, RoleDefinition};
 use konklav_store::sessions::{self, SessionFilter};
 use konklav_store::templates::{self, Template};
 use konklav_store::tenants::{self, Tenant, TenantState};
-use konklav_store::{Connection, StoreError, compile_input, events, subjects};
+use konklav_store::{StoreError, compile_input, events};
 use serde::{Deserialize, Serialize};
 
 use crate::capabilities::Operator;
 use crate::control_api::{Written, guard, parse_id};
-use crate::error::{ApiError, ApiJson, ErrorCode};
+use crate::error::{ApiError, ApiJson};
+use crate::import::{self, not_found_as, validate_facts};
 use crate::{AppState, capabilities};
 
 pub fn routes(state: &AppState) -> Router<AppState> {
@@ -66,24 +67,6 @@ fn tenant_ref(value: &str) -> Result<TenantId, ApiError> {
         .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))
 }
 
-fn not_found_as(what: &'static str) -> impl Fn(StoreError) -> ApiError {
-    move |error| match error {
-        StoreError::NotFound => ApiError::not_found(what),
-        other => other.into(),
-    }
-}
-
-async fn validate_facts(
-    conn: &mut Connection,
-    target: FactTarget,
-    facts: &serde_json::Value,
-) -> Result<(), ApiError> {
-    let document = catalog::load(conn).await?;
-    document
-        .validate_facts(target, facts)
-        .map_err(ApiError::invalid_request)
-}
-
 // --- Catalog ----------------------------------------------------------------
 
 async fn get_catalog(State(state): State<AppState>) -> Result<Json<CatalogDocument>, ApiError> {
@@ -96,11 +79,10 @@ async fn put_catalog(
     State(state): State<AppState>,
     ApiJson(document): ApiJson<CatalogDocument>,
 ) -> Result<Json<Written<CatalogDocument>>, ApiError> {
-    document.validate().map_err(ApiError::invalid_request)?;
     let mut conn = state.pool.get().await?;
     let cursor = conn
         .transaction::<_, ApiError, _>(async |conn| {
-            catalog::replace(conn, &document).await?;
+            import::replace_catalog(conn, &document).await?;
             Ok(events::last_in_transaction(conn).await?)
         })
         .await?;
@@ -141,11 +123,8 @@ async fn create_tenant(
     let mut conn = state.pool.get().await?;
     let (tenant, created, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
-            validate_facts(conn, FactTarget::Tenant, &body.facts).await?;
-            let (tenant, created) = tenants::create(conn, id, parent, &body.facts).await?;
-            if created {
-                roles::instantiate(conn, id, &body.templates).await?;
-            }
+            let (tenant, created) =
+                import::create_tenant(conn, id, parent, &body.facts, &body.templates).await?;
             Ok((tenant, created, events::last_in_transaction(conn).await?))
         })
         .await?;
@@ -256,18 +235,8 @@ async fn create_membership(
     let mut conn = state.pool.get().await?;
     let (membership, created, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
-            subjects::get(conn, body.subject)
-                .await
-                .map_err(not_found_as("subject"))?;
-            let target = tenants::get(conn, tenant)
-                .await
-                .map_err(not_found_as("tenant"))?;
-            if target.state == TenantState::Deleted {
-                return Err(ApiError::new(ErrorCode::Conflict, "the tenant is deleted"));
-            }
-            validate_facts(conn, FactTarget::Membership, &body.facts).await?;
             let (membership, created) =
-                memberships::create(conn, id, body.subject, tenant, &body.facts).await?;
+                import::create_membership(conn, id, body.subject, tenant, &body.facts).await?;
             Ok((
                 membership,
                 created,
@@ -410,7 +379,7 @@ async fn put_template(
             if granted || capabilities::granted_by(&body.policies) {
                 operator.require_all("a template with control-plane capabilities")?;
             }
-            let template = templates::put(
+            let template = import::put_template(
                 conn,
                 &key,
                 &body.description,
@@ -556,19 +525,8 @@ async fn assign_membership_role(
     let mut conn = state.pool.get().await?;
     let (assignment, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
-            let membership = memberships::get(conn, id)
-                .await
-                .map_err(not_found_as("membership"))?;
-            let role = roles::get(conn, membership.tenant_id, &body.role)
-                .await
-                .map_err(not_found_as("role"))?;
-            let assignment = roles::assign(
-                conn,
-                role.id,
-                AssignmentTarget::Membership(id),
-                body.scope.as_ref(),
-            )
-            .await?;
+            let assignment =
+                import::assign_membership_role(conn, id, &body.role, body.scope.as_ref()).await?;
             Ok((assignment, events::last_in_transaction(conn).await?))
         })
         .await?;
@@ -598,17 +556,13 @@ async fn assign_global_role(
     let mut conn = state.pool.get().await?;
     let (assignment, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
-            subjects::get(conn, id)
-                .await
-                .map_err(not_found_as("subject"))?;
             let role = roles::get(conn, tenants::ROOT, &body.role)
                 .await
                 .map_err(not_found_as("global role"))?;
             if capabilities::granted_by_role(conn, &role).await? {
                 operator.require_all("granting control-plane capabilities")?;
             }
-            let assignment =
-                roles::assign(conn, role.id, AssignmentTarget::Subject(id), None).await?;
+            let assignment = import::assign_global_role(conn, id, &role).await?;
             Ok((assignment, events::last_in_transaction(conn).await?))
         })
         .await?;

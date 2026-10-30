@@ -14,6 +14,7 @@ mod federation_api;
 pub mod feed;
 mod flows;
 pub mod health;
+mod import;
 mod import_api;
 mod invites;
 mod issue;
