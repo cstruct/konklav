@@ -56,6 +56,11 @@ A partial session MUST be able to list its subject's active MFA factors, so
 the client can offer one to complete login with. It MUST NOT see inactive
 factors or enroll, activate or remove any.
 
+r[authn.mfa.attempts]
+TOTP verification MUST be limited per factor over several windows, counting
+every failed check, and MUST NOT accept the same time step twice, even for
+concurrent requests.
+
 r[authn.mfa.amr]
 Every session MUST record the authentication methods used, as `amr`
 values, together with the time of the last authentication. A method MUST use

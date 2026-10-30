@@ -146,6 +146,21 @@ pub async fn get(
         .map_err(StoreError::from)
 }
 
+/// A factor that hasn't been removed, locked until the transaction ends.
+pub async fn lock(conn: &mut AsyncPgConnection, id: uuid::Uuid) -> StoreResult<Factor> {
+    mfa_factor::table
+        .find(id)
+        .filter(mfa_factor::removed_at.is_null())
+        .select(Row::as_select())
+        .for_update()
+        .first(conn)
+        .await
+        .optional()?
+        .ok_or(StoreError::NotFound)?
+        .try_into()
+        .map_err(StoreError::from)
+}
+
 pub async fn list(conn: &mut AsyncPgConnection, subject: SubjectId) -> StoreResult<Vec<Factor>> {
     mfa_factor::table
         .filter(mfa_factor::subject_id.eq(subject.as_uuid()))

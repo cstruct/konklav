@@ -727,6 +727,83 @@ async fn impersonation_needs_the_capability_and_ends_with_the_impersonator() {
     );
 }
 
+/// A subject whose password login requires an active TOTP factor, the
+/// factor's id and seed, and a partial session.
+async fn totp_partial(app: &TestApp) -> (String, String, String) {
+    app.human(EMAIL, PASSWORD).await;
+    let session = token(&app.login(EMAIL, PASSWORD).await);
+    let enrolled = post_bearer(app, "/v1/mfa/totp", &session, json!({})).await;
+    let secret = enrolled.body["secret"].as_str().unwrap().to_owned();
+    let factor = enrolled.body["factor_id"].as_str().unwrap().to_owned();
+    let activated = post_bearer(
+        app,
+        &format!("/v1/mfa/{factor}/activate"),
+        &session,
+        json!({"code": totp_code(&secret, -1)}),
+    )
+    .await;
+    assert_eq!(activated.body["active"], true, "{:?}", activated.body);
+    let mut conn = app.db.pool().get().await.unwrap();
+    diesel::sql_query("update credential set mfa_factors_required = 1")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let partial = token(&app.login(EMAIL, PASSWORD).await);
+    (factor, secret, partial)
+}
+
+// r[verify authn.mfa.attempts]
+#[tokio::test(flavor = "multi_thread")]
+async fn totp_checks_are_limited_even_when_concurrent() {
+    let app = TestApp::new().await;
+    let (factor, secret, partial) = totp_partial(&app).await;
+    let guesses = (0..8).map(|n| {
+        post_bearer(
+            &app,
+            "/v1/login/mfa",
+            &partial,
+            json!({"factor_id": factor, "code": format!("{:06}", 999_000 + n)}),
+        )
+    });
+    let replies = futures_util::future::join_all(guesses).await;
+    let limited = replies
+        .iter()
+        .filter(|reply| reply.code() == "RATE_LIMITED")
+        .count();
+    assert_eq!(limited, 3, "only five failures count before the limit");
+    let correct = post_bearer(
+        &app,
+        "/v1/login/mfa",
+        &partial,
+        json!({"factor_id": factor, "code": totp_code(&secret, 0)}),
+    )
+    .await;
+    assert_eq!(correct.code(), "RATE_LIMITED", "{:?}", correct.body);
+}
+
+// r[verify authn.mfa.attempts]
+#[tokio::test(flavor = "multi_thread")]
+async fn one_totp_code_is_accepted_once_even_when_concurrent() {
+    let app = TestApp::new().await;
+    let (factor, secret, partial) = totp_partial(&app).await;
+    let code = totp_code(&secret, 0);
+    let attempts = (0..4).map(|_| {
+        post_bearer(
+            &app,
+            "/v1/login/mfa",
+            &partial,
+            json!({"factor_id": factor, "code": code}),
+        )
+    });
+    let replies = futures_util::future::join_all(attempts).await;
+    let accepted = replies
+        .iter()
+        .filter(|reply| reply.status == StatusCode::OK)
+        .count();
+    let bodies: Vec<_> = replies.iter().map(|reply| &reply.body).collect();
+    assert_eq!(accepted, 1, "{bodies:?}");
+}
+
 // r[verify authn.impersonation.limits]
 #[tokio::test(flavor = "multi_thread")]
 async fn impersonation_cannot_reach_the_control_plane_or_change_authentication() {

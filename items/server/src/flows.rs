@@ -22,7 +22,7 @@ use konklav_store::credentials::{
 use konklav_store::mfa::{self, EmailCodeData, Factor, FactorData, FactorKind, TotpData};
 use konklav_store::sessions::{self, ClientKind, NewSession, Session, SessionFilter, Stage};
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
-use konklav_store::{Connection, events, memberships, tenants};
+use konklav_store::{Connection, events, login_attempts, memberships, tenants};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
@@ -62,6 +62,8 @@ const LINK_TTL_MINUTES: i64 = 15;
 /// Challenges sent per recipient and purpose per 10 minutes.
 const SEND_LIMIT: i64 = 5;
 const IMPERSONATION_MINUTES: i64 = 60;
+/// Failed TOTP checks allowed per factor, per window in seconds.
+const TOTP_LIMITS: [(i64, i64); 2] = [(10 * 60, 5), (24 * 60 * 60, 20)];
 
 fn accepted() -> Response {
     (StatusCode::ACCEPTED, Json(serde_json::json!({}))).into_response()
@@ -383,27 +385,15 @@ async fn verify_factor(
     code: &str,
 ) -> Result<&'static str, ApiError> {
     match &factor.data {
-        FactorData::Totp(data) => {
-            let seed = state
-                .auth
-                .secrets
-                .decrypt(&konklav_authn::EncryptedSecret {
-                    key_id: data.key_id.clone(),
-                    nonce: data.nonce.clone(),
-                    ciphertext: data.ciphertext.clone(),
+        FactorData::Totp(_) => {
+            // The outcome is returned rather than raised, so that a failed
+            // check is committed and counts.
+            let outcome = conn
+                .transaction::<_, ApiError, _>(async |conn| {
+                    verify_totp_locked(state, conn, factor.id, code).await
                 })
-                .map_err(|e| ApiError::new(ErrorCode::Internal, e.to_string()))?;
-            let step = verify_totp(
-                &TotpSecret::from_bytes(seed),
-                code,
-                Utc::now().timestamp(),
-                data.last_step,
-            )
-            .ok_or_else(invalid_code)?;
-            let mut updated = data.clone();
-            updated.last_step = Some(step);
-            mfa::set_data(conn, factor.id, &FactorData::Totp(updated)).await?;
-            Ok("otp")
+                .await?;
+            outcome.map(|()| "otp")
         }
         FactorData::EmailCode(data) => {
             redeem_code(
@@ -417,6 +407,56 @@ async fn verify_factor(
             Ok("eml")
         }
     }
+}
+
+/// Checks a TOTP code under a lock on its factor, so concurrent checks can
+/// neither exceed the attempt limit nor accept one code twice. The outer
+/// result is for database errors, the inner one for the check.
+// r[impl authn.mfa.attempts]
+async fn verify_totp_locked(
+    state: &AppState,
+    conn: &mut Connection,
+    id: uuid::Uuid,
+    code: &str,
+) -> Result<Result<(), ApiError>, ApiError> {
+    let factor = mfa::lock(conn, id).await?;
+    let FactorData::Totp(data) = &factor.data else {
+        return Ok(Err(invalid_code()));
+    };
+    let now = Utc::now();
+    for (window, limit) in TOTP_LIMITS {
+        let failures =
+            login_attempts::totp_failures_since(conn, id, now - Duration::seconds(window)).await?;
+        if failures >= limit {
+            return Ok(Err(ApiError::new(
+                ErrorCode::RateLimited,
+                "too many failed codes; try again later",
+            )));
+        }
+    }
+    let seed = state
+        .auth
+        .secrets
+        .decrypt(&konklav_authn::EncryptedSecret {
+            key_id: data.key_id.clone(),
+            nonce: data.nonce.clone(),
+            ciphertext: data.ciphertext.clone(),
+        })
+        .map_err(|e| ApiError::new(ErrorCode::Internal, e.to_string()))?;
+    let step = verify_totp(
+        &TotpSecret::from_bytes(seed),
+        code,
+        now.timestamp(),
+        data.last_step,
+    );
+    login_attempts::record_totp(conn, id, step.is_some()).await?;
+    let Some(step) = step else {
+        return Ok(Err(invalid_code()));
+    };
+    let mut updated = data.clone();
+    updated.last_step = Some(step);
+    mfa::set_data(conn, id, &FactorData::Totp(updated)).await?;
+    Ok(Ok(()))
 }
 
 #[derive(Deserialize)]
