@@ -45,7 +45,6 @@ const CLIENT_HEADER: &str = "x-konklav-client";
 const COOKIE_PATHS: [&str; 2] = ["/v1/refresh", "/v1/sign-out"];
 
 /// Failed attempts allowed per login identifier, per window.
-// r[impl authn.login.rate-limit]
 const RATE_LIMITS: [(i64, i64); 3] = [(10 * 60, 30), (60 * 60, 60), (24 * 60 * 60, 120)];
 
 // r[impl session.client-kind]
@@ -168,24 +167,51 @@ pub(crate) fn with_cookies(mut response: Response, cookies: Vec<HeaderValue>) ->
     response
 }
 
-pub(crate) async fn enforce_rate_limit(
+/// A login attempt, recorded as failed until [`Attempt::finish`] says
+/// otherwise.
+#[must_use = "finish the attempt with its outcome"]
+pub(crate) struct Attempt {
+    id: i64,
+}
+
+impl Attempt {
+    pub(crate) async fn finish(
+        self,
+        conn: &mut Connection,
+        succeeded: bool,
+    ) -> Result<(), ApiError> {
+        if succeeded {
+            login_attempts::mark_succeeded(conn, self.id).await?;
+        }
+        Ok(())
+    }
+}
+
+/// Records an attempt against `identifier` and refuses it if the
+/// identifier has had too many failures. The attempt counts as a failure
+/// while it is checked, so a burst of concurrent attempts can't all pass
+/// the limit.
+// r[impl authn.login.rate-limit]
+pub(crate) async fn begin_attempt(
     conn: &mut Connection,
     kind: CredentialKind,
     identifier: &str,
-) -> Result<(), ApiError> {
+) -> Result<Attempt, ApiError> {
+    let id = login_attempts::begin(conn, kind, identifier).await?;
     let now = Utc::now();
     for (window, limit) in RATE_LIMITS {
         let failures =
             login_attempts::failures_since(conn, kind, identifier, now - Duration::seconds(window))
                 .await?;
-        if failures >= limit {
+        if failures > limit {
+            login_attempts::forget(conn, id).await?;
             return Err(ApiError::new(
                 ErrorCode::RateLimited,
                 "too many failed attempts; try again later",
             ));
         }
     }
-    Ok(())
+    Ok(Attempt { id })
 }
 
 /// Only requestable (restrictive) catalog flags may be asked for at login.
@@ -349,7 +375,7 @@ async fn login_password(
     let mut conn = state.pool.get().await?;
     check_requested_flags(&mut conn, &body.flags).await?;
     let kind = CredentialKind::Password;
-    enforce_rate_limit(&mut conn, kind, &body.identifier).await?;
+    let attempt = begin_attempt(&mut conn, kind, &body.identifier).await?;
 
     let credential = credentials::find_active(&mut conn, kind, &body.identifier).await?;
     let subject = match &credential {
@@ -380,7 +406,7 @@ async fn login_password(
         .as_ref()
         .is_some_and(|s| s.state == SubjectState::Active && s.kind == SubjectKind::Human);
     let succeeded = usable && matches!(check, PasswordCheck::Match { .. });
-    login_attempts::record(&mut conn, kind, &body.identifier, succeeded).await?;
+    attempt.finish(&mut conn, succeeded).await?;
     // r[impl platform.error.no-enumeration]
     let (Some(credential), true) = (credential, succeeded) else {
         return Err(invalid_credentials());
@@ -416,7 +442,7 @@ async fn login_secret_key(
 ) -> Result<Response, ApiError> {
     let mut conn = state.pool.get().await?;
     let kind = CredentialKind::SecretKey;
-    enforce_rate_limit(&mut conn, kind, &body.key_id).await?;
+    let attempt = begin_attempt(&mut conn, kind, &body.key_id).await?;
 
     let credential = credentials::find_active(&mut conn, kind, &body.key_id).await?;
     let subject = match &credential {
@@ -458,7 +484,7 @@ async fn login_secret_key(
         .as_ref()
         .is_some_and(|s| s.state == SubjectState::Active && s.kind == SubjectKind::Service);
     let succeeded = usable && matched;
-    login_attempts::record(&mut conn, kind, &body.key_id, succeeded).await?;
+    attempt.finish(&mut conn, succeeded).await?;
     let (Some(credential), true) = (credential, succeeded) else {
         return Err(invalid_credentials());
     };

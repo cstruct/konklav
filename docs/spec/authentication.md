@@ -27,7 +27,10 @@ bump the session version.
 
 r[authn.login.rate-limit]
 Login attempts MUST be rate-limited per credential and per login identifier,
-over several windows (for example minutes, hours and days).
+over several windows (for example minutes, hours and days). An attempt MUST
+count toward the limit while it is being checked, so concurrent attempts
+can't exceed it, and every check of a credential's secret MUST count,
+including those made for step-up and password change.
 
 r[authn.login.timing]
 Failed and successful first-factor attempts MUST NOT be distinguishable by

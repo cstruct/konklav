@@ -16,13 +16,13 @@ use chrono::{DateTime, Duration, Utc};
 use diesel_async::AsyncConnection;
 use konklav_authn::{generate_secret, hash_challenge_secret};
 use konklav_core::{CredentialId, Cursor, SubjectId};
+use konklav_store::Connection;
 use konklav_store::challenges::{self, Challenge, NewChallenge, Purpose};
 use konklav_store::credentials::{
     self, Credential, CredentialData, CredentialKind, NewCredential, PublicKeyData,
 };
 use konklav_store::sessions::{self, Session, SessionFilter, Stage};
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
-use konklav_store::{Connection, login_attempts};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use webauthn_rs::prelude::{PublicKeyCredential, RegisterPublicKeyCredential};
@@ -30,7 +30,7 @@ use webauthn_rs::prelude::{PublicKeyCredential, RegisterPublicKeyCredential};
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::passkeys::{Rejected, Verifier};
 use crate::subject_api::{
-    Client, authenticate, check_browser_request, check_requested_flags, enforce_rate_limit,
+    Client, authenticate, begin_attempt, check_browser_request, check_requested_flags,
     invalid_credentials, refuse_impersonation, start_session,
 };
 use crate::{AppState, pacing};
@@ -391,7 +391,7 @@ async fn login(
         .claimed(&body.credential)
         .map_err(|error| rejected(&error))?;
     let kind = CredentialKind::PublicKey;
-    enforce_rate_limit(&mut conn, kind, &claimed.credential_id).await?;
+    let attempt = begin_attempt(&mut conn, kind, &claimed.credential_id).await?;
 
     let credential = credentials::find_active(&mut conn, kind, &claimed.credential_id)
         .await?
@@ -413,7 +413,7 @@ async fn login(
         }),
         _ => None,
     };
-    login_attempts::record(&mut conn, kind, &claimed.credential_id, updated.is_some()).await?;
+    attempt.finish(&mut conn, updated.is_some()).await?;
     // r[impl platform.error.no-enumeration]
     let (Some(credential), Some(updated)) = (credential, updated) else {
         return Err(invalid_credentials());

@@ -85,6 +85,42 @@ async fn repeated_failures_are_rate_limited_per_identifier() {
     );
 }
 
+// r[verify authn.login.rate-limit]
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_failures_cannot_exceed_the_limit() {
+    let app = TestApp::new().await;
+    app.human(EMAIL, PASSWORD).await;
+    let burst = (0..45).map(|_| app.login(EMAIL, "wrong password"));
+    let replies = futures_util::future::join_all(burst).await;
+    let checked = replies
+        .iter()
+        .filter(|reply| reply.code() == "INVALID_CREDENTIALS")
+        .count();
+    assert!(checked <= 30, "{checked} attempts were checked");
+    assert_eq!(app.login(EMAIL, PASSWORD).await.code(), "RATE_LIMITED");
+}
+
+// r[verify authn.login.rate-limit]
+#[tokio::test(flavor = "multi_thread")]
+async fn password_checks_in_step_up_count_toward_the_limit() {
+    let app = TestApp::new().await;
+    app.human(EMAIL, PASSWORD).await;
+    let session = token(&app.login(EMAIL, PASSWORD).await);
+    let auth = format!("Bearer {session}");
+    for _ in 0..30 {
+        let step_up = app
+            .send(
+                Method::POST,
+                "/v1/step-up",
+                &[("authorization", &auth)],
+                Some(json!({"password": "wrong password"})),
+            )
+            .await;
+        assert_eq!(step_up.code(), "INVALID_CREDENTIALS");
+    }
+    assert_eq!(app.login(EMAIL, PASSWORD).await.code(), "RATE_LIMITED");
+}
+
 // r[verify session.version]
 // r[verify session.refresh.rotation]
 #[tokio::test(flavor = "multi_thread")]

@@ -7,18 +7,36 @@ use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use crate::credentials::{CredentialKind, normalize_identifier};
 use crate::schema::login_attempt;
 
-pub async fn record(
+/// Records an attempt as failed before it is checked, so that concurrent
+/// attempts all see each other; [`mark_succeeded`] corrects it once the
+/// check passes. Returns its id.
+pub async fn begin(
     conn: &mut AsyncPgConnection,
     kind: CredentialKind,
     identifier: &str,
-    succeeded: bool,
-) -> QueryResult<()> {
+) -> QueryResult<i64> {
     diesel::insert_into(login_attempt::table)
         .values((
             login_attempt::kind.eq(kind.as_str()),
             login_attempt::identifier.eq(normalize_identifier(identifier)),
-            login_attempt::succeeded.eq(succeeded),
+            login_attempt::succeeded.eq(false),
         ))
+        .returning(login_attempt::id)
+        .get_result(conn)
+        .await
+}
+
+pub async fn mark_succeeded(conn: &mut AsyncPgConnection, id: i64) -> QueryResult<()> {
+    diesel::update(login_attempt::table.find(id))
+        .set(login_attempt::succeeded.eq(true))
+        .execute(conn)
+        .await
+        .map(|_| ())
+}
+
+/// Deletes an attempt that was refused before it was checked.
+pub async fn forget(conn: &mut AsyncPgConnection, id: i64) -> QueryResult<()> {
+    diesel::delete(login_attempt::table.find(id))
         .execute(conn)
         .await
         .map(|_| ())

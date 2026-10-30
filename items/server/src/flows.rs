@@ -29,7 +29,7 @@ use subtle::ConstantTimeEq;
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::issue::{self, IssuedToken};
 use crate::subject_api::{
-    authenticate, check_browser_request, refresh_cookies, refuse_impersonation,
+    authenticate, begin_attempt, check_browser_request, refresh_cookies, refuse_impersonation,
     start_passwordless_session, with_cookies,
 };
 use crate::{AppState, capabilities, pacing, passkeys_api};
@@ -654,12 +654,17 @@ async fn verify_password_of(
     let CredentialData::Password(data) = &credential.data else {
         unreachable!("filtered to passwords")
     };
+    // Counts toward the login limit, so step-up and password change can't
+    // be used to guess the password instead.
+    let attempt = begin_attempt(conn, CredentialKind::Password, &credential.identifier).await?;
     let hasher = state.auth.hasher.clone();
     let (password, hash) = (password.to_owned(), data.hash.clone());
     let check = tokio::task::spawn_blocking(move || hasher.verify(&password, &hash))
         .await
         .map_err(ApiError::internal)?;
-    if matches!(check, PasswordCheck::Match { .. }) {
+    let matched = matches!(check, PasswordCheck::Match { .. });
+    attempt.finish(conn, matched).await?;
+    if matched {
         Ok(credential)
     } else {
         Err(ApiError::new(
