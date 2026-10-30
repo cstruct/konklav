@@ -77,12 +77,17 @@ async fn own_capabilities(
     if session.stage == Stage::Partial {
         return Err(ApiError::new(ErrorCode::Forbidden, "complete MFA first"));
     }
-    let input = compile_input::load(&mut conn, claims.sub, None).await?;
-    let capabilities = compile(&input.catalog, &input.assignments)
-        .global
-        .into_iter()
-        .filter(|action| action.starts_with("konklav:"))
-        .collect();
+    // r[impl authn.impersonation.limits]
+    let capabilities = if session.impersonator_subject_id.is_some() {
+        Vec::new()
+    } else {
+        let input = compile_input::load(&mut conn, claims.sub, None).await?;
+        compile(&input.catalog, &input.assignments)
+            .global
+            .into_iter()
+            .filter(|action| action.starts_with("konklav:"))
+            .collect()
+    };
     Ok(Json(OwnCapabilities {
         subject: claims.sub,
         capabilities,

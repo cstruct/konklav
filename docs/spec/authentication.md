@@ -229,3 +229,10 @@ tokens carry the impersonating subject in the actor chain.
 r[authn.impersonation.time-bounded]
 Impersonation and assumption sessions MUST be time-bounded and auditable,
 and MUST be revoked when the impersonating subject's session is revoked.
+
+r[authn.impersonation.limits]
+An impersonation session MUST NOT be accepted on the control-plane surface,
+MUST NOT start another impersonation, and MUST NOT enroll, activate, change
+or remove the target's credentials, MFA factors or passkeys, or end the
+target's other sessions. Listing the caller's own control-plane capabilities
+MUST report none for it.

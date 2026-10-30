@@ -29,7 +29,8 @@ use subtle::ConstantTimeEq;
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::issue::{self, IssuedToken};
 use crate::subject_api::{
-    authenticate, check_browser_request, refresh_cookies, start_passwordless_session, with_cookies,
+    authenticate, check_browser_request, refresh_cookies, refuse_impersonation,
+    start_passwordless_session, with_cookies,
 };
 use crate::{AppState, capabilities, pacing, passkeys_api};
 
@@ -245,6 +246,18 @@ async fn full_session(
     Ok(session)
 }
 
+/// Authenticates a full session that may change the subject's own
+/// authentication: not one started by impersonation.
+async fn own_session(
+    state: &AppState,
+    conn: &mut Connection,
+    headers: &HeaderMap,
+) -> Result<Session, ApiError> {
+    let session = full_session(state, conn, headers).await?;
+    refuse_impersonation(&session)?;
+    Ok(session)
+}
+
 /// `GET /v1/mfa`: the subject's factors. A partial session sees only the
 /// active ones, to pick one for completing login.
 // r[impl authn.mfa.partial-factors]
@@ -279,7 +292,7 @@ async fn enroll_totp(
     headers: HeaderMap,
 ) -> Result<Json<TotpEnrollment>, ApiError> {
     let mut conn = state.pool.get().await?;
-    let session = full_session(&state, &mut conn, &headers).await?;
+    let session = own_session(&state, &mut conn, &headers).await?;
     let seed = TotpSecret::generate();
     let sealed = state
         .auth
@@ -320,7 +333,7 @@ async fn enroll_email(
         return Err(ApiError::invalid_request("email must be an email address"));
     }
     let mut conn = state.pool.get().await?;
-    let session = full_session(&state, &mut conn, &headers).await?;
+    let session = own_session(&state, &mut conn, &headers).await?;
     let factor = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let factor = mfa::create(
@@ -419,7 +432,7 @@ async fn activate_factor(
     ApiJson(body): ApiJson<Code>,
 ) -> Result<Json<FactorView>, ApiError> {
     let mut conn = state.pool.get().await?;
-    let session = full_session(&state, &mut conn, &headers).await?;
+    let session = own_session(&state, &mut conn, &headers).await?;
     let factor = mfa::get(&mut conn, session.subject_id, id)
         .await
         .map_err(|_| ApiError::not_found("factor"))?;
@@ -452,7 +465,7 @@ async fn remove_factor(
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let mut conn = state.pool.get().await?;
-    let session = full_session(&state, &mut conn, &headers).await?;
+    let session = own_session(&state, &mut conn, &headers).await?;
     let removed = mfa::remove(&mut conn, session.subject_id, id).await?;
     Ok(Json(serde_json::json!({"removed": removed})))
 }
@@ -849,7 +862,7 @@ async fn change_password(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_password(&body.new)?;
     let mut conn = state.pool.get().await?;
-    let session = full_session(&state, &mut conn, &headers).await?;
+    let session = own_session(&state, &mut conn, &headers).await?;
     let old = verify_password_of(&state, &mut conn, session.subject_id, &body.current).await?;
     let hasher = state.auth.hasher.clone();
     let password = body.new.clone();
@@ -890,7 +903,7 @@ async fn impersonate(
     ApiJson(body): ApiJson<Impersonate>,
 ) -> Result<Json<TokenBody>, ApiError> {
     let mut conn = state.pool.get().await?;
-    let parent = full_session(&state, &mut conn, &headers).await?;
+    let parent = own_session(&state, &mut conn, &headers).await?;
     capabilities::require(&mut conn, parent.subject_id, capabilities::IMPERSONATE).await?;
     let target = subjects::get(&mut conn, body.subject)
         .await

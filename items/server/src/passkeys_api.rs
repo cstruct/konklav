@@ -31,7 +31,7 @@ use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::passkeys::{Rejected, Verifier};
 use crate::subject_api::{
     Client, authenticate, check_browser_request, check_requested_flags, enforce_rate_limit,
-    invalid_credentials, start_session,
+    invalid_credentials, refuse_impersonation, start_session,
 };
 use crate::{AppState, pacing};
 
@@ -197,6 +197,7 @@ async fn recent_session(
     headers: &HeaderMap,
 ) -> Result<Session, ApiError> {
     let session = full_session(state, conn, headers).await?;
+    refuse_impersonation(&session)?;
     if Utc::now() - session.auth_time > Duration::minutes(RECENT_AUTH_MINUTES) {
         return Err(ApiError::new(
             ErrorCode::Forbidden,

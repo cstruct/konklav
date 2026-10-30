@@ -727,6 +727,74 @@ async fn impersonation_needs_the_capability_and_ends_with_the_impersonator() {
     );
 }
 
+// r[verify authn.impersonation.limits]
+#[tokio::test(flavor = "multi_thread")]
+async fn impersonation_cannot_reach_the_control_plane_or_change_authentication() {
+    let app = TestApp::new().await;
+    let support = app.human("support@example.com", PASSWORD).await;
+    let admin = app.human(EMAIL, PASSWORD).await;
+    app.control(
+        Method::PUT,
+        "/v1/tenants/root/roles/SUPPORT",
+        Some(json!({"policies": [{"action": "konklav:subject:impersonate", "effect": "allow"}]})),
+    )
+    .await;
+    for (subject, role) in [(&support, "SUPPORT"), (&admin, "konklav.admin")] {
+        let assigned = app
+            .control(
+                Method::POST,
+                &format!("/v1/subjects/{subject}/global-assignments"),
+                Some(json!({"role": role})),
+            )
+            .await;
+        assert_eq!(assigned.status, StatusCode::CREATED, "{:?}", assigned.body);
+    }
+    let support_token = token(&app.login("support@example.com", PASSWORD).await);
+    let impersonating = post_bearer(
+        &app,
+        "/v1/impersonate",
+        &support_token,
+        json!({"subject": admin}),
+    )
+    .await;
+    assert_eq!(
+        impersonating.status,
+        StatusCode::OK,
+        "{:?}",
+        impersonating.body
+    );
+    let as_admin = token(&impersonating);
+
+    let control = app
+        .with_bearer(Method::GET, "/v1/sessions", &as_admin)
+        .await;
+    assert_eq!(control.code(), "FORBIDDEN", "{:?}", control.body);
+    let own = app
+        .with_bearer(Method::GET, "/v1/capabilities", &as_admin)
+        .await;
+    assert_eq!(own.body["capabilities"], json!([]));
+    for (uri, body) in [
+        ("/v1/impersonate", json!({"subject": support})),
+        ("/v1/mfa/totp", json!({})),
+        ("/v1/mfa/email", json!({"email": "attacker@example.com"})),
+        (
+            "/v1/password/change",
+            json!({"current": PASSWORD, "new": "a different password"}),
+        ),
+        ("/v1/sign-out/others", json!({})),
+    ] {
+        let refused = post_bearer(&app, uri, &as_admin, body).await;
+        assert_eq!(refused.code(), "FORBIDDEN", "{uri}: {:?}", refused.body);
+    }
+
+    // The admin's own session still works.
+    let admin_token = token(&app.login(EMAIL, PASSWORD).await);
+    let control = app
+        .with_bearer(Method::GET, "/v1/sessions", &admin_token)
+        .await;
+    assert_eq!(control.status, StatusCode::OK, "{:?}", control.body);
+}
+
 // r[verify challenge.delivery.no-replay]
 #[tokio::test(flavor = "multi_thread")]
 async fn delivery_requests_are_only_for_the_delivery_capability_and_expire() {

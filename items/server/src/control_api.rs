@@ -118,6 +118,7 @@ async fn authorize_operator(
     if session.stage == konklav_store::sessions::Stage::Partial {
         return Err(ApiError::new(ErrorCode::Forbidden, "complete MFA first"));
     }
+    crate::subject_api::refuse_impersonation(&session)?;
     if capabilities::holds(&mut conn, session.subject_id, capabilities::CONTROL_ALL).await?
         || capabilities::holds(&mut conn, session.subject_id, capability).await?
     {

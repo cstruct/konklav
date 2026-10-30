@@ -577,6 +577,19 @@ async fn refresh(
     Ok(with_cookies(Json(body).into_response(), cookies))
 }
 
+/// Refuses a session started by impersonation, for operations that change
+/// the subject's authentication or act on the control plane.
+// r[impl authn.impersonation.limits]
+pub(crate) fn refuse_impersonation(session: &Session) -> Result<(), ApiError> {
+    if session.impersonator_subject_id.is_some() {
+        return Err(ApiError::new(
+            ErrorCode::Forbidden,
+            "not allowed while impersonating",
+        ));
+    }
+    Ok(())
+}
+
 /// Verifies a bearer access token and its session: the session must be
 /// active and the token issued at its current version.
 // r[impl session.version]
@@ -686,7 +699,8 @@ async fn sign_out_others(
     headers: HeaderMap,
 ) -> Result<Json<CursorResponse>, ApiError> {
     let mut conn = state.pool.get().await?;
-    let (claims, _) = authenticate(&state, &mut conn, &headers).await?;
+    let (claims, session) = authenticate(&state, &mut conn, &headers).await?;
+    refuse_impersonation(&session)?;
     let filter = SessionFilter {
         subject: Some(claims.sub),
         ..Default::default()
