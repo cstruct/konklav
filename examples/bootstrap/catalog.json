@@ -1,0 +1,8 @@
+{
+  "actions": [{"name": "workspace:read"}, {"name": "workspace:write"}],
+  "scope_kinds": [{"name": "workspace"}],
+  "facts": [
+    {"key": "member_type", "target": "membership", "type": "string", "portable": true},
+    {"key": "seats", "target": "tenant", "type": "integer"}
+  ]
+}

@@ -1,0 +1,5 @@
+// What the tables need besides rows: the namespace their external ids are
+// derived under, and the template the tenants are created with.
+id_namespace 3f1c9a52-6a1e-4d0b-9a0e-6c1d8f0b2e11
+catalog_file "../catalog.json"
+templates ({key clinician, policies ({action workspace:read})})
