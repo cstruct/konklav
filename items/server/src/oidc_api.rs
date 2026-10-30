@@ -32,13 +32,18 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
+use crate::cookies::{Cookie, SameSite};
 use crate::error::{ApiError, ErrorCode};
 use crate::oidc::{self, OpenIdProvider};
 use crate::subject_api::{self, Started};
 use crate::{AppState, issue};
 
-const AUTHORIZE_COOKIE: &str = "konklav_authorize";
-const AUTHORIZE_COOKIE_PATH: &str = "/v1/oauth2";
+/// Binds a login request to the browser that started it. Lax: the browser
+/// comes back from the login application by navigation.
+const AUTHORIZE_COOKIE: Cookie = Cookie {
+    name: "konklav_authorize",
+    same_site: SameSite::Lax,
+};
 const LOGIN_REQUEST_MINUTES: i64 = 10;
 const CODE_SECONDS: i64 = 60;
 
@@ -181,26 +186,13 @@ fn client_error(
     redirect_to(details_redirect, &params)
 }
 
-fn cookie(state: &AppState, value: &str, max_age: i64) -> HeaderValue {
-    let secure = state.auth.browser.as_ref().is_none_or(|b| b.secure_cookies);
-    let secure = if secure { "; Secure" } else { "" };
-    // Lax: the browser comes back from the login application by navigation.
-    HeaderValue::from_str(&format!(
-        "{AUTHORIZE_COOKIE}={value}; Path={AUTHORIZE_COOKIE_PATH}; Max-Age={max_age}; HttpOnly; SameSite=Lax{secure}"
-    ))
-    .expect("cookie header is ASCII")
+/// Secure unless browser clients are configured otherwise.
+fn secure_cookies(state: &AppState) -> bool {
+    state.auth.browser.as_ref().is_none_or(|b| b.secure_cookies)
 }
 
-fn read_cookie(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(';'))
-        .find_map(|pair| {
-            let (name, value) = pair.trim().split_once('=')?;
-            (name == AUTHORIZE_COOKIE).then(|| value.to_owned())
-        })
+fn cookie(state: &AppState, value: &str, max_age: i64) -> HeaderValue {
+    AUTHORIZE_COOKIE.set(secure_cookies(state), value, max_age)
 }
 
 async fn active_client(conn: &mut Connection, id: &str) -> Option<OidcClient> {
@@ -430,7 +422,9 @@ async fn resume(
 ) -> Result<Response, ApiError> {
     provider(&state)?;
     let foreign = || ApiError::invalid_request("this browser didn't start the request");
-    let cookie_value = read_cookie(&headers).ok_or_else(foreign)?;
+    let cookie_value = AUTHORIZE_COOKIE
+        .read(&headers, secure_cookies(&state))
+        .ok_or_else(foreign)?;
     let (cookie_id, secret) = cookie_value.split_once('.').ok_or_else(foreign)?;
     if cookie_id != query.login_request {
         return Err(foreign());

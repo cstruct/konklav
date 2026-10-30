@@ -249,7 +249,7 @@ async fn browsers_complete_mfa_with_a_listed_factor_and_get_the_cookie() {
     assert_eq!(done.body["token_kind"], "identity");
     assert!(done.body.get("refresh_token").is_none());
     let cookies = done.set_cookies();
-    assert_eq!(cookies.len(), 2, "{cookies:?}");
+    assert_eq!(cookies.len(), 1, "{cookies:?}");
     let cookie = cookies[0].split(';').next().unwrap().to_owned();
     let refreshed = app
         .send(

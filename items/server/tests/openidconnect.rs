@@ -54,7 +54,7 @@ async fn hand_off(app: &TestApp, base: &str, url: &str, login_token: &str) -> St
         .await;
     assert_eq!(started.status, StatusCode::SEE_OTHER, "{:?}", started.body);
     let request = query(&location(&started))["login_request"].clone();
-    let browser = cookie(&started, "konklav_authorize");
+    let browser = cookie(&started, "__Host-konklav_authorize");
     let auth = format!("Bearer {login_token}");
     let accepted = app
         .send(

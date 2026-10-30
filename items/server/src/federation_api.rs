@@ -28,17 +28,24 @@ use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
 use crate::claim_mapping;
+use crate::cookies::{Cookie, SameSite};
 use crate::error::{ApiError, ErrorCode};
 use crate::federation::{FederationError, LoginRequest, Provider, Provisioning};
 use crate::subject_api::{self, Client, Started};
 use crate::{AppState, BrowserSettings};
 
-const STATE_COOKIE: &str = "konklav_oidc";
-const STATE_COOKIE_PATH: &str = "/v1/login/oidc";
+/// Binds a login to the browser that started it. Lax, because the
+/// provider's redirect back is a cross-site navigation.
+const STATE_COOKIE: Cookie = Cookie {
+    name: "konklav_oidc",
+    same_site: SameSite::Lax,
+};
 /// Carries a partial session's access token from the callback to the page,
 /// when the provider's sign-ins need local MFA.
-const PARTIAL_COOKIE: &str = "konklav_partial";
-const PARTIAL_COOKIE_PATH: &str = "/v1/login/oidc/partial";
+const PARTIAL_COOKIE: Cookie = Cookie {
+    name: "konklav_partial",
+    same_site: SameSite::Strict,
+};
 const LOGIN_MINUTES: i64 = 10;
 
 pub fn routes() -> Router<AppState> {
@@ -85,28 +92,11 @@ fn return_to(provider: &Provider, requested: Option<&str>) -> Result<String, Api
 }
 
 fn state_cookie(browser: &BrowserSettings, value: &str, max_age: i64) -> HeaderValue {
-    let secure = if browser.secure_cookies {
-        "; Secure"
-    } else {
-        ""
-    };
-    // Lax, because the provider's redirect back is a cross-site navigation.
-    HeaderValue::from_str(&format!(
-        "{STATE_COOKIE}={value}; Path={STATE_COOKIE_PATH}; Max-Age={max_age}; HttpOnly; SameSite=Lax{secure}"
-    ))
-    .expect("cookie header is ASCII")
+    STATE_COOKIE.set_for(browser, value, max_age)
 }
 
 fn partial_cookie(browser: &BrowserSettings, value: &str, max_age: i64) -> HeaderValue {
-    let secure = if browser.secure_cookies {
-        "; Secure"
-    } else {
-        ""
-    };
-    HeaderValue::from_str(&format!(
-        "{PARTIAL_COOKIE}={value}; Path={PARTIAL_COOKIE_PATH}; Max-Age={max_age}; HttpOnly; SameSite=Strict{secure}"
-    ))
-    .expect("cookie header is ASCII")
+    PARTIAL_COOKIE.set_for(browser, value, max_age)
 }
 
 /// `POST /v1/login/oidc/partial`: hands the page the partial access token a
@@ -118,15 +108,8 @@ async fn take_partial(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let browser = subject_api::check_browser_request(&state.auth, &headers)?.clone();
-    let token = headers
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(';'))
-        .find_map(|pair| {
-            let (name, value) = pair.trim().split_once('=')?;
-            (name == PARTIAL_COOKIE).then(|| value.to_owned())
-        })
+    let token = PARTIAL_COOKIE
+        .read(&headers, browser.secure_cookies)
         .ok_or_else(|| ApiError::new(ErrorCode::Unauthenticated, "no partial sign-in"))?;
     let mut conn = state.pool.get().await?;
     let (_, session) = subject_api::verify_access_token(&state, &mut conn, &token).await?;
@@ -139,18 +122,6 @@ async fn take_partial(
         .headers_mut()
         .append(header::SET_COOKIE, partial_cookie(&browser, "", 0));
     Ok(response)
-}
-
-fn read_state_cookie(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(';'))
-        .find_map(|pair| {
-            let (name, value) = pair.trim().split_once('=')?;
-            (name == STATE_COOKIE).then(|| value.to_owned())
-        })
 }
 
 /// Creates the login challenge and returns the provider URL and the
@@ -324,13 +295,16 @@ fn redirect(return_to: &str, param: (&str, &str), cookies: Vec<HeaderValue>) -> 
 /// browser started it.
 async fn take_challenge(
     conn: &mut Connection,
+    browser: &BrowserSettings,
     headers: &HeaderMap,
     provider_id: &str,
     state: Option<&str>,
 ) -> Result<(Challenge, Details), ApiError> {
     let invalid = || ApiError::invalid_request("unknown, expired or foreign login state");
     let state = state.ok_or_else(invalid)?;
-    let cookie = read_state_cookie(headers).ok_or_else(invalid)?;
+    let cookie = STATE_COOKIE
+        .read(headers, browser.secure_cookies)
+        .ok_or_else(invalid)?;
     if !bool::from(cookie.as_bytes().ct_eq(state.as_bytes())) {
         return Err(invalid());
     }
@@ -364,8 +338,14 @@ async fn callback(
     let provider = provider(&state, &provider_id)?;
     let browser = browser(&state)?;
     let mut conn = state.pool.get().await?;
-    let (challenge, details) =
-        take_challenge(&mut conn, &headers, &provider_id, query.state.as_deref()).await?;
+    let (challenge, details) = take_challenge(
+        &mut conn,
+        browser,
+        &headers,
+        &provider_id,
+        query.state.as_deref(),
+    )
+    .await?;
     let clear = state_cookie(browser, "", 0);
     let outcome = finish(&state, &mut conn, provider, &challenge, &details, &query).await;
     Ok(match outcome {

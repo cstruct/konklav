@@ -105,10 +105,19 @@ Relying systems never set or clear flags on existing sessions.
 
 ## Browser clients
 
-- The refresh token is a cookie with these attributes:
+- The refresh token is a cookie named `__Host-konklav_refresh` with these
+  attributes:
   - `HttpOnly; Secure; SameSite=Strict`
-  - `Path=/v1/refresh`, plus a second cookie path for `/v1/sign-out`
-  - scoped to Konklav's host
+  - `Path=/` and no `Domain`, which the `__Host-` prefix requires
+  - scoped to Konklav's exact host: browsers refuse a `__Host-` cookie
+    from any other host, including a sibling subdomain, and from plain
+    HTTP, so nobody can plant a refresh token of their own
+- Every cookie Konklav sets follows the same rule. A path-scoped cookie
+  would be sent to fewer endpoints, but could be replaced from a sibling
+  subdomain. Only `/v1/refresh` and `/v1/sign-out` read the refresh
+  cookie, and `SameSite=Strict` keeps it off cross-site requests. With
+  `secure_cookies false` (local development over HTTP) the names drop
+  the prefix, which browsers only accept on secure cookies.
 - The access token is returned in the body and kept in memory by the
   frontend. A reload calls `/v1/refresh` to get a new one.
 - `SameSite=Strict` requires the frontend and Konklav to share a

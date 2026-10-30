@@ -199,8 +199,12 @@ required assertive flag MUST deny.
 
 r[session.browser.cookie]
 For browser clients, the refresh token MUST be delivered only as an
-`HttpOnly`, `Secure`, `SameSite=Strict` cookie restricted to the refresh and
-sign-out paths. Access tokens MUST be returned in the response body.
+`HttpOnly`, `Secure`, `SameSite=Strict` cookie, and access tokens MUST be
+returned in the response body. Every cookie Konklav sets MUST carry the
+`__Host-` prefix (and so `Path=/` and no `Domain`), so that no other host,
+including a sibling subdomain, and no plain-HTTP response can set or
+replace it. Only a deployment that turns secure cookies off for local
+development MAY use unprefixed names.
 
 r[session.browser.csrf]
 Cookie-authenticated endpoints MUST check the request `Origin` against a

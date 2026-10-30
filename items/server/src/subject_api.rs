@@ -21,6 +21,7 @@ use konklav_token::{AccessClaims, VerifyOptions};
 use serde::{Deserialize, Serialize};
 
 use crate::client_address::ClientAddress;
+use crate::cookies::{Cookie, SameSite};
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::issue::{self, IssuedToken};
 use crate::{AppState, AuthContext, BrowserSettings, keys, pacing};
@@ -38,12 +39,15 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .route("/sign-out/others", post(sign_out_others))
 }
 
-const REFRESH_COOKIE: &str = "konklav_refresh";
+/// Holds a browser session's refresh token. Only `/v1/refresh` and
+/// `/v1/sign-out` read it.
+const REFRESH_COOKIE: Cookie = Cookie {
+    name: "konklav_refresh",
+    same_site: SameSite::Strict,
+};
 /// Browser requests to cookie endpoints must carry this header. Setting a
 /// custom header forces a CORS preflight, so other sites cannot send it.
 const CLIENT_HEADER: &str = "x-konklav-client";
-/// Cookies are scoped to the only endpoints that read them.
-const COOKIE_PATHS: [&str; 2] = ["/v1/refresh", "/v1/sign-out"];
 
 /// Failed attempts allowed per login identifier, per window in seconds.
 const RATE_LIMITS: [(i64, i64); 3] = [(10 * 60, 30), (60 * 60, 60), (24 * 60 * 60, 120)];
@@ -130,38 +134,16 @@ pub(crate) fn check_browser_request<'a>(
     Ok(browser)
 }
 
-// r[impl session.browser.cookie]
 pub(crate) fn refresh_cookies(
     browser: &BrowserSettings,
     value: &str,
     max_age: i64,
 ) -> Vec<HeaderValue> {
-    let secure = if browser.secure_cookies {
-        "; Secure"
-    } else {
-        ""
-    };
-    COOKIE_PATHS
-        .iter()
-        .map(|path| {
-            HeaderValue::from_str(&format!(
-                "{REFRESH_COOKIE}={value}; Path={path}; Max-Age={max_age}; HttpOnly; SameSite=Strict{secure}"
-            ))
-            .expect("cookie header is ASCII")
-        })
-        .collect()
+    vec![REFRESH_COOKIE.set_for(browser, value, max_age)]
 }
 
-fn read_refresh_cookie(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(';'))
-        .find_map(|pair| {
-            let (name, value) = pair.trim().split_once('=')?;
-            (name == REFRESH_COOKIE).then(|| value.to_owned())
-        })
+fn read_refresh_cookie(browser: &BrowserSettings, headers: &HeaderMap) -> Option<String> {
+    REFRESH_COOKIE.read(headers, browser.secure_cookies)
 }
 
 pub(crate) fn with_cookies(mut response: Response, cookies: Vec<HeaderValue>) -> Response {
@@ -585,7 +567,7 @@ async fn refresh(
         Some(token) => (token, None),
         None => {
             let browser = check_browser_request(&state.auth, &headers)?.clone();
-            let token = read_refresh_cookie(&headers)
+            let token = read_refresh_cookie(&browser, &headers)
                 .ok_or_else(|| ApiError::new(ErrorCode::Unauthenticated, "no refresh token"))?;
             (token, Some(browser))
         }
@@ -719,7 +701,7 @@ async fn sign_out(State(state): State<AppState>, headers: HeaderMap) -> Result<R
         (claims.sid, state.auth.browser.clone())
     } else {
         let browser = check_browser_request(&state.auth, &headers)?.clone();
-        let presented = read_refresh_cookie(&headers)
+        let presented = read_refresh_cookie(&browser, &headers)
             .and_then(|token| RefreshToken::parse(&token).ok())
             .ok_or_else(|| ApiError::new(ErrorCode::Unauthenticated, "no refresh token"))?;
         // Only the current refresh token may sign out; anything else is a

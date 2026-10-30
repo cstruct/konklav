@@ -7,6 +7,7 @@ mod client_address;
 pub mod config;
 mod control_api;
 mod control_authz;
+mod cookies;
 pub mod error;
 pub mod federation;
 mod federation_api;

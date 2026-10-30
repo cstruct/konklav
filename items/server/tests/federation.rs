@@ -215,7 +215,10 @@ async fn start(app: &TestApp) -> (String, String) {
         .send(Method::GET, "/v1/login/oidc/ops/start", &[], None)
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{:?}", reply.body);
-    (location(&reply), cookie(&reply, "konklav_oidc").unwrap())
+    (
+        location(&reply),
+        cookie(&reply, "__Host-konklav_oidc").unwrap(),
+    )
 }
 
 async fn callback(
@@ -251,7 +254,7 @@ async fn link(app: &TestApp, provider: &FakeProvider, token: &str, claims: Value
         .unwrap()
         .to_owned();
     let code = provider.authorize(&url, claims, Signing::Provider);
-    let state_cookie = cookie(&started, "konklav_oidc").unwrap();
+    let state_cookie = cookie(&started, "__Host-konklav_oidc").unwrap();
     callback(app, &url, &code, Some(&state_cookie)).await
 }
 
@@ -278,7 +281,7 @@ async fn linked_provider_accounts_sign_in_with_a_browser_session() {
     assert_eq!(linked.status, StatusCode::SEE_OTHER);
     assert_eq!(location(&linked), format!("{RETURN}?linked=true"));
     assert!(
-        cookie(&linked, "konklav_oidc").is_some_and(|c| c == "konklav_oidc="),
+        cookie(&linked, "__Host-konklav_oidc").is_some_and(|c| c == "__Host-konklav_oidc="),
         "the state cookie is cleared"
     );
 
@@ -295,7 +298,7 @@ async fn linked_provider_accounts_sign_in_with_a_browser_session() {
     let done = callback(&app, &url, &code, Some(&state_cookie)).await;
     assert_eq!(done.status, StatusCode::SEE_OTHER, "{:?}", done.body);
     assert_eq!(location(&done), format!("{RETURN}?signed_in=true"));
-    let refresh_cookie = cookie(&done, "konklav_refresh").expect("a refresh cookie");
+    let refresh_cookie = cookie(&done, "__Host-konklav_refresh").expect("a refresh cookie");
 
     let refreshed = app
         .send(
@@ -391,7 +394,7 @@ async fn invalid_id_tokens_and_unlinked_accounts_are_refused() {
             format!("{RETURN}?error={error}"),
             "{claims}"
         );
-        assert!(cookie(&reply, "konklav_refresh").is_none());
+        assert!(cookie(&reply, "__Host-konklav_refresh").is_none());
     }
 
     // An account linked to one subject can't be linked to another.
@@ -452,7 +455,7 @@ async fn providers_enforce_their_requirements_and_cap_sessions() {
     let refresh = reply
         .set_cookies()
         .into_iter()
-        .find(|c| c.starts_with("konklav_refresh="))
+        .find(|c| c.starts_with("__Host-konklav_refresh="))
         .expect("a refresh cookie");
     let max_age: i64 = refresh
         .split(';')
@@ -494,7 +497,7 @@ async fn federated_login(app: &TestApp, provider: &FakeProvider, claims: Value) 
 /// The subject a successful federated login signed in.
 async fn signed_in_subject(app: &TestApp, reply: &common::Reply) -> String {
     assert_eq!(location(reply), format!("{RETURN}?signed_in=true"));
-    let refresh_cookie = cookie(reply, "konklav_refresh").unwrap();
+    let refresh_cookie = cookie(reply, "__Host-konklav_refresh").unwrap();
     let refreshed = app
         .send(
             Method::POST,
@@ -746,10 +749,10 @@ async fn providers_can_require_local_mfa() {
     let reply = federated_login(&app, &provider, json!({"sub": "new-person"})).await;
     assert_eq!(location(&reply), format!("{RETURN}?signed_in=mfa_required"));
     assert!(
-        cookie(&reply, "konklav_refresh").is_none(),
+        cookie(&reply, "__Host-konklav_refresh").is_none(),
         "no refresh token before MFA"
     );
-    let partial = cookie(&reply, "konklav_partial").unwrap();
+    let partial = cookie(&reply, "__Host-konklav_partial").unwrap();
     let take = |cookie: Option<String>| {
         let app = &app;
         async move {
@@ -768,7 +771,7 @@ async fn providers_can_require_local_mfa() {
         taken
             .set_cookies()
             .iter()
-            .any(|c| c.starts_with("konklav_partial=;")),
+            .any(|c| c.starts_with("__Host-konklav_partial=;")),
         "the cookie is cleared once taken"
     );
     assert_eq!(take(None).await.code(), "UNAUTHENTICATED");

@@ -157,7 +157,7 @@ async fn authorize(world: &World, extra: &[(&str, &str)]) -> String {
     let login_url = location(&started);
     assert!(login_url.starts_with(LOGIN_URL));
     let request = query(&login_url)["login_request"].clone();
-    let browser = cookie(&started, "konklav_authorize").unwrap();
+    let browser = cookie(&started, "__Host-konklav_authorize").unwrap();
 
     let viewed = app
         .send(
@@ -252,7 +252,7 @@ async fn a_request_started_in_one_browser_cannot_be_accepted_in_another() {
     // The attacker starts a request and sends its login link to a victim.
     let started = app.send(Method::GET, &authorize_uri(&[]), &[], None).await;
     let request = query(&location(&started))["login_request"].clone();
-    let attacker = cookie(&started, "konklav_authorize").unwrap();
+    let attacker = cookie(&started, "__Host-konklav_authorize").unwrap();
     // The victim, signed in, accepts it.
     let auth = format!("Bearer {}", world.login_token);
     let accepted = app

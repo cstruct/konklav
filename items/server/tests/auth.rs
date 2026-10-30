@@ -321,18 +321,14 @@ async fn browsers_get_http_only_cookies_and_must_pass_csrf_checks() {
         "browsers never see the refresh token"
     );
     let cookies = login.set_cookies();
-    assert_eq!(cookies.len(), 2);
-    for (cookie, path) in cookies.iter().zip(["/v1/refresh", "/v1/sign-out"]) {
-        assert!(cookie.starts_with("konklav_refresh="), "{cookie}");
-        for attribute in [
-            "HttpOnly",
-            "SameSite=Strict",
-            "Secure",
-            &format!("Path={path}"),
-        ] {
-            assert!(cookie.contains(attribute), "{cookie} lacks {attribute}");
-        }
+    assert_eq!(cookies.len(), 1);
+    // The `__Host-` prefix needs `Path=/` and no `Domain`.
+    let cookie = &cookies[0];
+    assert!(cookie.starts_with("__Host-konklav_refresh="), "{cookie}");
+    for attribute in ["HttpOnly", "SameSite=Strict", "Secure", "Path=/;"] {
+        assert!(cookie.contains(attribute), "{cookie} lacks {attribute}");
     }
+    assert!(!cookie.contains("Domain"), "{cookie}");
     let value = cookies[0].split(';').next().unwrap().to_owned();
 
     // Refreshing with the cookie needs the same CSRF checks.
