@@ -756,6 +756,11 @@ async fn sign_out_others(
 ) -> Result<Json<CursorResponse>, ApiError> {
     let mut conn = state.pool.get().await?;
     let (claims, session) = authenticate(&state, &mut conn, &headers).await?;
+    // Only the password is proven before MFA: not enough to end sessions.
+    // r[impl session.sign-out-others]
+    if session.stage == Stage::Partial {
+        return Err(ApiError::new(ErrorCode::Forbidden, "complete MFA first"));
+    }
     refuse_impersonation(&session)?;
     let filter = SessionFilter {
         subject: Some(claims.sub),

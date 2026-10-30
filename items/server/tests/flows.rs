@@ -833,6 +833,15 @@ struct Count {
     count: i64,
 }
 
+// r[verify session.sign-out-others]
+#[tokio::test(flavor = "multi_thread")]
+async fn partial_sessions_cannot_end_other_sessions() {
+    let app = TestApp::new().await;
+    let (_, _, partial) = totp_partial(&app).await;
+    let refused = post_bearer(&app, "/v1/sign-out/others", &partial, json!({})).await;
+    assert_eq!(refused.code(), "FORBIDDEN", "{:?}", refused.body);
+}
+
 // r[verify authn.mfa.attempts]
 #[tokio::test(flavor = "multi_thread")]
 async fn totp_checks_are_limited_even_when_concurrent() {

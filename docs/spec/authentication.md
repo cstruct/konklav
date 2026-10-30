@@ -163,6 +163,10 @@ r[session.revocation.event]
 Every session change MUST emit a `session.changed` event carrying the
 session id, its new version and whether it is revoked.
 
+r[session.sign-out-others]
+A subject MUST be able to end its other sessions only from a full session,
+not a partial one that has proven a single factor.
+
 r[session.history]
 Session records MUST remain queryable after revocation or expiry, for audit,
 for a configured retention period.
