@@ -65,6 +65,7 @@ async fn failed_logins_do_not_reveal_what_was_wrong() {
 }
 
 // r[verify authn.login.rate-limit]
+// r[verify platform.error.retry-after]
 #[tokio::test(flavor = "multi_thread")]
 async fn repeated_failures_are_rate_limited_per_identifier() {
     let app = TestApp::new().await;
@@ -78,6 +79,12 @@ async fn repeated_failures_are_rate_limited_per_identifier() {
     let limited = app.login(EMAIL, PASSWORD).await;
     assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(limited.code(), "RATE_LIMITED");
+    let wait: u32 = limited.headers["retry-after"]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((60..=90).contains(&wait), "{wait}");
     // Other identifiers are unaffected, including unknown ones.
     assert_eq!(
         app.login("other@example.com", "x").await.code(),

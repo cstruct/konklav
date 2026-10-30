@@ -79,6 +79,11 @@ r[platform.error.no-enumeration]
 Authentication failures MUST NOT reveal whether a login identifier, subject
 or credential exists.
 
+r[platform.error.retry-after]
+A `RATE_LIMITED` response MUST carry a `Retry-After` header whose value
+includes random jitter, so that clients refused at the same time don't
+retry at the same time.
+
 ## Idempotency
 
 r[platform.idempotency.client-ids]

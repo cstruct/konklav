@@ -112,8 +112,25 @@ impl IntoResponse for ApiError {
                 message: &self.message,
             },
         };
-        (self.code.status(), Json(body)).into_response()
+        let mut response = (self.code.status(), Json(body)).into_response();
+        if self.code == ErrorCode::RateLimited {
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, retry_after().into());
+        }
+        response
     }
+}
+
+/// Seconds a rate-limited client should wait: a minute plus up to 30
+/// seconds of jitter, so clients refused together don't all retry together.
+// r[impl platform.error.retry-after]
+fn retry_after() -> u32 {
+    const BASE: u32 = 60;
+    const JITTER: u32 = 30;
+    let mut bytes = [0u8; 4];
+    getrandom::fill(&mut bytes).expect("system randomness");
+    BASE + u32::from_le_bytes(bytes) % (JITTER + 1)
 }
 
 impl From<StoreError> for ApiError {
