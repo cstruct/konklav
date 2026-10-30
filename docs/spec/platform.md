@@ -134,3 +134,66 @@ r[import.sessions]
 Imported sessions MUST keep their identifiers, versions and expiry, with a
 refresh-token hash supplied by the importer, so that people stay signed in
 across a migration.
+
+## Bootstrap
+
+r[bootstrap.command]
+The server binary MUST offer a `bootstrap` command that reads a bootstrap
+set from files and applies it to the database directly, without serving
+any surface. It MUST refuse to run while migrations are pending.
+
+r[bootstrap.formats]
+The command MUST accept flat tables (CSV, one file per kind of record,
+with a fixed header) and nested documents (Styx), and MUST accept both in
+one run, read into a single bootstrap set.
+
+r[bootstrap.contents]
+A bootstrap set MAY contain the action catalog, templates, tenants,
+subjects, credentials (federated ones included), MFA factors, memberships,
+membership and global role assignments, and sessions.
+
+r[bootstrap.ids]
+Every record's identifier MUST be resolved the same way in both formats:
+- an identifier that is a UUID MUST be used as given
+- any other identifier is an external id, and MUST become UUID version 5
+  of the set's id namespace and `<kind>:<external id>`
+- in nested documents, a record without an identifier is found by its
+  natural key: a tenant's key MUST be treated as its external id, and a
+  subject MUST be the one with an active credential for its login
+  identifier, or else a new subject
+
+A set that uses external ids or tenant keys MUST declare an id namespace.
+Flat tables MUST give every record an identifier.
+
+r[bootstrap.idempotent]
+Applying a bootstrap set MUST create the records that don't exist and skip
+those that exist with the same content. A record that exists with
+different content MUST be reported as a conflict, except that secret-key
+slots are replaced as `import.credentials.secret-key-rotation` describes.
+Applying MUST NOT delete or change anything the set doesn't name.
+
+r[bootstrap.validate-first]
+Before writing anything, the command MUST read every file, resolve every
+identifier and reference, check the set against the catalog (in the set or
+already stored), and report every problem it finds together, each with its
+file and line.
+
+r[bootstrap.atomic]
+A run MUST apply in one transaction: either everything in the set is
+applied or nothing is. A conflict MUST fail the run.
+
+r[bootstrap.dry-run]
+The command MUST offer a dry run that does everything except commit, and
+reports how many records of each kind would be created, skipped or in
+conflict.
+
+r[bootstrap.secrets]
+Passwords and secret keys MUST arrive as Argon2 hashes, as
+`import.credentials` describes. Plaintext passwords MUST be refused unless
+the run explicitly allows them, and are then hashed before they are
+stored. TOTP seeds MUST be encrypted on arrival, as `import.mfa` describes.
+
+r[bootstrap.events]
+Applying a bootstrap set MUST emit the same events as the equivalent
+control-plane writes, in the same transaction, so relying systems see the
+result on the change feed.

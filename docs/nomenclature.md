@@ -397,6 +397,41 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `break-glass credential`
   - A local operator credential that works while every upstream is unavailable. Every use is recorded as an event.
 
+## Import and bootstrap
+
+- `import`
+  - Loading another system's identity data into Konklav in bulk, keeping
+    the records' identifiers so it can be repeated without duplicates.
+  - Konklav offers it through the control plane and through the
+    `bootstrap` command (below).
+
+- `external id`
+  - A record's identifier in the system it comes from, when that isn't a
+    UUID, such as `4711` or `usr_abc`.
+  - Konklav never stores it. It derives the record's own UUID from it (see
+    `id namespace`).
+
+- `id namespace`
+  - A UUID that an import declares once, from which external ids are
+    turned into Konklav UUIDs: UUID version 5 of the namespace and
+    `<kind>:<external id>`, such as `subject:4711`.
+  - The mapping is deterministic, so repeating an import finds the same
+    records, and a relying system that knows the namespace can compute a
+    record's Konklav id from its own.
+
+- `natural key`
+  - What identifies a record that comes with no identifier at all: a
+    tenant's key (a name chosen in the import, treated as an external id),
+    or a subject's login identifier.
+
+- `bootstrap set`
+  - Everything one run of the `bootstrap` command reads from its files:
+    catalog, templates, tenants, subjects, credentials, MFA factors,
+    memberships, role assignments and sessions.
+  - It can be written as flat tables (CSV, one file per kind of record,
+    referring to each other by id) or as nested documents (Styx, with
+    records inside the ones they belong to), or a mix of both.
+
 ## Software architecture and traceability
 
 - `software item`

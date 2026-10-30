@@ -11,7 +11,7 @@ reference them from code comments as `r[impl ...]` and `r[verify ...]`.
 Product specs:
 
 - [platform](platform.md): repository shape, runtime, configuration,
-  storage and errors
+  storage, errors, import and bootstrap
 - [tenancy and identity](tenancy-and-identity.md): tenants, subjects,
   credentials, memberships and facts
 - [authentication](authentication.md): login, MFA, step-up, sessions, session
