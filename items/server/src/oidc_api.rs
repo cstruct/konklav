@@ -1102,7 +1102,7 @@ async fn peer_events(
 ) -> Result<Response, ApiError> {
     provider(&state)?;
     let mut conn = state.pool.get().await?;
-    let Some(client) = authenticate_client(&state, &mut conn, &headers, &form).await else {
+    let Some(client) = authenticate_peer(&state, &mut conn, &headers, &form).await else {
         return Ok(oauth_error(
             StatusCode::UNAUTHORIZED,
             "invalid_client",
@@ -1158,6 +1158,21 @@ async fn peer_events(
         .into_response())
 }
 
+/// Authenticates a client for the peer endpoints. A public client proves
+/// nothing beyond its id, which anyone can know, so only confidential
+/// clients may read subjects through them.
+// r[impl federation.peer.feed]
+async fn authenticate_peer(
+    state: &AppState,
+    conn: &mut Connection,
+    headers: &HeaderMap,
+    form: &TokenRequest,
+) -> Option<OidcClient> {
+    authenticate_client(state, conn, headers, form)
+        .await
+        .filter(|client| client.kind == ClientKind::Confidential)
+}
+
 /// `POST /v1/oauth2/peer/subjects`: whether a subject is still active, and
 /// the claims the client would receive for it with all its scopes. Only
 /// for subjects that have had a session for the client.
@@ -1168,7 +1183,7 @@ async fn peer_subject(
 ) -> Result<Response, ApiError> {
     provider(&state)?;
     let mut conn = state.pool.get().await?;
-    let Some(client) = authenticate_client(&state, &mut conn, &headers, &form).await else {
+    let Some(client) = authenticate_peer(&state, &mut conn, &headers, &form).await else {
         return Ok(oauth_error(
             StatusCode::UNAUTHORIZED,
             "invalid_client",

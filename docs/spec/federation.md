@@ -152,7 +152,9 @@ Peer-only capabilities MUST be optional.
 r[federation.peer.feed]
 An upstream Konklav MUST offer each OIDC client a view of its change feed
 limited to subjects that have had a session for that client, and the
-current claims and state of such a subject. A downstream instance MAY
+current claims and state of such a subject. Only confidential clients,
+authenticated with a secret or a signed assertion, MAY read this view;
+public clients MUST be refused. A downstream instance MAY
 follow it. When it does, it MUST revoke the sessions of subjects the
 upstream disables, and MUST re-evaluate managed grants when a subject's
 claims change, within its polling interval.

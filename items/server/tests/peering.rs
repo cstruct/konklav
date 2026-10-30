@@ -553,3 +553,34 @@ async fn peer_endpoints_only_show_subjects_the_client_has_seen() {
         .await;
     assert_eq!(anonymous.body["error"], "invalid_client");
 }
+
+// r[verify federation.peer.feed]
+#[tokio::test(flavor = "multi_thread")]
+async fn public_clients_cannot_read_the_peer_endpoints() {
+    let federation = upstream().await;
+    let up = &federation.upstream;
+    control_ok(
+        up,
+        Method::PUT,
+        "/v1/oidc/clients/spa",
+        Some(json!({
+            "kind": "public",
+            "redirect_uris": ["https://spa.example/callback"],
+            "audience": "spa",
+            "id_token_alg": "EdDSA",
+            "refresh": false,
+        })),
+    )
+    .await;
+    for (uri, extra) in [
+        ("/v1/oauth2/peer/events", ("after", "0")),
+        (
+            "/v1/oauth2/peer/subjects",
+            ("subject", federation.operator.as_str()),
+        ),
+    ] {
+        let refused = up.send_form(uri, &[], &[("client_id", "spa"), extra]).await;
+        assert_eq!(refused.status, StatusCode::UNAUTHORIZED, "{uri}");
+        assert_eq!(refused.body["error"], "invalid_client", "{uri}");
+    }
+}
