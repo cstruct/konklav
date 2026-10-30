@@ -262,6 +262,9 @@ config_tree! {
             /// How often streams poll when no notification arrives.
             #[facet(default = 2000)]
             pub poll_interval_ms: u32,
+            /// Streams open at once; more are refused as `OVERLOADED`.
+            #[facet(default = 1000)]
+            pub max_streams: u32,
         }>,
     }
 }
@@ -272,6 +275,15 @@ impl FeedConfig {
         chrono::Duration::hours(i64::from(
             self.feed.as_ref().map_or(168, |f| f.retention_hours),
         ))
+    }
+
+    #[must_use]
+    pub fn max_streams(&self) -> usize {
+        self.feed
+            .as_ref()
+            .map_or(crate::feed::FeedHub::DEFAULT_MAX_STREAMS, |f| {
+                usize::try_from(f.max_streams).unwrap_or(usize::MAX)
+            })
     }
 
     #[must_use]

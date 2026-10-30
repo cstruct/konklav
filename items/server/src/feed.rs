@@ -15,9 +15,9 @@ use konklav_core::feed::{FeedEvent, RESET, SessionChanged};
 use konklav_core::{Cursor, SessionId};
 use konklav_store::{Pool, events, sessions};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Notify;
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 
-use crate::error::ApiError;
+use crate::error::{ApiError, ErrorCode};
 use crate::relying_api::require_service;
 use crate::{AppState, capabilities};
 
@@ -33,19 +33,31 @@ pub fn routes() -> Router<AppState> {
         .route("/session-states/{id}", get(session_state))
 }
 
-/// Wakes streams when events are appended.
+/// Wakes streams when events are appended, and bounds how many are open.
 pub struct FeedHub {
     notify: Notify,
     poll_interval: Duration,
+    streams: std::sync::Arc<Semaphore>,
 }
 
 impl FeedHub {
+    /// Streams open at once by default.
+    pub const DEFAULT_MAX_STREAMS: usize = 1000;
+
     #[must_use]
     pub fn new(poll_interval: Duration) -> Self {
         Self {
             notify: Notify::new(),
             poll_interval,
+            streams: std::sync::Arc::new(Semaphore::new(Self::DEFAULT_MAX_STREAMS)),
         }
+    }
+
+    /// Allows at most `max` streams open at once.
+    #[must_use]
+    pub fn with_max_streams(mut self, max: usize) -> Self {
+        self.streams = std::sync::Arc::new(Semaphore::new(max));
+        self
     }
 
     pub fn wake(&self) {
@@ -185,6 +197,8 @@ struct StreamState {
     /// Whether the consumer may read delivery requests.
     delivery: bool,
     buffer: VecDeque<FeedEvent>,
+    /// Held until the stream ends.
+    _slot: OwnedSemaphorePermit,
 }
 
 /// `GET /v1/events`: Server-Sent Events. Each event's `id` is its cursor;
@@ -200,6 +214,14 @@ async fn stream_events(
     let mut conn = state.pool.get().await?;
     // r[impl feed.authorization]
     let caller = require_service(&state, &mut conn, &headers).await?;
+    // Streams outlive the request timeout, so they are bounded here.
+    // r[impl platform.server.limits]
+    let slot = state
+        .feed
+        .streams
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| ApiError::new(ErrorCode::Overloaded, "too many change-feed streams"))?;
     let delivery = capabilities::holds(&mut conn, caller, capabilities::DELIVERY_READ).await?;
     let requested = headers
         .get("last-event-id")
@@ -225,6 +247,7 @@ async fn stream_events(
         kinds: kinds(&query),
         delivery,
         buffer,
+        _slot: slot,
     };
     let stream = futures_util::stream::unfold(initial, |mut state| async move {
         loop {

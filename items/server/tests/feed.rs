@@ -233,3 +233,37 @@ async fn session_states_match_session_changed_payloads() {
     assert_eq!(state.body["revoked"], false);
     assert!(state.body["expires_at"].is_i64());
 }
+
+// r[verify platform.server.limits]
+#[tokio::test(flavor = "multi_thread")]
+async fn change_feed_streams_are_capped() {
+    use konklav_server::feed::FeedHub;
+    use konklav_server::surface::{self, Surface};
+    use tower::ServiceExt;
+
+    let app = TestApp::new().await;
+    let token = app.service_token().await;
+    let state = konklav_server::AppState {
+        feed: std::sync::Arc::new(FeedHub::new(Duration::from_millis(100)).with_max_streams(1)),
+        ..app.state.clone()
+    };
+    let router = surface::router(&Surface::ALL, state);
+    let open = || {
+        let request = axum::http::Request::get("/v1/events")
+            .header("authorization", format!("Bearer {token}"))
+            .body(axum::body::Body::empty())
+            .unwrap();
+        router.clone().oneshot(request)
+    };
+    let first = open().await.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let second = open().await.unwrap();
+    assert_eq!(second.status(), StatusCode::SERVICE_UNAVAILABLE);
+    drop(first);
+    let third = open().await.unwrap();
+    assert_eq!(
+        third.status(),
+        StatusCode::OK,
+        "closing a stream frees its slot"
+    );
+}

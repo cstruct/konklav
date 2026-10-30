@@ -164,7 +164,7 @@ async fn serve(
             konklav_server::passkeys::Verifier::from_config(passkeys, browser.browser.as_ref())
         })
         .transpose()?;
-    let hub = Arc::new(FeedHub::new(feed.poll_interval()));
+    let hub = Arc::new(FeedHub::new(feed.poll_interval()).with_max_streams(feed.max_streams()));
     tokio::spawn(konklav_server::feed::listen(
         database.database.connect_options().url,
         hub.clone(),
