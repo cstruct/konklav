@@ -51,6 +51,8 @@ pub struct AuthContext {
     pub access_ttl: Duration,
     pub session_lifetime: Duration,
     pub hasher: PasswordHasher,
+    /// Bounds concurrent password hashing; see [`AuthContext::hashing`].
+    pub hashing_slots: tokio::sync::Semaphore,
     pub signer: Signer,
     pub browser: Option<BrowserSettings>,
     /// The bootstrap control-plane token, if configured.
@@ -76,6 +78,33 @@ pub struct BrowserSettings {
 }
 
 impl AuthContext {
+    /// One hashing slot per CPU.
+    #[must_use]
+    pub fn default_hashing_slots() -> tokio::sync::Semaphore {
+        let cpus = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+        tokio::sync::Semaphore::new(cpus)
+    }
+
+    /// Runs password hashing or verification on the blocking pool, at most
+    /// one per CPU at a time. Without a bound, a burst of logins would queue
+    /// unbounded CPU work and starve everything else; with it, the excess
+    /// waits for a slot.
+    // r[impl authn.login.hashing-bound]
+    pub(crate) async fn hashing<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&PasswordHasher) -> T + Send + 'static,
+    ) -> Result<T, error::ApiError> {
+        let _slot = self
+            .hashing_slots
+            .acquire()
+            .await
+            .map_err(error::ApiError::internal)?;
+        let hasher = self.hasher.clone();
+        tokio::task::spawn_blocking(move || work(&hasher))
+            .await
+            .map_err(error::ApiError::internal)
+    }
+
     /// Builds the context from configuration and the already-loaded signer,
     /// with no MFA encryption keys (set `secrets` to add them).
     ///
@@ -95,6 +124,7 @@ impl AuthContext {
             access_ttl: Duration::seconds(i64::from(tokens.access_ttl_seconds)),
             session_lifetime: Duration::seconds(i64::from(tokens.session_lifetime_seconds)),
             hasher: PasswordHasher::default(),
+            hashing_slots: Self::default_hashing_slots(),
             signer,
             browser: browser.map(|browser| BrowserSettings {
                 allowed_origins: browser.allowed_origins.clone(),
@@ -108,5 +138,58 @@ impl AuthContext {
             passkeys: None,
             trusted_proxies: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    fn context(slots: usize) -> AuthContext {
+        let tokens = config::Tokens {
+            issuer: "https://konklav.test".into(),
+            audience: "test".into(),
+            access_ttl_seconds: 900,
+            session_lifetime_seconds: 3600,
+            signing_key_file: String::new(),
+            published_key_files: Vec::new(),
+        };
+        let signer = Signer::new(ed25519_dalek::SigningKey::from_bytes(&[1; 32]));
+        let mut auth = AuthContext::new(
+            &tokens,
+            None,
+            &config::ControlConfig { control: None },
+            signer,
+        );
+        auth.hashing_slots = tokio::sync::Semaphore::new(slots);
+        auth
+    }
+
+    // r[verify authn.login.hashing-bound]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn hashing_runs_at_most_one_job_per_slot() {
+        let auth = Arc::new(context(2));
+        let running = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let jobs = (0..8).map(|_| {
+            let (auth, running, peak) = (auth.clone(), running.clone(), peak.clone());
+            tokio::spawn(async move {
+                auth.hashing(move |_| {
+                    let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(now, Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    running.fetch_sub(1, Ordering::SeqCst);
+                })
+                .await
+                .unwrap();
+            })
+        });
+        for job in futures_util::future::join_all(jobs).await {
+            job.unwrap();
+        }
+        assert_eq!(peak.load(Ordering::SeqCst), 2);
     }
 }

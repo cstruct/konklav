@@ -464,10 +464,7 @@ async fn new_slot(
 }
 
 async fn hash(state: &AppState, secret: String) -> Result<String, ApiError> {
-    let hasher = state.auth.hasher.clone();
-    tokio::task::spawn_blocking(move || hasher.hash(&secret))
-        .await
-        .map_err(ApiError::internal)
+    state.auth.hashing(move |hasher| hasher.hash(&secret)).await
 }
 
 const MIN_PASSWORD_LENGTH: usize = 8;

@@ -53,6 +53,7 @@ async fn server() -> Server {
             access_ttl: ChronoDuration::minutes(15),
             session_lifetime: ChronoDuration::days(1),
             hasher: konklav_authn::PasswordHasher::new(8, 1, 1).unwrap(),
+            hashing_slots: AuthContext::default_hashing_slots(),
             signer: keys.signer,
             browser: None,
             control_token: Some(CONTROL.into()),

@@ -666,11 +666,11 @@ async fn verify_password_of(
         address,
     )
     .await?;
-    let hasher = state.auth.hasher.clone();
     let (password, hash) = (password.to_owned(), data.hash.clone());
-    let check = tokio::task::spawn_blocking(move || hasher.verify(&password, &hash))
-        .await
-        .map_err(ApiError::internal)?;
+    let check = state
+        .auth
+        .hashing(move |hasher| hasher.verify(&password, &hash))
+        .await?;
     let matched = matches!(check, PasswordCheck::Match { .. });
     attempt.finish(conn, matched).await?;
     if matched {
@@ -876,11 +876,11 @@ async fn complete_reset(
     ApiJson(body): ApiJson<CompleteReset>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_password(&body.password)?;
-    let hasher = state.auth.hasher.clone();
     let password = body.password.clone();
-    let hash = tokio::task::spawn_blocking(move || hasher.hash(&password))
-        .await
-        .map_err(ApiError::internal)?;
+    let hash = state
+        .auth
+        .hashing(move |hasher| hasher.hash(&password))
+        .await?;
     let mut conn = state.pool.get().await?;
     let cursor = conn
         .transaction::<_, ApiError, _>(async |conn| {
@@ -926,11 +926,11 @@ async fn change_password(
         address,
     )
     .await?;
-    let hasher = state.auth.hasher.clone();
     let password = body.new.clone();
-    let hash = tokio::task::spawn_blocking(move || hasher.hash(&password))
-        .await
-        .map_err(ApiError::internal)?;
+    let hash = state
+        .auth
+        .hashing(move |hasher| hasher.hash(&password))
+        .await?;
     let cursor = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let new = replace_password(conn, &old, hash).await?;

@@ -402,17 +402,17 @@ async fn login_password(
         }) => Some(data.hash.clone()),
         _ => None,
     };
-    let hasher = state.auth.hasher.clone();
     let password = body.password.clone();
-    let check = tokio::task::spawn_blocking(move || match hash {
-        Some(hash) => hasher.verify(&password, &hash),
-        None => {
-            hasher.verify_dummy(&password);
-            PasswordCheck::Mismatch
-        }
-    })
-    .await
-    .map_err(ApiError::internal)?;
+    let check = state
+        .auth
+        .hashing(move |hasher| match hash {
+            Some(hash) => hasher.verify(&password, &hash),
+            None => {
+                hasher.verify_dummy(&password);
+                PasswordCheck::Mismatch
+            }
+        })
+        .await?;
 
     // Passwords are interactive, so service principals can't use them.
     let usable = subject
@@ -426,11 +426,11 @@ async fn login_password(
     };
 
     if check == (PasswordCheck::Match { needs_rehash: true }) {
-        let hasher = state.auth.hasher.clone();
         let password = body.password;
-        let hash = tokio::task::spawn_blocking(move || hasher.hash(&password))
-            .await
-            .map_err(ApiError::internal)?;
+        let hash = state
+            .auth
+            .hashing(move |hasher| hasher.hash(&password))
+            .await?;
         let data = CredentialData::Password(credentials::PasswordData { hash });
         credentials::set_data(&mut conn, credential.id, &data).await?;
     }
@@ -477,21 +477,21 @@ async fn login_secret_key(
             .collect(),
         _ => Vec::new(),
     };
-    let hasher = state.auth.hasher.clone();
     let secret = body.secret.clone();
-    let matched = tokio::task::spawn_blocking(move || {
-        if hashes.is_empty() {
-            hasher.verify_dummy(&secret);
-            return false;
-        }
-        // Check every slot so the time taken doesn't reveal which matched.
-        hashes
-            .iter()
-            .map(|hash| matches!(hasher.verify(&secret, hash), PasswordCheck::Match { .. }))
-            .fold(false, |any, matched| any | matched)
-    })
-    .await
-    .map_err(ApiError::internal)?;
+    let matched = state
+        .auth
+        .hashing(move |hasher| {
+            if hashes.is_empty() {
+                hasher.verify_dummy(&secret);
+                return false;
+            }
+            // Check every slot so the time taken doesn't reveal which matched.
+            hashes
+                .iter()
+                .map(|hash| matches!(hasher.verify(&secret, hash), PasswordCheck::Match { .. }))
+                .fold(false, |any, matched| any | matched)
+        })
+        .await?;
 
     // r[impl subject.kind]
     let usable = subject

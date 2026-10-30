@@ -34,6 +34,10 @@ count toward the limit while it is being checked, so concurrent attempts
 can't exceed it, and every check of a credential's secret MUST count,
 including those made for step-up and password change.
 
+r[authn.login.hashing-bound]
+Password and secret-key hashing MUST run with bounded concurrency, so a
+burst of login attempts queues instead of exhausting CPU.
+
 r[authn.login.timing]
 Failed and successful first-factor attempts MUST NOT be distinguishable by
 response time beyond a configured jitter.

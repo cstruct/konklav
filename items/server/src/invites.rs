@@ -186,11 +186,11 @@ async fn existing_account(
     let CredentialData::Password(data) = &existing.data else {
         return Err(invalid_invite());
     };
-    let hasher = state.auth.hasher.clone();
     let (password, hash) = (password.to_owned(), data.hash.clone());
-    let check = tokio::task::spawn_blocking(move || hasher.verify(&password, &hash))
-        .await
-        .map_err(ApiError::internal)?;
+    let check = state
+        .auth
+        .hashing(move |hasher| hasher.verify(&password, &hash))
+        .await?;
     if matches!(check, PasswordCheck::Match { .. }) {
         Ok(Some(existing))
     } else {
@@ -220,11 +220,11 @@ async fn redeem_invite(
     }
     let (id, secret) = body.token.split_once('.').ok_or_else(invalid_invite)?;
     let id: uuid::Uuid = id.parse().map_err(|_| invalid_invite())?;
-    let hasher = state.auth.hasher.clone();
     let password = body.password.clone();
-    let new_hash = tokio::task::spawn_blocking(move || hasher.hash(&password))
-        .await
-        .map_err(ApiError::internal)?;
+    let new_hash = state
+        .auth
+        .hashing(move |hasher| hasher.hash(&password))
+        .await?;
     let mut conn = state.pool.get().await?;
     let challenge = challenges::get(&mut conn, id)
         .await

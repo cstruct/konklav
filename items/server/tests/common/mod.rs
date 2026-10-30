@@ -60,6 +60,7 @@ pub fn auth_context(signer: Signer) -> AuthContext {
         session_lifetime: Duration::days(30),
         // Cheap parameters keep the tests fast.
         hasher: PasswordHasher::new(8, 1, 1).unwrap(),
+        hashing_slots: AuthContext::default_hashing_slots(),
         signer,
         browser: Some(BrowserSettings {
             allowed_origins: vec![ORIGIN.into()],
