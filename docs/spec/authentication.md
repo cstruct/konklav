@@ -219,7 +219,10 @@ when the limit is reached.
 r[challenge.send-limit]
 Sending challenges MUST be limited per recipient and purpose over several
 windows, including a daily one, so that the codes a recipient can be sent
-in a day allow only a bounded number of guesses.
+in a day allow only a bounded number of guesses. Where a request names a
+login identifier without authenticating, a send refused by the limit MUST
+be answered like one that went out, so the limit doesn't reveal which
+identifiers exist.
 
 r[challenge.delivery.event]
 Konklav MUST NOT send messages. To deliver a challenge it MUST emit a

@@ -72,6 +72,18 @@ fn accepted() -> Response {
     (StatusCode::ACCEPTED, Json(serde_json::json!({}))).into_response()
 }
 
+/// Treats a send refused by the rate limit as done. Starts for unknown
+/// identifiers send nothing and are always accepted, so refusing a known
+/// one would reveal that it exists.
+// r[impl platform.error.no-enumeration]
+fn quietly_limited(error: ApiError) -> Result<(), ApiError> {
+    if error.code == ErrorCode::RateLimited {
+        Ok(())
+    } else {
+        Err(error)
+    }
+}
+
 fn invalid_code() -> ApiError {
     ApiError::new(ErrorCode::InvalidCredentials, "invalid or expired code")
 }
@@ -734,7 +746,8 @@ async fn start_email_link(
         )
         .await
     })
-    .await?;
+    .await
+    .or_else(quietly_limited)?;
     Ok(accepted())
 }
 
@@ -785,7 +798,8 @@ async fn start_phone(
         )
         .await
     })
-    .await?;
+    .await
+    .or_else(quietly_limited)?;
     Ok(accepted())
 }
 
@@ -842,7 +856,8 @@ async fn start_reset(
         )
         .await
     })
-    .await?;
+    .await
+    .or_else(quietly_limited)?;
     Ok(accepted())
 }
 

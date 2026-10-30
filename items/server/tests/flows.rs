@@ -795,16 +795,27 @@ async fn changing_factors_needs_a_recent_authentication() {
 }
 
 // r[verify challenge.send-limit]
+// r[verify platform.error.no-enumeration]
 #[tokio::test(flavor = "multi_thread")]
 async fn codes_sent_to_one_recipient_are_capped_per_day() {
     let app = TestApp::new().await;
     passwordless_subject(&app, "phone_otp", "+15550100").await;
     let start = || app.post("/v1/login/phone/start", json!({"phone": "+15550100"}));
+    let sent = || async {
+        let mut conn = app.db.pool().get().await.unwrap();
+        diesel::sql_query("select count(*) as count from challenge where purpose = 'phone_code'")
+            .get_result::<Count>(&mut conn)
+            .await
+            .unwrap()
+            .count
+    };
     for round in 0..4 {
-        for _ in 0..5 {
+        // Refused sends are answered like the others, so they don't reveal
+        // that the phone number is known.
+        for _ in 0..6 {
             assert_eq!(start().await.status, StatusCode::ACCEPTED, "round {round}");
         }
-        assert_eq!(start().await.code(), "RATE_LIMITED", "round {round}");
+        assert_eq!(sent().await, 5 * (round + 1), "round {round}");
         // Move this round out of the 10-minute window, but not out of the day.
         let mut conn = app.db.pool().get().await.unwrap();
         diesel::sql_query("update challenge set created_at = created_at - interval '1 hour'")
@@ -812,7 +823,14 @@ async fn codes_sent_to_one_recipient_are_capped_per_day() {
             .await
             .unwrap();
     }
-    assert_eq!(start().await.code(), "RATE_LIMITED", "20 a day at most");
+    assert_eq!(start().await.status, StatusCode::ACCEPTED);
+    assert_eq!(sent().await, 20, "20 a day at most");
+}
+
+#[derive(diesel::QueryableByName)]
+struct Count {
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    count: i64,
 }
 
 // r[verify authn.mfa.attempts]
