@@ -24,6 +24,7 @@ Planned software items for v2 (see
 - `store`
 - `authz`
 - `authn`
+- `bootstrap`
 - `server`
 - `token`
 - [`relying`](relying.md)

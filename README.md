@@ -79,6 +79,7 @@ v1, a prototype backed by Feldera, is preserved at tag `v1`.
   - `token`: claims, JWS, JWKS
   - `authn`: hashing, refresh tokens
   - `authz`: entitlement compilation and evaluation
+  - `bootstrap`: reading bootstrap sets (CSV tables and Styx documents)
   - `store`: Postgres, migrations, repositories
   - `server`: the binary
   - `relying`: the sans-I/O relying core
@@ -87,6 +88,8 @@ v1, a prototype backed by Feldera, is preserved at tag `v1`.
   - `console`: the operators' web UI (Leptos, WASM)
   - `test-support`: shared test helpers
 - `config/`: development configuration.
+- `examples/bootstrap/`: example bootstrap sets, nested and flat, that the
+  tests apply.
 - `dev/`: local services for development.
 - `.agents/`: agent skills and the planning standard.
 
@@ -122,6 +125,10 @@ local setup. Everyday tasks:
   for the console's WASM target) and Tracey validation.
 - `mise run migrate` applies migrations; `mise run db:schema` regenerates the
   Diesel schema.
+- `cargo run -p konklav-server -- bootstrap [--dry-run] <paths>` loads
+  tenants, people and grants from CSV tables or Styx documents, for seeding
+  a database or moving another system's data in. See
+  [`items/bootstrap`](items/bootstrap/README.md).
 
 Other database tasks:
 

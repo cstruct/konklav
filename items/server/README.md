@@ -13,6 +13,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
 - Configuration is split into ordna contexts (`ListenConfig`, `DatabaseConfig`, `LogConfig`), and each command loads only the ones it needs:
   - `serve` and `check-config` load all three.
   - `migrate` loads only the database and log contexts, so it runs without any `listen` settings.
+  - `bootstrap` loads the database, log and MFA contexts.
 
   Keys belonging to contexts a command doesn't load are still validated, so typos are still caught.
 - Binding one listener per distinct surface address. Surfaces configured with the same address share a listener.
@@ -57,7 +58,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
 
 ## Public interface
 
-- CLI: `konklav-server --config <file> --secrets <file> <serve|migrate|check-config>`.
+- CLI: `konklav-server --config <file> --secrets <file> <serve|migrate|check-config|bootstrap>`.
   - The file paths can also come from `KONKLAV_CONFIG` and `KONKLAV_SECRETS`.
 - Configuration: the contexts in `src/config.rs`:
   - `listen`, `database`, `log`
@@ -86,6 +87,25 @@ mise run serve
 
 This starts Postgres, creates an untracked dev signing key if needed, applies migrations, and serves on `127.0.0.1:8080` (subject), `:8081` (relying) and `:8082` (control).
 
+### Bootstrapping data
+
+`bootstrap` applies a bootstrap set to the database directly: tenants, people, credentials and grants, from CSV tables, Styx documents and a `catalog.json`, or directories of them. The formats are described in [`konklav-bootstrap`](../bootstrap/README.md).
+
+```sh
+cargo run -p konklav-server -- bootstrap --dry-run examples/bootstrap/nested/seed.styx
+cargo run -p konklav-server -- bootstrap examples/bootstrap/nested/seed.styx
+```
+
+- **One transaction.** Every record is written in a savepoint of its own. The run reports each problem and conflict with its file and line, and commits only when there are none.
+- **Re-runnable.**
+  - Records that exist with the same content are skipped, so a set can be applied again.
+  - A record that exists with different content is a conflict.
+  - Nothing the set doesn't name is changed.
+- **`--dry-run`** does everything but commit, and prints what would be created, skipped, updated or in conflict.
+- **Passwords** must arrive as Argon2 hashes. `--allow-plaintext-passwords` accepts plaintext for development seeds and hashes it.
+- **Requirements:** it refuses to run while migrations are pending, and needs the `mfa` keys to import TOTP seeds.
+- **Exit codes:** 0 when the set applied or the dry run found nothing wrong, 1 for problems, 2 for conflicts.
+
 ## Testing
 
 ```sh
@@ -103,6 +123,7 @@ mise run test
     - credential replacement, subject disabling, MFA-required partial tokens
     - session administration, signing-key revocation
     - passkey registration, login, step-up and removal, with a software authenticator (`tests/passkeys.rs`)
+  - the bootstrap command, applying both example sets, re-runs, dry runs, conflicts and located problems (`tests/bootstrap.rs`)
 - Indirect coverage: none yet.
 
 ## Behavior notes
