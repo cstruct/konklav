@@ -50,10 +50,10 @@ const REFRESH_COOKIE: Cookie = Cookie {
 const CLIENT_HEADER: &str = "x-konklav-client";
 
 /// Failed attempts allowed per login identifier, per window in seconds.
-const RATE_LIMITS: [(i64, i64); 3] = [(10 * 60, 30), (60 * 60, 60), (24 * 60 * 60, 120)];
+pub(crate) const RATE_LIMITS: [(i64, i64); 3] = [(10 * 60, 30), (60 * 60, 60), (24 * 60 * 60, 120)];
 /// Failed attempts allowed per client address across identifiers, per
 /// window. Looser than per identifier: many people can share an address.
-const ADDRESS_LIMITS: [(i64, i64); 2] = [(10 * 60, 100), (24 * 60 * 60, 1000)];
+pub(crate) const ADDRESS_LIMITS: [(i64, i64); 2] = [(10 * 60, 100), (24 * 60 * 60, 1000)];
 
 // r[impl session.client-kind]
 #[derive(Debug, Clone, Copy, Default, Deserialize)]

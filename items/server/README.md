@@ -17,6 +17,14 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
 
   Keys belonging to contexts a command doesn't load are still validated, so typos are still caught.
 - Binding one listener per distinct surface address. Surfaces configured with the same address share a listener.
+- Sweeping (`sweeper.rs`): every `retention.sweep_interval_seconds` (default 300), one instance at a time deletes what retention allows, in batches of `retention.batch_size`:
+  - expired challenges once the one-day send-limit window has passed
+  - login attempts older than the one-day rate-limit window
+  - expired client- and bearer-assertion `jti`s
+  - sessions `retention.sessions_days` (default 30) after they ended
+  - events older than `feed.retention_hours`
+
+  It also erases the challenge material from stored `delivery.requested` events once their challenge has expired.
 - Working out each client's address from the connection, or from `X-Forwarded-For` when the connection comes from one of `listen.trusted_proxies`, for per-address rate limits.
 - Liveness (`/healthz`) and readiness (`/readyz`: database reachable and no pending migrations) on every listener.
 - The typed error model: `{"error": {"code": "SCREAMING_SNAKE_CASE", "message": "..."}}`, including for unknown endpoints and methods.
@@ -123,6 +131,7 @@ mise run test
     - credential replacement, subject disabling, MFA-required partial tokens
     - session administration, signing-key revocation
     - passkey registration, login, step-up and removal, with a software authenticator (`tests/passkeys.rs`)
+  - retention: what the sweeper deletes and keeps, and its lock (`tests/retention.rs`)
   - the bootstrap command, applying both example sets, re-runs, dry runs, conflicts and located problems (`tests/bootstrap.rs`)
 - Indirect coverage: none yet.
 

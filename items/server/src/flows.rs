@@ -63,10 +63,10 @@ const LINK_TTL_MINUTES: i64 = 15;
 /// Challenges sent per recipient and purpose, per window in seconds. The
 /// daily cap bounds how many codes can be guessed against: each allows a
 /// few attempts.
-const SEND_LIMITS: [(i64, i64); 2] = [(10 * 60, 5), (24 * 60 * 60, 20)];
+pub(crate) const SEND_LIMITS: [(i64, i64); 2] = [(10 * 60, 5), (24 * 60 * 60, 20)];
 const IMPERSONATION_MINUTES: i64 = 60;
 /// Failed TOTP checks allowed per factor, per window in seconds.
-const TOTP_LIMITS: [(i64, i64); 2] = [(10 * 60, 5), (24 * 60 * 60, 20)];
+pub(crate) const TOTP_LIMITS: [(i64, i64); 2] = [(10 * 60, 5), (24 * 60 * 60, 20)];
 
 fn accepted() -> Response {
     (StatusCode::ACCEPTED, Json(serde_json::json!({}))).into_response()

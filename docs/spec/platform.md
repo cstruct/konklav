@@ -80,6 +80,37 @@ r[platform.storage.transactional-events]
 Every state change that produces a change-feed event MUST write that event
 in the same database transaction as the change itself.
 
+## Retention
+
+r[retention.sweep]
+A sweeper MUST periodically delete what retention allows, in batches of a
+bounded size, so that no table grows without bound. With several server
+instances on one database, at most one sweeper MUST run at a time.
+
+r[retention.challenges]
+A challenge MUST be deleted once it has expired, but not before the longest
+send-limit window has passed since it was created, since send limits count
+challenges.
+
+r[retention.login-attempts]
+A login attempt MUST be deleted once the longest rate-limit window has
+passed since it was made.
+
+r[retention.assertions]
+A recorded client-assertion or bearer-assertion identifier MUST be deleted
+once the assertion it was recorded for has expired.
+
+r[retention.sessions]
+A session MUST be deleted a configured period after it expired or was
+revoked, together with its refresh history and the challenges that refer to
+it. A session MUST NOT be deleted while it has not ended, while a
+back-channel logout for it is pending, or while an impersonation session
+started from it is kept.
+
+r[retention.delivery-material]
+The challenge material in a stored `delivery.requested` event MUST be erased
+once the challenge has expired, not only withheld from the feed.
+
 ## Errors
 
 r[platform.error.typed-codes]

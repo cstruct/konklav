@@ -24,6 +24,7 @@ pub mod schema;
 pub mod sessions;
 pub mod signing_keys;
 pub mod subjects;
+pub mod sweep;
 pub mod templates;
 pub mod tenants;
 

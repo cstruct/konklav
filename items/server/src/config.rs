@@ -257,7 +257,7 @@ config_tree! {
 }
 
 config_tree! {
-    /// The change feed.
+    /// The change feed, and how long other rows are kept.
     #[derive(Debug, Clone, PartialEq)]
     pub struct FeedConfig {
         pub feed: Option<pub struct Feed {
@@ -270,6 +270,19 @@ config_tree! {
             /// Streams open at once; more are refused as `OVERLOADED`.
             #[facet(default = 1000)]
             pub max_streams: u32,
+        }>,
+        // r[impl retention.sessions]
+        /// What the sweeper deletes, and how often it runs.
+        pub retention: Option<pub struct Retention {
+            /// Days a session is kept after it expired or was revoked.
+            #[facet(default = 30)]
+            pub sessions_days: u32,
+            /// How often the sweeper runs.
+            #[facet(default = 300)]
+            pub sweep_interval_seconds: u32,
+            /// The most rows one delete removes, so no sweep holds locks long.
+            #[facet(default = 1000)]
+            pub batch_size: u32,
         }>,
     }
 }
@@ -289,6 +302,20 @@ impl FeedConfig {
             .map_or(crate::feed::FeedHub::DEFAULT_MAX_STREAMS, |f| {
                 usize::try_from(f.max_streams).unwrap_or(usize::MAX)
             })
+    }
+
+    /// What the sweeper keeps, with the change feed's retention.
+    #[must_use]
+    pub fn sweeper(&self) -> crate::sweeper::Settings {
+        let retention = self.retention.as_ref();
+        crate::sweeper::Settings {
+            sessions: chrono::Duration::days(i64::from(retention.map_or(30, |r| r.sessions_days))),
+            events: self.retention(),
+            interval: std::time::Duration::from_secs(u64::from(
+                retention.map_or(300, |r| r.sweep_interval_seconds).max(1),
+            )),
+            batch: i64::from(retention.map_or(1000, |r| r.batch_size).max(1)),
+        }
     }
 
     #[must_use]

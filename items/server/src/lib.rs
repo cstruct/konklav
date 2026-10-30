@@ -31,6 +31,7 @@ mod relying_api;
 pub mod serve;
 mod subject_api;
 pub mod surface;
+pub mod sweeper;
 
 use std::sync::Arc;
 

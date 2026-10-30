@@ -435,6 +435,22 @@ Terms are introduced in dependency order: each definition only uses terms define
     referring to each other by id) or as nested documents (Styx, with
     records inside the ones they belong to), or a mix of both.
 
+## Operations
+
+- `retention`
+  - How long Konklav keeps a row it no longer needs, such as an expired challenge or an ended session, before deleting it.
+  - Each kind of row has its own rule, set either by configuration or by the longest window anything still reads it over, such as a rate limit's.
+
+- `sweeper`
+  - The background task that deletes what retention allows, in bounded batches, and erases delivery material from stored events once its challenge has expired.
+  - Only one instance's sweeper runs at a time.
+
+- `delivery material`
+  - The secret part of a `delivery.requested` event: the one-time code or link token the relying system sends.
+
+- `telemetry`
+  - The traces, metrics and logs Konklav exports over OTLP for operators. It is separate from the change feed, which is for relying systems.
+
 ## Software architecture and traceability
 
 - `software item`

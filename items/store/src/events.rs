@@ -86,26 +86,37 @@ pub async fn pruned_through(conn: &mut AsyncPgConnection) -> QueryResult<Cursor>
         .map(Cursor::new)
 }
 
-/// Deletes events created before `cutoff` and advances the watermark.
-/// Returns the new watermark.
+/// Deletes up to `batch` of the oldest events created before `cutoff` and
+/// advances the watermark past them. Returns how many it deleted.
 pub async fn prune_before(
     conn: &mut AsyncPgConnection,
     cutoff: chrono::DateTime<chrono::Utc>,
-) -> QueryResult<Cursor> {
+    batch: i64,
+) -> QueryResult<usize> {
     use diesel_async::AsyncConnection;
     conn.transaction(async |conn| {
-        let deleted = diesel::delete(event::table.filter(event::created_at.lt(cutoff)))
-            .returning(event::cursor)
-            .get_results::<i64>(conn)
-            .await?;
-        if let Some(highest) = deleted.into_iter().max() {
+        #[derive(QueryableByName)]
+        struct Deleted {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            cursor: i64,
+        }
+        let deleted = diesel::sql_query(
+            "delete from event where cursor in (
+                 select cursor from event where created_at < $1 order by cursor limit $2
+             ) returning cursor",
+        )
+        .bind::<diesel::sql_types::Timestamptz, _>(cutoff)
+        .bind::<diesel::sql_types::BigInt, _>(batch)
+        .get_results::<Deleted>(conn)
+        .await?;
+        if let Some(highest) = deleted.iter().map(|d| d.cursor).max() {
             diesel::update(feed_watermark::table)
                 .filter(feed_watermark::pruned_through.lt(highest))
                 .set(feed_watermark::pruned_through.eq(highest))
                 .execute(conn)
                 .await?;
         }
-        pruned_through(conn).await
+        Ok(deleted.len())
     })
     .await
 }

@@ -140,12 +140,17 @@ async fn resuming_from_a_pruned_cursor_starts_with_a_reset() {
     login(&app, "ada@example.com").await;
     {
         let mut conn = app.db.pool().get().await.unwrap();
-        let watermark = konklav_store::events::prune_before(
+        let pruned = konklav_store::events::prune_before(
             &mut conn,
             chrono::Utc::now() + chrono::Duration::seconds(1),
+            1000,
         )
         .await
         .unwrap();
+        assert!(pruned > 1);
+        let watermark = konklav_store::events::pruned_through(&mut conn)
+            .await
+            .unwrap();
         assert!(watermark.get() > 1);
     }
     let url = format!("http://{}/v1/events", running.relying);

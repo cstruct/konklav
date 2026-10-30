@@ -100,22 +100,6 @@ pub async fn listen(url: String, hub: std::sync::Arc<FeedHub>) {
     }
 }
 
-/// Deletes events past retention once an hour.
-pub async fn prune(pool: Pool, retention: chrono::Duration) {
-    loop {
-        match pool.get().await {
-            Ok(mut conn) => {
-                match events::prune_before(&mut conn, chrono::Utc::now() - retention).await {
-                    Ok(watermark) => tracing::debug!(%watermark, "pruned change feed"),
-                    Err(error) => tracing::warn!(%error, "pruning the change feed failed"),
-                }
-            }
-            Err(error) => tracing::warn!(%error, "pruning the change feed failed"),
-        }
-        tokio::time::sleep(Duration::from_secs(3600)).await;
-    }
-}
-
 #[derive(Deserialize, Default)]
 struct FeedQuery {
     /// Comma-separated event kinds; every kind when absent.

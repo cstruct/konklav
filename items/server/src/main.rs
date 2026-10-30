@@ -273,7 +273,10 @@ async fn serve(
         database.database.connect_options().url,
         hub.clone(),
     ));
-    tokio::spawn(konklav_server::feed::prune(pool.clone(), feed.retention()));
+    tokio::spawn(konklav_server::sweeper::sweep_forever(
+        pool.clone(),
+        feed.sweeper(),
+    ));
     let state = AppState {
         pool,
         auth: Arc::new(auth),
