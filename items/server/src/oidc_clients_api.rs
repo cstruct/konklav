@@ -74,6 +74,13 @@ async fn put_client(
     {
         return Err(ApiError::invalid_request("jwks must be a JWK set"));
     }
+    // PKCE is all that protects a public client's codes.
+    // r[impl oidc.provider.code-flow]
+    if !definition.require_pkce && definition.kind != ClientKind::Confidential {
+        return Err(ApiError::invalid_request(
+            "only confidential clients can be registered without PKCE",
+        ));
+    }
     if definition.service_subject.is_some() && definition.kind != ClientKind::Confidential {
         return Err(ApiError::invalid_request(
             "only confidential clients can act as service principals",

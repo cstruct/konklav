@@ -376,6 +376,13 @@ async fn discovery_lists_the_endpoints() {
         document.body["code_challenge_methods_supported"],
         json!(["S256"])
     );
+    for unsupported in [
+        "request_parameter_supported",
+        "request_uri_parameter_supported",
+        "claims_parameter_supported",
+    ] {
+        assert_eq!(document.body[unsupported], false, "{unsupported}");
+    }
     let plain = TestApp::new().await;
     let missing = plain
         .send(Method::GET, "/.well-known/openid-configuration", &[], None)
@@ -388,6 +395,9 @@ async fn discovery_lists_the_endpoints() {
 }
 
 // r[verify oidc.provider.clients]
+// r[verify oidc.provider.code-flow]
+// r[verify oidc.provider.request-objects]
+// r[verify oidc.provider.prompt]
 #[tokio::test(flavor = "multi_thread")]
 async fn bad_requests_are_refused_without_leaking_codes() {
     let world = world().await;
@@ -406,8 +416,17 @@ async fn bad_requests_are_refused_without_leaking_codes() {
     for (extra, error) in [
         (vec![("code_challenge", "")], "invalid_request"),
         (vec![("code_challenge_method", "plain")], "invalid_request"),
-        (vec![("scope", "openid admin")], "invalid_scope"),
         (vec![("scope", "email")], "invalid_scope"),
+        (vec![("response_type", "")], "invalid_request"),
+        (
+            vec![("request", "eyJhbGciOiJub25lIn0.e30.")],
+            "request_not_supported",
+        ),
+        (
+            vec![("request_uri", "https://rp.example/request.jwt")],
+            "request_uri_not_supported",
+        ),
+        (vec![("prompt", "none login")], "invalid_request"),
         (
             vec![("response_type", "token")],
             "unsupported_response_type",
@@ -861,4 +880,294 @@ async fn a_reused_code_fails_and_revokes_what_it_issued() {
         .with_bearer(Method::GET, "/v1/oauth2/userinfo", access)
         .await;
     assert_eq!(info.code(), "SESSION_ENDED", "{:?}", info.body);
+}
+
+/// Starts a request, returning the login request id and the browser's
+/// cookie.
+async fn start(world: &World, extra: &[(&str, &str)]) -> (String, String) {
+    let started = world
+        .app
+        .send(Method::GET, &authorize_uri(extra), &[], None)
+        .await;
+    assert_eq!(started.status, StatusCode::SEE_OTHER, "{:?}", started.body);
+    let request = query(&location(&started))["login_request"].clone();
+    let browser = cookie(&started, "__Host-konklav_authorize").unwrap();
+    (request, browser)
+}
+
+/// Answers a login request as the login application: `accept` with
+/// `token`, or `reject` with a body.
+async fn answer(
+    world: &World,
+    request: &str,
+    verb: &str,
+    token: Option<&str>,
+    body: Option<Value>,
+) -> common::Reply {
+    let auth = token.map(|t| format!("Bearer {t}"));
+    let mut headers = vec![("origin", ORIGIN), ("x-konklav-client", "web")];
+    if let Some(auth) = &auth {
+        headers.push(("authorization", auth));
+    }
+    world
+        .app
+        .send(
+            Method::POST,
+            &format!("/v1/oauth2/login-requests/{request}/{verb}"),
+            &headers,
+            body,
+        )
+        .await
+}
+
+/// Follows an answer's `redirect_to` in the starting browser, returning
+/// the query the client receives.
+async fn resume(world: &World, answered: &common::Reply, browser: &str) -> HashMap<String, String> {
+    let resume = answered.body["redirect_to"].as_str().unwrap();
+    let resumed = world
+        .app
+        .send(
+            Method::GET,
+            resume.trim_start_matches(ISSUER),
+            &[("cookie", browser)],
+            None,
+        )
+        .await;
+    assert_eq!(resumed.status, StatusCode::SEE_OTHER, "{:?}", resumed.body);
+    let back = location(&resumed);
+    assert!(back.starts_with(REDIRECT), "{back}");
+    query(&back)
+}
+
+// r[verify oidc.provider.scopes]
+#[tokio::test(flavor = "multi_thread")]
+async fn scopes_the_client_may_not_have_are_dropped() {
+    let world = world().await;
+    let code = authorize(&world, &[("scope", "openid email profile admin email")]).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    assert_eq!(tokens.status, StatusCode::OK, "{:?}", tokens.body);
+    assert_eq!(tokens.body["scope"], "openid email");
+}
+
+// r[verify oidc.provider.prompt]
+// r[verify oidc.provider.login-refusal]
+#[tokio::test(flavor = "multi_thread")]
+async fn login_applications_see_the_prompt_and_can_refuse() {
+    let world = world().await;
+    let (request, browser) = start(
+        &world,
+        &[("prompt", "none"), ("login_hint", "ada@example.com")],
+    )
+    .await;
+    let viewed = world
+        .app
+        .send(
+            Method::GET,
+            &format!("/v1/oauth2/login-requests/{request}"),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(viewed.body["prompt"], "none");
+    assert_eq!(viewed.body["login_hint"], "ada@example.com");
+
+    let unknown = answer(
+        &world,
+        &request,
+        "reject",
+        None,
+        Some(json!({"error": "nope"})),
+    )
+    .await;
+    assert_eq!(unknown.code(), "INVALID_REQUEST");
+    let refused = answer(
+        &world,
+        &request,
+        "reject",
+        None,
+        Some(json!({"error": "login_required"})),
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::OK, "{:?}", refused.body);
+    let again = answer(&world, &request, "accept", Some(&world.login_token), None).await;
+    assert_eq!(
+        again.code(),
+        "CONFLICT",
+        "a refused request can't be accepted"
+    );
+    let back = resume(&world, &refused, &browser).await;
+    assert_eq!(back["error"], "login_required");
+    assert_eq!(back["state"], "client-state");
+    assert_eq!(back["iss"], ISSUER);
+    assert!(!back.contains_key("code"));
+
+    // `prompt=login` takes a sign-in from after the request started.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let (request, browser) = start(&world, &[("prompt", "login")]).await;
+    let stale = answer(&world, &request, "accept", Some(&world.login_token), None).await;
+    assert_eq!(stale.code(), "FORBIDDEN", "{:?}", stale.body);
+    let fresh = world.app.login("ada@example.com", PASSWORD).await;
+    let fresh = fresh.body["access_token"].as_str().unwrap();
+    let accepted = answer(&world, &request, "accept", Some(fresh), None).await;
+    assert_eq!(accepted.status, StatusCode::OK, "{:?}", accepted.body);
+    assert!(
+        resume(&world, &accepted, &browser)
+            .await
+            .contains_key("code")
+    );
+}
+
+// r[verify oidc.provider.code-flow]
+#[tokio::test(flavor = "multi_thread")]
+async fn confidential_clients_may_be_registered_without_pkce() {
+    let world = world().await;
+    let app = &world.app;
+    let public = app
+        .control(
+            Method::PUT,
+            "/v1/oidc/clients/spa",
+            Some(json!({
+                "kind": "public",
+                "redirect_uris": [REDIRECT],
+                "audience": "spa",
+                "require_pkce": false,
+            })),
+        )
+        .await;
+    assert_eq!(public.code(), "INVALID_REQUEST", "{:?}", public.body);
+
+    let definition = |require_pkce| {
+        json!({
+            "kind": "confidential",
+            "redirect_uris": [REDIRECT],
+            "scopes": ["openid", "email", "groups", "tenant"],
+            "audience": "console",
+            "visible_groups": ["ops-*"],
+            "require_pkce": require_pkce,
+        })
+    };
+    let relaxed = app
+        .control(
+            Method::PUT,
+            "/v1/oidc/clients/console",
+            Some(definition(false)),
+        )
+        .await;
+    assert_eq!(relaxed.status, StatusCode::OK, "{:?}", relaxed.body);
+    let without = [("code_challenge", ""), ("code_challenge_method", "")];
+    let code = authorize(&world, &without).await;
+    let downgraded = exchange(&world, &code, VERIFIER).await;
+    assert_eq!(
+        downgraded.body["error"], "invalid_grant",
+        "a verifier without a challenge"
+    );
+    let code = authorize(&world, &without).await;
+    let tokens = app
+        .send_form(
+            "/v1/oauth2/token",
+            &[("authorization", &basic(&world.secret))],
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", &code),
+                ("redirect_uri", REDIRECT),
+            ],
+        )
+        .await;
+    assert_eq!(tokens.status, StatusCode::OK, "{:?}", tokens.body);
+    // A client that sends a challenge is still held to it.
+    let code = authorize(&world, &[]).await;
+    let tokens = app
+        .send_form(
+            "/v1/oauth2/token",
+            &[("authorization", &basic(&world.secret))],
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", &code),
+                ("redirect_uri", REDIRECT),
+            ],
+        )
+        .await;
+    assert_eq!(tokens.body["error"], "invalid_grant");
+
+    app.control(
+        Method::PUT,
+        "/v1/oidc/clients/console",
+        Some(definition(true)),
+    )
+    .await;
+    let started = app
+        .send(Method::GET, &authorize_uri(&without), &[], None)
+        .await;
+    assert_eq!(query(&location(&started))["error"], "invalid_request");
+}
+
+// r[verify oidc.provider.code-flow]
+#[tokio::test(flavor = "multi_thread")]
+async fn authorization_requests_can_be_posted() {
+    let world = world().await;
+    let form = authorize_uri(&[]);
+    let (_, query_string) = form.split_once('?').unwrap();
+    let pairs: Vec<(String, String)> = reqwest::Url::parse(&format!("http://x/?{query_string}"))
+        .unwrap()
+        .query_pairs()
+        .into_owned()
+        .collect();
+    let pairs: Vec<(&str, &str)> = pairs
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let started = world
+        .app
+        .send_form("/v1/oauth2/authorize", &[], &pairs)
+        .await;
+    assert_eq!(started.status, StatusCode::SEE_OTHER, "{:?}", started.body);
+    assert!(location(&started).starts_with(LOGIN_URL));
+}
+
+// r[verify oidc.provider.userinfo]
+// r[verify oidc.provider.token-errors]
+#[tokio::test(flavor = "multi_thread")]
+async fn userinfo_and_token_errors_follow_the_oauth_challenges() {
+    let world = world().await;
+    let app = &world.app;
+    let code = authorize(&world, &[]).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    assert_eq!(
+        tokens.headers[header::CACHE_CONTROL],
+        "no-store",
+        "token responses aren't cached"
+    );
+    let access = tokens.body["access_token"].as_str().unwrap();
+    let in_body = app
+        .send_form("/v1/oauth2/userinfo", &[], &[("access_token", access)])
+        .await;
+    assert_eq!(in_body.status, StatusCode::OK, "{:?}", in_body.body);
+    assert_eq!(in_body.body["sub"], world.subject);
+
+    let missing = app
+        .send(Method::GET, "/v1/oauth2/userinfo", &[], None)
+        .await;
+    assert_eq!(missing.status, StatusCode::UNAUTHORIZED);
+    assert!(
+        missing.headers[header::WWW_AUTHENTICATE]
+            .to_str()
+            .unwrap()
+            .starts_with("Bearer")
+    );
+
+    let wrong = app
+        .send_form(
+            "/v1/oauth2/token",
+            &[("authorization", &basic("not the secret"))],
+            &[("grant_type", "refresh_token"), ("refresh_token", "x")],
+        )
+        .await;
+    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(wrong.body["error"], "invalid_client");
+    assert!(
+        wrong.headers[header::WWW_AUTHENTICATE]
+            .to_str()
+            .unwrap()
+            .starts_with("Basic")
+    );
 }

@@ -74,6 +74,10 @@ pub struct ClientDefinition {
     pub post_logout_redirect_uris: Vec<String>,
     #[serde(default)]
     pub backchannel_logout_uri: Option<String>,
+    /// Whether authorization requests must use PKCE. Only a confidential
+    /// client may be registered without it.
+    #[serde(default = "yes")]
+    pub require_pkce: bool,
 }
 
 fn default_scopes() -> Vec<String> {
@@ -160,6 +164,7 @@ struct Row {
     jwks: Option<serde_json::Value>,
     post_logout_redirect_uris: Vec<Option<String>>,
     backchannel_logout_uri: Option<String>,
+    require_pkce: bool,
 }
 
 impl From<Row> for OidcClient {
@@ -188,6 +193,7 @@ impl From<Row> for OidcClient {
                 jwks: row.jwks,
                 post_logout_redirect_uris: list(row.post_logout_redirect_uris),
                 backchannel_logout_uri: row.backchannel_logout_uri,
+                require_pkce: row.require_pkce,
             },
             has_secret: row.secret_hash.is_some(),
             secret_hash: row.secret_hash,
@@ -222,6 +228,7 @@ pub async fn put(
         oidc_client::jwks.eq(&definition.jwks),
         oidc_client::post_logout_redirect_uris.eq(nullable(&definition.post_logout_redirect_uris)),
         oidc_client::backchannel_logout_uri.eq(&definition.backchannel_logout_uri),
+        oidc_client::require_pkce.eq(definition.require_pkce),
     );
     diesel::insert_into(oidc_client::table)
         .values((oidc_client::id.eq(id), values.clone()))

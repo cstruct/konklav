@@ -108,9 +108,51 @@ A client's audience MUST NOT be Konklav's own access-token audience, so
 tokens issued to a client are never accepted by Konklav's own surfaces.
 
 r[oidc.provider.code-flow]
-The authorization endpoint MUST require PKCE (`S256`) for every client.
-Authorization codes MUST be single-use, short-lived, and bound to the
-client, the redirect URI, the code challenge, the nonce and the session.
+The authorization endpoint MUST accept requests by `GET` and by form
+`POST`. It MUST require PKCE (`S256`) from every client, unless a
+confidential client is registered without it. A token request MUST present
+a `code_verifier` exactly when the authorization request sent a
+`code_challenge`. Authorization codes MUST be single-use, short-lived, and
+bound to the client, the redirect URI, the code challenge, the nonce and
+the session. A missing `response_type` MUST be refused as
+`invalid_request`, and any other than `code` as
+`unsupported_response_type`.
+
+r[oidc.provider.scopes]
+An authorization request MUST include the `openid` scope. Other scopes the
+client may not have MUST be dropped rather than refused, and the token
+response MUST say which scopes were granted.
+
+r[oidc.provider.request-objects]
+Konklav doesn't support request objects or the `claims` parameter. A request
+with `request` or `request_uri` MUST be refused with `request_not_supported`
+or `request_uri_not_supported`, and discovery MUST say that none of the
+three is supported.
+
+r[oidc.provider.prompt]
+The login request MUST carry the request's `prompt` and `login_hint` to the
+login application. With `prompt=login`, Konklav MUST accept only a session
+whose sign-in happened after the request started. A `prompt` combining
+`none` with another value MUST be refused as `invalid_request`.
+
+r[oidc.provider.login-refusal]
+A login application MUST be able to refuse a login request with
+`login_required`, `interaction_required`, `consent_required`,
+`account_selection_required` or `access_denied`, as it must for `prompt=none`
+when nobody is signed in. Konklav MUST then send that error to the client's
+redirect URI, through the browser that started the request, as it would a
+code.
+
+r[oidc.provider.userinfo]
+The UserInfo endpoint MUST accept `GET` and `POST`, with the access token in
+the `Authorization` header or, for `POST`, in the form body. A missing or
+invalid access token MUST be answered with 401 and a
+`WWW-Authenticate: Bearer` challenge.
+
+r[oidc.provider.token-errors]
+Token endpoint responses MUST NOT be cached. A client that failed to
+authenticate with HTTP basic credentials MUST be answered with 401 and a
+`WWW-Authenticate: Basic` challenge.
 
 r[oidc.provider.code-reuse]
 Presenting an authorization code that was already exchanged MUST fail and

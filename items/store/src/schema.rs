@@ -172,6 +172,7 @@ diesel::table! {
         jwks -> Nullable<Jsonb>,
         post_logout_redirect_uris -> Array<Nullable<Text>>,
         backchannel_logout_uri -> Nullable<Text>,
+        require_pkce -> Bool,
     }
 }
 

@@ -33,7 +33,7 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 use crate::cookies::{Cookie, SameSite};
-use crate::error::{ApiError, ErrorCode};
+use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::oidc::{self, OpenIdProvider};
 use crate::subject_api::{self, Started};
 use crate::{AppState, issue};
@@ -49,12 +49,13 @@ const CODE_SECONDS: i64 = 60;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/oauth2/authorize", get(authorize))
+        .route("/oauth2/authorize", get(authorize_get).post(authorize_post))
         .route("/oauth2/authorize/resume", get(resume))
         .route("/oauth2/login-requests/{id}", get(login_request))
         .route("/oauth2/login-requests/{id}/accept", post(accept))
+        .route("/oauth2/login-requests/{id}/reject", post(reject))
         .route("/oauth2/token", post(token))
-        .route("/oauth2/userinfo", get(userinfo).post(userinfo))
+        .route("/oauth2/userinfo", get(userinfo_get).post(userinfo_post))
         .route("/oauth2/revoke", post(revoke))
         .route("/oauth2/logout", get(logout))
         .route("/oauth2/peer/events", post(peer_events))
@@ -112,6 +113,11 @@ pub async fn discovery(State(state): State<AppState>) -> Result<Response, ApiErr
         ],
         "acr_values_supported": [oidc::ACR_SINGLE, oidc::ACR_MULTI],
         "authorization_response_iss_parameter_supported": true,
+        // r[impl oidc.provider.request-objects]
+        "request_parameter_supported": false,
+        "request_uri_parameter_supported": false,
+        "claims_parameter_supported": false,
+        "prompt_values_supported": ["none", "login", "consent", "select_account"],
     });
     Ok((
         [(header::CACHE_CONTROL, "public, max-age=300")],
@@ -134,6 +140,10 @@ struct AuthorizeQuery {
     code_challenge_method: Option<String>,
     max_age: Option<i64>,
     acr_values: Option<String>,
+    prompt: Option<String>,
+    login_hint: Option<String>,
+    request: Option<String>,
+    request_uri: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -143,14 +153,35 @@ struct RequestDetails {
     scopes: Vec<String>,
     state: Option<String>,
     nonce: Option<String>,
-    code_challenge: String,
+    /// Absent only for a confidential client registered without PKCE.
+    #[serde(default)]
+    code_challenge: Option<String>,
     max_age: Option<i64>,
     acr_values: Option<String>,
     tenant: Option<TenantId>,
-    /// The hash of the secret `accept` put in `redirect_to`, set once the
-    /// request is accepted.
+    #[serde(default)]
+    prompt: Option<String>,
+    #[serde(default)]
+    login_hint: Option<String>,
+    /// When the request started, as a Unix time; `prompt=login` needs a
+    /// sign-in after it.
+    #[serde(default)]
+    requested_at: i64,
+    /// The hash of the secret `accept` or `reject` put in `redirect_to`, set
+    /// once the request is answered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     acceptance_hash: Option<String>,
+    /// The error the login application refused the request with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refusal: Option<String>,
+}
+
+impl RequestDetails {
+    fn prompts(&self, value: &str) -> bool {
+        self.prompt
+            .as_deref()
+            .is_some_and(|prompt| prompt.split_whitespace().any(|p| p == value))
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -159,7 +190,8 @@ struct CodeDetails {
     redirect_uri: String,
     scopes: Vec<String>,
     nonce: Option<String>,
-    code_challenge: String,
+    #[serde(default)]
+    code_challenge: Option<String>,
     /// The client session the code was exchanged for, revoked if the code
     /// is presented again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -203,13 +235,27 @@ async fn active_client(conn: &mut Connection, id: &str) -> Option<OidcClient> {
 }
 
 /// `GET /v1/oauth2/authorize`
-// r[impl oidc.provider.code-flow]
-// r[impl oidc.provider.login-handoff]
-async fn authorize(
+async fn authorize_get(
     State(state): State<AppState>,
     Query(query): Query<AuthorizeQuery>,
 ) -> Result<Response, ApiError> {
-    let provider = provider(&state)?;
+    authorize(&state, query).await
+}
+
+/// `POST /v1/oauth2/authorize`, the same request as a form.
+async fn authorize_post(
+    State(state): State<AppState>,
+    Form(query): Form<AuthorizeQuery>,
+) -> Result<Response, ApiError> {
+    authorize(&state, query).await
+}
+
+// r[impl oidc.provider.code-flow]
+// r[impl oidc.provider.login-handoff]
+// r[impl oidc.provider.request-objects]
+// r[impl oidc.provider.prompt]
+async fn authorize(state: &AppState, query: AuthorizeQuery) -> Result<Response, ApiError> {
+    let provider = provider(state)?;
     let mut conn = state.pool.get().await?;
     // Until the client and redirect URI are known good, errors go to the
     // browser, never to a redirect URI.
@@ -225,37 +271,37 @@ async fn authorize(
     let issuer = state.auth.issuer.as_str();
     let fail = |error: &str| client_error(redirect_uri, error, query.state.as_deref(), issuer);
 
-    if query.response_type.as_deref() != Some("code") {
-        return Ok(fail("unsupported_response_type"));
+    if query.request.is_some() {
+        return Ok(fail("request_not_supported"));
     }
-    let Some(code_challenge) = query
-        .code_challenge
-        .clone()
-        .filter(|_| query.code_challenge_method.as_deref() == Some("S256"))
-    else {
-        return Ok(fail("invalid_request"));
+    if query.request_uri.is_some() {
+        return Ok(fail("request_uri_not_supported"));
+    }
+    match query.response_type.as_deref() {
+        Some("code") => {}
+        None => return Ok(fail("invalid_request")),
+        Some(_) => return Ok(fail("unsupported_response_type")),
+    }
+    // `plain` isn't supported, and is what a challenge without a method means.
+    let code_challenge = match (
+        &query.code_challenge,
+        query.code_challenge_method.as_deref(),
+    ) {
+        (Some(challenge), Some("S256")) if is_code_challenge(challenge) => Some(challenge.clone()),
+        (None, _) if !client.require_pkce => None,
+        _ => return Ok(fail("invalid_request")),
     };
-    let scopes: Vec<String> = query
-        .scope
+    let prompt = query
+        .prompt
         .as_deref()
-        .unwrap_or_default()
-        .split_whitespace()
-        .map(str::to_owned)
-        .collect();
-    if !scopes.iter().any(|s| s == "openid") || !scopes.iter().all(|s| client.allows_scope(s)) {
-        return Ok(fail("invalid_scope"));
+        .map(|p| p.split_whitespace().collect::<Vec<_>>())
+        .unwrap_or_default();
+    if prompt.contains(&"none") && prompt.len() > 1 {
+        return Ok(fail("invalid_request"));
     }
-    let tenants: Vec<_> = scopes
-        .iter()
-        .filter_map(|s| s.strip_prefix("tenant:"))
-        .collect();
-    let tenant = match tenants.as_slice() {
-        [] => None,
-        [one] => match one.parse::<uuid::Uuid>() {
-            Ok(id) => Some(TenantId::from(id)),
-            Err(_) => return Ok(fail("invalid_scope")),
-        },
-        _ => return Ok(fail("invalid_scope")),
+    let (scopes, tenant) = match granted_scopes(&client, query.scope.as_deref()) {
+        Ok(granted) => granted,
+        Err(error) => return Ok(fail(error)),
     };
 
     let id = uuid::Uuid::now_v7();
@@ -270,7 +316,11 @@ async fn authorize(
         max_age: query.max_age,
         acr_values: query.acr_values.clone(),
         tenant,
+        prompt: (!prompt.is_empty()).then(|| prompt.join(" ")),
+        login_hint: query.login_hint.clone(),
+        requested_at: Utc::now().timestamp(),
         acceptance_hash: None,
+        refusal: None,
     };
     challenges::create(
         &mut conn,
@@ -292,13 +342,50 @@ async fn authorize(
     let mut response = redirect_to(login_url, &[("login_request", &id.to_string())]);
     response.headers_mut().append(
         header::SET_COOKIE,
-        cookie(
-            &state,
-            &format!("{id}.{secret}"),
-            LOGIN_REQUEST_MINUTES * 60,
-        ),
+        cookie(state, &format!("{id}.{secret}"), LOGIN_REQUEST_MINUTES * 60),
     );
     Ok(response)
+}
+
+/// An S256 challenge: the base64url SHA-256 of a verifier, 43 characters
+/// (RFC 7636 4.2 allows 43 to 128 unreserved characters).
+fn is_code_challenge(challenge: &str) -> bool {
+    (43..=128).contains(&challenge.len())
+        && challenge
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-._~".contains(&b))
+}
+
+/// The requested scopes the client may have, without repeats, and the
+/// tenant a `tenant:` scope names. Others are dropped, but `openid` must be
+/// requested, and at most one tenant.
+// r[impl oidc.provider.scopes]
+fn granted_scopes(
+    client: &OidcClient,
+    requested: Option<&str>,
+) -> Result<(Vec<String>, Option<TenantId>), &'static str> {
+    let requested: Vec<&str> = requested.unwrap_or_default().split_whitespace().collect();
+    if !requested.contains(&"openid") {
+        return Err("invalid_scope");
+    }
+    let mut scopes: Vec<String> = Vec::new();
+    for scope in requested {
+        if client.allows_scope(scope) && !scopes.iter().any(|s| s == scope) {
+            scopes.push(scope.to_owned());
+        }
+    }
+    let tenants: Vec<_> = scopes
+        .iter()
+        .filter_map(|s| s.strip_prefix("tenant:"))
+        .collect();
+    let tenant = match tenants.as_slice() {
+        [] => None,
+        [one] => Some(TenantId::from(
+            one.parse::<uuid::Uuid>().map_err(|_| "invalid_scope")?,
+        )),
+        _ => return Err("invalid_scope"),
+    };
+    Ok((scopes, tenant))
 }
 
 async fn pending_request(
@@ -322,6 +409,11 @@ struct LoginRequestView {
     tenant: Option<TenantId>,
     max_age: Option<i64>,
     acr_values: Option<String>,
+    /// The request's `prompt`, such as `none` (answer without asking the
+    /// person anything, or refuse with `login_required`) or `login` (ask
+    /// them to sign in again).
+    prompt: Option<String>,
+    login_hint: Option<String>,
 }
 
 /// `GET /v1/oauth2/login-requests/{id}`: what the login application needs
@@ -339,6 +431,8 @@ async fn login_request(
         tenant: details.tenant,
         max_age: details.max_age,
         acr_values: details.acr_values,
+        prompt: details.prompt,
+        login_hint: details.login_hint,
     }))
 }
 
@@ -360,6 +454,12 @@ async fn accept(
     let mut conn = state.pool.get().await?;
     let (_, session) = subject_api::authenticate(&state, &mut conn, &headers).await?;
     let (challenge, mut details) = pending_request(&mut conn, &id).await?;
+    if details.refusal.is_some() {
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            "the request was already answered",
+        ));
+    }
     let unmet = |what: &str| ApiError::new(ErrorCode::Forbidden, what.to_owned());
     if session.stage == Stage::Partial || session.oidc_client_id.is_some() {
         return Err(unmet("sign in through the login application first"));
@@ -375,6 +475,12 @@ async fn accept(
         && !oidc::satisfies_acr(&session, acr_values)
     {
         return Err(unmet("the request needs a stronger sign-in (acr_values)"));
+    }
+    // r[impl oidc.provider.prompt]
+    if details.prompts("login") && session.auth_time.timestamp() < details.requested_at {
+        return Err(unmet(
+            "the request asks for a new sign-in (prompt=login); sign in again",
+        ));
     }
     if details.tenant.is_some() && session.tenant_id != details.tenant {
         return Err(unmet("select the requested tenant first"));
@@ -392,6 +498,61 @@ async fn accept(
             "the request was already accepted",
         ));
     }
+    Ok(Json(Accepted {
+        redirect_to: format!(
+            "{}?login_request={}&acceptance={acceptance}",
+            endpoint(&state, "authorize/resume"),
+            challenge.id
+        ),
+    }))
+}
+
+#[derive(Deserialize)]
+struct Refusal {
+    error: String,
+}
+
+/// Errors a login application may refuse a request with.
+const REFUSALS: [&str; 5] = [
+    "login_required",
+    "interaction_required",
+    "consent_required",
+    "account_selection_required",
+    "access_denied",
+];
+
+/// `POST /v1/oauth2/login-requests/{id}/reject`: the login application
+/// refuses the request, as it must for `prompt=none` when nobody is signed
+/// in. Like `accept`, it returns where to send the browser, which then
+/// carries the error to the client.
+// r[impl oidc.provider.login-refusal]
+async fn reject(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    ApiJson(refusal): ApiJson<Refusal>,
+) -> Result<Json<Accepted>, ApiError> {
+    provider(&state)?;
+    subject_api::check_browser_request(&state.auth, &headers)?;
+    if !REFUSALS.contains(&refusal.error.as_str()) {
+        return Err(ApiError::invalid_request(format!(
+            "error must be one of {}",
+            REFUSALS.join(", ")
+        )));
+    }
+    let mut conn = state.pool.get().await?;
+    let (challenge, mut details) = pending_request(&mut conn, &id).await?;
+    if challenge.session_id.is_some() || details.refusal.is_some() {
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            "the request was already answered",
+        ));
+    }
+    let acceptance = generate_secret();
+    details.acceptance_hash = Some(acceptance_hash(challenge.id, &acceptance));
+    details.refusal = Some(refusal.error);
+    let stored = serde_json::to_value(&details).map_err(ApiError::internal)?;
+    challenges::set_details(&mut conn, challenge.id, &stored).await?;
     Ok(Json(Accepted {
         redirect_to: format!(
             "{}?login_request={}&acceptance={acceptance}",
@@ -447,6 +608,21 @@ async fn resume(
     };
     if !accepted_here {
         return Err(foreign());
+    }
+    if let Some(error) = &details.refusal {
+        if !challenges::consume(&mut conn, challenge.id, Utc::now()).await? {
+            return Err(foreign());
+        }
+        let mut response = client_error(
+            &details.redirect_uri,
+            error,
+            details.state.as_deref(),
+            &state.auth.issuer,
+        );
+        response
+            .headers_mut()
+            .append(header::SET_COOKIE, cookie(&state, "", 0));
+        return Ok(response);
     }
     let session = challenge
         .session_id
@@ -525,6 +701,28 @@ fn oauth_error(status: StatusCode, error: &str, description: &str) -> Response {
         Json(serde_json::json!({"error": error, "error_description": description})),
     )
         .into_response()
+}
+
+/// `invalid_client`, with a basic challenge when the client tried basic
+/// credentials (RFC 6749 5.2).
+// r[impl oidc.provider.token-errors]
+fn client_unauthenticated(headers: &HeaderMap) -> Response {
+    let mut response = oauth_error(
+        StatusCode::UNAUTHORIZED,
+        "invalid_client",
+        "client authentication failed",
+    );
+    let tried_basic = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("Basic "));
+    if tried_basic {
+        response.headers_mut().insert(
+            header::WWW_AUTHENTICATE,
+            HeaderValue::from_static("Basic realm=\"konklav\""),
+        );
+    }
+    response
 }
 
 fn invalid_grant(description: &str) -> Response {
@@ -654,11 +852,7 @@ async fn token(
         return jwt_bearer_grant(&state, &mut conn, form.assertion.as_deref()).await;
     }
     let Some(client) = authenticate_client(&state, &mut conn, &headers, &form).await else {
-        return Ok(oauth_error(
-            StatusCode::UNAUTHORIZED,
-            "invalid_client",
-            "client authentication failed",
-        ));
+        return Ok(client_unauthenticated(&headers));
     };
     Ok(match form.grant_type.as_deref().unwrap_or_default() {
         "authorization_code" => code_grant(&state, &mut conn, &client, &form).await?,
@@ -716,14 +910,17 @@ async fn code_grant(
             "the code wasn't issued for this client and redirect URI",
         ));
     }
-    let verified = form.code_verifier.as_deref().is_some_and(|verifier| {
-        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-        bool::from(
-            challenge
-                .as_bytes()
-                .ct_eq(details.code_challenge.as_bytes()),
-        )
-    });
+    // A verifier without a challenge is refused too, so a request can't
+    // be downgraded to skip PKCE.
+    // r[impl oidc.provider.code-flow]
+    let verified = match (&details.code_challenge, form.code_verifier.as_deref()) {
+        (Some(expected), Some(verifier)) => {
+            let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+            bool::from(challenge.as_bytes().ct_eq(expected.as_bytes()))
+        }
+        (None, None) => true,
+        _ => false,
+    };
     if !verified {
         return Ok(invalid_grant("PKCE verification failed"));
     }
@@ -1304,8 +1501,51 @@ async fn peer_subject(
 
 /// `GET` or `POST /v1/oauth2/userinfo`, with an access token issued to a
 /// client.
-async fn userinfo(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
-    provider(&state)?;
+#[derive(Deserialize)]
+struct UserinfoForm {
+    access_token: Option<String>,
+}
+
+/// `GET /v1/oauth2/userinfo`
+async fn userinfo_get(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    challenged(userinfo(&state, &headers, None).await)
+}
+
+/// `POST /v1/oauth2/userinfo`, with the access token in the header or the
+/// form body.
+async fn userinfo_post(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    form: Result<Form<UserinfoForm>, axum::extract::rejection::FormRejection>,
+) -> Response {
+    let body_token = form.ok().and_then(|Form(form)| form.access_token);
+    challenged(userinfo(&state, &headers, body_token.as_deref()).await)
+}
+
+/// A 401 carries a bearer challenge (RFC 6750 3).
+// r[impl oidc.provider.userinfo]
+fn challenged(result: Result<Response, ApiError>) -> Response {
+    match result {
+        Ok(response) => response,
+        Err(error) => {
+            let mut response = error.into_response();
+            if response.status() == StatusCode::UNAUTHORIZED {
+                response.headers_mut().insert(
+                    header::WWW_AUTHENTICATE,
+                    HeaderValue::from_static("Bearer error=\"invalid_token\""),
+                );
+            }
+            response
+        }
+    }
+}
+
+async fn userinfo(
+    state: &AppState,
+    headers: &HeaderMap,
+    body_token: Option<&str>,
+) -> Result<Response, ApiError> {
+    provider(state)?;
     let mut conn = state.pool.get().await?;
     let unauthenticated = || {
         ApiError::new(
@@ -1317,6 +1557,7 @@ async fn userinfo(State(state): State<AppState>, headers: HeaderMap) -> Result<R
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
+        .or(body_token)
         .ok_or_else(unauthenticated)?;
     // Only tokens issued to a client, checked against that client's audience.
     let claimed = konklav_token::decode_claims_unverified(token).ok_or_else(unauthenticated)?;
@@ -1327,7 +1568,7 @@ async fn userinfo(State(state): State<AppState>, headers: HeaderMap) -> Result<R
         .ok_or_else(unauthenticated)?;
     let client = oidc_clients::get(&mut conn, &client_id).await?;
     let (_, session) =
-        subject_api::verify_access_token_for(&state, &mut conn, token, &client.audience).await?;
+        subject_api::verify_access_token_for(state, &mut conn, token, &client.audience).await?;
     let credential = credentials::get(&mut conn, session.credential_id).await?;
     let claims = oidc::claims(
         &mut conn,
