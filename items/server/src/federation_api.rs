@@ -35,12 +35,17 @@ use crate::{AppState, BrowserSettings};
 
 const STATE_COOKIE: &str = "konklav_oidc";
 const STATE_COOKIE_PATH: &str = "/v1/login/oidc";
+/// Carries a partial session's access token from the callback to the page,
+/// when the provider's sign-ins need local MFA.
+const PARTIAL_COOKIE: &str = "konklav_partial";
+const PARTIAL_COOKIE_PATH: &str = "/v1/login/oidc/partial";
 const LOGIN_MINUTES: i64 = 10;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/login/oidc/{provider}/start", get(start))
         .route("/login/oidc/{provider}/callback", get(callback))
+        .route("/login/oidc/partial", post(take_partial))
         .route("/credentials/oidc/{provider}/link", post(link))
 }
 
@@ -90,6 +95,50 @@ fn state_cookie(browser: &BrowserSettings, value: &str, max_age: i64) -> HeaderV
         "{STATE_COOKIE}={value}; Path={STATE_COOKIE_PATH}; Max-Age={max_age}; HttpOnly; SameSite=Lax{secure}"
     ))
     .expect("cookie header is ASCII")
+}
+
+fn partial_cookie(browser: &BrowserSettings, value: &str, max_age: i64) -> HeaderValue {
+    let secure = if browser.secure_cookies {
+        "; Secure"
+    } else {
+        ""
+    };
+    HeaderValue::from_str(&format!(
+        "{PARTIAL_COOKIE}={value}; Path={PARTIAL_COOKIE_PATH}; Max-Age={max_age}; HttpOnly; SameSite=Strict{secure}"
+    ))
+    .expect("cookie header is ASCII")
+}
+
+/// `POST /v1/login/oidc/partial`: hands the page the partial access token a
+/// federated sign-in left in a cookie, once, so it can complete MFA with
+/// `POST /v1/login/mfa` as after a password login.
+// r[impl federation.local-mfa]
+async fn take_partial(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let browser = subject_api::check_browser_request(&state.auth, &headers)?.clone();
+    let token = headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
+        .find_map(|pair| {
+            let (name, value) = pair.trim().split_once('=')?;
+            (name == PARTIAL_COOKIE).then(|| value.to_owned())
+        })
+        .ok_or_else(|| ApiError::new(ErrorCode::Unauthenticated, "no partial sign-in"))?;
+    let mut conn = state.pool.get().await?;
+    let (_, session) = subject_api::verify_access_token(&state, &mut conn, &token).await?;
+    if session.stage != Stage::Partial {
+        return Err(ApiError::invalid_request("the session has no pending MFA"));
+    }
+    let token = crate::issue::access_token(&mut conn, &state.auth, &session).await?;
+    let mut response = Json(token).into_response();
+    response
+        .headers_mut()
+        .append(header::SET_COOKIE, partial_cookie(&browser, "", 0));
+    Ok(response)
 }
 
 fn read_state_cookie(headers: &HeaderMap) -> Option<String> {
@@ -369,7 +418,8 @@ async fn finish(
                             email: claims.email.clone(),
                             email_verified: claims.email_verified,
                         }),
-                        mfa_factors_required: 0,
+                        // r[impl federation.local-mfa]
+                        mfa_factors_required: provider.settings.local_mfa_factors,
                         replaces: None,
                     },
                 )
@@ -423,7 +473,29 @@ async fn finish(
     )
     .await
     .map_err(|_| Failure::Provider)?;
+    signed_in(state, conn, &session, &refresh).await
+}
+
+/// The redirect parameter and cookies for a new federated session. One
+/// that still needs MFA gets no refresh token: the page picks its partial
+/// access token up from `POST /v1/login/oidc/partial`.
+async fn signed_in(
+    state: &AppState,
+    conn: &mut Connection,
+    session: &konklav_store::sessions::Session,
+    refresh: &konklav_authn::RefreshToken,
+) -> Result<((&'static str, &'static str), Vec<HeaderValue>), Failure> {
     let browser = state.auth.browser.as_ref().ok_or(Failure::Provider)?;
+    if session.stage == Stage::Partial {
+        let token = crate::issue::access_token(conn, &state.auth, session)
+            .await
+            .map_err(|_| Failure::Provider)?;
+        let max_age = state.auth.access_ttl.num_seconds();
+        return Ok((
+            ("signed_in", "mfa_required"),
+            vec![partial_cookie(browser, &token.access_token, max_age)],
+        ));
+    }
     let max_age = (session.expires_at - Utc::now()).num_seconds();
     Ok((
         ("signed_in", "true"),
@@ -478,7 +550,7 @@ async fn provision(
                     email: claims.email.clone(),
                     email_verified: claims.email_verified,
                 }),
-                mfa_factors_required: 0,
+                mfa_factors_required: settings.local_mfa_factors,
                 replaces: None,
             },
         )

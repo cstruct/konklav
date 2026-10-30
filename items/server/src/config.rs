@@ -189,6 +189,11 @@ config_tree! {
             /// What happens when an account nobody linked signs in: `link`
             /// (the default) refuses it, `create` creates a subject.
             pub provisioning: Option<String>,
+            /// MFA factors a subject must prove here after signing in
+            /// through this provider, as for its other credentials. `0`
+            /// trusts the provider's authentication alone. It has no
+            /// default, so the choice is deliberate.
+            pub local_mfa_factors: u16,
             /// A JWKS file with the provider's signing keys, used instead of
             /// the keys its discovery document names.
             pub pinned_jwks_file: Option<String>,

@@ -36,6 +36,13 @@ be fetched again, but at most once a minute per provider, so tokens with
 made-up key ids can't make Konklav fetch the provider's keys on every
 request.
 
+r[federation.local-mfa]
+Each identity provider's configuration MUST state how many local MFA
+factors a sign-in through it needs, with no default. When it needs any, the
+federated credential MUST require them, and the browser MUST get a partial
+session, with no refresh token until MFA completes, that it completes with
+MFA as after a password login.
+
 r[federation.credential]
 A federated credential MUST be identified by the provider and the
 provider's `sub`, never by an email address or another mutable claim.

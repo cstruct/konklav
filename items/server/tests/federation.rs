@@ -732,3 +732,44 @@ async fn unknown_key_ids_cannot_force_key_fetches() {
         "the first fetch is recent, so unknown keys don't refetch"
     );
 }
+
+// r[verify federation.local-mfa]
+#[tokio::test(flavor = "multi_thread")]
+async fn providers_can_require_local_mfa() {
+    let provider = FakeProvider::start().await;
+    let settings = Settings {
+        provisioning: Provisioning::Create,
+        local_mfa_factors: 1,
+        ..provider.settings()
+    };
+    let app = TestApp::with_identity_providers(Providers::from_settings([settings])).await;
+    let reply = federated_login(&app, &provider, json!({"sub": "new-person"})).await;
+    assert_eq!(location(&reply), format!("{RETURN}?signed_in=mfa_required"));
+    assert!(
+        cookie(&reply, "konklav_refresh").is_none(),
+        "no refresh token before MFA"
+    );
+    let partial = cookie(&reply, "konklav_partial").unwrap();
+    let take = |cookie: Option<String>| {
+        let app = &app;
+        async move {
+            let mut headers = vec![("origin", ORIGIN), ("x-konklav-client", "web")];
+            let cookie = cookie.unwrap_or_default();
+            if !cookie.is_empty() {
+                headers.push(("cookie", cookie.as_str()));
+            }
+            app.send(Method::POST, "/v1/login/oidc/partial", &headers, None)
+                .await
+        }
+    };
+    let taken = take(Some(partial.clone())).await;
+    assert_eq!(taken.body["token_kind"], "partial", "{:?}", taken.body);
+    assert!(
+        taken
+            .set_cookies()
+            .iter()
+            .any(|c| c.starts_with("konklav_partial=;")),
+        "the cookie is cleared once taken"
+    );
+    assert_eq!(take(None).await.code(), "UNAUTHENTICATED");
+}

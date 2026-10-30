@@ -70,8 +70,17 @@ the state cookie, and the callback links the account to that subject. Only
 linking while signed in avoids account takeover through a provider that
 reports an email it doesn't own.
 
+Each provider states `local_mfa_factors`: how many of the subject's own
+MFA factors a sign-in through it must also prove. `0` trusts the provider's
+authentication alone; there is no default, so it is always a decision.
+When it is above zero, the callback sets no refresh cookie. It redirects
+with `signed_in=mfa_required` and leaves the partial session's access token
+in a short-lived cookie, which the page exchanges once at
+`POST /v1/login/oidc/partial` and then completes with `POST /v1/login/mfa`,
+as after a password login.
+
 The callback redirects to the return URL with `signed_in=true`,
-`linked=true`, or `error=` one of `provider_error`, `invalid_id_token`,
+`signed_in=mfa_required`, `linked=true`, or `error=` one of `provider_error`, `invalid_id_token`,
 `requirements_not_met`, `account_not_linked` and
 `account_linked_elsewhere`. Linking enforces the provider's `acr` and
 `max_age` requirements too.
@@ -228,6 +237,7 @@ identity_providers ({
     redirect_uri "https://prod-eu.konklav.example/v1/login/oidc/operators/callback"
     return_urls ("https://console.prod-eu.example/")
     provisioning create
+    local_mfa_factors 0
     session_lifetime_seconds 3600
     require_acr "urn:konklav:acr:hwk"
     methods ({from hwk, to hwk}, {from otp, to otp})

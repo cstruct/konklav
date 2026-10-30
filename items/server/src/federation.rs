@@ -55,6 +55,9 @@ pub struct Settings {
     pub max_age: Option<u32>,
     pub session_lifetime: Option<chrono::Duration>,
     pub provisioning: Provisioning,
+    /// MFA factors required after signing in through the provider, recorded
+    /// on the federated credentials it creates.
+    pub local_mfa_factors: i16,
     /// Domains whose verified emails may link to the subject with that
     /// login identifier.
     pub link_verified_email_domains: Vec<String>,
@@ -558,6 +561,12 @@ impl Providers {
                         ));
                     }
                 },
+                local_mfa_factors: i16::try_from(provider.local_mfa_factors).map_err(|_| {
+                    format!(
+                        "identity provider `{}`: local_mfa_factors is too large",
+                        provider.id
+                    )
+                })?,
                 link_verified_email_domains: provider
                     .link_verified_email_domains
                     .iter()

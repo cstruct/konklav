@@ -253,6 +253,7 @@ identity_providers ({{
     methods ({{from hwk, to hwk}})
     require_acr "urn:hwk"
     session_lifetime_seconds 3600
+    local_mfa_factors 0
 }})
 "#
     );
@@ -271,6 +272,18 @@ identity_providers ({{
     );
     assert_eq!(browser.identity_provider_secrets[0].client_secret, "shh");
     assert!(konklav_server::federation::Providers::from_config(&browser).is_ok());
+
+    // r[verify federation.local-mfa]
+    let undecided = public.replace("    local_mfa_factors 0\n", "");
+    assert!(
+        load(
+            &files.write("undecided.styx", &undecided),
+            &files.write("s.styx", &secrets),
+            &[],
+        )
+        .is_err(),
+        "local_mfa_factors has no default"
+    );
 
     let misplaced = load(
         &files.write(
@@ -307,6 +320,7 @@ identity_providers ({{
     client_id prod-eu
     redirect_uri "https://auth.example/v1/login/oidc/ops/callback"
     return_urls ("https://app.example/")
+    local_mfa_factors 0
     {extra}
 }})
 "#
@@ -405,6 +419,7 @@ identity_providers ({{
     client_id prod-eu
     redirect_uri "https://auth.example/v1/login/oidc/ops/callback"
     return_urls ("https://app.example/")
+    local_mfa_factors 0
     pinned_jwks_file "{file}"
     peering true
     workloads true
