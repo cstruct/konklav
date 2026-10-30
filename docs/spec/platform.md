@@ -33,6 +33,12 @@ connection comes from a configured trusted proxy. Then it MUST use the last
 address in `X-Forwarded-For` that is not a trusted proxy, so clients can't
 choose their own address by sending the header.
 
+r[platform.server.limits]
+Every listener MUST bound request body size, how long a request may take to
+be answered, and how many requests it serves at once, refusing the excess
+with a typed error. Change-feed streams MUST count against the time bound
+only until they start.
+
 r[platform.server.health]
 The server MUST expose a liveness endpoint and a readiness endpoint. The
 readiness endpoint MUST fail while the database is unreachable or migrations

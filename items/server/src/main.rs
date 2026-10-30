@@ -177,7 +177,9 @@ async fn serve(
     };
     tokio::spawn(konklav_server::oidc::deliver_logouts_forever(state.clone()));
     tokio::spawn(konklav_server::peering::sync_forever(state.clone()));
-    let server = BoundServer::bind(&listen.listen, state).await?;
+    let server = BoundServer::bind(&listen.listen, state)
+        .await?
+        .with_limits(konklav_server::serve::Limits::from_config(&listen));
     server.run(shutdown_signal()).await?;
     Ok(())
 }

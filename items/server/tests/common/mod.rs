@@ -422,6 +422,12 @@ impl TestApp {
     /// Serves this app's state over real sockets, waking feeds through a
     /// Postgres listener like production does.
     pub async fn serve(&self) -> Running {
+        self.serve_with(konklav_server::serve::Limits::DEFAULT)
+            .await
+    }
+
+    /// [`Self::serve`] with other listener limits.
+    pub async fn serve_with(&self, limits: konklav_server::serve::Limits) -> Running {
         use konklav_server::config::Listen;
         use konklav_server::serve::BoundServer;
         let any = "127.0.0.1:0".parse().unwrap();
@@ -433,7 +439,8 @@ impl TestApp {
         };
         let server = BoundServer::bind(&listen, self.state.clone())
             .await
-            .unwrap();
+            .unwrap()
+            .with_limits(limits);
         let addrs = server.local_addrs().unwrap();
         let addr_of =
             |surface: Surface| addrs.iter().find(|(_, s)| s.contains(&surface)).unwrap().0;

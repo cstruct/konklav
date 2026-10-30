@@ -3,19 +3,82 @@
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 
+use axum::Router;
+use axum::extract::{DefaultBodyLimit, Request, State};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use tokio::net::TcpListener;
-use tokio::sync::watch;
+use tokio::sync::{Semaphore, watch};
 use tokio::task::JoinSet;
 
 use crate::AppState;
-use crate::config::Listen;
+use crate::config::{Listen, ListenConfig};
+use crate::error::{ApiError, ErrorCode};
 use crate::surface::{self, Surface};
+
+/// Bounds on what each listener accepts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Limits {
+    pub request_timeout: Duration,
+    pub max_body_bytes: usize,
+    pub max_concurrent_requests: usize,
+}
+
+impl Limits {
+    pub const DEFAULT: Self = Self {
+        request_timeout: Duration::from_secs(30),
+        max_body_bytes: 2_097_152,
+        max_concurrent_requests: 1024,
+    };
+
+    #[must_use]
+    pub fn from_config(config: &ListenConfig) -> Self {
+        config.limits.as_ref().map_or(Self::DEFAULT, |limits| Self {
+            request_timeout: Duration::from_secs(u64::from(limits.request_timeout_seconds)),
+            max_body_bytes: usize::try_from(limits.max_body_bytes).unwrap_or(usize::MAX),
+            max_concurrent_requests: usize::try_from(limits.max_concurrent_requests)
+                .unwrap_or(usize::MAX),
+        })
+    }
+
+    /// Wraps a listener's router: request bodies are capped, and a request
+    /// is refused when the listener is already serving its maximum or
+    /// answered with an error once it has taken too long.
+    // r[impl platform.server.limits]
+    fn apply(self, router: Router) -> Router {
+        let slots = Arc::new(Semaphore::new(self.max_concurrent_requests));
+        router
+            .layer(middleware::from_fn_with_state(
+                (slots, self.request_timeout),
+                bound,
+            ))
+            .layer(DefaultBodyLimit::max(self.max_body_bytes))
+    }
+}
+
+async fn bound(
+    State((slots, timeout)): State<(Arc<Semaphore>, Duration)>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let Ok(_slot) = slots.try_acquire() else {
+        return ApiError::new(ErrorCode::Overloaded, "too many requests in progress")
+            .into_response();
+    };
+    match tokio::time::timeout(timeout, next.run(request)).await {
+        Ok(response) => response,
+        Err(_) => ApiError::new(ErrorCode::Overloaded, "the request took too long").into_response(),
+    }
+}
 
 /// A server whose listeners are bound but not yet accepting connections.
 pub struct BoundServer {
     listeners: Vec<(TcpListener, Vec<Surface>)>,
     state: AppState,
+    limits: Limits,
 }
 
 impl BoundServer {
@@ -29,7 +92,18 @@ impl BoundServer {
             })?;
             listeners.push((listener, surfaces));
         }
-        Ok(Self { listeners, state })
+        Ok(Self {
+            listeners,
+            state,
+            limits: Limits::DEFAULT,
+        })
+    }
+
+    /// Replaces the default [`Limits`].
+    #[must_use]
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
     }
 
     /// The bound address of each listener and the surfaces it serves.
@@ -49,7 +123,9 @@ impl BoundServer {
             let addr = listener.local_addr()?;
             let names = surfaces.iter().map(ToString::to_string).collect::<Vec<_>>();
             tracing::info!(%addr, surfaces = %names.join(","), "listening");
-            let app = surface::router(&surfaces, self.state.clone());
+            let app = self
+                .limits
+                .apply(surface::router(&surfaces, self.state.clone()));
             let mut stopped = stopped.clone();
             tasks.spawn(async move {
                 // Connection info gives handlers the client's address.

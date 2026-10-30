@@ -33,6 +33,8 @@ pub enum ErrorCode {
     SessionEnded,
     Forbidden,
     RateLimited,
+    /// The server is serving too many requests, or this one took too long.
+    Overloaded,
     SigningKeyUnavailable,
     Internal,
     DatabaseUnavailable,
@@ -53,9 +55,10 @@ impl ErrorCode {
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::SigningKeyUnavailable | Self::DatabaseUnavailable | Self::MigrationsPending => {
-                StatusCode::SERVICE_UNAVAILABLE
-            }
+            Self::Overloaded
+            | Self::SigningKeyUnavailable
+            | Self::DatabaseUnavailable
+            | Self::MigrationsPending => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 }

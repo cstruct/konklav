@@ -37,6 +37,19 @@ config_tree! {
             #[facet(default)]
             pub trusted_proxies: Vec<IpAddr>,
         },
+        /// Bounds on what each listener accepts. A section of its own,
+        /// loaded with `listen`.
+        pub limits: Option<pub struct Limits {
+            /// How long a request may take to be answered. A change-feed
+            /// stream counts only until it starts.
+            #[facet(default = 30)]
+            pub request_timeout_seconds: u32,
+            #[facet(default = 2_097_152)]
+            pub max_body_bytes: u32,
+            /// Requests served at once per listener; more are refused.
+            #[facet(default = 1024)]
+            pub max_concurrent_requests: u32,
+        }>,
     }
 }
 
