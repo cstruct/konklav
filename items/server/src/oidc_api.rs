@@ -238,17 +238,53 @@ async fn active_client(conn: &mut Connection, id: &str) -> Option<OidcClient> {
 /// `GET /v1/oauth2/authorize`
 async fn authorize_get(
     State(state): State<AppState>,
-    Query(query): Query<AuthorizeQuery>,
-) -> Result<Response, ApiError> {
-    authorize(&state, query).await
+    query: Result<Query<AuthorizeQuery>, axum::extract::rejection::QueryRejection>,
+) -> Response {
+    match query {
+        Ok(Query(query)) => error_page(authorize(&state, query).await),
+        Err(rejection) => error_page(Err(ApiError::invalid_request(rejection.body_text()))),
+    }
 }
 
 /// `POST /v1/oauth2/authorize`, the same request as a form.
 async fn authorize_post(
     State(state): State<AppState>,
-    Form(query): Form<AuthorizeQuery>,
-) -> Result<Response, ApiError> {
-    authorize(&state, query).await
+    form: Result<Form<AuthorizeQuery>, axum::extract::rejection::FormRejection>,
+) -> Response {
+    match form {
+        Ok(Form(query)) => error_page(authorize(&state, query).await),
+        Err(rejection) => error_page(Err(ApiError::invalid_request(rejection.body_text()))),
+    }
+}
+
+/// An error that can't go back to the client, as a page for the person
+/// whose browser is showing it.
+// r[impl oidc.provider.error-page]
+fn error_page(result: Result<Response, ApiError>) -> Response {
+    let error = match result {
+        Ok(response) => return response,
+        Err(error) => error,
+    };
+    let escape = |text: &str| {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+    };
+    let code = serde_json::to_value(error.code)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_default();
+    let page = format!(
+        "<!doctype html><html lang=en><meta charset=utf-8>\
+         <meta name=viewport content=\"width=device-width\">\
+         <title>Sign-in failed</title>\
+         <h1>Sign-in failed</h1><p>{}</p><p><small>{code}</small></p></html>",
+        escape(&error.message)
+    );
+    let mut response = (error.code.status(), axum::response::Html(page)).into_response();
+    response.extensions_mut().insert(error.code);
+    response
 }
 
 // r[impl oidc.provider.code-flow]

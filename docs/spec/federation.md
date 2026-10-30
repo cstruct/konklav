@@ -107,6 +107,11 @@ r[oidc.provider.client-audience]
 A client's audience MUST NOT be Konklav's own access-token audience, so
 tokens issued to a client are never accepted by Konklav's own surfaces.
 
+r[oidc.provider.error-page]
+An authorization request whose error can't be sent to the client, because
+its client or redirect URI isn't known good, MUST be answered with a
+human-readable page, never a redirect.
+
 r[oidc.provider.code-flow]
 The authorization endpoint MUST accept requests by `GET` and by form
 `POST`. It MUST require PKCE (`S256`) from every client, unless a
@@ -195,7 +200,9 @@ tenant and membership as they do for direct logins.
 r[oidc.provider.claims]
 `userinfo` and ID tokens MUST only contain claims Konklav holds (the
 subject id, login identifiers with their verification state, and group
-claims) unless a claims hook is configured. Konklav MUST NOT store profile
+claims) unless a claims hook is configured. A scope's claims MUST come from
+the credential signed in with when it holds them, and otherwise from the
+subject's other active credentials, preferring a verified email address. Konklav MUST NOT store profile
 data to serve claims.
 
 r[oidc.provider.groups]

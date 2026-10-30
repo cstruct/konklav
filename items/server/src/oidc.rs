@@ -5,7 +5,7 @@ use std::path::Path;
 
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use konklav_core::SubjectId;
-use konklav_store::credentials::{Credential, CredentialData};
+use konklav_store::credentials::{self, Credential, CredentialData};
 use konklav_store::oidc_clients::{IdTokenAlgorithm, OidcClient};
 use konklav_store::sessions::Session;
 use konklav_store::{Connection, roles, tenants};
@@ -166,34 +166,59 @@ pub async fn claims(
 ) -> Result<Claims, ApiError> {
     let wants = |scope: &str| scopes.iter().any(|s| s == scope);
     let mut claims = Claims::default();
+    // The credential signed in with first, then the subject's others, so a
+    // phone number reaches a client after a password sign-in too.
+    let others = if (wants("email") && email_of(credential).is_none())
+        || (wants("phone") && phone_of(credential).is_none())
+    {
+        credentials::list_for_subject(conn, subject)
+            .await?
+            .into_iter()
+            .filter(|c| c.is_active() && c.id != credential.id)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let candidates = || std::iter::once(credential).chain(others.iter());
     if wants("email") {
-        match &credential.data {
-            CredentialData::EmailLink => {
-                claims.email = Some(credential.identifier.clone());
-                claims.email_verified = Some(true);
-            }
-            CredentialData::Password(_) => {
-                claims.email = Some(credential.identifier.clone());
-                claims.email_verified = Some(false);
-            }
-            CredentialData::Federated(data) => {
-                claims.email.clone_from(&data.email);
-                claims.email_verified = data
-                    .email
-                    .as_ref()
-                    .map(|_| data.email_verified == Some(true));
-            }
-            _ => {}
+        // A verified address wins, then the sign-in credential's.
+        let found = candidates()
+            .filter_map(email_of)
+            .find(|(_, verified)| *verified)
+            .or_else(|| candidates().find_map(email_of));
+        if let Some((email, verified)) = found {
+            claims.email = Some(email);
+            claims.email_verified = Some(verified);
         }
     }
-    if wants("phone") && matches!(credential.data, CredentialData::PhoneOtp) {
-        claims.phone_number = Some(credential.identifier.clone());
+    if wants("phone")
+        && let Some(phone) = candidates().find_map(phone_of)
+    {
+        claims.phone_number = Some(phone);
         claims.phone_number_verified = Some(true);
     }
     if wants("groups") {
         claims.groups = Some(groups(conn, client, subject).await?);
     }
     Ok(claims)
+}
+
+/// The email a credential holds and whether it was verified.
+fn email_of(credential: &Credential) -> Option<(String, bool)> {
+    match &credential.data {
+        CredentialData::EmailLink => Some((credential.identifier.clone(), true)),
+        CredentialData::Password(_) => Some((credential.identifier.clone(), false)),
+        CredentialData::Federated(data) => data
+            .email
+            .clone()
+            .map(|email| (email, data.email_verified == Some(true))),
+        _ => None,
+    }
+}
+
+/// The verified phone number of a phone-code credential.
+fn phone_of(credential: &Credential) -> Option<String> {
+    matches!(credential.data, CredentialData::PhoneOtp).then(|| credential.identifier.clone())
 }
 
 /// The subject's global roles that the client may see.

@@ -104,7 +104,7 @@ async fn world_with(provider: OpenIdProvider) -> World {
             json!({
                 "kind": "confidential",
                 "redirect_uris": [REDIRECT],
-                "scopes": ["openid", "email", "groups", "tenant"],
+                "scopes": ["openid", "email", "phone", "groups", "tenant"],
                 "audience": "console",
                 "visible_groups": ["ops-*"],
             }),
@@ -402,6 +402,7 @@ async fn discovery_lists_the_endpoints() {
 }
 
 // r[verify oidc.provider.clients]
+// r[verify oidc.provider.error-page]
 // r[verify oidc.provider.code-flow]
 // r[verify oidc.provider.request-objects]
 // r[verify oidc.provider.prompt]
@@ -417,7 +418,13 @@ async fn bad_requests_are_refused_without_leaking_codes() {
         let reply = app
             .send(Method::GET, &authorize_uri(&extra), &[], None)
             .await;
-        assert_eq!(reply.code(), "INVALID_REQUEST", "{extra:?}");
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{extra:?}");
+        assert!(reply.headers.get(header::LOCATION).is_none());
+        let page = reply.body.as_str().unwrap_or_default();
+        assert!(
+            page.contains("Sign-in failed") && page.contains("INVALID_REQUEST"),
+            "{page}"
+        );
     }
     // Other problems go back to the client.
     for (extra, error) in [
@@ -529,7 +536,14 @@ async fn requests_are_only_accepted_by_sessions_that_satisfy_them() {
         .await;
     assert_eq!(info.status, StatusCode::UNAUTHORIZED);
     let started = app.send(Method::GET, &authorize_uri(&[]), &[], None).await;
-    assert_eq!(started.code(), "INVALID_REQUEST");
+    assert_eq!(started.status, StatusCode::BAD_REQUEST);
+    assert!(
+        started
+            .body
+            .as_str()
+            .unwrap_or_default()
+            .contains("INVALID_REQUEST")
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1261,4 +1275,29 @@ async fn clients_can_get_rs256_id_tokens_when_an_rsa_key_is_configured() {
             .claims;
     assert_eq!(claims["sub"], world.subject);
     assert_eq!(claims["nonce"], "client-nonce");
+}
+
+// r[verify oidc.provider.claims]
+#[tokio::test(flavor = "multi_thread")]
+async fn scope_claims_come_from_any_of_the_subjects_credentials() {
+    let world = world().await;
+    let app = &world.app;
+    let added = app
+        .control(
+            Method::POST,
+            &format!("/v1/subjects/{}/credentials", world.subject),
+            Some(json!({"kind": "phone_otp", "identifier": "+46700000000"})),
+        )
+        .await;
+    assert_eq!(added.status, StatusCode::CREATED, "{:?}", added.body);
+    // Signed in with the password, the phone number still comes along.
+    let code = authorize(&world, &[("scope", "openid email phone")]).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    let access = tokens.body["access_token"].as_str().unwrap();
+    let info = app
+        .with_bearer(Method::GET, "/v1/oauth2/userinfo", access)
+        .await;
+    assert_eq!(info.body["phone_number"], "+46700000000", "{:?}", info.body);
+    assert_eq!(info.body["phone_number_verified"], true);
+    assert_eq!(info.body["email"], "ada@example.com");
 }
