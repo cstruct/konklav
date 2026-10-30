@@ -61,7 +61,11 @@ async fn main() -> ExitCode {
         },
         // Validates what `serve` needs, which is every context.
         Command::CheckConfig => match load::<ServeContexts>(&cli) {
-            Ok(_) => {
+            Ok((_, _, _, _, _, control, _, _)) => {
+                if let Err(error) = control.bootstrap_expiry() {
+                    eprintln!("{error}");
+                    return ExitCode::FAILURE;
+                }
                 println!("configuration is valid");
                 return ExitCode::SUCCESS;
             }
@@ -133,6 +137,14 @@ async fn serve(
         Err(error) => tracing::warn!(%error, "could not publish signing keys at startup"),
     }
     let mut auth = AuthContext::new(&tokens, browser.browser.as_ref(), &control, keys.signer);
+    auth.control_token_expires_at = control.bootstrap_expiry()?;
+    if auth.control_token.is_some() {
+        tracing::warn!(
+            expires_at = ?auth.control_token_expires_at,
+            "a bootstrap control token is configured and grants every capability; \
+             remove it once an operator holds konklav:control:all"
+        );
+    }
     if let Some(mfa) = &mfa.mfa {
         auth.secrets = konklav_authn::SecretBox::new(
             mfa.totp_keys

@@ -49,6 +49,12 @@ Secret-bearing configuration MUST load only from secret sources (secret
 files or files they reference). The environment and command-line flags MUST
 NOT supply secret values, though they MAY locate secret files.
 
+r[platform.config.bootstrap-token]
+A bootstrap control-plane token MUST be at least 32 characters, or the
+server MUST refuse to start. Its use MUST be logged, the server MUST warn
+at startup while one is configured, and it MUST stop being accepted after
+its configured expiry.
+
 r[platform.config.report-all-errors]
 Configuration loading MUST report every problem it finds (unknown keys,
 misplaced secrets, decode errors) together, not just the first one.

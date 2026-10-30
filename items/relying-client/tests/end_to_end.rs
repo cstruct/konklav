@@ -57,6 +57,7 @@ async fn server() -> Server {
             signer: keys.signer,
             browser: None,
             control_token: Some(CONTROL.into()),
+            control_token_expires_at: None,
             secrets: konklav_authn::SecretBox::new([]).unwrap(),
             pacing: konklav_server::pacing::Pacing::NONE,
             identity_providers: konklav_server::federation::Providers::default(),

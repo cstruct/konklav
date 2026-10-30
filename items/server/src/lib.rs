@@ -57,6 +57,8 @@ pub struct AuthContext {
     pub browser: Option<BrowserSettings>,
     /// The bootstrap control-plane token, if configured.
     pub control_token: Option<String>,
+    /// When the bootstrap token stops being accepted, if ever.
+    pub control_token_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Encrypts TOTP seeds.
     pub secrets: konklav_authn::SecretBox,
     /// How long authentication endpoints take at least.
@@ -131,6 +133,7 @@ impl AuthContext {
                 secure_cookies: browser.secure_cookies,
             }),
             control_token: control.bootstrap_token(),
+            control_token_expires_at: None,
             secrets: konklav_authn::SecretBox::new([]).expect("an empty key set is valid"),
             pacing: pacing::Pacing::DEFAULT,
             identity_providers: federation::Providers::default(),

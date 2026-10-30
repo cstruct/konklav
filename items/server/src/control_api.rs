@@ -106,9 +106,15 @@ async fn authorize_operator(
                 "missing control-plane credentials",
             )
         })?;
+    // r[impl platform.config.bootstrap-token]
     if let Some(bootstrap) = &state.auth.control_token
         && bool::from(presented.as_bytes().ct_eq(bootstrap.as_bytes()))
+        && state
+            .auth
+            .control_token_expires_at
+            .is_none_or(|expires| Utc::now() < expires)
     {
+        tracing::info!(capability, "control plane used with the bootstrap token");
         return Ok(Operator { all: true });
     }
     let mut conn = state.pool.get().await?;

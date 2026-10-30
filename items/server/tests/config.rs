@@ -91,6 +91,7 @@ fn environment_overrides_the_config_file() {
     assert_eq!(tokens.tokens.published_key_files, Vec::<String>::new());
     assert_eq!(browser.browser, None);
     assert_eq!(control.bootstrap_token().as_deref(), Some("t"));
+    assert!(control.bootstrap_expiry().is_err(), "`t` is too short");
     assert_eq!(
         feed.retention(),
         chrono::Duration::hours(168),
@@ -479,4 +480,25 @@ passkeys {{
     .err()
     .unwrap();
     assert!(error.contains("not within relying party ID"), "{error}");
+}
+
+// r[verify platform.config.bootstrap-token]
+#[test]
+fn bootstrap_tokens_must_be_long_and_may_expire() {
+    use konklav_server::config::{Control, ControlConfig};
+    let config = |token: &str, expires: Option<&str>| ControlConfig {
+        control: Some(Control {
+            bootstrap_token: Some(token.to_owned()),
+            bootstrap_token_expires_at: expires.map(str::to_owned),
+        }),
+    };
+    assert!(config("short", None).bootstrap_expiry().is_err());
+    let long = "a".repeat(32);
+    assert_eq!(config(&long, None).bootstrap_expiry(), Ok(None));
+    let expiry = config(&long, Some("2026-11-01T00:00:00Z"))
+        .bootstrap_expiry()
+        .unwrap()
+        .unwrap();
+    assert_eq!(expiry.to_rfc3339(), "2026-11-01T00:00:00+00:00");
+    assert!(config(&long, Some("tomorrow")).bootstrap_expiry().is_err());
 }

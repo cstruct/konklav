@@ -578,3 +578,14 @@ async fn narrower_capabilities_cannot_lead_to_more() {
     .await;
     assert_eq!(disabled.status, StatusCode::OK, "{:?}", disabled.body);
 }
+
+// r[verify platform.config.bootstrap-token]
+#[tokio::test(flavor = "multi_thread")]
+async fn an_expired_bootstrap_token_is_refused() {
+    let app = TestApp::with_auth(|auth| {
+        auth.control_token_expires_at = Some(chrono::Utc::now() - chrono::Duration::minutes(1));
+    })
+    .await;
+    let refused = app.control(Method::GET, "/v1/subjects", None).await;
+    assert_eq!(refused.code(), "UNAUTHENTICATED", "{:?}", refused.body);
+}

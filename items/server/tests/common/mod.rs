@@ -20,7 +20,7 @@ use konklav_token::{AccessClaims, JwkSet, Signer, VerifyOptions};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-pub const CONTROL_TOKEN: &str = "test-control-token";
+pub const CONTROL_TOKEN: &str = "test-control-token-0123456789abcdef";
 pub const ORIGIN: &str = "https://app.example";
 pub const ISSUER: &str = "https://auth.example";
 pub const AUDIENCE: &str = "api";
@@ -67,6 +67,7 @@ pub fn auth_context(signer: Signer) -> AuthContext {
             secure_cookies: true,
         }),
         control_token: Some(CONTROL_TOKEN.into()),
+        control_token_expires_at: None,
         secrets: konklav_authn::SecretBox::new([("test", TOTP_KEY)]).unwrap(),
         // Tests that are about pacing set their own.
         pacing: konklav_server::pacing::Pacing::NONE,

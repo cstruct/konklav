@@ -228,8 +228,12 @@ config_tree! {
     #[derive(Debug, Clone, PartialEq)]
     pub struct ControlConfig {
         pub control: Option<pub struct Control {
+            /// At least [`MIN_BOOTSTRAP_TOKEN_CHARS`] characters.
             #[config(secret)]
             pub bootstrap_token: Option<String>,
+            /// When the bootstrap token stops working, as RFC 3339, such as
+            /// `2026-11-01T00:00:00Z`.
+            pub bootstrap_token_expires_at: Option<String>,
         }>,
     }
 }
@@ -349,12 +353,41 @@ impl Database {
     }
 }
 
+/// The shortest bootstrap token accepted, so it can't be guessed.
+pub const MIN_BOOTSTRAP_TOKEN_CHARS: usize = 32;
+
 impl ControlConfig {
     #[must_use]
     pub fn bootstrap_token(&self) -> Option<String> {
         self.control
             .as_ref()
             .and_then(|c| c.bootstrap_token.clone())
+    }
+
+    /// Checks the bootstrap token and returns when it expires, if it does.
+    // r[impl platform.config.bootstrap-token]
+    pub fn bootstrap_expiry(&self) -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
+        let Some(control) = &self.control else {
+            return Ok(None);
+        };
+        if let Some(token) = &control.bootstrap_token
+            && token.trim().chars().count() < MIN_BOOTSTRAP_TOKEN_CHARS
+        {
+            return Err(format!(
+                "control.bootstrap_token needs at least {MIN_BOOTSTRAP_TOKEN_CHARS} characters"
+            ));
+        }
+        control
+            .bootstrap_token_expires_at
+            .as_deref()
+            .map(|at| {
+                chrono::DateTime::parse_from_rfc3339(at)
+                    .map(|at| at.to_utc())
+                    .map_err(|error| {
+                        format!("control.bootstrap_token_expires_at is not RFC 3339: {error}")
+                    })
+            })
+            .transpose()
     }
 }
 
