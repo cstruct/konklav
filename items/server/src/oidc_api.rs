@@ -142,6 +142,10 @@ struct RequestDetails {
     max_age: Option<i64>,
     acr_values: Option<String>,
     tenant: Option<TenantId>,
+    /// The hash of the secret `accept` put in `redirect_to`, set once the
+    /// request is accepted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    acceptance_hash: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -270,6 +274,7 @@ async fn authorize(
         max_age: query.max_age,
         acr_values: query.acr_values.clone(),
         tenant,
+        acceptance_hash: None,
     };
     challenges::create(
         &mut conn,
@@ -358,7 +363,7 @@ async fn accept(
     subject_api::check_browser_request(&state.auth, &headers)?;
     let mut conn = state.pool.get().await?;
     let (_, session) = subject_api::authenticate(&state, &mut conn, &headers).await?;
-    let (challenge, details) = pending_request(&mut conn, &id).await?;
+    let (challenge, mut details) = pending_request(&mut conn, &id).await?;
     let unmet = |what: &str| ApiError::new(ErrorCode::Forbidden, what.to_owned());
     if session.stage == Stage::Partial || session.oidc_client_id.is_some() {
         return Err(unmet("sign in through the login application first"));
@@ -378,7 +383,14 @@ async fn accept(
     if details.tenant.is_some() && session.tenant_id != details.tenant {
         return Err(unmet("select the requested tenant first"));
     }
-    if !challenges::attach_session(&mut conn, challenge.id, session.id).await? {
+    // The secret goes only to the accepting browser, which must present it
+    // together with the starting browser's cookie, so a request started in
+    // one browser can't be completed with a session from another.
+    // r[impl oidc.provider.login-handoff]
+    let acceptance = generate_secret();
+    details.acceptance_hash = Some(acceptance_hash(challenge.id, &acceptance));
+    let stored = serde_json::to_value(&details).map_err(ApiError::internal)?;
+    if !challenges::attach_session(&mut conn, challenge.id, session.id, &stored).await? {
         return Err(ApiError::new(
             ErrorCode::Conflict,
             "the request was already accepted",
@@ -386,16 +398,24 @@ async fn accept(
     }
     Ok(Json(Accepted {
         redirect_to: format!(
-            "{}?login_request={}",
+            "{}?login_request={}&acceptance={acceptance}",
             endpoint(&state, "authorize/resume"),
             challenge.id
         ),
     }))
 }
 
+fn acceptance_hash(request: uuid::Uuid, secret: &str) -> String {
+    STANDARD.encode(hash_challenge_secret(
+        &format!("{request}.acceptance"),
+        secret,
+    ))
+}
+
 #[derive(Deserialize)]
 struct ResumeQuery {
     login_request: String,
+    acceptance: Option<String>,
 }
 
 /// `GET /v1/oauth2/authorize/resume`
@@ -417,6 +437,17 @@ async fn resume(
         .ct_eq(&challenge.secret_hash)
         .into();
     if !matches {
+        return Err(foreign());
+    }
+    let accepted_here = match (&details.acceptance_hash, &query.acceptance) {
+        (Some(hash), Some(acceptance)) => bool::from(
+            acceptance_hash(challenge.id, acceptance)
+                .as_bytes()
+                .ct_eq(hash.as_bytes()),
+        ),
+        _ => false,
+    };
+    if !accepted_here {
         return Err(foreign());
     }
     let session = challenge

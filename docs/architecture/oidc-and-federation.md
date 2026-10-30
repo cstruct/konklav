@@ -148,9 +148,12 @@ Konklav has no user interface, and `/v1/oauth2/authorize` doesn't add one:
    Konklav checks `max_age`, `acr_values` and the requested tenant against
    the session, and returns `redirect_to`.
 4. The browser follows it to `/v1/oauth2/authorize/resume`. Konklav
-   checks the cookie, so only the browser that started the request
-   finishes it, then redirects to the client with a code, the client's
-   `state` and `iss`.
+   checks the cookie and the one-time acceptance secret that `redirect_to`
+   carries, so only a browser that both started and accepted the request
+   finishes it. Someone who starts a request and sends its login link to a
+   signed-in victim therefore gets nothing: the victim's browser lacks the
+   cookie, and the attacker's lacks the acceptance. Konklav then redirects
+   to the client with a code, the client's `state` and `iss`.
 5. The client calls `POST /v1/oauth2/token` with the code, the redirect
    URI, the PKCE verifier and its credentials (HTTP basic or form; none for
    public clients). The response holds an access token, an ID token and,

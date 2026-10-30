@@ -227,15 +227,20 @@ pub async fn consume(
 }
 
 /// Records the session that completed a challenge (such as an accepted
-/// authorization request). Returns false if a session was already recorded.
+/// authorization request), replacing its details. Returns false if a
+/// session was already recorded.
 pub async fn attach_session(
     conn: &mut AsyncPgConnection,
     id: uuid::Uuid,
     session: SessionId,
+    details: &serde_json::Value,
 ) -> StoreResult<bool> {
     let updated = diesel::update(challenge::table.find(id))
         .filter(challenge::session_id.is_null())
-        .set(challenge::session_id.eq(uuid::Uuid::from(session)))
+        .set((
+            challenge::session_id.eq(uuid::Uuid::from(session)),
+            challenge::details.eq(details),
+        ))
         .execute(conn)
         .await?;
     Ok(updated > 0)

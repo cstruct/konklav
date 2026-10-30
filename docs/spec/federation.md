@@ -95,7 +95,9 @@ The authorization endpoint MUST NOT render user interface. It MUST redirect
 to the login URL configured for the client or the instance with an opaque
 login request, which a login application completes by presenting a session
 that satisfies the request (including any `max_age` and `acr_values`).
-Only then MUST Konklav issue the authorization code.
+Only then MUST Konklav issue the authorization code, and only to a browser
+that proves it both started the request and received its acceptance, so a
+request started by one person can't be completed with another's session.
 
 r[oidc.provider.id-token]
 ID tokens MUST carry `iss`, `sub` (the subject id), `aud` (the client id),

@@ -245,6 +245,47 @@ async fn id_token_claims(app: &TestApp, token: &str) -> Value {
 
 // r[verify oidc.provider.code-flow]
 // r[verify oidc.provider.login-handoff]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_started_in_one_browser_cannot_be_accepted_in_another() {
+    let world = world().await;
+    let app = &world.app;
+    // The attacker starts a request and sends its login link to a victim.
+    let started = app.send(Method::GET, &authorize_uri(&[]), &[], None).await;
+    let request = query(&location(&started))["login_request"].clone();
+    let attacker = cookie(&started, "konklav_authorize").unwrap();
+    // The victim, signed in, accepts it.
+    let auth = format!("Bearer {}", world.login_token);
+    let accepted = app
+        .send(
+            Method::POST,
+            &format!("/v1/oauth2/login-requests/{request}/accept"),
+            &[
+                ("authorization", &auth),
+                ("origin", ORIGIN),
+                ("x-konklav-client", "web"),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(accepted.status, StatusCode::OK, "{:?}", accepted.body);
+    let victim_resume = accepted.body["redirect_to"].as_str().unwrap();
+    let victim_resume = victim_resume.trim_start_matches(ISSUER).to_owned();
+
+    // The attacker's browser, without the acceptance, gets no code.
+    let attacker_resume = format!("/v1/oauth2/authorize/resume?login_request={request}");
+    let guessed = format!("{attacker_resume}&acceptance=guess");
+    for path in [&attacker_resume, &guessed] {
+        let resumed = app
+            .send(Method::GET, path, &[("cookie", &attacker)], None)
+            .await;
+        assert_eq!(resumed.status, StatusCode::BAD_REQUEST, "{path}");
+    }
+    // The victim's browser, without the cookie, gets none either.
+    let resumed = app.send(Method::GET, &victim_resume, &[], None).await;
+    assert_eq!(resumed.status, StatusCode::BAD_REQUEST);
+}
+
+// r[verify oidc.provider.login-handoff]
 // r[verify oidc.provider.id-token]
 // r[verify oidc.provider.algorithms]
 // r[verify oidc.provider.tokens]
