@@ -209,6 +209,22 @@ async fn a_standard_client_library_signs_in_through_konklav() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn public_clients_verify_eddsa_id_tokens_with_the_library() {
+    library_verifies("EdDSA", openidconnect::core::CoreJwsSigningAlgorithm::EdDsa).await;
+}
+
+// r[verify oidc.provider.algorithms]
+#[tokio::test(flavor = "multi_thread")]
+async fn public_clients_verify_rs256_id_tokens_with_the_library() {
+    library_verifies(
+        "RS256",
+        openidconnect::core::CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
+    )
+    .await;
+}
+
+/// A public client registered for `alg` signs in, and the library verifies
+/// its ID token with Konklav's published keys. The provider has an RSA key.
+async fn library_verifies(alg: &str, library_alg: openidconnect::core::CoreJwsSigningAlgorithm) {
     let (app, base) = TestApp::serving(|auth, base| {
         auth.oidc = Some(
             OpenIdProvider::from_pem(
@@ -216,6 +232,8 @@ async fn public_clients_verify_eddsa_id_tokens_with_the_library() {
                 "https://login.example/".into(),
                 format!("{base}/.well-known/jwks.json"),
             )
+            .unwrap()
+            .with_rsa_pem(include_str!("fixtures/id-token-rsa-key.pem"))
             .unwrap(),
         );
     })
@@ -229,7 +247,7 @@ async fn public_clients_verify_eddsa_id_tokens_with_the_library() {
                 "kind": "public",
                 "redirect_uris": [REDIRECT],
                 "audience": "spa",
-                "id_token_alg": "EdDSA",
+                "id_token_alg": alg,
             })),
         )
         .await;
@@ -265,12 +283,10 @@ async fn public_clients_verify_eddsa_id_tokens_with_the_library() {
         .request_async(&http)
         .await
         .expect("public clients exchange codes with PKCE alone");
-    let verifier = client
-        .id_token_verifier()
-        .set_allowed_algs([openidconnect::core::CoreJwsSigningAlgorithm::EdDsa]);
+    let verifier = client.id_token_verifier().set_allowed_algs([library_alg]);
     tokens
         .id_token()
         .unwrap()
         .claims(&verifier, &nonce)
-        .expect("the EdDSA ID token verifies against Konklav's Ed25519 keys");
+        .expect("the ID token verifies against Konklav's published keys");
 }

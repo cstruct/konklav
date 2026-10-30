@@ -174,9 +174,12 @@ ID tokens MUST carry `iss`, `sub` (the subject id), `aud` (the client id),
 `sid`, and only the further claims the client may receive.
 
 r[oidc.provider.algorithms]
-Signing keys MUST support `ES256` in addition to `EdDSA`. JWKS MUST publish
-each key's `alg`, and ID tokens MUST be signed with the algorithm the client
-is registered for.
+Signing keys MUST support `ES256` in addition to `EdDSA`, and `RS256`, which
+OpenID Connect requires providers to offer, when an RSA key of at least 2048
+bits is configured. Discovery MUST list only the algorithms whose keys are
+configured, and a client MUST NOT be registered for one that isn't. JWKS
+MUST publish each key's `alg`, and ID tokens MUST be signed with the
+algorithm the client is registered for.
 
 r[oidc.provider.tokens]
 Access tokens issued through OIDC MUST be Konklav access tokens with the

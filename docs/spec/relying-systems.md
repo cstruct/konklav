@@ -9,6 +9,11 @@ r[relying.verify.offline]
 The relying SDK MUST verify access tokens offline against cached JWKS:
 signature, `iss`, `aud`, `exp`, token kind.
 
+r[relying.verify.foreign-keys]
+The relying SDK MUST accept a JWKS that also holds keys it doesn't verify
+access tokens with, such as ID-token keys of other types, and MUST ignore
+them.
+
 r[relying.verify.jwks-refresh]
 The relying SDK MUST refresh JWKS on `signing_keys.changed` events and on an
 unknown `kid`. Refreshes caused by unknown `kid`s MUST be rate-limited.

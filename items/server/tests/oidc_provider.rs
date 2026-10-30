@@ -56,13 +56,20 @@ struct World {
     login_token: String,
 }
 
-async fn world() -> World {
-    let provider = OpenIdProvider::from_pem(
+fn provider() -> OpenIdProvider {
+    OpenIdProvider::from_pem(
         ID_TOKEN_KEY,
         LOGIN_URL.into(),
         format!("{ISSUER}/.well-known/jwks.json"),
     )
-    .unwrap();
+    .unwrap()
+}
+
+async fn world() -> World {
+    world_with(provider()).await
+}
+
+async fn world_with(provider: OpenIdProvider) -> World {
     let app = TestApp::with_openid_provider(provider).await;
     let subject = app.human("ada@example.com", PASSWORD).await;
     for (method, path, body) in [
@@ -1170,4 +1177,88 @@ async fn userinfo_and_token_errors_follow_the_oauth_challenges() {
             .unwrap()
             .starts_with("Basic")
     );
+}
+
+// r[verify oidc.provider.algorithms]
+#[tokio::test(flavor = "multi_thread")]
+async fn clients_can_get_rs256_id_tokens_when_an_rsa_key_is_configured() {
+    let weak = provider().with_rsa_pem(include_str!("fixtures/weak-rsa-key.pem"));
+    assert!(weak.is_err(), "a 1024-bit key is refused");
+    let not_rsa = provider().with_rsa_pem(ID_TOKEN_KEY);
+    assert!(not_rsa.is_err(), "a P-256 key is refused");
+
+    // Without an RSA key, RS256 is neither offered nor registrable.
+    let world = world().await;
+    let document = world
+        .app
+        .send(Method::GET, "/.well-known/openid-configuration", &[], None)
+        .await;
+    assert_eq!(
+        document.body["id_token_signing_alg_values_supported"],
+        json!(["ES256", "EdDSA"])
+    );
+    let definition = json!({
+        "kind": "confidential",
+        "redirect_uris": [REDIRECT],
+        "scopes": ["openid", "email", "groups", "tenant"],
+        "audience": "console",
+        "visible_groups": ["ops-*"],
+        "id_token_alg": "RS256",
+    });
+    let refused = world
+        .app
+        .control(
+            Method::PUT,
+            "/v1/oidc/clients/console",
+            Some(definition.clone()),
+        )
+        .await;
+    assert_eq!(refused.code(), "INVALID_REQUEST", "{:?}", refused.body);
+
+    let world = world_with(
+        provider()
+            .with_rsa_pem(include_str!("fixtures/id-token-rsa-key.pem"))
+            .unwrap(),
+    )
+    .await;
+    let app = &world.app;
+    let document = app
+        .send(Method::GET, "/.well-known/openid-configuration", &[], None)
+        .await;
+    assert_eq!(
+        document.body["id_token_signing_alg_values_supported"],
+        json!(["ES256", "EdDSA", "RS256"])
+    );
+    let registered = app
+        .control(Method::PUT, "/v1/oidc/clients/console", Some(definition))
+        .await;
+    assert_eq!(registered.status, StatusCode::OK, "{:?}", registered.body);
+
+    let code = authorize(&world, &[]).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    let id_token = tokens.body["id_token"].as_str().unwrap();
+    let header = jsonwebtoken::decode_header(id_token).unwrap();
+    assert_eq!(header.alg, jsonwebtoken::Algorithm::RS256);
+    let jwks: Value = app
+        .send(Method::GET, "/.well-known/jwks.json", &[], None)
+        .await
+        .body;
+    let rsa = jwks["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|k| k["kty"] == "RSA")
+        .expect("the RSA key is published");
+    assert_eq!(rsa["alg"], "RS256");
+    assert_eq!(header.kid.as_deref(), rsa["kid"].as_str());
+    let jwk: Jwk = serde_json::from_value(rsa.clone()).unwrap();
+    let mut validation = Validation::new(jsonwebtoken::Algorithm::RS256);
+    validation.set_audience(&["console"]);
+    validation.set_issuer(&[ISSUER]);
+    let claims =
+        jsonwebtoken::decode::<Value>(id_token, &DecodingKey::from_jwk(&jwk).unwrap(), &validation)
+            .unwrap()
+            .claims;
+    assert_eq!(claims["sub"], world.subject);
+    assert_eq!(claims["nonce"], "client-nonce");
 }

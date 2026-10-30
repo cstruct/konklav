@@ -267,6 +267,11 @@ config_tree! {
             pub login_url: String,
             /// Defaults to `{issuer}/.well-known/jwks.json`.
             pub jwks_uri: Option<String>,
+            /// PKCS#8 PEM file with an RSA key of at least 2048 bits that
+            /// signs `RS256` ID tokens. OpenID Connect requires providers to
+            /// offer RS256; without this key, clients can't be registered
+            /// for it.
+            pub rsa_key_file: Option<String>,
         }>,
         /// How long authentication endpoints take at least, so their
         /// response times don't reveal which identifiers exist. A section

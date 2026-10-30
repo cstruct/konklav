@@ -110,7 +110,7 @@ New pieces:
   - access-token audience
   - visible groups (exact keys or `prefix*`)
   - an optional login URL
-  - ID-token algorithm (`ES256` or `EdDSA`)
+  - ID-token algorithm (`ES256`, `EdDSA` or, with an RSA key, `RS256`)
   - whether refresh is allowed
 
   `POST …/secret` issues a confidential client's secret once; Konklav
@@ -130,6 +130,12 @@ New pieces:
   relying SDK ignores it. Access tokens stay EdDSA. Rotating the ES256 key
   means replacing the file; publishing the next key ahead of a rotation, as
   the Ed25519 keys allow, is not built yet.
+- **RS256**: OpenID Connect requires providers to offer RS256, and some
+  relying parties accept nothing else. With `rsa_key_file` (an RSA key of
+  at least 2048 bits), discovery lists RS256, JWKS publishes the key with
+  an RFC 7638 thumbprint as its `kid`, and clients can be registered for
+  it. Signing uses aws-lc-rs, not the `rsa` crate, whose private-key
+  operations aren't constant-time (RUSTSEC-2023-0071).
 - **`acr`**: `urn:konklav:acr:1` for sessions with one authentication
   method and `urn:konklav:acr:2` for two or more (an identity-provider
   login counts the methods it was credited with). `acr_values` asks for
@@ -395,7 +401,7 @@ Proposed defaults, to confirm before implementation:
 | Federated session lifetime | 1 hour for operator providers, configurable per provider | Instance-wide lifetime |
 | Peering in the first release | No: short sessions and back-channel logout first, peering next | Peering from the start |
 | Break-glass credential | Local secret keys with an alerting event; hardware keys once `public_key` exists | Bootstrap token |
-| Second signing algorithm | ES256 | RS256 (wider support, larger keys and tokens) |
+| Second signing algorithm | ES256, and RS256 when an RSA key is configured | RS256 only (wider support, larger keys and tokens) |
 | ID token claims | Subject id, login identifiers and groups; a claims hook for the rest | Store profile data in Konklav |
 | SAML | Deferred; brokers translate SAML to OIDC | Native SAML |
 

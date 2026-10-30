@@ -35,6 +35,8 @@ pub enum IdTokenAlgorithm {
     Es256,
     #[serde(rename = "EdDSA")]
     EdDsa,
+    #[serde(rename = "RS256")]
+    Rs256,
 }
 
 impl IdTokenAlgorithm {
@@ -42,6 +44,7 @@ impl IdTokenAlgorithm {
         match self {
             Self::Es256 => "ES256",
             Self::EdDsa => "EdDSA",
+            Self::Rs256 => "RS256",
         }
     }
 }
@@ -183,10 +186,10 @@ impl From<Row> for OidcClient {
                 audience: row.audience,
                 visible_groups: list(row.visible_groups),
                 login_url: row.login_url,
-                id_token_alg: if row.id_token_alg == "EdDSA" {
-                    IdTokenAlgorithm::EdDsa
-                } else {
-                    IdTokenAlgorithm::Es256
+                id_token_alg: match row.id_token_alg.as_str() {
+                    "EdDSA" => IdTokenAlgorithm::EdDsa,
+                    "RS256" => IdTokenAlgorithm::Rs256,
+                    _ => IdTokenAlgorithm::Es256,
                 },
                 refresh: row.refresh,
                 service_subject: row.service_subject_id.map(Into::into),

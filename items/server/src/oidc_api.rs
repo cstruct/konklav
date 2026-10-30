@@ -102,7 +102,8 @@ pub async fn discovery(State(state): State<AppState>) -> Result<Response, ApiErr
             JWT_BEARER_GRANT
         ],
         "subject_types_supported": ["public"],
-        "id_token_signing_alg_values_supported": ["ES256", "EdDSA"],
+        // r[impl oidc.provider.algorithms]
+        "id_token_signing_alg_values_supported": provider.algorithms(),
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt", "none"],
         "token_endpoint_auth_signing_alg_values_supported": ["ES256", "ES384", "RS256", "PS256", "EdDSA"],
@@ -1048,7 +1049,7 @@ async fn tokens_for(
         access_token: access.access_token,
         token_type: "Bearer",
         expires_in: access.expires_in,
-        id_token: oidc::id_token(&state.auth, provider, client, session, nonce, &claims),
+        id_token: oidc::id_token(&state.auth, provider, client, session, nonce, &claims)?,
         refresh_token: client.refresh.then(|| refresh.as_str().to_owned()),
         scope: session.oidc_scopes.join(" "),
     };

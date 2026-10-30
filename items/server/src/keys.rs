@@ -124,7 +124,13 @@ pub async fn jwks(State(state): State<AppState>) -> Result<impl IntoResponse, Ap
         .filter(|key| is_publishable(key, now, state.auth.access_ttl))
         .filter_map(to_verifying_key)
         .map(|key| Jwk::from_verifying_key(&key))
-        .chain(state.auth.oidc.as_ref().map(|oidc| oidc.jwk.clone()))
+        .chain(
+            state
+                .auth
+                .oidc
+                .iter()
+                .flat_map(crate::oidc::OpenIdProvider::jwks),
+        )
         .collect();
     Ok((
         [(header::CACHE_CONTROL, "public, max-age=60")],

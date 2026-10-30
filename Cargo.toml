@@ -39,6 +39,7 @@ konklav-test-support = { path = "items/test-support" }
 konklav-token = { path = "items/token" }
 
 aes-gcm = "0.11.1"
+aws-lc-rs = "1.18.2"
 argon2 = "0.6.0"
 axum = "0.8.9"
 axum-extra = { version = "0.12.6", features = ["cookie"] }
@@ -59,7 +60,7 @@ getrandom = "0.4.3"
 hmac = "0.13.0"
 http-body-util = "0.1.5"
 lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls", "rustls-native-certs", "aws-lc-rs"] }
-jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["aws_lc_rs"] }
 p256 = { version = "0.13.2", features = ["pkcs8", "pem"] }
 ordna-core = "0.1.3"
 ordna-source-env = "0.1.3"

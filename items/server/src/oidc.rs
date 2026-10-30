@@ -16,7 +16,7 @@ use tracing::Instrument;
 
 use crate::AuthContext;
 use crate::config::OidcProvider as OidcProviderConfig;
-use crate::error::ApiError;
+use crate::error::{ApiError, ErrorCode};
 
 /// `acr` for sessions authenticated with one method, and with two or more.
 pub const ACR_SINGLE: &str = "urn:konklav:acr:1";
@@ -25,6 +25,8 @@ pub const ACR_MULTI: &str = "urn:konklav:acr:2";
 pub struct OpenIdProvider {
     key: EncodingKey,
     pub jwk: Jwk,
+    /// The RSA key for `RS256`, when one is configured.
+    rsa: Option<(EncodingKey, Jwk)>,
     pub login_url: String,
     pub jwks_uri: String,
 }
@@ -35,13 +37,67 @@ impl OpenIdProvider {
     pub fn load(config: &OidcProviderConfig, issuer: &str) -> Result<Self, String> {
         let pem = std::fs::read_to_string(Path::new(&config.id_token_key_file))
             .map_err(|error| format!("reading {}: {error}", config.id_token_key_file))?;
-        Self::from_pem(
+        let provider = Self::from_pem(
             &pem,
             config.login_url.clone(),
             config.jwks_uri.clone().unwrap_or_else(|| {
                 format!("{}/.well-known/jwks.json", issuer.trim_end_matches('/'))
             }),
-        )
+        )?;
+        match &config.rsa_key_file {
+            Some(file) => {
+                let pem = std::fs::read_to_string(Path::new(file))
+                    .map_err(|error| format!("reading {file}: {error}"))?;
+                provider.with_rsa_pem(&pem)
+            }
+            None => Ok(provider),
+        }
+    }
+
+    /// Adds an RSA key for `RS256` ID tokens, from PKCS#8 PEM.
+    // r[impl oidc.provider.algorithms]
+    pub fn with_rsa_pem(mut self, pem: &str) -> Result<Self, String> {
+        let invalid = |error: &dyn std::fmt::Display| {
+            format!("the RSA key must be a PKCS#8 RSA key of at least 2048 bits: {error}")
+        };
+        let (label, der) =
+            p256::pkcs8::der::SecretDocument::from_pem(pem).map_err(|error| invalid(&error))?;
+        if label != "PRIVATE KEY" {
+            return Err(invalid(&format!("a `{label}` PEM block")));
+        }
+        let pair =
+            aws_lc_rs::rsa::KeyPair::from_pkcs8(der.as_bytes()).map_err(|error| invalid(&error))?;
+        if pair.public_modulus_len() < 256 {
+            return Err(invalid(&format!(
+                "it has {} bits",
+                pair.public_modulus_len() * 8
+            )));
+        }
+        let public = aws_lc_rs::rsa::PublicKeyComponents::<Vec<u8>>::from(
+            aws_lc_rs::signature::KeyPair::public_key(&pair),
+        );
+        let key = EncodingKey::from_rsa_pem(pem.as_bytes()).map_err(|error| invalid(&error))?;
+        self.rsa = Some((key, Jwk::rs256(&public.n, &public.e)));
+        Ok(self)
+    }
+
+    /// The `alg`s of the ID-token keys this provider has.
+    #[must_use]
+    pub fn algorithms(&self) -> Vec<&'static str> {
+        let mut algorithms = vec!["ES256", "EdDSA"];
+        if self.rsa.is_some() {
+            algorithms.push("RS256");
+        }
+        algorithms
+    }
+
+    /// The keys this provider signs with besides access-token keys, for
+    /// JWKS.
+    #[must_use]
+    pub fn jwks(&self) -> Vec<Jwk> {
+        std::iter::once(self.jwk.clone())
+            .chain(self.rsa.as_ref().map(|(_, jwk)| jwk.clone()))
+            .collect()
     }
 
     pub fn from_pem(pem: &str, login_url: String, jwks_uri: String) -> Result<Self, String> {
@@ -55,6 +111,7 @@ impl OpenIdProvider {
         Ok(Self {
             key: EncodingKey::from_ec_pem(pem.as_bytes()).map_err(|error| error.to_string())?,
             jwk: Jwk::es256(x, y),
+            rsa: None,
             login_url,
             jwks_uri,
         })
@@ -187,7 +244,6 @@ struct IdTokenClaims<'a> {
 ///
 /// Never in practice: the claims always serialize and the key always signs.
 // r[impl oidc.provider.id-token]
-#[must_use]
 pub fn id_token(
     auth: &AuthContext,
     provider: &OpenIdProvider,
@@ -195,7 +251,7 @@ pub fn id_token(
     session: &Session,
     nonce: Option<&str>,
     claims: &Claims,
-) -> String {
+) -> Result<String, ApiError> {
     let now = chrono::Utc::now();
     let expires = (now + auth.access_ttl).min(session.expires_at);
     let token = IdTokenClaims {
@@ -222,8 +278,8 @@ fn sign_for<T: Serialize>(
     client: &OidcClient,
     claims: &T,
     typ: Option<&str>,
-) -> String {
-    match client.id_token_alg {
+) -> Result<String, ApiError> {
+    Ok(match client.id_token_alg {
         IdTokenAlgorithm::EdDsa => auth.signer.sign_json(claims),
         IdTokenAlgorithm::Es256 => {
             let mut header = Header::new(Algorithm::ES256);
@@ -233,18 +289,33 @@ fn sign_for<T: Serialize>(
             }
             jsonwebtoken::encode(&header, claims, &provider.key).expect("tokens sign")
         }
-    }
+        IdTokenAlgorithm::Rs256 => {
+            // The key may have been removed from the configuration since
+            // the client was registered for it.
+            let Some((key, jwk)) = &provider.rsa else {
+                return Err(ApiError::new(
+                    ErrorCode::SigningKeyUnavailable,
+                    "the client is registered for RS256, and no RSA key is configured",
+                ));
+            };
+            let mut header = Header::new(Algorithm::RS256);
+            header.kid = Some(jwk.kid.clone());
+            if let Some(typ) = typ {
+                header.typ = Some(typ.to_owned());
+            }
+            jsonwebtoken::encode(&header, claims, key).map_err(ApiError::internal)?
+        }
+    })
 }
 
 /// A back-channel logout token (OpenID Connect Back-Channel Logout 1.0).
-#[must_use]
 pub fn logout_token(
     auth: &AuthContext,
     provider: &OpenIdProvider,
     client: &OidcClient,
     subject: SubjectId,
     session: konklav_core::SessionId,
-) -> String {
+) -> Result<String, ApiError> {
     let claims = serde_json::json!({
         "iss": auth.issuer,
         "aud": client.id,
@@ -308,7 +379,7 @@ async fn deliver_leased(
             &client,
             logout.subject_id,
             logout.session_id,
-        );
+        )?;
         let sent = crate::telemetry::http::send(
             http.post(uri).form(&[("logout_token", token)]),
             "backchannel_logout",
@@ -377,14 +448,15 @@ pub async fn verify_own_id_token(
         .filter_map(crate::keys::to_verifying_key)
         .map(|key| Jwk::from_verifying_key(&key))
         .collect();
-    keys.push(provider.jwk.clone());
+    keys.extend(provider.jwks());
     let Ok(header) = jsonwebtoken::decode_header(token) else {
         return Ok(None);
     };
-    let Some(jwk) = keys
-        .iter()
-        .find(|key| Some(&key.kid) == header.kid.as_ref())
-    else {
+    // The key decides the algorithm, not the token.
+    let Some(jwk) = keys.iter().find(|key| {
+        Some(&key.kid) == header.kid.as_ref()
+            && serde_json::to_value(header.alg).is_ok_and(|alg| alg == key.alg.as_str())
+    }) else {
         return Ok(None);
     };
     let Some(key) = serde_json::to_value(jwk)

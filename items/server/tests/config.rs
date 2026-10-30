@@ -394,8 +394,8 @@ p1XNGpwF1zXMHj8NrRZRBsdiy2jZvNVSLlPqzmK3P4YLDAtSoKNCeXst
         konklav_server::oidc::OpenIdProvider::load(&config, &tokens.tokens.issuer).unwrap();
     assert_eq!(provider.jwk.alg, "ES256");
     assert_eq!(
-        provider.jwk.x,
-        "Y6_1EEzqCvOEimuWQdUYPZi0Vo88sqdVzRqcBdc1zB4"
+        provider.jwk.x.as_deref(),
+        Some("Y6_1EEzqCvOEimuWQdUYPZi0Vo88sqdVzRqcBdc1zB4")
     );
     assert_eq!(
         provider.jwks_uri,

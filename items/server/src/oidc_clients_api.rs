@@ -6,7 +6,9 @@ use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use diesel_async::AsyncConnection;
 use konklav_store::credentials::{self, CredentialData, CredentialKind};
-use konklav_store::oidc_clients::{self, ClientDefinition, ClientKind, OidcClient};
+use konklav_store::oidc_clients::{
+    self, ClientDefinition, ClientKind, IdTokenAlgorithm, OidcClient,
+};
 use konklav_store::{sessions, subjects};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -73,6 +75,17 @@ async fn put_client(
         && serde_json::from_value::<jsonwebtoken::jwk::JwkSet>(jwks.clone()).is_err()
     {
         return Err(ApiError::invalid_request("jwks must be a JWK set"));
+    }
+    // r[impl oidc.provider.algorithms]
+    let has_rsa = state
+        .auth
+        .oidc
+        .as_ref()
+        .is_some_and(|provider| provider.algorithms().contains(&"RS256"));
+    if definition.id_token_alg == IdTokenAlgorithm::Rs256 && !has_rsa {
+        return Err(ApiError::invalid_request(
+            "RS256 ID tokens need an RSA key (oidc_provider.rsa_key_file)",
+        ));
     }
     // PKCE is all that protects a public client's codes.
     // r[impl oidc.provider.code-flow]
