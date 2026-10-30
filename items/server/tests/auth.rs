@@ -99,10 +99,19 @@ async fn concurrent_failures_cannot_exceed_the_limit() {
     app.human(EMAIL, PASSWORD).await;
     let burst = (0..45).map(|_| app.login(EMAIL, "wrong password"));
     let replies = futures_util::future::join_all(burst).await;
-    let checked = replies
+    let mut checked = replies
         .iter()
         .filter(|reply| reply.code() == "INVALID_CREDENTIALS")
         .count();
+    // In-flight attempts count against the limit, so a burst may be refused
+    // before 30 guesses were checked. Either way no more than 30 are.
+    loop {
+        match app.login(EMAIL, "wrong password").await.code() {
+            "INVALID_CREDENTIALS" => checked += 1,
+            "RATE_LIMITED" => break,
+            other => panic!("unexpected {other}"),
+        }
+    }
     assert!(checked <= 30, "{checked} attempts were checked");
     assert_eq!(app.login(EMAIL, PASSWORD).await.code(), "RATE_LIMITED");
 }
