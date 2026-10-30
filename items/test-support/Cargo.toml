@@ -2,6 +2,7 @@
 name = "konklav-test-support"
 description = "Test helpers: isolated databases on the development Postgres server"
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true

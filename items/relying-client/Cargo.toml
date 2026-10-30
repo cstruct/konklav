@@ -2,6 +2,7 @@
 name = "konklav-relying-client"
 description = "Native Rust host binding for the relying core: HTTP, the change feed and background refresh on tokio"
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true

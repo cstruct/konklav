@@ -2,6 +2,7 @@
 name = "konklav-console"
 description = "The Konklav console: a browser UI for operating the control plane"
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true

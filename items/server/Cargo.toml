@@ -2,6 +2,7 @@
 name = "konklav-server"
 description = "The Konklav server: subject-facing, relying and control-plane HTTP surfaces"
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true

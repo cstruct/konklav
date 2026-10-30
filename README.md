@@ -149,3 +149,7 @@ To use another port, set `KONKLAV_DEV_PG_PORT`, for example in an untracked
 - Ed25519 JWTs published through JWKS
 - pyo3 for the Python relying binding
 - Leptos and Trunk for the console
+
+## License
+
+Konklav is licensed under the [MIT License](LICENSE).
