@@ -3,6 +3,7 @@
 //! the way an app or operator would. They run as binaries for people to
 //! read and try, and as tests (`items/server/tests/examples.rs`).
 
+pub mod conformance;
 pub mod delivery;
 pub mod harness;
 pub mod scenario;

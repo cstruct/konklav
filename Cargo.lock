@@ -2629,6 +2629,8 @@ dependencies = [
 name = "konklav-examples"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
+ "axum",
  "base64 0.23.1",
  "ed25519-dalek 3.0.0",
  "getrandom 0.4.3",
@@ -2637,6 +2639,7 @@ dependencies = [
  "p256",
  "percent-encoding",
  "reqwest 0.13.5",
+ "serde",
  "serde_json",
  "tokio",
  "uuid",

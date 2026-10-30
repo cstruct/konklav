@@ -32,6 +32,12 @@ pub fn server_binary() -> PathBuf {
 pub struct Setup {
     /// The server binary; [`server_binary`] when absent.
     pub binary: Option<PathBuf>,
+    /// The host in the issuer URL, when others reach the server by another
+    /// name than `127.0.0.1`, such as `host.docker.internal`.
+    pub issuer_host: Option<String>,
+    /// The whole issuer URL, when others reach the server through a proxy,
+    /// such as one that terminates TLS. Wins over `issuer_host`.
+    pub issuer: Option<String>,
     /// Serve as an OpenID provider, sending people to this login page.
     pub login_url: Option<String>,
     /// Origins allowed to use browser sign-in.
@@ -46,6 +52,9 @@ pub struct Setup {
 pub struct Server {
     /// Base URLs of the three surfaces, as `http://127.0.0.1:port`.
     pub subject: String,
+    /// The `iss` of its tokens: [`Self::subject`] unless the setup named an
+    /// issuer host.
+    pub issuer: String,
     pub relying: String,
     pub control: String,
     /// Accepted for every control-plane call.
@@ -99,24 +108,14 @@ impl Server {
             .as_bytes(),
         )
         .await?;
-        let issuer = format!("http://127.0.0.1:{subject}");
+        let issuer = setup.issuer.clone().unwrap_or_else(|| {
+            format!(
+                "http://{}:{subject}",
+                setup.issuer_host.as_deref().unwrap_or("127.0.0.1")
+            )
+        });
         let oidc = match &setup.login_url {
-            Some(login_url) => {
-                let key = loop {
-                    if let Ok(key) = p256::SecretKey::from_slice(&random::<32>()) {
-                        break key;
-                    }
-                };
-                tokio::fs::write(
-                    dir.join("id-token-key.pem"),
-                    key.to_pkcs8_pem(p256::pkcs8::LineEnding::LF)?.as_bytes(),
-                )
-                .await?;
-                format!(
-                    "oidc_provider {{\n    id_token_key_file id-token-key.pem\n    login_url {}\n}}\n",
-                    quoted(login_url)
-                )
-            }
+            Some(login_url) => provider_config(&dir, login_url).await?,
             None => String::new(),
         };
         let origins = setup
@@ -158,7 +157,8 @@ impl Server {
         tokio::fs::write(dir.join("secrets.styx"), secrets).await?;
 
         Ok(Self {
-            subject: issuer,
+            subject: format!("http://127.0.0.1:{subject}"),
+            issuer,
             relying: format!("http://127.0.0.1:{relying}"),
             control: format!("http://127.0.0.1:{control}"),
             bootstrap_token,
@@ -342,6 +342,48 @@ impl Drop for Server {
         }
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+/// The `oidc_provider` section, with an ES256 and an RSA ID-token key
+/// written into `dir`.
+async fn provider_config(dir: &Path, login_url: &str) -> Result<String> {
+    let key = loop {
+        if let Ok(key) = p256::SecretKey::from_slice(&random::<32>()) {
+            break key;
+        }
+    };
+    tokio::fs::write(
+        dir.join("id-token-key.pem"),
+        key.to_pkcs8_pem(p256::pkcs8::LineEnding::LF)?.as_bytes(),
+    )
+    .await?;
+    // An RSA key too, so clients can get RS256 ID tokens.
+    let rsa = aws_lc_rs::rsa::KeyPair::generate(aws_lc_rs::rsa::KeySize::Rsa2048)
+        .map_err(|error| fail(error.to_string()))?;
+    let der: aws_lc_rs::encoding::Pkcs8V1Der<'_> =
+        aws_lc_rs::encoding::AsDer::as_der(&rsa).map_err(|error| fail(error.to_string()))?;
+    tokio::fs::write(
+        dir.join("id-token-rsa-key.pem"),
+        pem("PRIVATE KEY", der.as_ref()),
+    )
+    .await?;
+    Ok(format!(
+        "oidc_provider {{\n    id_token_key_file id-token-key.pem\n    \
+         rsa_key_file id-token-rsa-key.pem\n    login_url {}\n}}\n",
+        quoted(login_url)
+    ))
+}
+
+/// `der` as a PEM block.
+fn pem(label: &str, der: &[u8]) -> String {
+    let body = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, der);
+    let lines = body
+        .as_bytes()
+        .chunks(64)
+        .map(|line| String::from_utf8_lossy(line).into_owned())
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("-----BEGIN {label}-----\n{lines}\n-----END {label}-----\n")
 }
 
 /// The directory of example data, such as bootstrap sets.

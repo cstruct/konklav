@@ -38,6 +38,42 @@ cargo run -p konklav-examples --bin delivery-worker
 
 To see its mail by hand, point it at a local catcher such as Mailpit with `SMTP_TLS=none`.
 
+## OpenID conformance
+
+`conformance` sets Konklav up for the [OpenID conformance suite](https://gitlab.com/openid/conformance-suite)'s Basic OP and Config OP plans. It:
+- starts Konklav as an OpenID provider
+- registers two static clients, one with RS256 and one with ES256 ID tokens
+- serves a login page that the suite's browser can drive
+- writes the plan configuration, including the overrides that upload screenshots for the tests a reviewer checks by eye
+
+To run it against the suite's prebuilt images:
+
+1. **Start the suite.** Use its `docker-compose-prebuilt.yml`, with `IMAGE_TAG=release-v5.3.4`. Give MongoDB a named volume if the compose directory is somewhere it can't write, as under `/tmp` on macOS.
+2. **Start Konklav behind TLS.** The suite requires an HTTPS issuer.
+
+   ```sh
+   CONFORMANCE_ISSUER=https://host.docker.internal:9443 cargo run -p konklav-examples --bin conformance
+   ```
+
+   Then proxy port 9443 to the subject-facing port it prints:
+
+   ```sh
+   docker run -d -p 9443:9443 caddy:2.10.2 caddy reverse-proxy --internal-certs \
+     --from https://host.docker.internal:9443 --to http://host.docker.internal:<port>
+   ```
+3. **Run the plans.** Use the suite's `scripts/run-test-plan.py` with `CONFORMANCE_DEV_MODE=1` and the written `conformance.json`:
+   - `oidcc-config-certification-test-plan`
+   - `oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client]`
+
+Last run with suite release v5.3.4, both plans had no failures.
+
+- **Warnings:**
+  - Konklav's `konklav_peer_*` discovery fields are reported as unexpected.
+  - The ID token carries `email` for the `email` scope. OIDC Core 5.4 prefers that only in userinfo, but downstream Konklavs link accounts by it.
+  - There is no `name` claim. Konklav stores no profile data.
+- **Skipped:** the profile, address and all-scopes tests, and request objects. Konklav doesn't support these.
+- **Review:** the second sign-in and error-page screenshots, as for any provider.
+
 ## Layout
 
 - `src/harness.rs`: starts servers. It writes config, secrets and keys to a temporary directory, creates a database, waits for readiness, and stops everything on drop.
