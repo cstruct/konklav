@@ -60,8 +60,10 @@ pub fn routes(state: &AppState) -> Router<AppState> {
 
 const CODE_TTL_MINUTES: i64 = 10;
 const LINK_TTL_MINUTES: i64 = 15;
-/// Challenges sent per recipient and purpose per 10 minutes.
-const SEND_LIMIT: i64 = 5;
+/// Challenges sent per recipient and purpose, per window in seconds. The
+/// daily cap bounds how many codes can be guessed against: each allows a
+/// few attempts.
+const SEND_LIMITS: [(i64, i64); 2] = [(10 * 60, 5), (24 * 60 * 60, 20)];
 const IMPERSONATION_MINUTES: i64 = 60;
 /// Failed TOTP checks allowed per factor, per window in seconds.
 const TOTP_LIMITS: [(i64, i64); 2] = [(10 * 60, 5), (24 * 60 * 60, 20)];
@@ -114,13 +116,15 @@ async fn issue_challenge(
     fill: impl FnOnce(&mut NewChallenge),
 ) -> Result<(), ApiError> {
     let now = Utc::now();
-    if challenges::count_since(conn, purpose, recipient, now - Duration::minutes(10)).await?
-        >= SEND_LIMIT
-    {
-        return Err(ApiError::new(
-            ErrorCode::RateLimited,
-            "too many requests; try again later",
-        ));
+    // r[impl challenge.send-limit]
+    for (window, limit) in SEND_LIMITS {
+        let since = now - Duration::seconds(window);
+        if challenges::count_since(conn, purpose, recipient, since).await? >= limit {
+            return Err(ApiError::new(
+                ErrorCode::RateLimited,
+                "too many requests; try again later",
+            ));
+        }
     }
     let id = uuid::Uuid::now_v7();
     let mut new = NewChallenge {

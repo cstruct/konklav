@@ -211,6 +211,11 @@ r[challenge.attempts]
 Code challenges MUST limit verification attempts and invalidate the code
 when the limit is reached.
 
+r[challenge.send-limit]
+Sending challenges MUST be limited per recipient and purpose over several
+windows, including a daily one, so that the codes a recipient can be sent
+in a day allow only a bounded number of guesses.
+
 r[challenge.delivery.event]
 Konklav MUST NOT send messages. To deliver a challenge it MUST emit a
 `delivery.requested` event with the channel, recipient, purpose, challenge

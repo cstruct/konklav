@@ -752,6 +752,27 @@ async fn totp_partial(app: &TestApp) -> (String, String, String) {
     (factor, secret, partial)
 }
 
+// r[verify challenge.send-limit]
+#[tokio::test(flavor = "multi_thread")]
+async fn codes_sent_to_one_recipient_are_capped_per_day() {
+    let app = TestApp::new().await;
+    passwordless_subject(&app, "phone_otp", "+15550100").await;
+    let start = || app.post("/v1/login/phone/start", json!({"phone": "+15550100"}));
+    for round in 0..4 {
+        for _ in 0..5 {
+            assert_eq!(start().await.status, StatusCode::ACCEPTED, "round {round}");
+        }
+        assert_eq!(start().await.code(), "RATE_LIMITED", "round {round}");
+        // Move this round out of the 10-minute window, but not out of the day.
+        let mut conn = app.db.pool().get().await.unwrap();
+        diesel::sql_query("update challenge set created_at = created_at - interval '1 hour'")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+    }
+    assert_eq!(start().await.code(), "RATE_LIMITED", "20 a day at most");
+}
+
 // r[verify authn.mfa.attempts]
 #[tokio::test(flavor = "multi_thread")]
 async fn totp_checks_are_limited_even_when_concurrent() {
