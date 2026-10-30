@@ -4,10 +4,12 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::routing::get;
 use axum::{Json, Router};
-use konklav_authz::compile;
+use konklav_authz::{Effect, Policy, compile};
 use konklav_core::SubjectId;
+use konklav_store::catalog::CAPABILITY_PREFIX;
+use konklav_store::roles::Role;
 use konklav_store::sessions::Stage;
-use konklav_store::{Connection, compile_input};
+use konklav_store::{Connection, compile_input, templates};
 use serde::Serialize;
 
 use crate::AppState;
@@ -37,6 +39,75 @@ pub async fn holds(
     Ok(compile(&input.catalog, &input.assignments)
         .global
         .contains(capability))
+}
+
+/// Whether `policies` allow any control-plane capability. Capabilities
+/// are only granted by name, never through groups.
+#[must_use]
+pub fn granted_by(policies: &[Policy]) -> bool {
+    policies.iter().any(|policy| {
+        policy.effect == Effect::Allow && policy.action.starts_with(CAPABILITY_PREFIX)
+    })
+}
+
+/// Whether `role` allows any control-plane capability, through its own
+/// policies or its template's.
+pub async fn granted_by_role(conn: &mut Connection, role: &Role) -> Result<bool, ApiError> {
+    if granted_by(&role.policies) {
+        return Ok(true);
+    }
+    Ok(match &role.template {
+        Some(key) => granted_by(&templates::get(conn, key).await?.policies),
+        None => false,
+    })
+}
+
+/// Whether `subject` holds any control-plane capability: an operator.
+/// Compiles entitlements in a transaction of its own, so it can't run
+/// inside another.
+pub async fn held_by(conn: &mut Connection, subject: SubjectId) -> Result<bool, ApiError> {
+    let input = compile_input::load(conn, subject, None).await?;
+    Ok(compile(&input.catalog, &input.assignments)
+        .global
+        .iter()
+        .any(|action| action.starts_with(CAPABILITY_PREFIX)))
+}
+
+/// What the control-plane guard learned about the caller, for handlers that
+/// need more than the route's capability.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Operator {
+    /// Holds `konklav:control:all`, or used the bootstrap token.
+    pub(crate) all: bool,
+}
+
+impl Operator {
+    /// Granting or withdrawing capabilities, and changing how an operator
+    /// authenticates, need `konklav:control:all`: otherwise a narrower
+    /// capability would be a path to every capability.
+    // r[impl authz.control-plane.escalation]
+    pub(crate) fn require_all(self, what: &str) -> Result<(), ApiError> {
+        if self.all {
+            Ok(())
+        } else {
+            Err(ApiError::new(
+                ErrorCode::Forbidden,
+                format!("{what} needs {CONTROL_ALL}"),
+            ))
+        }
+    }
+
+    /// [`Self::require_all`] if `subject` is an operator.
+    pub(crate) async fn may_change(
+        self,
+        conn: &mut Connection,
+        subject: SubjectId,
+    ) -> Result<(), ApiError> {
+        if self.all || !held_by(conn, subject).await? {
+            return Ok(());
+        }
+        self.require_all("changing an operator's credentials or state")
+    }
 }
 
 pub async fn require(

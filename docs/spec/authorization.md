@@ -97,6 +97,13 @@ r[authz.assignment.capabilities]
 Control-plane capabilities MUST only be grantable through global
 assignments.
 
+r[authz.control-plane.escalation]
+Granting or withdrawing control-plane capabilities (writing or deleting a
+role or template whose policies allow one, or assigning or unassigning such
+a role) MUST require `konklav:control:all`. So MUST changing the state or
+credentials of a subject that holds any capability. No narrower capability
+may lead to more capabilities.
+
 r[authz.control-plane.own-capabilities]
 The subject-facing surface MUST let a subject with a full (non-partial)
 session list the control-plane capabilities it holds, so operator tools can

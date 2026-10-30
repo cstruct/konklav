@@ -1,7 +1,7 @@
 //! The control-plane surface for tenancy and authorization: the catalog,
 //! tenants, memberships, templates, roles and role assignments.
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
@@ -18,6 +18,7 @@ use konklav_store::tenants::{self, Tenant, TenantState};
 use konklav_store::{Connection, StoreError, compile_input, events, subjects};
 use serde::{Deserialize, Serialize};
 
+use crate::capabilities::Operator;
 use crate::control_api::{Written, guard, parse_id};
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::{AppState, capabilities};
@@ -394,12 +395,21 @@ async fn get_template(
 /// `PUT /v1/templates/{key}`: creates or replaces a template.
 async fn put_template(
     State(state): State<AppState>,
+    Extension(operator): Extension<Operator>,
     Path(key): Path<String>,
     ApiJson(body): ApiJson<TemplateBody>,
 ) -> Result<Json<Written<Template>>, ApiError> {
     let mut conn = state.pool.get().await?;
     let (template, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
+            let granted = match templates::get(conn, &key).await {
+                Ok(old) => capabilities::granted_by(&old.policies),
+                Err(StoreError::NotFound) => false,
+                Err(error) => return Err(error.into()),
+            };
+            if granted || capabilities::granted_by(&body.policies) {
+                operator.require_all("a template with control-plane capabilities")?;
+            }
             let template = templates::put(
                 conn,
                 &key,
@@ -454,6 +464,7 @@ async fn get_role(
 /// Roles of the root tenant are global roles.
 async fn put_role(
     State(state): State<AppState>,
+    Extension(operator): Extension<Operator>,
     Path((tenant, key)): Path<(String, String)>,
     ApiJson(body): ApiJson<RoleBody>,
 ) -> Result<Json<Written<Role>>, ApiError> {
@@ -470,6 +481,22 @@ async fn put_role(
             tenants::get(conn, tenant)
                 .await
                 .map_err(not_found_as("tenant"))?;
+            let granted = match roles::get(conn, tenant, &key).await {
+                Ok(old) => capabilities::granted_by_role(conn, &old).await?,
+                Err(StoreError::NotFound) => false,
+                Err(error) => return Err(error.into()),
+            };
+            let template_grants = match &definition.template {
+                Some(template) => match templates::get(conn, template).await {
+                    Ok(template) => capabilities::granted_by(&template.policies),
+                    Err(StoreError::NotFound) => false,
+                    Err(error) => return Err(error.into()),
+                },
+                None => false,
+            };
+            if granted || template_grants || capabilities::granted_by(&definition.policies) {
+                operator.require_all("a role with control-plane capabilities")?;
+            }
             let role = roles::put(conn, tenant, &key, &definition).await?;
             Ok((role, events::last_in_transaction(conn).await?))
         })
@@ -487,12 +514,18 @@ struct Deleted {
 
 async fn delete_role(
     State(state): State<AppState>,
+    Extension(operator): Extension<Operator>,
     Path((tenant, key)): Path<(String, String)>,
 ) -> Result<Json<Written<Deleted>>, ApiError> {
     let tenant = tenant_ref(&tenant)?;
     let mut conn = state.pool.get().await?;
     let (deleted, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
+            if let Ok(old) = roles::get(conn, tenant, &key).await
+                && capabilities::granted_by_role(conn, &old).await?
+            {
+                operator.require_all("a role with control-plane capabilities")?;
+            }
             let deleted = roles::delete(conn, tenant, &key).await?;
             Ok((deleted, events::last_in_transaction(conn).await?))
         })
@@ -552,6 +585,7 @@ async fn assign_membership_role(
 // r[impl authz.assignment.capabilities]
 async fn assign_global_role(
     State(state): State<AppState>,
+    Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<AssignRole>,
 ) -> Result<(StatusCode, Json<Written<RoleAssignment>>), ApiError> {
@@ -570,6 +604,9 @@ async fn assign_global_role(
             let role = roles::get(conn, tenants::ROOT, &body.role)
                 .await
                 .map_err(not_found_as("global role"))?;
+            if capabilities::granted_by_role(conn, &role).await? {
+                operator.require_all("granting control-plane capabilities")?;
+            }
             let assignment =
                 roles::assign(conn, role.id, AssignmentTarget::Subject(id), None).await?;
             Ok((assignment, events::last_in_transaction(conn).await?))
@@ -595,12 +632,18 @@ async fn list_global_assignments(
 
 async fn unassign(
     State(state): State<AppState>,
+    Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
 ) -> Result<Json<Written<Deleted>>, ApiError> {
     let id: uuid::Uuid = parse_id(&id, "assignment id")?;
     let mut conn = state.pool.get().await?;
     let (deleted, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
+            if let Ok(role) = roles::of_assignment(conn, id).await
+                && capabilities::granted_by_role(conn, &role).await?
+            {
+                operator.require_all("withdrawing control-plane capabilities")?;
+            }
             let deleted = roles::unassign(conn, id).await?;
             Ok((deleted, events::last_in_transaction(conn).await?))
         })

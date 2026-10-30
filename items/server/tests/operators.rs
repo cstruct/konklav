@@ -479,3 +479,102 @@ async fn builtin_roles_and_reserved_keys_cannot_be_written() {
     let sessions = as_operator(&app, &token, Method::GET, "/v1/sessions", None).await;
     assert_eq!(sessions.status, StatusCode::OK, "{:?}", sessions.body);
 }
+
+// r[verify authz.control-plane.escalation]
+#[tokio::test(flavor = "multi_thread")]
+async fn narrower_capabilities_cannot_lead_to_more() {
+    let app = TestApp::new().await;
+    let authz = operator(&app, "authz@example.com", &["konklav:authz:manage"]).await;
+    let people = operator(&app, "people@example.com", &["konklav:subjects:manage"]).await;
+    let admin = app.human("admin@example.com", PASSWORD).await;
+    app.control(
+        Method::POST,
+        &format!("/v1/subjects/{admin}/global-assignments"),
+        Some(json!({"role": "konklav.admin"})),
+    )
+    .await;
+    let me = app.verify(&authz).await.sub;
+
+    let assign_admin = as_operator(
+        &app,
+        &authz,
+        Method::POST,
+        &format!("/v1/subjects/{me}/global-assignments"),
+        Some(json!({"role": "konklav.admin"})),
+    )
+    .await;
+    assert_eq!(assign_admin.code(), "FORBIDDEN", "{:?}", assign_admin.body);
+    let capability_role = as_operator(
+        &app,
+        &authz,
+        Method::PUT,
+        "/v1/tenants/root/roles/sneaky",
+        Some(json!({"policies": [{"action": "konklav:control:all", "effect": "allow"}]})),
+    )
+    .await;
+    assert_eq!(
+        capability_role.code(),
+        "FORBIDDEN",
+        "{:?}",
+        capability_role.body
+    );
+    let capability_template = as_operator(
+        &app,
+        &authz,
+        Method::PUT,
+        "/v1/templates/sneaky",
+        Some(json!({"policies": [{"action": "konklav:control:all", "effect": "allow"}]})),
+    )
+    .await;
+    assert_eq!(capability_template.code(), "FORBIDDEN");
+    let plain_role = as_operator(
+        &app,
+        &authz,
+        Method::PUT,
+        "/v1/tenants/root/roles/plain",
+        Some(json!({"policies": []})),
+    )
+    .await;
+    assert_eq!(plain_role.status, StatusCode::OK, "{:?}", plain_role.body);
+
+    let credentials = app
+        .control(Method::GET, &format!("/v1/subjects/{admin}"), None)
+        .await;
+    let password = credentials.body["credentials"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["kind"] == "password")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let replaced = as_operator(
+        &app,
+        &people,
+        Method::POST,
+        &format!("/v1/credentials/{password}/replace"),
+        Some(json!({"password": "taken over now"})),
+    )
+    .await;
+    assert_eq!(replaced.code(), "FORBIDDEN", "{:?}", replaced.body);
+    let disabled = as_operator(
+        &app,
+        &people,
+        Method::POST,
+        &format!("/v1/subjects/{admin}/disable"),
+        None,
+    )
+    .await;
+    assert_eq!(disabled.code(), "FORBIDDEN");
+    let plain = app.human("plain@example.com", PASSWORD).await;
+    let disabled = as_operator(
+        &app,
+        &people,
+        Method::POST,
+        &format!("/v1/subjects/{plain}/disable"),
+        None,
+    )
+    .await;
+    assert_eq!(disabled.status, StatusCode::OK, "{:?}", disabled.body);
+}

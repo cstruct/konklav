@@ -4,7 +4,7 @@
 //! Until operator authorization arrives (M6), every route requires the
 //! configured bootstrap bearer token.
 
-use axum::extract::{Path, Query, Request, State};
+use axum::extract::{Extension, Path, Query, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -24,6 +24,7 @@ use konklav_store::{StoreError, signing_keys};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
+use crate::capabilities::Operator;
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::{AppState, capabilities};
 
@@ -79,8 +80,12 @@ fn check_operator(
     next: Next,
 ) -> GuardFuture {
     Box::pin(async move {
+        let mut request = request;
         match authorize_operator(&state, capability, request.headers()).await {
-            Ok(()) => next.run(request).await,
+            Ok(operator) => {
+                request.extensions_mut().insert(operator);
+                next.run(request).await
+            }
             Err(error) => error.into_response(),
         }
     })
@@ -90,7 +95,7 @@ async fn authorize_operator(
     state: &AppState,
     capability: &'static str,
     headers: &axum::http::HeaderMap,
-) -> Result<(), ApiError> {
+) -> Result<Operator, ApiError> {
     let presented = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -104,7 +109,7 @@ async fn authorize_operator(
     if let Some(bootstrap) = &state.auth.control_token
         && bool::from(presented.as_bytes().ct_eq(bootstrap.as_bytes()))
     {
-        return Ok(());
+        return Ok(Operator { all: true });
     }
     let mut conn = state.pool.get().await?;
     let (_, session) = crate::subject_api::verify_access_token(state, &mut conn, presented)
@@ -119,10 +124,9 @@ async fn authorize_operator(
         return Err(ApiError::new(ErrorCode::Forbidden, "complete MFA first"));
     }
     crate::subject_api::refuse_impersonation(&session)?;
-    if capabilities::holds(&mut conn, session.subject_id, capabilities::CONTROL_ALL).await?
-        || capabilities::holds(&mut conn, session.subject_id, capability).await?
-    {
-        Ok(())
+    let all = capabilities::holds(&mut conn, session.subject_id, capabilities::CONTROL_ALL).await?;
+    if all || capabilities::holds(&mut conn, session.subject_id, capability).await? {
+        Ok(Operator { all })
     } else {
         Err(ApiError::new(
             ErrorCode::Forbidden,
@@ -258,11 +262,13 @@ async fn get_subject(
 
 async fn set_subject_state(
     state: &AppState,
+    operator: Operator,
     id: &str,
     target: SubjectState,
 ) -> Result<Json<Written<SubjectView>>, ApiError> {
     let id = parse_id(id, "subject id")?;
     let mut conn = state.pool.get().await?;
+    operator.may_change(&mut conn, id).await?;
     let revoked = conn
         .transaction::<_, ApiError, _>(async |conn| {
             subjects::set_state(conn, id, target)
@@ -291,16 +297,18 @@ async fn set_subject_state(
 
 async fn disable_subject(
     State(state): State<AppState>,
+    Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
 ) -> Result<Json<Written<SubjectView>>, ApiError> {
-    set_subject_state(&state, &id, SubjectState::Disabled).await
+    set_subject_state(&state, operator, &id, SubjectState::Disabled).await
 }
 
 async fn enable_subject(
     State(state): State<AppState>,
+    Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
 ) -> Result<Json<Written<SubjectView>>, ApiError> {
-    set_subject_state(&state, &id, SubjectState::Active).await
+    set_subject_state(&state, operator, &id, SubjectState::Active).await
 }
 
 // --- Credentials ------------------------------------------------------------
@@ -505,6 +513,7 @@ async fn password_hash_for(
 /// `POST /v1/subjects/{id}/credentials`
 async fn create_credential(
     State(state): State<AppState>,
+    Extension(operator): Extension<Operator>,
     Path(subject_id): Path<String>,
     ApiJson(body): ApiJson<CreateCredential>,
 ) -> Result<(StatusCode, Json<CreatedCredential>), ApiError> {
@@ -513,6 +522,7 @@ async fn create_credential(
     let subject = subjects::get(&mut conn, subject_id)
         .await
         .map_err(|_| ApiError::not_found("subject"))?;
+    operator.may_change(&mut conn, subject_id).await?;
 
     let is_email = matches!(body, CreateCredential::EmailLink { .. });
     let (new, secret_keys) = match body {
@@ -644,6 +654,7 @@ struct RevokeCredential {
 // r[impl credential.revocation-ends-sessions]
 async fn revoke_credential(
     State(state): State<AppState>,
+    Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
     body: Option<ApiJson<RevokeCredential>>,
 ) -> Result<Json<Written<CredentialView>>, ApiError> {
@@ -652,6 +663,11 @@ async fn revoke_credential(
         .and_then(|ApiJson(body)| body.reason)
         .unwrap_or_else(|| "revoked".to_owned());
     let mut conn = state.pool.get().await?;
+    if let Ok(credential) = credentials::get(&mut conn, id).await {
+        operator
+            .may_change(&mut conn, credential.subject_id)
+            .await?;
+    }
     let revoked = conn
         .transaction::<_, ApiError, _>(async |conn| {
             credentials::revoke(conn, id, &reason)
@@ -685,6 +701,7 @@ struct ReplacePassword {
 /// old one end.
 async fn replace_password(
     State(state): State<AppState>,
+    Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<ReplacePassword>,
 ) -> Result<(StatusCode, Json<Written<CredentialView>>), ApiError> {
@@ -694,9 +711,13 @@ async fn replace_password(
             "passwords need at least {MIN_PASSWORD_LENGTH} characters"
         )));
     }
+    let mut conn = state.pool.get().await?;
+    // Outside the transaction: entitlement compilation opens its own.
+    if let Ok(old) = credentials::get(&mut conn, old_id).await {
+        operator.may_change(&mut conn, old.subject_id).await?;
+    }
     let hash = hash(&state, body.password).await?;
     let new_id = body.id.unwrap_or_else(CredentialId::new_v7);
-    let mut conn = state.pool.get().await?;
     let (credential, revoked) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let old = credentials::get_for_update(conn, old_id)
@@ -945,6 +966,7 @@ struct BreakGlass {
 /// `break_glass.used`.
 async fn set_break_glass(
     State(state): State<AppState>,
+    Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<BreakGlass>,
 ) -> Result<Json<CredentialView>, ApiError> {
@@ -953,6 +975,9 @@ async fn set_break_glass(
     let credential = credentials::get(&mut conn, id)
         .await
         .map_err(|_| ApiError::not_found("credential"))?;
+    operator
+        .may_change(&mut conn, credential.subject_id)
+        .await?;
     if !matches!(
         credential.kind(),
         CredentialKind::Password | CredentialKind::SecretKey

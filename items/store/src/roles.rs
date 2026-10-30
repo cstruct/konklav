@@ -163,6 +163,18 @@ pub async fn get(conn: &mut AsyncPgConnection, tenant: TenantId, key: &str) -> S
     load(conn, query).await?.pop().ok_or(StoreError::NotFound)
 }
 
+/// The role an assignment activates.
+pub async fn of_assignment(
+    conn: &mut AsyncPgConnection,
+    assignment: uuid::Uuid,
+) -> StoreResult<Role> {
+    let roles = role_assignment::table
+        .find(assignment)
+        .select(role_assignment::role_id);
+    let query = role::table.filter(role::id.eq_any(roles)).into_boxed();
+    load(conn, query).await?.pop().ok_or(StoreError::NotFound)
+}
+
 pub async fn list(conn: &mut AsyncPgConnection, tenant: TenantId) -> StoreResult<Vec<Role>> {
     let query = role::table
         .filter(role::tenant_id.eq(uuid::Uuid::from(tenant)))
