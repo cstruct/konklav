@@ -182,7 +182,23 @@ struct StreamState {
     delivery: bool,
     buffer: VecDeque<FeedEvent>,
     /// Held until the stream ends.
-    _slot: OwnedSemaphorePermit,
+    _slot: StreamSlot,
+}
+
+/// A stream's place among the open ones, counted while it's held.
+struct StreamSlot(#[allow(dead_code)] OwnedSemaphorePermit);
+
+impl StreamSlot {
+    fn new(permit: OwnedSemaphorePermit) -> Self {
+        crate::telemetry::metrics::METRICS.feed_streams.add(1, &[]);
+        Self(permit)
+    }
+}
+
+impl Drop for StreamSlot {
+    fn drop(&mut self) {
+        crate::telemetry::metrics::METRICS.feed_streams.add(-1, &[]);
+    }
 }
 
 /// `GET /v1/events`: Server-Sent Events. Each event's `id` is its cursor;
@@ -231,7 +247,7 @@ async fn stream_events(
         kinds: kinds(&query),
         delivery,
         buffer,
-        _slot: slot,
+        _slot: StreamSlot::new(slot),
     };
     let stream = futures_util::stream::unfold(initial, |mut state| async move {
         loop {

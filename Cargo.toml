@@ -79,7 +79,16 @@ tower = "0.5.3"
 webauthn-rs = { version = "0.5.5", features = ["danger-allow-state-serialisation", "conditional-ui"] }
 webauthn-rs-proto = "0.5.5"
 tracing = "0.1.44"
+tracing-opentelemetry = { version = "0.34.0", default-features = false }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+# Telemetry over OTLP: traces, metrics and logs, over HTTP or gRPC.
+opentelemetry = { version = "0.33.1", features = ["logs", "metrics", "trace"] }
+opentelemetry-appender-tracing = "0.33.1"
+opentelemetry-http = "0.33.1"
+opentelemetry-otlp = { version = "0.33.1", default-features = false, features = ["http-proto", "reqwest-blocking-client", "grpc-tonic", "logs", "metrics", "trace"] }
+opentelemetry-proto = { version = "0.33.1", features = ["gen-tonic-messages", "logs", "metrics", "trace"] }
+opentelemetry_sdk = { version = "0.33.1", features = ["logs", "metrics", "trace"] }
+prost = "0.14.4"
 uuid = { version = "1.28.0", features = ["serde"] }
 
 [workspace.lints.rust]

@@ -81,12 +81,13 @@ fn environment_overrides_the_config_file() {
         &[("KONKLAV__LISTEN__CONTROL", "0.0.0.0:9000")],
     )
     .unwrap();
-    let (listen, database, log, tokens, browser, control, feed, mfa) = loaded;
+    let (listen, database, telemetry, tokens, browser, control, feed, mfa) = loaded;
     assert_eq!(listen.listen.control, "0.0.0.0:9000".parse().unwrap());
     assert_eq!(listen.listen.subject, "127.0.0.1:8080".parse().unwrap());
     assert_eq!(database.database.password, "from-secrets");
     assert_eq!(database.database.max_connections, 10, "default applies");
-    assert_eq!(log.filter(), None);
+    assert_eq!(telemetry.telemetry.logs.level, "info");
+    assert!(!telemetry.telemetry.traces.enabled);
     assert_eq!(tokens.tokens.access_ttl_seconds, 900, "default applies");
     assert_eq!(tokens.tokens.published_key_files, Vec::<String>::new());
     assert_eq!(browser.browser, None);

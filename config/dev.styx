@@ -12,8 +12,12 @@ database {
     max_connections 10
 }
 
-log {
-    filter "info,konklav_server=debug"
+// Logs, and exporting traces, metrics and logs over OTLP (off by default).
+// With an OpenTelemetry Collector on localhost, set `otlp.endpoint` to
+// "http://localhost:4318" and enable a signal, as in `traces {enabled true}`.
+telemetry {
+    service_name konklav-dev
+    logs {level "info,konklav_server=debug"}
 }
 
 tokens {

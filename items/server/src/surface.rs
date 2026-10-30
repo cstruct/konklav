@@ -3,14 +3,17 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use axum::Router;
+use axum::middleware;
 use axum::routing::get;
 
 use crate::config::Listen;
 use crate::{
     AppState, capabilities, control_api, control_authz, error, federation_api, feed, flows, health,
     import_api, invites, keys, oidc_api, oidc_clients_api, passkeys_api, relying_api, subject_api,
+    telemetry,
 };
 
 /// One of Konklav's groups of endpoints.
@@ -79,11 +82,21 @@ pub fn router(surfaces: &[Surface], state: AppState) -> Router {
     let root = surfaces.iter().fold(Router::new(), |router, surface| {
         router.merge(surface.root_routes())
     });
+    let names: Arc<str> = surfaces
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+        .into();
     root.route("/healthz", get(health::healthz))
         .route("/readyz", get(health::readyz))
         .nest("/v1", v1)
         .fallback(error::not_found)
         .method_not_allowed_fallback(error::method_not_allowed)
+        .layer(middleware::from_fn_with_state(
+            names,
+            telemetry::http::serve,
+        ))
         .with_state(state)
 }
 

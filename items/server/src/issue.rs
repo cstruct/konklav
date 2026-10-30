@@ -67,10 +67,10 @@ pub async fn access_token(
     // Never outlive the session.
     // r[impl session.expiry]
     let expires_at = (now + auth.access_ttl).min(session.expires_at);
-    let token_kind = match session.stage {
-        Stage::Partial => TokenKind::Partial,
-        Stage::Identity => TokenKind::Identity,
-        Stage::Tenant => TokenKind::Tenant,
+    let (token_kind, kind_name) = match session.stage {
+        Stage::Partial => (TokenKind::Partial, "partial"),
+        Stage::Identity => (TokenKind::Identity, "identity"),
+        Stage::Tenant => (TokenKind::Tenant, "tenant"),
     };
     // r[impl oidc.provider.tokens]
     let aud = match &session.oidc_client_id {
@@ -105,6 +105,11 @@ pub async fn access_token(
             None => None,
         },
     };
+    crate::telemetry::metrics::count(
+        &crate::telemetry::metrics::METRICS.tokens_issued,
+        "konklav.token.kind",
+        kind_name,
+    );
     Ok(IssuedToken {
         access_token: auth.signer.sign(&claims),
         token_type: "Bearer",

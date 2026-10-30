@@ -32,6 +32,7 @@ pub mod serve;
 mod subject_api;
 pub mod surface;
 pub mod sweeper;
+pub mod telemetry;
 
 use std::sync::Arc;
 
@@ -100,15 +101,21 @@ impl AuthContext {
         &self,
         work: impl FnOnce(&PasswordHasher) -> T + Send + 'static,
     ) -> Result<T, error::ApiError> {
+        let metrics = &telemetry::metrics::METRICS;
+        let waiting = std::time::Instant::now();
         let _slot = self
             .hashing_slots
             .acquire()
             .await
             .map_err(error::ApiError::internal)?;
+        metrics
+            .hashing_wait
+            .record(telemetry::metrics::seconds(waiting.elapsed()), &[]);
+        metrics.hashing_busy.add(1, &[]);
         let hasher = self.hasher.clone();
-        tokio::task::spawn_blocking(move || work(&hasher))
-            .await
-            .map_err(error::ApiError::internal)
+        let done = tokio::task::spawn_blocking(move || work(&hasher)).await;
+        metrics.hashing_busy.add(-1, &[]);
+        done.map_err(error::ApiError::internal)
     }
 
     /// Builds the context from configuration and the already-loaded signer,

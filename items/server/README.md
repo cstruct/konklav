@@ -25,6 +25,23 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - events older than `feed.retention_hours`
 
   It also erases the challenge material from stored `delivery.requested` events once their challenge has expired.
+- Telemetry (`telemetry.rs`), configured under `telemetry`:
+  - logs to stderr as text or JSON (`logs.format json`, with trace and span ids)
+  - traces, metrics and logs exported over OTLP (HTTP or gRPC) when `traces.enabled`, `metrics.enabled` or `logs.export` is set
+  - every request is a server span named by method and route template, continuing a caller's `traceparent`
+  - requests to identity providers, their keys, peers and back-channel logout endpoints are client spans that carry the trace
+  - metrics:
+    - request durations (`http.server.request.duration`) by route, status and error code
+    - refusals for load
+    - hashing wait and busy slots
+    - access tokens issued
+    - open feed streams
+    - logout deliveries
+    - rows swept
+    - pool connections
+    - outbound requests
+
+  Telemetry never records login identifiers, secrets, tokens, codes, client addresses or request paths. Export headers, such as an API key, belong in the secrets file under `telemetry.otlp.headers`.
 - Working out each client's address from the connection, or from `X-Forwarded-For` when the connection comes from one of `listen.trusted_proxies`, for per-address rate limits.
 - Liveness (`/healthz`) and readiness (`/readyz`: database reachable and no pending migrations) on every listener.
 - The typed error model: `{"error": {"code": "SCREAMING_SNAKE_CASE", "message": "..."}}`, including for unknown endpoints and methods.
@@ -131,6 +148,7 @@ mise run test
     - credential replacement, subject disabling, MFA-required partial tokens
     - session administration, signing-key revocation
     - passkey registration, login, step-up and removal, with a software authenticator (`tests/passkeys.rs`)
+  - telemetry: spans, metrics and logs exported to a fake OTLP collector, trace propagation in and out, and nothing identifying in what's exported (`tests/telemetry.rs`)
   - retention: what the sweeper deletes and keeps, and its lock (`tests/retention.rs`)
   - the bootstrap command, applying both example sets, re-runs, dry runs, conflicts and located problems (`tests/bootstrap.rs`)
 - Indirect coverage: none yet.

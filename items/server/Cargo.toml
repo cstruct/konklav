@@ -39,13 +39,21 @@ subtle.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-postgres.workspace = true
+opentelemetry.workspace = true
+opentelemetry-appender-tracing.workspace = true
+opentelemetry-http.workspace = true
+opentelemetry-otlp.workspace = true
+opentelemetry_sdk.workspace = true
 tracing.workspace = true
+tracing-opentelemetry.workspace = true
 tracing-subscriber.workspace = true
 uuid = { workspace = true, features = ["v4", "v5", "v7"] }
 webauthn-rs.workspace = true
 webauthn-rs-proto.workspace = true
 
 [dev-dependencies]
+opentelemetry-proto.workspace = true
+prost.workspace = true
 openidconnect = "4.0.1"
 reqwest = { workspace = true, features = ["cookies"] }
 chrono.workspace = true

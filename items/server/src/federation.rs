@@ -184,7 +184,7 @@ impl Provider {
             "{}/.well-known/openid-configuration",
             self.settings.issuer.trim_end_matches('/')
         );
-        let metadata: Metadata = self.get_json(&url).await?;
+        let metadata: Metadata = self.get_json(&url, "idp_discovery").await?;
         if metadata.issuer != self.settings.issuer {
             return Err(FederationError::Provider(format!(
                 "discovery names issuer {}, not {}",
@@ -199,10 +199,9 @@ impl Provider {
     async fn get_json<T: serde::de::DeserializeOwned>(
         &self,
         url: &str,
+        operation: &'static str,
     ) -> Result<T, FederationError> {
-        self.http
-            .get(url)
-            .send()
+        crate::telemetry::http::send(self.http.get(url), operation)
             .await
             .and_then(reqwest::Response::error_for_status)
             .map_err(|error| FederationError::Provider(error.to_string()))?
@@ -232,7 +231,7 @@ impl Provider {
             return Ok(keys.clone());
         }
         let metadata = self.metadata().await?;
-        let keys: Arc<JwkSet> = Arc::new(self.get_json(&metadata.jwks_uri).await?);
+        let keys: Arc<JwkSet> = Arc::new(self.get_json(&metadata.jwks_uri, "idp_jwks").await?);
         *cached = Some((keys.clone(), Instant::now()));
         Ok(keys)
     }
@@ -283,7 +282,7 @@ impl Provider {
             id_token: String,
         }
         let metadata = self.metadata().await?;
-        let tokens: Tokens = self
+        let request = self
             .http
             .post(&metadata.token_endpoint)
             .basic_auth(&self.settings.client_id, Some(&self.settings.client_secret))
@@ -292,8 +291,8 @@ impl Provider {
                 ("code", code),
                 ("redirect_uri", &self.settings.redirect_uri),
                 ("code_verifier", code_verifier),
-            ])
-            .send()
+            ]);
+        let tokens: Tokens = crate::telemetry::http::send(request, "idp_token")
             .await
             .and_then(reqwest::Response::error_for_status)
             .map_err(|error| FederationError::Provider(error.to_string()))?
@@ -312,11 +311,12 @@ impl Provider {
         let endpoint = endpoint.ok_or_else(|| {
             FederationError::Provider("the provider doesn't offer peering".into())
         })?;
-        self.http
+        let request = self
+            .http
             .post(endpoint)
             .basic_auth(&self.settings.client_id, Some(&self.settings.client_secret))
-            .form(form)
-            .send()
+            .form(form);
+        crate::telemetry::http::send(request, "peer")
             .await
             .map_err(|error| FederationError::Provider(error.to_string()))
     }

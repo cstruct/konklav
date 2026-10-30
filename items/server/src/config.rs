@@ -1,6 +1,7 @@
 //! Runtime configuration, loaded with ordna from a Styx file, a secrets Styx
 //! file and `KONKLAV__*` environment variables, in that order of precedence.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -70,13 +71,166 @@ config_tree! {
 }
 
 config_tree! {
+    /// Logs, and exporting traces, metrics and logs over OTLP. Exporting is
+    /// off unless enabled per signal.
     #[derive(Debug, Clone, PartialEq)]
-    pub struct LogConfig {
-        pub log: Option<pub struct Log {
-            /// A `tracing_subscriber` filter directive, such as `info` or
-            /// `konklav_server=debug,info`.
-            pub filter: Option<String>,
-        }>,
+    pub struct TelemetryConfig {
+        #[facet(default)]
+        pub telemetry: pub struct Telemetry {
+            /// The `service.name` resource attribute.
+            #[facet(default = String::from("konklav"))]
+            pub service_name: String,
+            /// More resource attributes, such as `deployment.environment`. A
+            /// list, since attribute names contain dots, which map keys can't.
+            /// `OTEL_RESOURCE_ATTRIBUTES` is read as well.
+            #[facet(default)]
+            pub resource: Vec<pub struct ResourceAttribute {
+                pub key: String,
+                pub value: String,
+            }>,
+            // r[impl telemetry.endpoints]
+            /// Where and how to export. Settings left out fall back to the
+            /// standard `OTEL_EXPORTER_OTLP_*` environment variables.
+            #[facet(default)]
+            pub otlp: pub struct Otlp {
+                /// The collector's base URL, such as `http://collector:4318`;
+                /// over HTTP, the signal's path, such as `/v1/metrics`, is
+                /// appended.
+                pub endpoint: Option<String>,
+                #[facet(default)]
+                pub protocol: #[derive(Default)] #[facet(rename_all = "snake_case")] pub enum OtlpProtocol {
+                    /// Protobuf over HTTP, conventionally on port 4318.
+                    #[default]
+                    HttpProtobuf,
+                    /// gRPC, conventionally on port 4317.
+                    Grpc,
+                },
+                /// Headers sent with every export, such as an API key.
+                #[config(secret)]
+                #[facet(default)]
+                pub headers: HashMap<String, String>,
+                /// How long an export may take.
+                #[facet(default = 10)]
+                pub timeout_seconds: u32,
+            },
+            #[facet(default)]
+            pub metrics: pub struct MetricsExport {
+                #[facet(default)]
+                pub enabled: bool,
+                /// The full URL to export metrics to, overriding
+                /// `otlp.endpoint`.
+                pub endpoint: Option<String>,
+                #[facet(default = 30)]
+                pub interval_seconds: u32,
+            },
+            #[facet(default)]
+            pub traces: pub struct TracesExport {
+                #[facet(default)]
+                pub enabled: bool,
+                /// The full URL to export traces to, overriding
+                /// `otlp.endpoint`.
+                pub endpoint: Option<String>,
+                /// The share of traces to sample, from 0 to 1. Requests whose
+                /// caller sampled them are traced either way.
+                #[facet(default = 1.0)]
+                pub sample_ratio: f64,
+            },
+            // r[impl telemetry.logs]
+            /// Logging, to stderr and optionally exported.
+            #[facet(default)]
+            pub logs: pub struct Logs {
+                /// What to log, as `tracing` filter directives such as `info`
+                /// or `info,konklav_server=debug`. `RUST_LOG` overrides it.
+                #[facet(default = String::from("info"))]
+                pub level: String,
+                #[facet(default)]
+                pub format: #[derive(Default)] #[facet(rename_all = "snake_case")] pub enum LogFormat {
+                    /// Human-readable lines.
+                    #[default]
+                    Text,
+                    /// A JSON object per line, with the trace and span ids of
+                    /// traced requests.
+                    Json,
+                },
+                /// Whether to export logs over OTLP too.
+                #[facet(default)]
+                pub export: bool,
+                /// The full URL to export logs to, overriding
+                /// `otlp.endpoint`.
+                pub endpoint: Option<String>,
+            },
+        },
+    }
+}
+
+impl Default for Telemetry {
+    fn default() -> Self {
+        Self {
+            service_name: "konklav".into(),
+            resource: Vec::new(),
+            otlp: Otlp::default(),
+            metrics: MetricsExport::default(),
+            traces: TracesExport::default(),
+            logs: Logs::default(),
+        }
+    }
+}
+
+impl Default for Otlp {
+    fn default() -> Self {
+        Self {
+            endpoint: None,
+            protocol: OtlpProtocol::default(),
+            headers: HashMap::new(),
+            timeout_seconds: 10,
+        }
+    }
+}
+
+impl Default for MetricsExport {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint: None,
+            interval_seconds: 30,
+        }
+    }
+}
+
+impl Default for TracesExport {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint: None,
+            sample_ratio: 1.0,
+        }
+    }
+}
+
+impl Default for Logs {
+    fn default() -> Self {
+        Self {
+            level: "info".into(),
+            format: LogFormat::default(),
+            export: false,
+            endpoint: None,
+        }
+    }
+}
+
+impl Telemetry {
+    /// The same logging, with nothing exported: for commands that run once.
+    #[must_use]
+    pub fn logs_only(&self) -> Self {
+        Self {
+            metrics: MetricsExport::default(),
+            traces: TracesExport::default(),
+            logs: Logs {
+                export: false,
+                ..self.logs.clone()
+            },
+            ..self.clone()
+        }
     }
 }
 
@@ -362,7 +516,7 @@ config_contexts!(
     pub ServerContexts = [
         ListenConfig,
         DatabaseConfig,
-        LogConfig,
+        TelemetryConfig,
         TokensConfig,
         BrowserConfig,
         ControlConfig,
@@ -375,7 +529,7 @@ config_contexts!(
 pub type ServeContexts = (
     ListenConfig,
     DatabaseConfig,
-    LogConfig,
+    TelemetryConfig,
     TokensConfig,
     BrowserConfig,
     ControlConfig,
@@ -384,11 +538,11 @@ pub type ServeContexts = (
 );
 
 /// The contexts `migrate` needs: no listeners.
-pub type MigrateContexts = (DatabaseConfig, LogConfig);
+pub type MigrateContexts = (DatabaseConfig, TelemetryConfig);
 
 /// The contexts `bootstrap` needs: the database, and the MFA keys that
 /// imported TOTP seeds are encrypted with.
-pub type BootstrapContexts = (DatabaseConfig, LogConfig, MfaConfig);
+pub type BootstrapContexts = (DatabaseConfig, TelemetryConfig, MfaConfig);
 
 impl Database {
     /// Builds the libpq connection URL, escaping user and password.
@@ -449,13 +603,6 @@ impl ControlConfig {
                     })
             })
             .transpose()
-    }
-}
-
-impl LogConfig {
-    #[must_use]
-    pub fn filter(&self) -> Option<&str> {
-        self.log.as_ref().and_then(|log| log.filter.as_deref())
     }
 }
 

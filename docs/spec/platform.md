@@ -111,6 +111,81 @@ r[retention.delivery-material]
 The challenge material in a stored `delivery.requested` event MUST be erased
 once the challenge has expired, not only withheld from the feed.
 
+## Telemetry
+
+Konklav exports telemetry over OTLP to any collector or backend that
+accepts it. Telemetry is for operators; relying systems use the change feed.
+
+r[telemetry.init]
+Telemetry MUST be set up from configuration before the server is built,
+with the providers of the enabled signals installed globally, and MUST be
+flushed and shut down when the server stops.
+
+r[telemetry.endpoints]
+A signal MUST be exported to its own endpoint when one is configured, used
+as is, and otherwise to the OTLP endpoint, with the signal's path (such as
+`/v1/metrics`) appended over HTTP. Without either, the standard
+`OTEL_EXPORTER_OTLP_*` environment variables MUST apply. Export headers are
+secret configuration.
+
+r[telemetry.privacy]
+Telemetry MUST NOT record login identifiers, secrets, tokens, codes, client
+addresses or request paths. Requests MUST be named by their route template,
+never by a path with ids in it.
+
+r[telemetry.metrics]
+When metrics are enabled, they MUST be exported periodically over OTLP, with
+the configured service name and resource attributes. Their attributes MUST
+be low-cardinality: surfaces, route templates, methods, status codes, error
+codes, kinds and outcomes.
+
+r[telemetry.metrics.requests]
+The duration of every request MUST be recorded as
+`http.server.request.duration`, with its method, route template, status
+code, the surfaces of its listener and, for an error response, its error
+code. Requests refused before routing, for being too many or taking too
+long, MUST be counted by reason.
+
+r[telemetry.metrics.internals]
+Konklav MUST record:
+- how long password hashing waited for a slot, and how many slots are busy
+- access tokens issued, by kind
+- open change-feed streams
+- back-channel logout deliveries, by outcome
+- rows the sweeper deleted, by kind
+- the database pool's connections, by whether they are in use
+- outbound HTTP requests, by operation and outcome
+
+r[telemetry.traces]
+When traces are enabled, spans MUST be exported over OTLP in batches with
+the configured service name and resource attributes. The configured share
+of traces Konklav starts MUST be sampled, and a trace continued from a
+caller MUST follow the caller's sampling decision.
+
+r[telemetry.traces.requests]
+Every request MUST be a server span named by its method and route template,
+continuing the trace named by its W3C `traceparent` header, if any. The span
+MUST record the status code and error code, and MUST be failed when the
+response is a server error.
+
+r[telemetry.traces.outbound]
+Requests to identity providers, their key sets and back-channel logout
+endpoints MUST be client spans named by operation, failed when they fail,
+and MUST carry the trace in a `traceparent` header. Sweeps, back-channel
+logout runs and peer syncs MUST be spans of their own.
+
+r[telemetry.logs]
+Logs MUST be written to stderr, filtered by the configured level, or by
+`RUST_LOG` when set, as human-readable text or as one JSON object per line.
+A JSON line MUST carry its time, level, target, message and fields, the
+spans it is in, and the trace and span ids when traced. An invalid level
+MUST be refused.
+
+r[telemetry.logs.export]
+When log export is enabled, logs MUST be sent over OTLP in batches with the
+trace context of the span they were logged in, filtered by the same level,
+leaving out what the exporters themselves log.
+
 ## Errors
 
 r[platform.error.typed-codes]

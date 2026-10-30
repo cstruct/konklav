@@ -18,6 +18,7 @@ use crate::AppState;
 use crate::config::{Listen, ListenConfig};
 use crate::error::{ApiError, ErrorCode};
 use crate::surface::{self, Surface};
+use crate::telemetry::metrics;
 
 /// Bounds on what each listener accepts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,13 +65,18 @@ async fn bound(
     request: Request,
     next: Next,
 ) -> Response {
+    let refused = |reason| metrics::count(&metrics::METRICS.refused, "konklav.reason", reason);
     let Ok(_slot) = slots.try_acquire() else {
+        refused("too_many");
         return ApiError::new(ErrorCode::Overloaded, "too many requests in progress")
             .into_response();
     };
     match tokio::time::timeout(timeout, next.run(request)).await {
         Ok(response) => response,
-        Err(_) => ApiError::new(ErrorCode::Overloaded, "the request took too long").into_response(),
+        Err(_) => {
+            refused("timeout");
+            ApiError::new(ErrorCode::Overloaded, "the request took too long").into_response()
+        }
     }
 }
 

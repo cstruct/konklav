@@ -116,6 +116,8 @@ impl IntoResponse for ApiError {
             },
         };
         let mut response = (self.code.status(), Json(body)).into_response();
+        // For telemetry, which records the code.
+        response.extensions_mut().insert(self.code);
         if self.code == ErrorCode::RateLimited {
             response
                 .headers_mut()

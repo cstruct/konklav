@@ -9,6 +9,7 @@
 //! to the fresh claims, as at a login.
 
 use std::time::Duration;
+use tracing::Instrument;
 
 use diesel_async::AsyncConnection;
 use konklav_store::credentials::{self, Credential, CredentialData, CredentialKind};
@@ -113,8 +114,9 @@ async fn reconcile(
 pub async fn sync_forever(state: AppState) {
     loop {
         for provider in state.auth.identity_providers.iter() {
+            let span = tracing::info_span!("peer_sync", konklav.provider = %provider.settings.id);
             if provider.settings.peering
-                && let Err(error) = sync(&state, provider).await
+                && let Err(error) = sync(&state, provider).instrument(span).await
             {
                 tracing::warn!(provider = %provider.settings.id, %error, "peering failed");
             }

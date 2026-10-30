@@ -6,7 +6,7 @@ use konklav_server::AppState;
 use konklav_server::AuthContext;
 use konklav_server::config::{
     self, BootstrapContexts, BrowserConfig, ControlConfig, DatabaseConfig, FeedConfig,
-    ListenConfig, LogConfig, MfaConfig, MigrateContexts, ServeContexts, ServerContexts,
+    ListenConfig, MfaConfig, MigrateContexts, ServeContexts, ServerContexts, TelemetryConfig,
     TokensConfig,
 };
 use konklav_server::feed::FeedHub;
@@ -15,7 +15,6 @@ use konklav_server::serve::{BoundServer, shutdown_signal};
 use ordna_core::ConfigContexts;
 use std::path::Path;
 use std::sync::Arc;
-use tracing_subscriber::EnvFilter;
 
 /// The Konklav identity and access server.
 #[derive(Parser)]
@@ -64,15 +63,32 @@ async fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match &cli.command {
         Command::Serve => match load::<ServeContexts>(&cli) {
-            Ok((listen, database, log, tokens, browser, control, feed, mfa)) => {
-                init_tracing(&log);
-                serve(listen, database, tokens, browser, control, feed, mfa).await
+            Ok((listen, database, telemetry, tokens, browser, control, feed, mfa)) => {
+                let telemetry = match konklav_server::telemetry::init(&telemetry.telemetry) {
+                    Ok(telemetry) => telemetry,
+                    Err(error) => {
+                        eprintln!("{error}");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                let served = serve(listen, database, tokens, browser, control, feed, mfa).await;
+                if let Err(error) = &served {
+                    tracing::error!("{error}");
+                }
+                telemetry.shutdown();
+                return if served.is_ok() {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                };
             }
             Err(code) => return code,
         },
         Command::Migrate => match load::<MigrateContexts>(&cli) {
-            Ok((database, log)) => {
-                init_tracing(&log);
+            Ok((database, telemetry)) => {
+                if let Err(code) = init_logs(&telemetry) {
+                    return code;
+                }
                 migrate(database).await
             }
             Err(code) => return code,
@@ -82,8 +98,10 @@ async fn main() -> ExitCode {
             allow_plaintext_passwords,
             paths,
         } => match load::<BootstrapContexts>(&cli) {
-            Ok((database, log, mfa)) => {
-                init_tracing(&log);
+            Ok((database, telemetry, mfa)) => {
+                if let Err(code) = init_logs(&telemetry) {
+                    return code;
+                }
                 let options = konklav_server::bootstrap::Options {
                     dry_run: *dry_run,
                     allow_plaintext_passwords: *allow_plaintext_passwords,
@@ -277,6 +295,7 @@ async fn serve(
         pool.clone(),
         feed.sweeper(),
     ));
+    let _pool_gauge = konklav_server::telemetry::metrics::observe_pool(pool.clone());
     let state = AppState {
         pool,
         auth: Arc::new(auth),
@@ -291,12 +310,13 @@ async fn serve(
     Ok(())
 }
 
-fn init_tracing(config: &LogConfig) {
-    let filter = std::env::var("RUST_LOG")
-        .ok()
-        .or_else(|| config.filter().map(str::to_owned))
-        .unwrap_or_else(|| "info".to_owned());
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::new(filter))
-        .init();
+/// Sets up logging alone, for commands that run once and exit.
+fn init_logs(config: &TelemetryConfig) -> Result<(), ExitCode> {
+    match konklav_server::telemetry::init(&config.telemetry.logs_only()) {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            eprintln!("{error}");
+            Err(ExitCode::FAILURE)
+        }
+    }
 }

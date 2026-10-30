@@ -5,6 +5,10 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use konklav_store::{Connection, Pool, StoreResult, events, sweep};
+use opentelemetry::KeyValue;
+use tracing::Instrument;
+
+use crate::telemetry::metrics::METRICS;
 
 /// How long rows are kept, and how the sweeper runs.
 #[derive(Clone, Copy, Debug)]
@@ -139,11 +143,18 @@ async fn sweep_locked(
 pub async fn sweep_forever(pool: Pool, settings: Settings) {
     loop {
         match pool.get().await {
-            Ok(mut conn) => match sweep(&mut conn, settings, Utc::now()).await {
+            Ok(mut conn) => match sweep(&mut conn, settings, Utc::now())
+                .instrument(tracing::info_span!("sweep"))
+                .await
+            {
                 Ok(Some(swept)) => {
                     for (kind, removed) in swept.kinds() {
                         if removed > 0 {
                             tracing::debug!(kind, removed, "swept");
+                            METRICS.retention_deleted.add(
+                                u64::try_from(removed).unwrap_or(u64::MAX),
+                                &[KeyValue::new("konklav.kind", kind)],
+                            );
                         }
                     }
                 }

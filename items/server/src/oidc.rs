@@ -12,6 +12,7 @@ use konklav_store::{Connection, roles, tenants};
 use konklav_token::Jwk;
 use p256::pkcs8::DecodePrivateKey;
 use serde::Serialize;
+use tracing::Instrument;
 
 use crate::AuthContext;
 use crate::config::OidcProvider as OidcProviderConfig;
@@ -271,10 +272,34 @@ pub async fn deliver_logouts(
     };
     let mut conn = state.pool.get().await?;
     let pending = konklav_store::backchannel::lease(&mut conn, 50).await?;
-    for logout in &pending {
-        let client = konklav_store::oidc_clients::get(&mut conn, &logout.client_id).await?;
+    if pending.is_empty() {
+        return Ok(0);
+    }
+    let span = tracing::info_span!("backchannel_logouts", count = pending.len());
+    deliver_leased(state, provider, http, &mut conn, &pending)
+        .instrument(span)
+        .await?;
+    Ok(pending.len())
+}
+
+async fn deliver_leased(
+    state: &crate::AppState,
+    provider: &OpenIdProvider,
+    http: &reqwest::Client,
+    conn: &mut konklav_store::Connection,
+    pending: &[konklav_store::backchannel::Pending],
+) -> Result<(), ApiError> {
+    let delivered = |outcome| {
+        crate::telemetry::metrics::count(
+            &crate::telemetry::metrics::METRICS.logout_deliveries,
+            "konklav.outcome",
+            outcome,
+        );
+    };
+    for logout in pending {
+        let client = konklav_store::oidc_clients::get(conn, &logout.client_id).await?;
         let Some(uri) = &client.backchannel_logout_uri else {
-            konklav_store::backchannel::complete(&mut conn, logout.id).await?;
+            konklav_store::backchannel::complete(conn, logout.id).await?;
             continue;
         };
         let token = logout_token(
@@ -284,33 +309,33 @@ pub async fn deliver_logouts(
             logout.subject_id,
             logout.session_id,
         );
-        let sent = http
-            .post(uri)
-            .form(&[("logout_token", token)])
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status);
+        let sent = crate::telemetry::http::send(
+            http.post(uri).form(&[("logout_token", token)]),
+            "backchannel_logout",
+        )
+        .await
+        .and_then(reqwest::Response::error_for_status);
         match sent {
-            Ok(_) => konklav_store::backchannel::complete(&mut conn, logout.id).await?,
+            Ok(_) => {
+                delivered("delivered");
+                konklav_store::backchannel::complete(conn, logout.id).await?;
+            }
             Err(error) if logout.attempts + 1 >= LOGOUT_ATTEMPTS => {
+                delivered("abandoned");
                 tracing::warn!(client = %client.id, session = %logout.session_id, %error, "giving up on a back-channel logout");
-                konklav_store::backchannel::complete(&mut conn, logout.id).await?;
+                konklav_store::backchannel::complete(conn, logout.id).await?;
             }
             Err(error) => {
+                delivered("retried");
                 let backoff =
                     chrono::Duration::seconds(10 * 2_i64.pow(logout.attempts.unsigned_abs()));
                 let retry_at = chrono::Utc::now() + backoff.min(chrono::Duration::hours(1));
-                konklav_store::backchannel::retry(
-                    &mut conn,
-                    logout.id,
-                    &error.to_string(),
-                    retry_at,
-                )
-                .await?;
+                konklav_store::backchannel::retry(conn, logout.id, &error.to_string(), retry_at)
+                    .await?;
             }
         }
     }
-    Ok(pending.len())
+    Ok(())
 }
 
 /// Runs [`deliver_logouts`] forever.
