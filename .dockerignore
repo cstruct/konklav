@@ -1,0 +1,10 @@
+/target/
+/.git/
+/.github/
+/.agents/
+/Dockerfile
+/.dockerignore
+/items/py/.venv/
+/items/py/target/
+/config/*.pem
+/mise.local.toml

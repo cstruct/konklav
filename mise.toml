@@ -1,6 +1,9 @@
 [tools]
-# The Rust toolchain, installed through rustup.
-rust = { version = "1.99.0", components = "rustfmt,clippy,rust-analyzer,rust-src" }
+# The Rust toolchain, installed through rustup, with the WebAssembly target
+# the console and the relying core build for.
+rust = { version = "1.99.0", components = "rustfmt,clippy,rust-analyzer,rust-src", targets = "wasm32-unknown-unknown" }
+# Lints the GitHub Actions workflows.
+"github:rhysd/actionlint" = "1.7.7"
 # Tracks the spec in docs/spec against the code, from its GitHub releases.
 "github:bearcove/tracey" = "1.4.0"
 # Diesel's CLI for migrations and schema.rs. libpq is compiled in, so no
@@ -61,7 +64,7 @@ dir = "items/py"
 run = ["uv sync -q --reinstall-package konklav-relying", "uv run -q pytest -q tests"]
 
 [tasks.lint]
-description = "Check formatting, lints and spec traceability"
+description = "Check formatting, lints, spec traceability and the CI workflows"
 run = [
     "cargo fmt --all --check",
     "cargo clippy --workspace --all-targets -- -D warnings",
@@ -69,6 +72,7 @@ run = [
     "cargo clippy -q -p konklav-console --target wasm32-unknown-unknown -- -D warnings",
     "cargo fmt --manifest-path items/py/Cargo.toml --check",
     "PYO3_PYTHON=$(cd items/py && uv python find) cargo clippy --manifest-path items/py/Cargo.toml -- -D warnings",
+    "actionlint",
     "tracey query validate",
 ]
 

@@ -122,7 +122,8 @@ local setup. Everyday tasks:
 - `mise run hydra` runs Hydra in memory (public `:4444`, admin `:4445`) for
   trying identity-provider logins by hand.
 - `mise run lint` checks formatting, clippy (warnings are errors, including
-  for the console's WASM target) and Tracey validation.
+  for the console's WASM target), Tracey validation and the GitHub Actions
+  workflows (actionlint).
 - `mise run migrate` applies migrations; `mise run db:schema` regenerates the
   Diesel schema.
 - `cargo run -p konklav-server -- bootstrap [--dry-run] <paths>` loads
@@ -140,6 +141,38 @@ Other database tasks:
 
 To use another port, set `KONKLAV_DEV_PG_PORT`, for example in an untracked
 `mise.local.toml`.
+
+## CI and releases
+
+GitHub Actions runs `mise run lint` and `mise run test` on every push to
+`main` and every pull request (`.github/workflows/ci.yml`), and checks that
+the container image builds.
+
+To release, set `version` under `[workspace.package]` in `Cargo.toml`, then
+push a matching `v<version>` tag. The release workflow:
+
+1. Runs CI again.
+2. Builds `konklav-server` for x86_64 and aarch64 Linux and aarch64 macOS,
+   and the console as a static bundle.
+3. Pushes a linux/amd64 and linux/arm64 image to Docker Hub. The repository is
+   the `DOCKERHUB_IMAGE` variable; the `deploy` environment holds
+   `DOCKERHUB_USERNAME` and the `DOCKERHUB_TOKEN` secret.
+4. Publishes a GitHub release with the archives and `SHA256SUMS`.
+
+A version with a pre-release part, such as `0.2.0-rc.1`, makes a
+pre-release, and its image gets only that exact tag.
+
+The image runs `serve` as a non-root user. Mount `config.styx`,
+`secrets.styx` and the key files they name at `/etc/konklav`:
+
+```sh
+docker run --rm -v ./deploy:/etc/konklav:ro konklav/konklav migrate
+docker run -v ./deploy:/etc/konklav:ro -p 8080-8082:8080-8082 konklav/konklav
+```
+
+Konklav's schema needs PostgreSQL 18 with the
+[`pg_jsonschema`](https://github.com/supabase/pg_jsonschema) extension;
+`dev/postgres` builds such an image.
 
 ## Stack
 
