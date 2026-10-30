@@ -53,12 +53,11 @@ impl Surface {
     /// Unversioned endpoints at fixed, well-known paths.
     fn root_routes(self) -> Router<AppState> {
         match self {
-            Self::Relying => Router::new().route("/.well-known/jwks.json", get(keys::jwks)),
             Self::Subject => Router::new().route(
                 "/.well-known/openid-configuration",
                 get(oidc_api::discovery),
             ),
-            Self::Control => Router::new(),
+            Self::Relying | Self::Control => Router::new(),
         }
     }
 }
@@ -79,9 +78,19 @@ pub fn router(surfaces: &[Surface], state: AppState) -> Router {
     let v1 = surfaces.iter().fold(Router::new(), |router, surface| {
         router.merge(surface.v1_routes(&state))
     });
-    let root = surfaces.iter().fold(Router::new(), |router, surface| {
+    let mut root = surfaces.iter().fold(Router::new(), |router, surface| {
         router.merge(surface.root_routes())
     });
+    // Relying systems verify access tokens with it, and OpenID clients,
+    // which know only the issuer, ID tokens. Once per listener, since
+    // surfaces sharing one are merged.
+    // r[impl oidc.provider.jwks]
+    if surfaces
+        .iter()
+        .any(|s| matches!(s, Surface::Relying | Surface::Subject))
+    {
+        root = root.route("/.well-known/jwks.json", get(keys::jwks));
+    }
     let names: Arc<str> = surfaces
         .iter()
         .map(ToString::to_string)

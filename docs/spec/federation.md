@@ -92,6 +92,11 @@ When the provider role is enabled, Konklav MUST publish an OpenID Provider
 discovery document listing only the endpoints, grants, algorithms and claims
 it supports.
 
+r[oidc.provider.jwks]
+The key set the discovery document names MUST be served on the
+subject-facing surface, where the issuer is, as well as on the relying
+surface, so clients that can reach only the issuer can verify ID tokens.
+
 r[oidc.provider.clients]
 OIDC clients MUST be control-plane resources with a caller-supplied id, a
 type (`confidential` or `public`), registered redirect URIs, allowed grants

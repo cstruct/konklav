@@ -20,6 +20,7 @@ async fn get_status_line(addr: SocketAddr, path: &str) -> String {
 }
 
 // r[verify platform.server.single-binary]
+// r[verify oidc.provider.jwks]
 #[tokio::test(flavor = "multi_thread")]
 async fn serves_every_surface_on_its_own_listener_until_shutdown() {
     let db = TestDatabase::new().await;
@@ -45,8 +46,15 @@ async fn serves_every_surface_on_its_own_listener_until_shutdown() {
         let _ = stopped.await;
     }));
 
-    for (addr, _) in &addrs {
+    for (addr, surfaces) in &addrs {
         assert_eq!(get_status_line(*addr, "/readyz").await, "HTTP/1.1 200 OK");
+        // The key set is where relying systems and OpenID clients look.
+        let jwks = get_status_line(*addr, "/.well-known/jwks.json").await;
+        if surfaces == &[Surface::Control] {
+            assert_eq!(jwks, "HTTP/1.1 404 Not Found");
+        } else {
+            assert_eq!(jwks, "HTTP/1.1 200 OK", "{surfaces:?}");
+        }
     }
 
     stop.send(()).unwrap();
