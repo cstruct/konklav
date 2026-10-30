@@ -324,10 +324,6 @@ async fn clients_sign_subjects_in_with_the_code_flow() {
     assert_eq!(info.body["sub"], world.subject.as_str());
     assert_eq!(info.body["groups"], json!(["ops-admin"]));
 
-    // Codes are single-use.
-    let replayed = exchange(&world, &code, VERIFIER).await;
-    assert_eq!(replayed.body["error"], "invalid_grant");
-
     // Refresh rotates; the old refresh token then ends the session.
     let refresh = tokens.body["refresh_token"].as_str().unwrap();
     let refreshed = app
@@ -832,4 +828,37 @@ async fn clients_cannot_take_konklavs_own_audience() {
         "{:?}",
         registered.body
     );
+}
+
+// r[verify oidc.provider.code-flow]
+// r[verify oidc.provider.code-reuse]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reused_code_fails_and_revokes_what_it_issued() {
+    let world = world().await;
+    let app = &world.app;
+    let code = authorize(&world, &[]).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    assert_eq!(tokens.status, StatusCode::OK, "{:?}", tokens.body);
+
+    let replayed = exchange(&world, &code, VERIFIER).await;
+    assert_eq!(replayed.body["error"], "invalid_grant");
+
+    let refresh = tokens.body["refresh_token"].as_str().unwrap();
+    let refreshed = app
+        .send_form(
+            "/v1/oauth2/token",
+            &[("authorization", &basic(&world.secret))],
+            &[("grant_type", "refresh_token"), ("refresh_token", refresh)],
+        )
+        .await;
+    assert_eq!(
+        refreshed.body["error"], "invalid_grant",
+        "{:?}",
+        refreshed.body
+    );
+    let access = tokens.body["access_token"].as_str().unwrap();
+    let info = app
+        .with_bearer(Method::GET, "/v1/oauth2/userinfo", access)
+        .await;
+    assert_eq!(info.code(), "SESSION_ENDED", "{:?}", info.body);
 }

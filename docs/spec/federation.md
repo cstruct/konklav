@@ -100,6 +100,11 @@ The authorization endpoint MUST require PKCE (`S256`) for every client.
 Authorization codes MUST be single-use, short-lived, and bound to the
 client, the redirect URI, the code challenge, the nonce and the session.
 
+r[oidc.provider.code-reuse]
+Presenting an authorization code that was already exchanged MUST fail and
+MUST revoke the session it was exchanged for, ending every token issued
+from it.
+
 r[oidc.provider.login-handoff]
 The authorization endpoint MUST NOT render user interface. It MUST redirect
 to the login URL configured for the client or the instance with an opaque

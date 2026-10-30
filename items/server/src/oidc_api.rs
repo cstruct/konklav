@@ -148,13 +148,17 @@ struct RequestDetails {
     acceptance_hash: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct CodeDetails {
     client_id: String,
     redirect_uri: String,
     scopes: Vec<String>,
     nonce: Option<String>,
     code_challenge: String,
+    /// The client session the code was exchanged for, revoked if the code
+    /// is presented again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    issued_session: Option<SessionId>,
 }
 
 fn redirect_to(url: &str, params: &[(&str, &str)]) -> Response {
@@ -475,6 +479,7 @@ async fn resume(
                 scopes: details.scopes.clone(),
                 nonce: details.nonce.clone(),
                 code_challenge: details.code_challenge.clone(),
+                issued_session: None,
             })
             .map_err(ApiError::internal)?,
             expires_at: Utc::now() + Duration::seconds(CODE_SECONDS),
@@ -728,17 +733,38 @@ async fn code_grant(
     if !verified {
         return Ok(invalid_grant("PKCE verification failed"));
     }
-    if !challenges::consume(conn, id, Utc::now()).await? {
-        return Ok(invalid_grant("the code was used or expired"));
-    }
-    let Some(parent) = challenge.session_id else {
-        return Ok(invalid_grant("unknown code"));
+    // Consuming the code and recording the session it issued commit
+    // together, so a concurrent second use waits and then finds the session.
+    let outcome = conn
+        .transaction::<_, ApiError, _>(async |conn| {
+            if !challenges::consume(conn, id, Utc::now()).await? {
+                return Ok(Err("the code was used or expired"));
+            }
+            let Some(parent) = challenge.session_id else {
+                return Ok(Err("unknown code"));
+            };
+            let parent = sessions::get(conn, parent).await?;
+            if !parent.is_active_at(Utc::now()) || !subject_api::still_valid(conn, &parent).await? {
+                return Ok(Err("the sign-in has ended"));
+            }
+            let (session, refresh) =
+                start_client_session(conn, &parent, client, &details.scopes).await?;
+            let issued = CodeDetails {
+                issued_session: Some(session.id),
+                ..details.clone()
+            };
+            let issued = serde_json::to_value(issued).map_err(ApiError::internal)?;
+            challenges::set_details(conn, id, &issued).await?;
+            Ok(Ok((session, refresh)))
+        })
+        .await?;
+    let (session, refresh) = match outcome {
+        Ok(issued) => issued,
+        Err(reason) => {
+            revoke_if_reused(conn, id).await?;
+            return Ok(invalid_grant(reason));
+        }
     };
-    let parent = sessions::get(conn, parent).await?;
-    if !parent.is_active_at(Utc::now()) || !subject_api::still_valid(conn, &parent).await? {
-        return Ok(invalid_grant("the sign-in has ended"));
-    }
-    let (session, refresh) = start_client_session(conn, &parent, client, &details.scopes).await?;
     let tokens = tokens_for(
         state,
         conn,
@@ -749,6 +775,24 @@ async fn code_grant(
     )
     .await?;
     Ok(tokens)
+}
+
+/// A code presented after it was exchanged has leaked, so the session it
+/// issued, with its tokens, is revoked (RFC 6749, section 4.1.2).
+// r[impl oidc.provider.code-reuse]
+async fn revoke_if_reused(conn: &mut Connection, id: uuid::Uuid) -> Result<(), ApiError> {
+    let challenge = challenges::get(conn, id).await?;
+    let issued = serde_json::from_value::<CodeDetails>(challenge.details)
+        .ok()
+        .and_then(|details| details.issued_session);
+    if let (Some(session), Some(_)) = (issued, challenge.consumed_at) {
+        let filter = sessions::SessionFilter {
+            session: Some(session),
+            ..Default::default()
+        };
+        sessions::revoke(conn, &filter, None, "authorization_code_reused").await?;
+    }
+    Ok(())
 }
 
 /// A session for the client, a child of the login application's: same

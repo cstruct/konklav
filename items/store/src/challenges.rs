@@ -236,6 +236,19 @@ pub async fn consume(
     Ok(consumed > 0)
 }
 
+/// Replaces a challenge's details.
+pub async fn set_details(
+    conn: &mut AsyncPgConnection,
+    id: uuid::Uuid,
+    details: &serde_json::Value,
+) -> StoreResult<()> {
+    diesel::update(challenge::table.find(id))
+        .set(challenge::details.eq(details))
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 /// Records the session that completed a challenge (such as an accepted
 /// authorization request), replacing its details. Returns false if a
 /// session was already recorded.
