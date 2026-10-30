@@ -128,16 +128,6 @@ async fn issue_challenge(
     fill: impl FnOnce(&mut NewChallenge),
 ) -> Result<(), ApiError> {
     let now = Utc::now();
-    // r[impl challenge.send-limit]
-    for (window, limit) in SEND_LIMITS {
-        let since = now - Duration::seconds(window);
-        if challenges::count_since(conn, purpose, recipient, since).await? >= limit {
-            return Err(ApiError::new(
-                ErrorCode::RateLimited,
-                "too many requests; try again later",
-            ));
-        }
-    }
     let id = uuid::Uuid::now_v7();
     let mut new = NewChallenge {
         id,
@@ -152,6 +142,22 @@ async fn issue_challenge(
         expires_at: now + ttl,
     };
     fill(&mut new);
+    // An MFA factor's address is whatever its subject entered, so other
+    // subjects' factors for the same address must not use up its sends.
+    let counted = match purpose {
+        Purpose::MfaEmailCode => new.subject_id,
+        _ => None,
+    };
+    // r[impl challenge.send-limit]
+    for (window, limit) in SEND_LIMITS {
+        let since = now - Duration::seconds(window);
+        if challenges::count_since(conn, purpose, recipient, counted, since).await? >= limit {
+            return Err(ApiError::new(
+                ErrorCode::RateLimited,
+                "too many requests; try again later",
+            ));
+        }
+    }
     let subject = new.subject_id;
     let expires_at = new.expires_at;
     challenges::create(conn, new).await?;
@@ -211,9 +217,9 @@ async fn redeem_code(
     factor: Option<uuid::Uuid>,
 ) -> Result<challenges::Challenge, ApiError> {
     let now = Utc::now();
-    let challenge = challenges::latest(conn, purpose, recipient, now)
+    // r[impl authn.mfa.factor-codes]
+    let challenge = challenges::latest(conn, purpose, recipient, factor, now)
         .await?
-        .filter(|c| factor.is_none() || c.mfa_factor_id == factor)
         .ok_or_else(invalid_code)?;
     let challenge = challenges::record_attempt(conn, challenge.id).await?;
     let matches: bool = hash_challenge_secret(&challenge.id.to_string(), code)

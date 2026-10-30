@@ -263,6 +263,7 @@ async fn registration_options(
         &mut conn,
         Purpose::PasskeyRegister,
         &subject.to_string(),
+        None,
         since,
     )
     .await?

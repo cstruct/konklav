@@ -159,18 +159,25 @@ pub async fn get(conn: &mut AsyncPgConnection, id: uuid::Uuid) -> StoreResult<Ch
         .ok_or(StoreError::NotFound)
 }
 
-/// The newest usable challenge for `purpose` sent to `recipient`.
+/// The newest usable challenge for `purpose` sent to `recipient`, and for
+/// `factor` if given.
 pub async fn latest(
     conn: &mut AsyncPgConnection,
     purpose: Purpose,
     recipient: &str,
+    factor: Option<uuid::Uuid>,
     now: DateTime<Utc>,
 ) -> StoreResult<Option<Challenge>> {
-    Ok(challenge::table
+    let mut query = challenge::table
         .filter(challenge::purpose.eq(purpose.as_str()))
         .filter(challenge::recipient.eq(recipient))
         .filter(challenge::consumed_at.is_null())
         .filter(challenge::expires_at.gt(now))
+        .into_boxed();
+    if let Some(factor) = factor {
+        query = query.filter(challenge::mfa_factor_id.eq(factor));
+    }
+    Ok(query
         .order(challenge::created_at.desc())
         .select(Row::as_select())
         .first(conn)
@@ -179,21 +186,24 @@ pub async fn latest(
         .map(Challenge::from))
 }
 
-/// Challenges for `purpose` and `recipient` created since `since`, for rate
-/// limiting.
+/// Challenges for `purpose` and `recipient` created since `since`, and for
+/// `subject` if given, for rate limiting.
 pub async fn count_since(
     conn: &mut AsyncPgConnection,
     purpose: Purpose,
     recipient: &str,
+    subject: Option<SubjectId>,
     since: DateTime<Utc>,
 ) -> StoreResult<i64> {
-    Ok(challenge::table
+    let mut query = challenge::table
         .filter(challenge::purpose.eq(purpose.as_str()))
         .filter(challenge::recipient.eq(recipient))
         .filter(challenge::created_at.ge(since))
-        .count()
-        .get_result(conn)
-        .await?)
+        .into_boxed();
+    if let Some(subject) = subject {
+        query = query.filter(challenge::subject_id.eq(uuid::Uuid::from(subject)));
+    }
+    Ok(query.count().get_result(conn).await?)
 }
 
 /// Counts a verification attempt. Returns the challenge after counting.

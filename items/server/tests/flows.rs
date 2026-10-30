@@ -953,6 +953,56 @@ async fn impersonation_cannot_reach_the_control_plane_or_change_authentication()
     assert_eq!(control.status, StatusCode::OK, "{:?}", control.body);
 }
 
+// r[verify authn.mfa.factor-codes]
+#[tokio::test(flavor = "multi_thread")]
+async fn others_factors_for_the_same_address_dont_interfere() {
+    let app = TestApp::new().await;
+    let mailer = mailer(&app).await;
+    let address = "shared@example.com";
+    app.human(EMAIL, PASSWORD).await;
+    let session = token(&app.login(EMAIL, PASSWORD).await);
+    let enrolled = post_bearer(&app, "/v1/mfa/email", &session, json!({"email": address})).await;
+    let factor = enrolled.body["id"].as_str().unwrap().to_owned();
+    let code = delivered(&app, &mailer, address).await["code"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    post_bearer(
+        &app,
+        &format!("/v1/mfa/{factor}/activate"),
+        &session,
+        json!({"code": code}),
+    )
+    .await;
+
+    // Someone else registers factors for the same address until their own
+    // sends run out.
+    app.human("other@example.com", PASSWORD).await;
+    let other = token(&app.login("other@example.com", PASSWORD).await);
+    for _ in 0..5 {
+        let enrolled = post_bearer(&app, "/v1/mfa/email", &other, json!({"email": address})).await;
+        assert_eq!(enrolled.status, StatusCode::CREATED, "{:?}", enrolled.body);
+    }
+    let sent = post_bearer(&app, &format!("/v1/mfa/{factor}/send"), &session, json!({})).await;
+    assert_eq!(sent.status, StatusCode::ACCEPTED, "{:?}", sent.body);
+    let code = delivered(&app, &mailer, address).await["code"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // A third subject's newer code for the address doesn't shadow it.
+    app.human("third@example.com", PASSWORD).await;
+    let third = token(&app.login("third@example.com", PASSWORD).await);
+    post_bearer(&app, "/v1/mfa/email", &third, json!({"email": address})).await;
+    let stepped = post_bearer(
+        &app,
+        "/v1/step-up",
+        &session,
+        json!({"factor_id": factor, "code": code}),
+    )
+    .await;
+    assert_eq!(stepped.status, StatusCode::OK, "{:?}", stepped.body);
+}
+
 // r[verify challenge.delivery.no-replay]
 #[tokio::test(flavor = "multi_thread")]
 async fn delivery_requests_are_only_for_the_delivery_capability_and_expire() {

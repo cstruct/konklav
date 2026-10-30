@@ -70,6 +70,12 @@ TOTP verification MUST be limited per factor over several windows, counting
 every failed check, and MUST NOT accept the same time step twice, even for
 concurrent requests.
 
+r[authn.mfa.factor-codes]
+An emailed MFA code MUST be checked against the newest code sent for that
+factor, and sends to a factor's address MUST be limited per subject, so a
+factor another subject registered for the same address can't block or use
+up its codes.
+
 r[authn.mfa.management]
 Enrolling, activating or removing an MFA factor MUST require a full session
 that authenticated recently, so a stolen access token can't add or strip
