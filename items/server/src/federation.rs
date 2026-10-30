@@ -21,6 +21,8 @@ use crate::config::BrowserConfig;
 
 /// How long discovery documents are trusted before being fetched again.
 const METADATA_TTL: Duration = Duration::from_secs(3600);
+/// The soonest the provider's keys are fetched again for an unknown `kid`.
+const KEYS_MIN_REFRESH: Duration = Duration::from_secs(60);
 /// Clock skew tolerated on `exp`, `iat` and `auth_time`.
 const LEEWAY_SECONDS: u64 = 60;
 /// The authentication method every federated session gets, whatever else
@@ -147,7 +149,7 @@ pub struct Provider {
     pub settings: Settings,
     http: reqwest::Client,
     metadata: RwLock<Option<(Arc<Metadata>, Instant)>>,
-    keys: RwLock<Option<Arc<JwkSet>>>,
+    keys: RwLock<Option<(Arc<JwkSet>, Instant)>>,
 }
 
 impl Provider {
@@ -205,12 +207,22 @@ impl Provider {
         if let Some(pinned) = &self.settings.pinned_keys {
             return Ok(pinned.clone());
         }
-        if !refresh && let Some(keys) = &*self.keys.read().await {
+        if !refresh && let Some((keys, _)) = &*self.keys.read().await {
+            return Ok(keys.clone());
+        }
+        // Refreshes wait for each other and happen at most once per
+        // KEYS_MIN_REFRESH, so tokens naming unknown keys can't make
+        // Konklav fetch the provider's keys on every request.
+        // r[impl federation.jwks-refresh]
+        let mut cached = self.keys.write().await;
+        if let Some((keys, fetched)) = &*cached
+            && (!refresh || fetched.elapsed() < KEYS_MIN_REFRESH)
+        {
             return Ok(keys.clone());
         }
         let metadata = self.metadata().await?;
         let keys: Arc<JwkSet> = Arc::new(self.get_json(&metadata.jwks_uri).await?);
-        *self.keys.write().await = Some(keys.clone());
+        *cached = Some((keys.clone(), Instant::now()));
         Ok(keys)
     }
 

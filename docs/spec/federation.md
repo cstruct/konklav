@@ -30,6 +30,12 @@ provider's keys with an asymmetric algorithm, and its `iss`, `aud`, `azp`
 (when present), `exp`, `iat` and `nonce` match. `alg: none` and symmetric
 algorithms MUST be refused.
 
+r[federation.jwks-refresh]
+A token naming a key the provider's cached keys lack MAY cause the keys to
+be fetched again, but at most once a minute per provider, so tokens with
+made-up key ids can't make Konklav fetch the provider's keys on every
+request.
+
 r[federation.credential]
 A federated credential MUST be identified by the provider and the
 provider's `sub`, never by an email address or another mutable claim.

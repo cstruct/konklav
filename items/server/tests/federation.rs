@@ -51,6 +51,7 @@ enum Signing {
 struct Fake {
     issuer: String,
     grants: HashMap<String, Grant>,
+    jwks_fetches: usize,
 }
 
 /// A minimal OpenID provider: discovery, keys and the token endpoint.
@@ -124,7 +125,8 @@ async fn discovery(State(state): State<Arc<Mutex<Fake>>>) -> axum::Json<Value> {
     }))
 }
 
-async fn jwks() -> axum::Json<Value> {
+async fn jwks(State(state): State<Arc<Mutex<Fake>>>) -> axum::Json<Value> {
+    state.lock().unwrap().jwks_fetches += 1;
     axum::Json(json!({"keys": [{
         "kty": "EC", "crv": "P-256", "kid": "k1", "alg": "ES256", "use": "sig",
         "x": PROVIDER_X, "y": PROVIDER_Y,
@@ -697,5 +699,36 @@ async fn claim_mapping_manages_only_its_own_grants() {
     assert_eq!(
         entitlements(Some(tenant)).await["tenant"],
         json!(["tickets:read"])
+    );
+}
+
+// r[verify federation.jwks-refresh]
+#[tokio::test(flavor = "multi_thread")]
+async fn unknown_key_ids_cannot_force_key_fetches() {
+    let provider = FakeProvider::start().await;
+    let upstream =
+        konklav_server::federation::Provider::new(provider.settings(), reqwest::Client::new());
+    let key = EncodingKey::from_ec_pem(PROVIDER_KEY.as_bytes()).unwrap();
+    let now = chrono::Utc::now().timestamp();
+    for n in 0..10 {
+        let mut header = Header::new(Algorithm::ES256);
+        header.kid = Some(format!("unknown-{n}"));
+        let token = jsonwebtoken::encode(
+            &header,
+            &json!({"iss": provider.issuer, "sub": "w", "aud": "a", "exp": now + 60}),
+            &key,
+        )
+        .unwrap();
+        assert!(
+            upstream
+                .verify_assertion(&token, &["a".into()])
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(
+        provider.state.lock().unwrap().jwks_fetches,
+        1,
+        "the first fetch is recent, so unknown keys don't refetch"
     );
 }
