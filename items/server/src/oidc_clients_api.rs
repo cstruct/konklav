@@ -52,6 +52,14 @@ async fn put_client(
     if !definition.scopes.iter().any(|s| s == "openid") {
         return Err(ApiError::invalid_request("clients need the openid scope"));
     }
+    // A client's tokens would otherwise pass as Konklav's own, on the
+    // subject-facing and control-plane surfaces.
+    // r[impl oidc.provider.client-audience]
+    if definition.audience == state.auth.audience {
+        return Err(ApiError::invalid_request(
+            "a client's audience can't be Konklav's own",
+        ));
+    }
     for uri in &definition.redirect_uris {
         let parsed = reqwest::Url::parse(uri)
             .map_err(|_| ApiError::invalid_request(format!("`{uri}` is not a URL")))?;

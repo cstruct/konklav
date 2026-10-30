@@ -85,6 +85,10 @@ type (`confidential` or `public`), registered redirect URIs, allowed grants
 and scopes, the audience of their access tokens, and the claims they may
 receive. Redirect URIs MUST match exactly.
 
+r[oidc.provider.client-audience]
+A client's audience MUST NOT be Konklav's own access-token audience, so
+tokens issued to a client are never accepted by Konklav's own surfaces.
+
 r[oidc.provider.code-flow]
 The authorization endpoint MUST require PKCE (`S256`) for every client.
 Authorization codes MUST be single-use, short-lived, and bound to the

@@ -800,3 +800,36 @@ async fn logout_ends_the_sign_in_and_notifies_clients() {
         "delivered once"
     );
 }
+
+// r[verify oidc.provider.client-audience]
+#[tokio::test(flavor = "multi_thread")]
+async fn clients_cannot_take_konklavs_own_audience() {
+    let world = world().await;
+    let registered = world
+        .app
+        .control(
+            Method::PUT,
+            "/v1/oidc/clients/sneaky",
+            Some(json!({
+                "kind": "confidential",
+                "redirect_uris": [REDIRECT],
+                "audience": common::AUDIENCE,
+                "id_token_alg": "EdDSA",
+            })),
+        )
+        .await;
+    assert_eq!(
+        registered.code(),
+        "INVALID_REQUEST",
+        "{:?}",
+        registered.body
+    );
+    assert!(
+        registered.body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("audience"),
+        "{:?}",
+        registered.body
+    );
+}
