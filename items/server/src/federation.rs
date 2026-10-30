@@ -145,6 +145,14 @@ impl LoginRequest {
     }
 }
 
+/// The claims of an accepted workload assertion.
+#[derive(Debug, Deserialize)]
+pub struct WorkloadAssertion {
+    pub sub: String,
+    pub jti: String,
+    pub exp: i64,
+}
+
 pub struct Provider {
     pub settings: Settings,
     http: reqwest::Client,
@@ -412,16 +420,12 @@ impl Provider {
 
     /// Validates a token the provider issued to a workload, for the JWT
     /// bearer grant: signed with the provider's keys, issued by it, for one
-    /// of `audiences`, unexpired. Returns its `sub`.
+    /// of `audiences`, unexpired, and with a `jti` to detect replays.
     pub async fn verify_assertion(
         &self,
         token: &str,
         audiences: &[String],
-    ) -> Result<String, FederationError> {
-        #[derive(Deserialize)]
-        struct Assertion {
-            sub: String,
-        }
+    ) -> Result<WorkloadAssertion, FederationError> {
         let invalid = |reason: &str| FederationError::InvalidIdToken(reason.to_owned());
         let header = jsonwebtoken::decode_header(token).map_err(|e| invalid(&e.to_string()))?;
         if matches!(
@@ -445,12 +449,13 @@ impl Provider {
         let mut validation = Validation::new(header.alg);
         validation.set_issuer(&[&self.settings.issuer]);
         validation.set_audience(audiences);
-        validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
+        validation.set_required_spec_claims(&["exp", "iss", "aud", "sub", "jti"]);
         validation.leeway = LEEWAY_SECONDS;
-        Ok(jsonwebtoken::decode::<Assertion>(token, &key, &validation)
-            .map_err(|e| invalid(&e.to_string()))?
-            .claims
-            .sub)
+        Ok(
+            jsonwebtoken::decode::<WorkloadAssertion>(token, &key, &validation)
+                .map_err(|e| invalid(&e.to_string()))?
+                .claims,
+        )
     }
 
     /// Checks `acr` and authentication recency against the provider's

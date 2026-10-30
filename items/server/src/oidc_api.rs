@@ -1100,14 +1100,14 @@ async fn jwt_bearer_grant(
         ));
     };
     let audiences = [state.auth.issuer.clone(), endpoint(state, "token")];
-    let subject = match provider.verify_assertion(assertion, &audiences).await {
-        Ok(subject) => subject,
+    let verified = match provider.verify_assertion(assertion, &audiences).await {
+        Ok(verified) => verified,
         Err(error) => {
             tracing::info!(%error, "JWT bearer assertion refused");
             return Ok(invalid_grant("the assertion is invalid"));
         }
     };
-    let identifier = credentials::federated_identifier(&provider.settings.id, &subject);
+    let identifier = credentials::federated_identifier(&provider.settings.id, &verified.sub);
     let Some(credential) =
         credentials::find_active(conn, credentials::CredentialKind::Federated, &identifier).await?
     else {
@@ -1122,6 +1122,19 @@ async fn jwt_bearer_grant(
         return Ok(invalid_grant(
             "no service principal has this workload identity",
         ));
+    }
+    // Each assertion is exchanged once; a second exchange means it leaked.
+    // r[impl federation.jwt-bearer.replay]
+    let expires = chrono::DateTime::from_timestamp(verified.exp, 0).unwrap_or_else(Utc::now);
+    if !konklav_store::bearer_assertions::record(
+        conn,
+        &provider.settings.issuer,
+        &verified.jti,
+        expires,
+    )
+    .await?
+    {
+        return Ok(invalid_grant("the assertion was already used"));
     }
     let now = Utc::now();
     let (session, _) = sessions::insert(

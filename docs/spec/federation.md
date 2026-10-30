@@ -194,6 +194,10 @@ configured upstream. An accepted assertion MUST map, by upstream issuer and
 `sub`, to a local service principal, and the issued token MUST be that
 principal's.
 
+r[federation.jwt-bearer.replay]
+An assertion MUST carry a `jti`, and each one MUST be exchanged at most
+once per upstream issuer until it expires.
+
 ## Audit
 
 r[federation.audit]

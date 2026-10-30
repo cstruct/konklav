@@ -357,6 +357,7 @@ async fn pinned_keys_replace_discovered_ones() {
 }
 
 // r[verify federation.jwt-bearer]
+// r[verify federation.jwt-bearer.replay]
 #[tokio::test(flavor = "multi_thread")]
 async fn workloads_exchange_upstream_tokens_for_local_service_principals() {
     let federation = upstream().await;
@@ -437,6 +438,11 @@ async fn workloads_exchange_upstream_tokens_for_local_service_principals() {
         .await;
     assert_eq!(claims.sub.to_string(), deployer.to_string());
     assert_eq!(claims.amr, ["fed"]);
+    let replayed = exchange(&down, &token).await;
+    assert_eq!(
+        replayed.body["error"], "invalid_grant",
+        "assertions work once"
+    );
 
     // A token for another audience isn't accepted.
     control_ok(

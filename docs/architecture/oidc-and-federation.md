@@ -327,6 +327,9 @@ credentials grant, with the downstream's issuer as its audience.
   control plane (`POST /v1/subjects/{id}/credentials` with
   `{"kind": "federated", "provider": …, "subject": …}`). People can't have
   workload identities; they link accounts by signing in.
+- Each assertion needs a `jti` and is exchanged once. The `jti` is kept
+  until the assertion expires, so a leaked token can't be exchanged again;
+  a job fetches a fresh upstream token for each exchange.
 - The resulting session lasts one access token, with this instance's
   audience and the `fed` method. Nothing is refreshed, and no long-lived
   secret sits in every environment.
