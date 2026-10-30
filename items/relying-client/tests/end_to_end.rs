@@ -61,6 +61,7 @@ async fn server() -> Server {
             identity_providers: konklav_server::federation::Providers::default(),
             oidc: None,
             passkeys: None,
+            trusted_proxies: Vec::new(),
         }),
         feed: Arc::new(FeedHub::new(Duration::from_millis(100))),
     };
@@ -69,6 +70,7 @@ async fn server() -> Server {
         subject: any,
         relying: any,
         control: any,
+        trusted_proxies: Vec::new(),
     };
     let bound = BoundServer::bind(&listen, state.clone()).await.unwrap();
     let addrs = bound.local_addrs().unwrap();

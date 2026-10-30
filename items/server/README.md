@@ -16,6 +16,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
 
   Keys belonging to contexts a command doesn't load are still validated, so typos are still caught.
 - Binding one listener per distinct surface address. Surfaces configured with the same address share a listener.
+- Working out each client's address from the connection, or from `X-Forwarded-For` when the connection comes from one of `listen.trusted_proxies`, for per-address rate limits.
 - Liveness (`/healthz`) and readiness (`/readyz`: database reachable and no pending migrations) on every listener.
 - The typed error model: `{"error": {"code": "SCREAMING_SNAKE_CASE", "message": "..."}}`, including for unknown endpoints and methods.
 - Graceful shutdown on Ctrl-C and SIGTERM.

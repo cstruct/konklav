@@ -118,6 +118,7 @@ mod tests {
             subject: subject.parse().unwrap(),
             relying: relying.parse().unwrap(),
             control: control.parse().unwrap(),
+            trusted_proxies: Vec::new(),
         }
     }
 

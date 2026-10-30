@@ -20,6 +20,7 @@ use konklav_store::{Connection, catalog, login_attempts, memberships, tenants};
 use konklav_token::{AccessClaims, VerifyOptions};
 use serde::{Deserialize, Serialize};
 
+use crate::client_address::ClientAddress;
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::issue::{self, IssuedToken};
 use crate::{AppState, AuthContext, BrowserSettings, keys, pacing};
@@ -44,8 +45,11 @@ const CLIENT_HEADER: &str = "x-konklav-client";
 /// Cookies are scoped to the only endpoints that read them.
 const COOKIE_PATHS: [&str; 2] = ["/v1/refresh", "/v1/sign-out"];
 
-/// Failed attempts allowed per login identifier, per window.
+/// Failed attempts allowed per login identifier, per window in seconds.
 const RATE_LIMITS: [(i64, i64); 3] = [(10 * 60, 30), (60 * 60, 60), (24 * 60 * 60, 120)];
+/// Failed attempts allowed per client address across identifiers, per
+/// window. Looser than per identifier: many people can share an address.
+const ADDRESS_LIMITS: [(i64, i64); 2] = [(10 * 60, 100), (24 * 60 * 60, 1000)];
 
 // r[impl session.client-kind]
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -187,8 +191,8 @@ impl Attempt {
     }
 }
 
-/// Records an attempt against `identifier` and refuses it if the
-/// identifier has had too many failures. The attempt counts as a failure
+/// Records an attempt against `identifier` from `address` and refuses it
+/// if either has had too many failures. The attempt counts as a failure
 /// while it is checked, so a burst of concurrent attempts can't all pass
 /// the limit.
 // r[impl authn.login.rate-limit]
@@ -196,20 +200,28 @@ pub(crate) async fn begin_attempt(
     conn: &mut Connection,
     kind: CredentialKind,
     identifier: &str,
+    address: ClientAddress,
 ) -> Result<Attempt, ApiError> {
-    let id = login_attempts::begin(conn, kind, identifier).await?;
+    let address = address.key();
+    let id = login_attempts::begin(conn, kind, identifier, address.as_deref()).await?;
     let now = Utc::now();
+    let mut limited = false;
     for (window, limit) in RATE_LIMITS {
-        let failures =
-            login_attempts::failures_since(conn, kind, identifier, now - Duration::seconds(window))
-                .await?;
-        if failures > limit {
-            login_attempts::forget(conn, id).await?;
-            return Err(ApiError::new(
-                ErrorCode::RateLimited,
-                "too many failed attempts; try again later",
-            ));
+        let since = now - Duration::seconds(window);
+        limited |= login_attempts::failures_since(conn, kind, identifier, since).await? > limit;
+    }
+    if let Some(address) = &address {
+        for (window, limit) in ADDRESS_LIMITS {
+            let since = now - Duration::seconds(window);
+            limited |= login_attempts::address_failures_since(conn, address, since).await? > limit;
         }
+    }
+    if limited {
+        login_attempts::forget(conn, id).await?;
+        return Err(ApiError::new(
+            ErrorCode::RateLimited,
+            "too many failed attempts; try again later",
+        ));
     }
     Ok(Attempt { id })
 }
@@ -365,6 +377,7 @@ pub(crate) async fn start_session(
 // r[impl authn.login.methods]
 async fn login_password(
     State(state): State<AppState>,
+    address: ClientAddress,
     headers: HeaderMap,
     ApiJson(body): ApiJson<PasswordLogin>,
 ) -> Result<Response, ApiError> {
@@ -375,7 +388,7 @@ async fn login_password(
     let mut conn = state.pool.get().await?;
     check_requested_flags(&mut conn, &body.flags).await?;
     let kind = CredentialKind::Password;
-    let attempt = begin_attempt(&mut conn, kind, &body.identifier).await?;
+    let attempt = begin_attempt(&mut conn, kind, &body.identifier, address).await?;
 
     let credential = credentials::find_active(&mut conn, kind, &body.identifier).await?;
     let subject = match &credential {
@@ -438,11 +451,12 @@ async fn login_password(
 /// for tokens. Native clients only.
 async fn login_secret_key(
     State(state): State<AppState>,
+    address: ClientAddress,
     ApiJson(body): ApiJson<SecretKeyLogin>,
 ) -> Result<Response, ApiError> {
     let mut conn = state.pool.get().await?;
     let kind = CredentialKind::SecretKey;
-    let attempt = begin_attempt(&mut conn, kind, &body.key_id).await?;
+    let attempt = begin_attempt(&mut conn, kind, &body.key_id, address).await?;
 
     let credential = credentials::find_active(&mut conn, kind, &body.key_id).await?;
     let subject = match &credential {

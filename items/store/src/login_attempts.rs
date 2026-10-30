@@ -14,12 +14,14 @@ pub async fn begin(
     conn: &mut AsyncPgConnection,
     kind: CredentialKind,
     identifier: &str,
+    address: Option<&str>,
 ) -> QueryResult<i64> {
     diesel::insert_into(login_attempt::table)
         .values((
             login_attempt::kind.eq(kind.as_str()),
             login_attempt::identifier.eq(normalize_identifier(identifier)),
             login_attempt::succeeded.eq(false),
+            login_attempt::address.eq(address),
         ))
         .returning(login_attempt::id)
         .get_result(conn)
@@ -52,6 +54,21 @@ pub async fn failures_since(
     login_attempt::table
         .filter(login_attempt::kind.eq(kind.as_str()))
         .filter(login_attempt::identifier.eq(normalize_identifier(identifier)))
+        .filter(login_attempt::succeeded.eq(false))
+        .filter(login_attempt::attempted_at.ge(since))
+        .count()
+        .get_result(conn)
+        .await
+}
+
+/// Failed attempts of any kind from `address` since `since`.
+pub async fn address_failures_since(
+    conn: &mut AsyncPgConnection,
+    address: &str,
+    since: DateTime<Utc>,
+) -> QueryResult<i64> {
+    login_attempt::table
+        .filter(login_attempt::address.eq(address))
         .filter(login_attempt::succeeded.eq(false))
         .filter(login_attempt::attempted_at.ge(since))
         .count()

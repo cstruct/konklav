@@ -115,6 +115,7 @@ diesel::table! {
         identifier -> Text,
         succeeded -> Bool,
         attempted_at -> Timestamptz,
+        address -> Nullable<Text>,
     }
 }
 

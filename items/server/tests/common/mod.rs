@@ -72,6 +72,7 @@ pub fn auth_context(signer: Signer) -> AuthContext {
         identity_providers: konklav_server::federation::Providers::default(),
         oidc: None,
         passkeys: None,
+        trusted_proxies: Vec::new(),
     }
 }
 
@@ -251,7 +252,22 @@ impl TestApp {
         headers: &[(&str, &str)],
         body: Option<Value>,
     ) -> Reply {
+        self.send_from(None, method, uri, headers, body).await
+    }
+
+    /// [`Self::send`] over a connection from `peer`.
+    pub async fn send_from(
+        &self,
+        peer: Option<std::net::SocketAddr>,
+        method: Method,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: Option<Value>,
+    ) -> Reply {
         let mut request = Request::builder().method(method).uri(uri);
+        if let Some(peer) = peer {
+            request = request.extension(axum::extract::ConnectInfo(peer));
+        }
         for (name, value) in headers {
             request = request.header(*name, *value);
         }
@@ -411,6 +427,7 @@ impl TestApp {
             subject: any,
             relying: any,
             control: any,
+            trusted_proxies: Vec::new(),
         };
         let server = BoundServer::bind(&listen, self.state.clone())
             .await

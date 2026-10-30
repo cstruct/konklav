@@ -121,6 +121,74 @@ async fn password_checks_in_step_up_count_toward_the_limit() {
     assert_eq!(app.login(EMAIL, PASSWORD).await.code(), "RATE_LIMITED");
 }
 
+// r[verify authn.login.rate-limit]
+#[tokio::test(flavor = "multi_thread")]
+async fn one_address_cannot_try_many_identifiers() {
+    let app = TestApp::new().await;
+    let login = |peer: &str, n: usize| {
+        let peer = peer.parse().unwrap();
+        let app = &app;
+        async move {
+            app.send_from(
+                Some(peer),
+                Method::POST,
+                "/v1/login/password",
+                &[],
+                Some(json!({"identifier": format!("user{n}@example.com"), "password": "x"})),
+            )
+            .await
+        }
+    };
+    for n in 0..100 {
+        assert_eq!(
+            login("203.0.113.9:1000", n).await.code(),
+            "INVALID_CREDENTIALS"
+        );
+    }
+    assert_eq!(login("203.0.113.9:1001", 100).await.code(), "RATE_LIMITED");
+    assert_eq!(
+        login("198.51.100.1:1000", 100).await.code(),
+        "INVALID_CREDENTIALS",
+        "other addresses are unaffected"
+    );
+}
+
+// r[verify platform.server.client-address]
+#[tokio::test(flavor = "multi_thread")]
+async fn trusted_proxies_report_the_client_address() {
+    let app = TestApp::with_auth(|auth| {
+        auth.trusted_proxies = vec!["10.0.0.1".parse().unwrap()];
+    })
+    .await;
+    let login = |forwarded: &'static str, n: usize| {
+        let app = &app;
+        async move {
+            app.send_from(
+                Some("10.0.0.1:443".parse().unwrap()),
+                Method::POST,
+                "/v1/login/password",
+                &[("x-forwarded-for", forwarded)],
+                Some(json!({"identifier": format!("user{n}@example.com"), "password": "x"})),
+            )
+            .await
+        }
+    };
+    for n in 0..100 {
+        // The client varies what it claims; the proxy's hop doesn't.
+        let claim = if n % 2 == 0 {
+            "1.1.1.1, 203.0.113.9"
+        } else {
+            "2.2.2.2, 203.0.113.9"
+        };
+        assert_eq!(login(claim, n).await.code(), "INVALID_CREDENTIALS");
+    }
+    assert_eq!(login("203.0.113.9", 100).await.code(), "RATE_LIMITED");
+    assert_eq!(
+        login("198.51.100.1", 100).await.code(),
+        "INVALID_CREDENTIALS"
+    );
+}
+
 // r[verify session.version]
 // r[verify session.refresh.rotation]
 #[tokio::test(flavor = "multi_thread")]

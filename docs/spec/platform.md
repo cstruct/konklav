@@ -27,6 +27,12 @@ r[platform.server.versioned-paths]
 Every HTTP endpoint other than health checks and `/.well-known/*` MUST live
 under a major-version prefix, starting with `/v1`.
 
+r[platform.server.client-address]
+The server MUST take a client's address from the connection, unless the
+connection comes from a configured trusted proxy. Then it MUST use the last
+address in `X-Forwarded-For` that is not a trusted proxy, so clients can't
+choose their own address by sending the header.
+
 r[platform.server.health]
 The server MUST expose a liveness endpoint and a readiness endpoint. The
 readiness endpoint MUST fail while the database is unreachable or migrations

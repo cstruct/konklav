@@ -2,7 +2,7 @@
 //! file and `KONKLAV__*` environment variables, in that order of precedence.
 
 use std::fmt;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use konklav_store::ConnectOptions;
@@ -32,6 +32,10 @@ config_tree! {
             pub subject: SocketAddr,
             pub relying: SocketAddr,
             pub control: SocketAddr,
+            /// Reverse proxies whose `X-Forwarded-For` is believed when
+            /// working out a client's address for rate limiting.
+            #[facet(default)]
+            pub trusted_proxies: Vec<IpAddr>,
         },
     }
 }

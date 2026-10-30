@@ -141,6 +141,8 @@ async fn serve(
         )?;
     }
     auth.pacing = pacing;
+    auth.trusted_proxies
+        .clone_from(&listen.listen.trusted_proxies);
     auth.oidc = oidc;
     auth.identity_providers = konklav_server::federation::Providers::from_config(&browser)?;
     auth.passkeys = browser

@@ -3,6 +3,7 @@
 
 mod capabilities;
 pub mod claim_mapping;
+mod client_address;
 pub mod config;
 mod control_api;
 mod control_authz;
@@ -64,6 +65,8 @@ pub struct AuthContext {
     pub oidc: Option<oidc::OpenIdProvider>,
     /// Passkey support, when configured.
     pub passkeys: Option<passkeys::Verifier>,
+    /// Reverse proxies trusted to report client addresses.
+    pub trusted_proxies: Vec<std::net::IpAddr>,
 }
 
 #[derive(Clone, Debug)]
@@ -103,6 +106,7 @@ impl AuthContext {
             identity_providers: federation::Providers::default(),
             oidc: None,
             passkeys: None,
+            trusted_proxies: Vec::new(),
         }
     }
 }

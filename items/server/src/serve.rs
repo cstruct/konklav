@@ -52,6 +52,8 @@ impl BoundServer {
             let app = surface::router(&surfaces, self.state.clone());
             let mut stopped = stopped.clone();
             tasks.spawn(async move {
+                // Connection info gives handlers the client's address.
+                let app = app.into_make_service_with_connect_info::<SocketAddr>();
                 axum::serve(listener, app)
                     .with_graceful_shutdown(async move {
                         let _ = stopped.wait_for(|stop| *stop).await;

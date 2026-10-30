@@ -26,6 +26,7 @@ use konklav_store::{Connection, events, login_attempts, memberships, tenants};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
+use crate::client_address::ClientAddress;
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::issue::{self, IssuedToken};
 use crate::subject_api::{
@@ -601,6 +602,7 @@ struct StepUpRequest {
 /// within the current session, refreshing its authentication time.
 async fn step_up(
     State(state): State<AppState>,
+    address: ClientAddress,
     headers: HeaderMap,
     ApiJson(body): ApiJson<StepUpRequest>,
 ) -> Result<Json<TokenBody>, ApiError> {
@@ -617,7 +619,7 @@ async fn step_up(
             vec![verify_factor(&state, &mut conn, &factor, &code).await?]
         }
         (None, None, Some(password), None) => {
-            verify_password_of(&state, &mut conn, session.subject_id, &password).await?;
+            verify_password_of(&state, &mut conn, session.subject_id, &password, address).await?;
             vec!["pwd"]
         }
         (None, None, None, Some((ceremony, passkey))) => {
@@ -645,6 +647,7 @@ async fn verify_password_of(
     conn: &mut Connection,
     subject: SubjectId,
     password: &str,
+    address: ClientAddress,
 ) -> Result<Credential, ApiError> {
     let credential = credentials::list_for_subject(conn, subject)
         .await?
@@ -656,7 +659,13 @@ async fn verify_password_of(
     };
     // Counts toward the login limit, so step-up and password change can't
     // be used to guess the password instead.
-    let attempt = begin_attempt(conn, CredentialKind::Password, &credential.identifier).await?;
+    let attempt = begin_attempt(
+        conn,
+        CredentialKind::Password,
+        &credential.identifier,
+        address,
+    )
+    .await?;
     let hasher = state.auth.hasher.clone();
     let (password, hash) = (password.to_owned(), data.hash.clone());
     let check = tokio::task::spawn_blocking(move || hasher.verify(&password, &hash))
@@ -902,13 +911,21 @@ struct ChangePassword {
 /// `POST /v1/password/change`: keeps the caller's session, ends the others.
 async fn change_password(
     State(state): State<AppState>,
+    address: ClientAddress,
     headers: HeaderMap,
     ApiJson(body): ApiJson<ChangePassword>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_password(&body.new)?;
     let mut conn = state.pool.get().await?;
     let session = own_session(&state, &mut conn, &headers).await?;
-    let old = verify_password_of(&state, &mut conn, session.subject_id, &body.current).await?;
+    let old = verify_password_of(
+        &state,
+        &mut conn,
+        session.subject_id,
+        &body.current,
+        address,
+    )
+    .await?;
     let hasher = state.auth.hasher.clone();
     let password = body.new.clone();
     let hash = tokio::task::spawn_blocking(move || hasher.hash(&password))

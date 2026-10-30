@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use webauthn_rs::prelude::{PublicKeyCredential, RegisterPublicKeyCredential};
 
+use crate::client_address::ClientAddress;
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::passkeys::{Rejected, Verifier};
 use crate::subject_api::{
@@ -376,6 +377,7 @@ struct Login {
 // r[impl authn.passkey.discoverable]
 async fn login(
     State(state): State<AppState>,
+    address: ClientAddress,
     headers: HeaderMap,
     ApiJson(body): ApiJson<Login>,
 ) -> Result<Response, ApiError> {
@@ -391,7 +393,7 @@ async fn login(
         .claimed(&body.credential)
         .map_err(|error| rejected(&error))?;
     let kind = CredentialKind::PublicKey;
-    let attempt = begin_attempt(&mut conn, kind, &claimed.credential_id).await?;
+    let attempt = begin_attempt(&mut conn, kind, &claimed.credential_id, address).await?;
 
     let credential = credentials::find_active(&mut conn, kind, &claimed.credential_id)
         .await?

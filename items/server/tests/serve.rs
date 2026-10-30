@@ -27,6 +27,7 @@ async fn serves_every_surface_on_its_own_listener_until_shutdown() {
         subject: any_port,
         relying: any_port,
         control: any_port,
+        trusted_proxies: Vec::new(),
     };
     let server = BoundServer::bind(&listen, common::state(db.pool().clone()))
         .await
