@@ -152,6 +152,48 @@ async fn the_database_rejects_credential_data_that_violates_its_schema() {
     }
 }
 
+// r[verify item.store.typed-data]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_database_rejects_mfa_factor_data_that_violates_its_schema() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let subject = subject(&mut conn).await;
+    let insert = |kind: &str, data: &str| {
+        diesel::sql_query(format!(
+            "insert into mfa_factor (id, subject_id, kind, data) \
+             values (gen_random_uuid(), '{subject}', '{kind}', '{data}')"
+        ))
+    };
+    for (kind, data) in [
+        (
+            "totp",
+            r#"{"key_id": "k", "nonce": "n", "ciphertext": "c"}"#,
+        ),
+        ("email_code", r#"{"email": "ada@acme.example"}"#),
+    ] {
+        insert(kind, data).execute(&mut conn).await.unwrap();
+    }
+    for (kind, data) in [
+        ("totp", r"{}"),
+        ("totp", r#"{"key_id": "k", "nonce": "n"}"#),
+        (
+            "totp",
+            r#"{"key_id": "k", "nonce": "n", "ciphertext": "c", "secret": "s"}"#,
+        ),
+        (
+            "totp",
+            r#"{"key_id": "k", "nonce": "n", "ciphertext": "c", "last_step": "1"}"#,
+        ),
+        ("email_code", r"{}"),
+        ("email_code", r#"{"email": "a@"}"#),
+        ("email_code", r#"{"email": "ada@acme.example", "extra": 1}"#),
+        ("sms", r#"{"phone": "+15550100"}"#),
+    ] {
+        let result = insert(kind, data).execute(&mut conn).await;
+        assert!(result.is_err(), "accepted {kind} {data}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn secret_keys_round_trip_through_the_schema() {
     let db = TestDatabase::new().await;
