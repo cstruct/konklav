@@ -18,59 +18,136 @@ It is designed around:
 - **traceability:** requirements live in Tracey-managed specs and are linked
   from code and tests
 
-## Status
+## Quickstart
 
-Milestones M0–M8 are done in code. The cutover itself is an operation the
-relying system's runbook describes, and it remains: publish the Python
-binding, ship the frontends, rehearse, switch over, then clean up.
+This runs Konklav locally, opens the operators' console and creates the
+first operator. You need [mise](https://mise.jdx.dev), Docker and the
+OpenSSL headers (for example `brew install openssl@3`).
 
-Beyond the milestones, Konklav federates through OpenID Connect in both
-directions:
-- signing in through identity providers, with claim mapping
-- acting as an OpenID provider, with client credentials, revocation and
-  logout
-- peering between Konklav instances
-- workload tokens
+1. Install the toolchain and start the server:
 
-See [OIDC and federation](docs/architecture/oidc-and-federation.md).
+   ```sh
+   mise trust && mise install
+   mise run serve
+   ```
 
-By milestone:
+   This starts Postgres in Docker, applies migrations, creates a development
+   signing key and serves the three surfaces:
+   - subject-facing on `127.0.0.1:8080`
+   - relying on `:8081`
+   - control-plane on `:8082`
 
-- M8: the relying system runs on Konklav behind a flag, and a cutover
-  runbook lives in that system's repository. The integration covers:
-  - token verification and decisions through the Python binding
-  - a transactional sync of its admin writes to the control plane
-  - invites that name their membership
-  - secret-key rotation on re-import
-  - retired sign-in routes
-  - delivery
-  - a legacy refresh exchange
-- M7: a capability-gated bulk import of subjects, Argon2-hashed
-  credentials, MFA seeds and sessions that keeps existing ids and can be
-  re-run.
-- M6: a control plane authorized by capabilities instead of a static token,
-  with listings and entitlement explanations.
-- M5: MFA, step-up, passwordless login, invites, password reset and change,
-  impersonation, and delivery requests.
-- M4: the change feed (SSE with resume, reset and batches) and the relying
-  SDK: a sans-I/O core that also builds for wasm, with a native Rust client
+2. In a second terminal, start the console:
+
+   ```sh
+   mise run console:serve
+   ```
+
+   Open <http://localhost:8083>. Use `localhost` rather than `127.0.0.1`,
+   because passkeys don't work on IP addresses.
+
+3. Sign in with the bootstrap token. The development one is
+   `control.bootstrap_token` in
+   [`config/dev.secrets.styx`](config/dev.secrets.styx). The control plane
+   accepts it for everything, and it is only meant for creating the first
+   operator.
+
+4. Create the first operator, a human subject with a password credential
+   and the built-in `konklav.admin` global role. You can do this in the
+   console, or with the control-plane API:
+
+   ```sh
+   TOKEN=konklav-dev-control-token-0123456789
+   ID=$(uuidgen | tr A-Z a-z)
+   curl -X PUT localhost:8082/v1/subjects/$ID \
+     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+     -d '{"kind": "human"}'
+   curl -X POST localhost:8082/v1/subjects/$ID/credentials \
+     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+     -d '{"kind": "password", "identifier": "ada@example.com", "password": "correct horse"}'
+   curl -X POST localhost:8082/v1/subjects/$ID/global-assignments \
+     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+     -d '{"role": "konklav.admin"}'
+   ```
+
+   A `409` means the identifier is already taken in your database. Pick
+   another, or start over with an empty database with `mise run db:reset`.
+
+5. Sign out of the console and sign in again as `ada@example.com`. To get
+   an access token without the console:
+
+   ```sh
+   curl -X POST localhost:8080/v1/login/password \
+     -H 'Content-Type: application/json' \
+     -d '{"identifier": "ada@example.com", "password": "correct horse"}'
+   ```
+
+   In a real deployment, remove the bootstrap token from the secrets file
+   once an operator exists.
+
+To start from a populated database instead, seed it with the example
+bootstrap set:
+
+```sh
+cargo run -p konklav-server -- bootstrap examples/bootstrap/nested/seed.styx
+```
+
+## Where next
+
+- **Vocabulary:** [`docs/nomenclature.md`](docs/nomenclature.md) defines
+  subjects, tenants, memberships, roles, entitlement sets and the rest.
+  Konklav's docs and APIs use these terms precisely.
+- **How it fits together:** the
+  [v2 overview](docs/architecture/v2-overview.md), then the other notes in
+  [`docs/architecture/`](docs/architecture/).
+- **Runnable scenarios:** [`examples/`](examples/README.md) has email-link
+  sign-in with a delivery worker, one Konklav signing people in to another,
+  and seeding a deployment. Run one with `mise run example <name>`.
+- **Integrating a relying system:** the relying SDK, as the
+  [Python binding](items/py/README.md) or the
+  [native Rust client](items/relying-client/README.md), on top of the
+  [relying core](items/relying/README.md).
+- **Operating it:** the [server](items/server/README.md) (commands,
+  configuration, every endpoint), the [console](items/console/README.md),
+  and [bootstrap sets](items/bootstrap/README.md) for seeding and
+  importing.
+- **Federation:** [OIDC and federation](docs/architecture/oidc-and-federation.md),
+  for signing in through identity providers and acting as an OpenID
+  provider.
+- **Exact behavior:** the normative specs in [`docs/spec/`](docs/spec/README.md).
+
+## What it does
+
+- **Subjects and credentials:** humans and service principals; passwords,
+  secret keys, passkeys, email links and phone codes; MFA (TOTP and email
+  codes), step-up, invites, password reset and change, and impersonation.
+- **Sessions and tokens:** server-side sessions with refresh rotation and
+  reuse detection, browser cookies with CSRF checks, and Ed25519 access
+  tokens published through JWKS.
+- **Tenancy and authorization:** tenants and memberships with facts, the
+  action catalog, templates, roles and assignments, compiled entitlement
+  sets, session flags, and the entitlements and check APIs.
+- **Change feed and relying SDK:** SSE with resume, reset and batches; a
+  sans-I/O relying core that also builds for wasm, with a native Rust client
   and a Python binding.
-- M3: tenants and memberships with facts, the action catalog, templates,
-  roles and assignments, entitlement compilation, tenant selection at
-  login, session flags, and the entitlements and check APIs.
-- M1–M2:
-  - subjects, and credentials in one JSON-Schema-validated table
-  - password and secret-key login
-  - server-side sessions with refresh rotation and reuse detection
-  - browser cookies with CSRF checks
-  - Ed25519 tokens with JWKS
-  - control-plane administration of all of the above
+- **Messaging:** Konklav never sends messages. It emits delivery requests
+  on the change feed for a relying system's worker to send.
+- **Control plane:** authorized by `konklav:` capabilities, with listings,
+  entitlement explanations and an operators' console.
+- **Import:** a bulk import API and a `bootstrap` command that keep existing
+  ids and can be re-run, including Argon2 password hashes, MFA seeds and
+  sessions.
+- **Federation:** OpenID Connect in both directions: signing in through
+  identity providers with claim mapping; acting as an OpenID provider with
+  client credentials, revocation and logout; peering between Konklav
+  instances; and workload tokens.
 
-v1, a prototype backed by Feldera, is preserved at tag `v1`.
+The Python binding isn't published to PyPI yet. v1, a prototype backed by
+Feldera, is preserved at tag `v1`.
 
 ## Repository layout
 
-- `docs/nomenclature.md`: the shared vocabulary. Read this first.
+- `docs/nomenclature.md`: the shared vocabulary.
 - `docs/spec/`: normative, Tracey-managed requirements.
 - `docs/architecture/`: rationale and design notes, starting with
   [`v2-overview.md`](docs/architecture/v2-overview.md).
@@ -101,7 +178,8 @@ v1, a prototype backed by Feldera, is preserved at tag `v1`.
 
 [mise](https://mise.jdx.dev) manages the toolchain, the environment and the
 local services. It covers Rust, Tracey and Diesel's CLI (which bundles libpq,
-so no system Postgres client is needed).
+so no system Postgres client is needed). Docker runs the local Postgres, and
+building the server needs the OpenSSL headers.
 
 ```sh
 mise trust && mise install
@@ -148,6 +226,24 @@ Other database tasks:
 To use another port, set `KONKLAV_DEV_PG_PORT`, for example in an untracked
 `mise.local.toml`.
 
+## Running in a container
+
+The image runs `serve` as a non-root user. Mount `config.styx`,
+`secrets.styx` and the key files they name at `/etc/konklav`:
+
+```sh
+docker run --rm -v ./deploy:/etc/konklav:ro konklav/konklav migrate
+docker run -v ./deploy:/etc/konklav:ro -p 8080-8082:8080-8082 konklav/konklav
+```
+
+[`config/dev.styx`](config/dev.styx) and
+[`config/dev.secrets.styx`](config/dev.secrets.styx) show the shape of both
+files, and [`items/server`](items/server/README.md) describes the settings.
+
+Konklav's schema needs PostgreSQL 18 with the
+[`pg_jsonschema`](https://github.com/supabase/pg_jsonschema) extension;
+`dev/postgres` builds such an image.
+
 ## CI and releases
 
 GitHub Actions runs `mise run lint` and `mise run test` on every push to
@@ -167,18 +263,6 @@ push a matching `v<version>` tag. The release workflow:
 
 A version with a pre-release part, such as `0.2.0-rc.1`, makes a
 pre-release, and its image gets only that exact tag.
-
-The image runs `serve` as a non-root user. Mount `config.styx`,
-`secrets.styx` and the key files they name at `/etc/konklav`:
-
-```sh
-docker run --rm -v ./deploy:/etc/konklav:ro konklav/konklav migrate
-docker run -v ./deploy:/etc/konklav:ro -p 8080-8082:8080-8082 konklav/konklav
-```
-
-Konklav's schema needs PostgreSQL 18 with the
-[`pg_jsonschema`](https://github.com/supabase/pg_jsonschema) extension;
-`dev/postgres` builds such an image.
 
 ## Stack
 
