@@ -54,6 +54,8 @@ out of scope" position.
    - checks `state` against the cookie and consumes the challenge
    - exchanges the code
    - validates the ID token
+   - fetches UserInfo when the provider has an endpoint and returned an
+     access token, and adds its claims (the ID token's win)
 3. It then resolves the federated credential:
    - linked: use its subject
    - otherwise: link or provision per policy
@@ -230,8 +232,11 @@ Konklav holds no profile data, so it can only serve:
 - `groups`
 
 `groups` lists the subject's global roles that the client's registration
-lets it see, such as roles named `ops-*` for environments. ID tokens and
-`/v1/oauth2/userinfo` carry the same claims for the granted scopes. Richer
+lets it see, such as roles named `ops-*` for environments. ID tokens carry
+`groups` but not `email` or `phone_number`: every code exchange also returns
+an access token, so OpenID Connect puts a scope's claims in
+`/v1/oauth2/userinfo`. A downstream Konklav reads them there before linking
+by email. Richer
 profile claims come from an optional claims hook, which isn't built yet: a
 relying-system endpoint that Konklav would call with the subject id. That
 keeps `r[platform.repo.relying-agnostic]`.
@@ -402,7 +407,7 @@ Proposed defaults, to confirm before implementation:
 | Peering in the first release | No: short sessions and back-channel logout first, peering next | Peering from the start |
 | Break-glass credential | Local secret keys with an alerting event; hardware keys once `public_key` exists | Bootstrap token |
 | Second signing algorithm | ES256, and RS256 when an RSA key is configured | RS256 only (wider support, larger keys and tokens) |
-| ID token claims | Subject id, login identifiers and groups; a claims hook for the rest | Store profile data in Konklav |
+| ID token claims | Subject id and groups; login identifiers from UserInfo; a claims hook for the rest | Store profile data in Konklav; login identifiers in the ID token |
 | SAML | Deferred; brokers translate SAML to OIDC | Native SAML |
 
 ## Phases

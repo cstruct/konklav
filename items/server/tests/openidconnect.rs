@@ -162,7 +162,7 @@ async fn a_standard_client_library_signs_in_through_konklav() {
         .claims(&client.id_token_verifier(), &nonce)
         .expect("the ID token verifies against Konklav's JWKS");
     assert_eq!(claims.subject().as_str(), subject);
-    assert_eq!(claims.email().map(|e| e.as_str()), Some("ada@example.com"));
+    assert_eq!(claims.email(), None, "scope claims are in userinfo");
 
     let info: CoreUserInfoClaims = client
         .user_info(tokens.access_token().clone(), None)
@@ -171,6 +171,7 @@ async fn a_standard_client_library_signs_in_through_konklav() {
         .await
         .expect("userinfo answers");
     assert_eq!(info.subject().as_str(), subject);
+    assert_eq!(info.email().map(|e| e.as_str()), Some("ada@example.com"));
 
     let refresh = tokens.refresh_token().expect("a refresh token").clone();
     let refreshed = client

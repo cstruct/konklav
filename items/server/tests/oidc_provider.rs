@@ -313,8 +313,9 @@ async fn clients_sign_subjects_in_with_the_code_flow() {
     assert_eq!(id["azp"], "console");
     assert_eq!(id["amr"], json!(["pwd"]));
     assert_eq!(id["acr"], "urn:konklav:acr:1");
-    assert_eq!(id["email"], "ada@example.com");
-    assert_eq!(id["email_verified"], false);
+    // Scope claims are served from userinfo only.
+    assert!(id.get("email").is_none(), "{id:?}");
+    assert!(id.get("email_verified").is_none(), "{id:?}");
     assert_eq!(
         id["groups"],
         json!(["ops-admin"]),

@@ -38,6 +38,8 @@ struct Grant {
     claims: Value,
     /// How to sign the ID token.
     signing: Signing,
+    /// userinfo for the access token, which is only issued with it.
+    userinfo: Option<Value>,
 }
 
 #[derive(Clone, Copy)]
@@ -51,10 +53,13 @@ enum Signing {
 struct Fake {
     issuer: String,
     grants: HashMap<String, Grant>,
+    /// userinfo by access token.
+    userinfo: HashMap<String, Value>,
     jwks_fetches: usize,
 }
 
-/// A minimal OpenID provider: discovery, keys and the token endpoint.
+/// A minimal OpenID provider: discovery, keys, the token endpoint and
+/// userinfo.
 /// Authorization is simulated by registering grants directly.
 struct FakeProvider {
     issuer: String,
@@ -73,6 +78,7 @@ impl FakeProvider {
             .route("/.well-known/openid-configuration", get(discovery))
             .route("/jwks", get(jwks))
             .route("/token", post(token))
+            .route("/userinfo", get(userinfo))
             .with_state(state.clone());
         tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         Self { issuer, state }
@@ -97,6 +103,18 @@ impl FakeProvider {
     /// Simulates the subject signing in at the provider for the
     /// authorization request at `url`, returning the code.
     fn authorize(&self, url: &str, claims: Value, signing: Signing) -> String {
+        self.authorize_with(url, claims, signing, None)
+    }
+
+    /// Like `authorize`, but the token response also carries an access
+    /// token that userinfo answers with `userinfo`.
+    fn authorize_with(
+        &self,
+        url: &str,
+        claims: Value,
+        signing: Signing,
+        userinfo: Option<Value>,
+    ) -> String {
         let params = query(url);
         let mut claims = claims;
         if claims.get("nonce").is_none() {
@@ -109,6 +127,7 @@ impl FakeProvider {
                 code_challenge: params["code_challenge"].clone(),
                 claims,
                 signing,
+                userinfo,
             },
         );
         code
@@ -122,7 +141,21 @@ async fn discovery(State(state): State<Arc<Mutex<Fake>>>) -> axum::Json<Value> {
         "authorization_endpoint": format!("{issuer}/authorize"),
         "token_endpoint": format!("{issuer}/token"),
         "jwks_uri": format!("{issuer}/jwks"),
+        "userinfo_endpoint": format!("{issuer}/userinfo"),
     }))
+}
+
+async fn userinfo(
+    State(state): State<Arc<Mutex<Fake>>>,
+    headers: HeaderMap,
+) -> Result<axum::Json<Value>, StatusCode> {
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let info = state.lock().unwrap().userinfo.get(token).cloned();
+    info.map(axum::Json).ok_or(StatusCode::UNAUTHORIZED)
 }
 
 async fn jwks(State(state): State<Arc<Mutex<Fake>>>) -> axum::Json<Value> {
@@ -149,13 +182,18 @@ async fn token(
     {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let (issuer, grant) = {
+    let (issuer, grant, access_token) = {
         let mut fake = state.lock().unwrap();
         let grant = fake
             .grants
             .remove(&form["code"])
             .ok_or(StatusCode::BAD_REQUEST)?;
-        (fake.issuer.clone(), grant)
+        let access_token = grant.userinfo.clone().map(|info| {
+            let token = uuid::Uuid::now_v7().to_string();
+            fake.userinfo.insert(token.clone(), info);
+            token
+        });
+        (fake.issuer.clone(), grant, access_token)
     };
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(form["code_verifier"].as_bytes()));
     if challenge != grant.code_challenge {
@@ -182,9 +220,11 @@ async fn token(
             jsonwebtoken::encode(&header, &claims, &EncodingKey::from_secret(b"shared")).unwrap()
         }
     };
-    Ok(axum::Json(
-        json!({"id_token": id_token, "token_type": "Bearer"}),
-    ))
+    let mut body = json!({"id_token": id_token, "token_type": "Bearer"});
+    if let Some(token) = access_token {
+        body["access_token"] = json!(token);
+    }
+    Ok(axum::Json(body))
 }
 
 fn query(url: &str) -> HashMap<String, String> {
@@ -569,6 +609,53 @@ async fn verified_emails_link_only_in_allowed_domains() {
         &app,
         &provider,
         json!({"sub": "u5", "email": "Ada@Example.com", "email_verified": true}),
+    )
+    .await;
+    assert_eq!(signed_in_subject(&app, &reply).await, ada);
+}
+
+// r[verify federation.idp.userinfo]
+#[tokio::test(flavor = "multi_thread")]
+async fn userinfo_claims_count_alongside_the_id_tokens() {
+    let provider = FakeProvider::start().await;
+    let settings = Settings {
+        link_verified_email_domains: vec!["example.com".into()],
+        ..provider.settings()
+    };
+    let app = TestApp::with_identity_providers(Providers::from_settings([settings])).await;
+    let ada = app.human("ada@example.com", "correct horse battery").await;
+    let login = |claims: Value, userinfo: Value| {
+        let (app, provider) = (&app, &provider);
+        async move {
+            let (url, state_cookie) = start(app).await;
+            let code = provider.authorize_with(&url, claims, Signing::Provider, Some(userinfo));
+            callback(app, &url, &code, Some(&state_cookie)).await
+        }
+    };
+
+    // The ID token's claims win: its unverified address doesn't link.
+    let reply = login(
+        json!({"sub": "u1", "email": "ada@example.com", "email_verified": false}),
+        json!({"sub": "u1", "email": "ada@example.com", "email_verified": true}),
+    )
+    .await;
+    assert_eq!(
+        location(&reply),
+        format!("{RETURN}?error=account_not_linked")
+    );
+
+    // userinfo for another subject is refused.
+    let reply = login(
+        json!({"sub": "u2"}),
+        json!({"sub": "someone-else", "email": "ada@example.com", "email_verified": true}),
+    )
+    .await;
+    assert_eq!(location(&reply), format!("{RETURN}?error=provider_error"));
+
+    // A verified address only in userinfo links.
+    let reply = login(
+        json!({"sub": "u3"}),
+        json!({"sub": "u3", "email": "ada@example.com", "email_verified": true}),
     )
     .await;
     assert_eq!(signed_in_subject(&app, &reply).await, ada);

@@ -84,6 +84,8 @@ struct Metadata {
     authorization_endpoint: String,
     token_endpoint: String,
     jwks_uri: String,
+    #[serde(default)]
+    userinfo_endpoint: Option<String>,
     /// Only Konklav upstreams have these.
     #[serde(default)]
     konklav_peer_events_endpoint: Option<String>,
@@ -131,6 +133,14 @@ pub struct IdClaims {
     pub raw: serde_json::Value,
 }
 
+/// What a code exchange returned.
+#[derive(Deserialize)]
+pub struct Tokens {
+    pub id_token: String,
+    #[serde(default)]
+    pub access_token: Option<String>,
+}
+
 /// The values a login keeps between redirecting to the provider and the
 /// provider redirecting back.
 pub struct LoginRequest {
@@ -146,6 +156,38 @@ impl LoginRequest {
             code_verifier: konklav_authn::generate_secret(),
         }
     }
+}
+
+/// Adds userinfo claims the ID token lacks, refusing userinfo for another
+/// subject.
+fn merge_userinfo(claims: &mut IdClaims, info: serde_json::Value) -> Result<(), FederationError> {
+    let serde_json::Value::Object(info) = info else {
+        return Err(FederationError::Provider(
+            "userinfo isn't a JSON object".into(),
+        ));
+    };
+    if info.get("sub").and_then(serde_json::Value::as_str) != Some(claims.sub.as_str()) {
+        return Err(FederationError::Provider(
+            "userinfo names another subject".into(),
+        ));
+    }
+    let email = info.get("email").and_then(serde_json::Value::as_str);
+    if claims.email.is_none() {
+        claims.email = email.map(str::to_owned);
+        claims.email_verified = None;
+    }
+    // Verification only counts for the address it was reported with.
+    if claims.email_verified.is_none() && claims.email.as_deref() == email {
+        claims.email_verified = info
+            .get("email_verified")
+            .and_then(serde_json::Value::as_bool);
+    }
+    if let serde_json::Value::Object(raw) = &mut claims.raw {
+        for (name, value) in info {
+            raw.entry(name).or_insert(value);
+        }
+    }
+    Ok(())
 }
 
 /// The claims of an accepted workload assertion.
@@ -271,16 +313,12 @@ impl Provider {
             .map_err(|error| FederationError::Provider(error.to_string()))
     }
 
-    /// Exchanges an authorization code for the provider's ID token.
+    /// Exchanges an authorization code for the provider's tokens.
     pub async fn exchange(
         &self,
         code: &str,
         code_verifier: &str,
-    ) -> Result<String, FederationError> {
-        #[derive(Deserialize)]
-        struct Tokens {
-            id_token: String,
-        }
+    ) -> Result<Tokens, FederationError> {
         let metadata = self.metadata().await?;
         let request = self
             .http
@@ -299,7 +337,33 @@ impl Provider {
             .json()
             .await
             .map_err(|error| FederationError::Provider(error.to_string()))?;
-        Ok(tokens.id_token)
+        Ok(tokens)
+    }
+
+    /// Adds the provider's userinfo claims to `claims`, when it has a
+    /// userinfo endpoint and issued an access token. Many providers, Konklav
+    /// among them, put scope claims such as `email` only there.
+    // r[impl federation.idp.userinfo]
+    pub async fn add_userinfo(
+        &self,
+        access_token: Option<&str>,
+        claims: &mut IdClaims,
+    ) -> Result<(), FederationError> {
+        let metadata = self.metadata().await?;
+        let (Some(endpoint), Some(token)) = (&metadata.userinfo_endpoint, access_token) else {
+            return Ok(());
+        };
+        let info: serde_json::Value = crate::telemetry::http::send(
+            self.http.get(endpoint).bearer_auth(token),
+            "idp_userinfo",
+        )
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|error| FederationError::Provider(error.to_string()))?
+        .json()
+        .await
+        .map_err(|error| FederationError::Provider(error.to_string()))?;
+        merge_userinfo(claims, info)
     }
 
     /// Posts to a peer endpoint as this instance's client.

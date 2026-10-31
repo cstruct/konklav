@@ -30,6 +30,14 @@ provider's keys with an asymmetric algorithm, and its `iss`, `aud`, `azp`
 (when present), `exp`, `iat` and `nonce` match. `alg: none` and symmetric
 algorithms MUST be refused.
 
+r[federation.idp.userinfo]
+When the provider's discovery document names a `userinfo_endpoint` and the
+token response carries an access token, the provider's UserInfo response
+MUST be fetched with it and its claims added to the ID token's, for linking,
+provisioning and claim mapping. The ID token's claims MUST win where both
+hold one. The login MUST fail if the UserInfo request fails or its `sub`
+differs from the ID token's.
+
 r[federation.jwks-refresh]
 A token naming a key the provider's cached keys lack MAY cause the keys to
 be fetched again, but at most once a minute per provider, so tokens with
@@ -176,7 +184,9 @@ request started by one person can't be completed with another's session.
 r[oidc.provider.id-token]
 ID tokens MUST carry `iss`, `sub` (the subject id), `aud` (the client id),
 `exp`, `iat`, `auth_time`, `nonce` when one was sent, `amr`, `acr` and
-`sid`, and only the further claims the client may receive.
+`sid`, and `groups` when the client may receive it. Claims of the `email`
+and `phone` scopes MUST only be served from the UserInfo endpoint, since an
+access token is always issued with the ID token.
 
 r[oidc.provider.algorithms]
 Signing keys MUST support `ES256` in addition to `EdDSA`, and `RS256`, which

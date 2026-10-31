@@ -1072,20 +1072,24 @@ async fn tokens_for(
 ) -> Result<Response, ApiError> {
     let provider = provider(state)?;
     let access = issue::access_token(conn, &state.auth, session).await?;
-    let credential = credentials::get(conn, session.credential_id).await?;
-    let claims = oidc::claims(
-        conn,
+    let groups = if session.oidc_scopes.iter().any(|s| s == "groups") {
+        Some(oidc::groups(conn, client, session.subject_id).await?)
+    } else {
+        None
+    };
+    let id_token = oidc::id_token(
+        &state.auth,
+        provider,
         client,
-        &session.oidc_scopes,
-        session.subject_id,
-        &credential,
-    )
-    .await?;
+        session,
+        nonce,
+        groups.as_deref(),
+    )?;
     let body = Tokens {
         access_token: access.access_token,
         token_type: "Bearer",
         expires_in: access.expires_in,
-        id_token: oidc::id_token(&state.auth, provider, client, session, nonce, &claims)?,
+        id_token,
         refresh_token: client.refresh.then(|| refresh.as_str().to_owned()),
         scope: session.oidc_scopes.join(" "),
     };

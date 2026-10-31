@@ -223,7 +223,7 @@ fn phone_of(credential: &Credential) -> Option<String> {
 
 /// The subject's global roles that the client may see.
 // r[impl oidc.provider.groups]
-async fn groups(
+pub async fn groups(
     conn: &mut Connection,
     client: &OidcClient,
     subject: SubjectId,
@@ -259,15 +259,13 @@ struct IdTokenClaims<'a> {
     amr: &'a [String],
     acr: &'static str,
     sid: konklav_core::SessionId,
-    #[serde(flatten)]
-    claims: &'a Claims,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    groups: Option<&'a [String]>,
 }
 
-/// Signs an ID token for `session` with the client's algorithm.
-///
-/// # Panics
-///
-/// Never in practice: the claims always serialize and the key always signs.
+/// Signs an ID token for `session` with the client's algorithm. Scope
+/// claims such as `email` are left to userinfo, since an access token is
+/// always issued alongside.
 // r[impl oidc.provider.id-token]
 pub fn id_token(
     auth: &AuthContext,
@@ -275,7 +273,7 @@ pub fn id_token(
     client: &OidcClient,
     session: &Session,
     nonce: Option<&str>,
-    claims: &Claims,
+    groups: Option<&[String]>,
 ) -> Result<String, ApiError> {
     let now = chrono::Utc::now();
     let expires = (now + auth.access_ttl).min(session.expires_at);
@@ -291,7 +289,7 @@ pub fn id_token(
         amr: &session.amr,
         acr: acr(session),
         sid: session.id,
-        claims,
+        groups,
     };
     sign_for(auth, provider, client, &token, None)
 }

@@ -4,8 +4,9 @@
 //!    keeps `state`, `nonce` and the PKCE verifier as a challenge, binds it
 //!    to the browser with a cookie, and sends the browser to the provider.
 //! 2. The provider redirects to `callback`, which consumes the challenge,
-//!    exchanges the code, validates the ID token and then either starts a
-//!    session or links the account, redirecting to the return URL. Failures
+//!    exchanges the code, validates the ID token, adds the provider's
+//!    userinfo claims and then either starts a session or links the
+//!    account, redirecting to the return URL. Failures
 //!    redirect there too, with an `error` parameter.
 
 use axum::Json;
@@ -370,8 +371,11 @@ async fn finish(
         return Err(Failure::Provider);
     }
     let code = query.code.as_deref().ok_or(Failure::Provider)?;
-    let id_token = provider.exchange(code, &details.code_verifier).await?;
-    let claims = provider.verify(&id_token, &details.nonce).await?;
+    let tokens = provider.exchange(code, &details.code_verifier).await?;
+    let mut claims = provider.verify(&tokens.id_token, &details.nonce).await?;
+    provider
+        .add_userinfo(tokens.access_token.as_deref(), &mut claims)
+        .await?;
     provider.check_requirements(&claims, Utc::now().timestamp())?;
     let identifier = federated_identifier(&provider.settings.id, &claims.sub);
     let existing = credentials::find_active(conn, CredentialKind::Federated, &identifier)

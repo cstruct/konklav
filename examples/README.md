@@ -69,7 +69,6 @@ Last run with suite release v5.3.4, both plans had no failures.
 
 - **Warnings:**
   - Konklav's `konklav_peer_*` discovery fields are reported as unexpected.
-  - The ID token carries `email` for the `email` scope. OIDC Core 5.4 prefers that only in userinfo, but downstream Konklavs link accounts by it.
   - There is no `name` claim. Konklav stores no profile data.
 - **Skipped:** the profile, address and all-scopes tests, and request objects. Konklav doesn't support these.
 - **Review:** the second sign-in and error-page screenshots, as for any provider.
