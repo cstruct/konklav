@@ -3,8 +3,11 @@
 //! An operators' instance (the upstream) is an OpenID provider. An
 //! environment's instance (the downstream) lets people sign in through it,
 //! creating their subject on first sign-in and granting a local role from
-//! the upstream's `groups` claim. This scenario plays both the browser and
-//! the upstream's login page, so every hop is visible.
+//! the upstream's `groups` claim. The upstream gets people's names from a
+//! claims hook, and the downstream passes them on: it is an OpenID provider
+//! too, and a tool signing in through it reads the name from userinfo.
+//! This scenario plays the browser, both login pages, the hook and the
+//! tool, so every hop is visible.
 
 use std::path::Path;
 
@@ -18,8 +21,14 @@ const EMAIL: &str = "ada@ops.example";
 const PASSWORD: &str = "correct horse battery";
 /// The upstream's login page, which the scenario plays.
 const LOGIN_PAGE: &str = "http://login.ops.example";
-/// The downstream's app, where a sign-in returns.
+/// The downstream's app, where a sign-in returns. It is also the
+/// downstream's login page for its own OpenID clients.
 const APP: &str = "http://app.env.example";
+/// What the upstream's claims hook knows about the operator.
+const NAME: &str = "Ada Lovelace";
+/// A tool signing in through the downstream.
+const TOOL_CALLBACK: &str = "http://tool.env.example/callback";
+const VERIFIER: &str = "a-code-verifier-that-is-long-enough-to-be-valid-0123456789";
 
 fn location(reply: &reqwest::Response) -> Result<String> {
     reply
@@ -57,12 +66,26 @@ fn query(url: &str, key: &str) -> Result<String> {
         .ok_or_else(|| fail(format!("{url} has no {key}")))
 }
 
-/// Starts the upstream with an operator in the `sre` global role.
+/// A claims hook for the upstream, answering every subject with [`NAME`].
+async fn claims_hook() -> Result<String> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let url = format!("http://{}/claims", listener.local_addr()?);
+    let router = axum::Router::new().route(
+        "/claims",
+        axum::routing::post(|| async { axum::Json(json!({"name": NAME})) }),
+    );
+    tokio::spawn(async move { axum::serve(listener, router).await });
+    Ok(url)
+}
+
+/// Starts the upstream with an operator in the `sre` global role, and a
+/// claims hook for names.
 async fn upstream(binary: &Path) -> Result<Server> {
     let up = Server::start(&Setup {
         binary: Some(binary.to_owned()),
         login_url: Some(format!("{LOGIN_PAGE}/sign-in")),
         browser_origins: vec![LOGIN_PAGE.into()],
+        claims_hook: Some(claims_hook().await?),
         ..Setup::default()
     })
     .await?;
@@ -81,11 +104,13 @@ async fn upstream(binary: &Path) -> Result<Server> {
 }
 
 /// Prepares the downstream, registers it as a client of the upstream, and
-/// starts it with the upstream as an identity provider.
+/// starts it with the upstream as an identity provider whose names it
+/// passes on, and as an OpenID provider for a tool.
 async fn downstream(binary: &Path, up: &Server) -> Result<Server> {
     let mut down = Server::prepare(&Setup {
         binary: Some(binary.to_owned()),
         browser_origins: vec![APP.into()],
+        login_url: Some(format!("{APP}/sign-in")),
         ..Setup::default()
     })
     .await?;
@@ -96,7 +121,7 @@ async fn downstream(binary: &Path, up: &Server) -> Result<Server> {
         Some(json!({
             "kind": "confidential",
             "redirect_uris": [callback],
-            "scopes": ["openid", "groups"],
+            "scopes": ["openid", "groups", "profile"],
             "audience": "env",
             "visible_groups": ["sre"],
         })),
@@ -111,8 +136,8 @@ async fn downstream(binary: &Path, up: &Server) -> Result<Server> {
     down.extend(
         &format!(
             "identity_providers ({{\n    id ops\n    issuer {issuer:?}\n    client_id env\n    \
-             redirect_uri {callback:?}\n    scopes (openid groups)\n    return_urls (\"{APP}/\")\n    \
-             provisioning create\n    local_mfa_factors 0\n    \
+             redirect_uri {callback:?}\n    scopes (openid groups profile)\n    return_urls (\"{APP}/\")\n    \
+             provisioning create\n    local_mfa_factors 0\n    pass_claims {{profile (name)}}\n    \
              grants ({{claim groups, contains sre, global_role operator}})\n}})\n",
             issuer = up.subject,
         ),
@@ -132,7 +157,106 @@ async fn downstream(binary: &Path, up: &Server) -> Result<Server> {
         Some(json!({"policies": [{"action": "env:operate", "effect": "allow"}]})),
     )
     .await?;
+    down.control(
+        Method::PUT,
+        "/v1/oidc/clients/tool",
+        Some(json!({
+            "kind": "confidential",
+            "redirect_uris": [TOOL_CALLBACK],
+            "scopes": ["openid", "profile"],
+            "audience": "tool",
+        })),
+    )
+    .await?;
     Ok(down)
+}
+
+/// A tool signs in through the downstream, with the app, already signed
+/// in with `access`, as the downstream's login page. Returns the name the
+/// tool reads from userinfo.
+async fn tool_signs_in(down: &Server, access: &str) -> Result<Value> {
+    let http = &down.http;
+    let secret = down
+        .control(Method::POST, "/v1/oidc/clients/tool/secret", None)
+        .await?["client_secret"]
+        .as_str()
+        .ok_or_else(|| fail("no client secret"))?
+        .to_owned();
+    let challenge = base64::Engine::encode(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, VERIFIER.as_bytes()),
+    );
+
+    step("a tool sends the browser to the downstream's authorization endpoint");
+    let authorize = reqwest::Url::parse_with_params(
+        &format!("{}/v1/oauth2/authorize", down.subject),
+        &[
+            ("response_type", "code"),
+            ("client_id", "tool"),
+            ("redirect_uri", TOOL_CALLBACK),
+            ("scope", "openid profile"),
+            ("state", "tool-state"),
+            ("nonce", "tool-nonce"),
+            ("code_challenge", challenge.as_str()),
+            ("code_challenge_method", "S256"),
+        ],
+    )?;
+    let handed_off = http.get(authorize).send().await?;
+    let login_page = location(&handed_off)?;
+    let browser = cookie(&handed_off, "konklav_authorize")?;
+    let request = query(&login_page, "login_request")?;
+    println!("    redirected to {login_page}");
+
+    step("the app, signed in through the upstream, accepts the request");
+    let accepted: Value = http
+        .post(format!(
+            "{}/v1/oauth2/login-requests/{request}/accept",
+            down.subject
+        ))
+        .bearer_auth(access)
+        .header(header::ORIGIN, APP)
+        .header("x-konklav-client", "web")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let resume = accepted["redirect_to"]
+        .as_str()
+        .ok_or_else(|| fail(format!("no redirect in {accepted}")))?;
+    let resumed = http
+        .get(resume)
+        .header(header::COOKIE, &browser)
+        .send()
+        .await?;
+    let back = location(&resumed)?;
+    let code = query(&back, "code")?;
+
+    step("the tool exchanges the code and reads userinfo");
+    let tokens: Value = http
+        .post(format!("{}/v1/oauth2/token", down.subject))
+        .basic_auth("tool", Some(&secret))
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code.as_str()),
+            ("redirect_uri", TOOL_CALLBACK),
+            ("code_verifier", VERIFIER),
+        ])
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let info: Value = http
+        .get(format!("{}/v1/oauth2/userinfo", down.subject))
+        .bearer_auth(tokens["access_token"].as_str().unwrap_or_default())
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    println!("    userinfo: {info}");
+    Ok(info)
 }
 
 /// The browser signs in at the downstream through the upstream, with the
@@ -254,6 +378,13 @@ pub async fn run(binary: &Path) -> Result<()> {
     check(entitlements["global"] == json!(["env:operate"]), || {
         format!("the subject holds {entitlements}, not env:operate")
     })?;
-    step("signed in at the downstream, holding env:operate through the upstream's `sre`");
+
+    let info = tool_signs_in(&down, access).await?;
+    check(info["name"] == NAME, || {
+        format!("the tool got {info}, not the upstream's name")
+    })?;
+    step(
+        "signed in at the downstream, holding env:operate through the upstream's `sre`, and named by the upstream's claims hook",
+    );
     Ok(())
 }

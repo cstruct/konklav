@@ -7,7 +7,7 @@ Runnable examples of Konklav deployments. Each scenario starts real `konklav-ser
 | Example | What it shows |
 |---|---|
 | `smtp-delivery` | Email-link sign-in. The reference delivery worker follows the change feed as a service principal holding `konklav.delivery` and sends the link over SMTP; the app completes the sign-in with the token from the email, and the link doesn't work twice. |
-| `federation` | One Konklav signing people in to another. The upstream is an OpenID provider; the downstream creates the subject on first sign-in and grants a local role from the upstream's `groups` claim. The scenario plays the browser and the upstream's login page, so every redirect is printed. |
+| `federation` | One Konklav signing people in to another. The upstream is an OpenID provider; the downstream creates the subject on first sign-in and grants a local role from the upstream's `groups` claim. The upstream gets names from a claims hook; the downstream passes them on as an OpenID provider itself, and a tool signing in through it reads the name from userinfo. The scenario plays the browser, both login pages, the hook and the tool, so every redirect is printed. |
 | `bootstrap` | Seeding a new deployment from `bootstrap/nested`: a dry run, applying, re-applying without changes, then signing in with an imported password hash. |
 
 Run one with:
