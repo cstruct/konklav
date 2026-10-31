@@ -244,6 +244,8 @@ diesel::table! {
         parent_session_id -> Nullable<Uuid>,
         oidc_client_id -> Nullable<Text>,
         oidc_scopes -> Array<Nullable<Text>>,
+        oidc_userinfo_claims -> Array<Nullable<Text>>,
+        oidc_id_token_claims -> Array<Nullable<Text>>,
     }
 }
 

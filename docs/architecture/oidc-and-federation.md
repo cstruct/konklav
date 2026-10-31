@@ -238,6 +238,14 @@ an access token, so OpenID Connect puts a scope's claims in
 `/v1/oauth2/userinfo`. A downstream Konklav reads them there before linking
 by email.
 
+A client can also ask for single claims with the `claims` request
+parameter (OIDC Core 5.5), such as `name` with only the `openid` scope. A
+claim is served only when a scope the client is registered for covers it,
+and others are dropped, as scopes are. Claims asked for in the ID token are
+honoured only for Konklav's own claims (email, phone, groups), so issuing
+tokens never waits on the claims hook. `essential` is accepted, and a
+missing claim isn't an error.
+
 ### Claims hook
 
 Profile claims such as `name` come from an optional claims hook: a relying
@@ -494,8 +502,6 @@ two suites run against independent implementations:
 
 ## Open points
 
-- The `claims` request parameter, so a client can ask for single claims such
-  as `name` without their scope.
 - Publishing the next ES256 key ahead of a rotation, as Ed25519 keys allow.
 - Token exchange (RFC 8693) for acting on behalf of a person.
 - Back-channel logout for sessions that expire rather than end.

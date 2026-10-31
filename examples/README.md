@@ -65,11 +65,9 @@ To run it against the suite's prebuilt images:
    - `oidcc-config-certification-test-plan`
    - `oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client]`
 
-Last run with suite release v5.3.4, both plans had no failures.
+Last run with suite release v5.3.4, both plans had no failures, and the Basic OP plan no warnings.
 
-- **Warnings:**
-  - Konklav's `konklav_peer_*` discovery fields are reported as unexpected.
-  - `oidcc-claims-essential` asks for `name` with the `claims` request parameter, which Konklav doesn't support.
+- **Warning:** Konklav's `konklav_peer_*` discovery fields are reported as unexpected by the Config OP plan.
 - **Profile claims** come from the example's claims hook, so the profile test runs.
 - **Skipped:** the address and all-scopes tests, and request objects. Konklav doesn't support these.
 - **Review:** the second sign-in and error-page screenshots, as for any provider.

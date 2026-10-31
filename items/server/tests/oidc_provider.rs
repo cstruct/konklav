@@ -387,10 +387,10 @@ async fn discovery_lists_the_endpoints() {
     for unsupported in [
         "request_parameter_supported",
         "request_uri_parameter_supported",
-        "claims_parameter_supported",
     ] {
         assert_eq!(document.body[unsupported], false, "{unsupported}");
     }
+    assert_eq!(document.body["claims_parameter_supported"], true);
     let plain = TestApp::new().await;
     let missing = plain
         .send(Method::GET, "/.well-known/openid-configuration", &[], None)
@@ -442,6 +442,11 @@ async fn bad_requests_are_refused_without_leaking_codes() {
             "request_uri_not_supported",
         ),
         (vec![("prompt", "none login")], "invalid_request"),
+        (vec![("claims", "not json")], "invalid_request"),
+        (
+            vec![("claims", r#"{"userinfo": ["name"]}"#)],
+            "invalid_request",
+        ),
         (
             vec![("response_type", "token")],
             "unsupported_response_type",
@@ -1524,4 +1529,69 @@ async fn claims_hook_answers_are_cached_for_their_ttl() {
         assert_eq!(info.body["name"], "Ada Lovelace");
     }
     assert_eq!(hook.calls(), 1, "answered from memory after the first call");
+}
+
+// r[verify oidc.provider.claims-parameter]
+#[tokio::test(flavor = "multi_thread")]
+async fn clients_can_ask_for_single_claims() {
+    use konklav_server::config::ClaimsHookFailure;
+    let hook = FakeHook::start().await;
+    let world = world_with(hook.provider(ClaimsHookFailure::Omit, 0)).await;
+    let app = &world.app;
+    let discovery = app
+        .send(Method::GET, "/.well-known/openid-configuration", &[], None)
+        .await;
+    assert_eq!(discovery.body["claims_parameter_supported"], true);
+
+    // Only `openid`: the claims come one by one. `department` needs the
+    // employee scope, which the client isn't registered for, and the hook's
+    // `name` isn't served in ID tokens.
+    let claims = json!({
+        "userinfo": {"name": {"essential": true}, "department": null, "unknown": null},
+        "id_token": {"email": {"essential": true}, "name": null},
+    })
+    .to_string();
+    let code = authorize(&world, &[("scope", "openid"), ("claims", &claims)]).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    assert_eq!(tokens.status, StatusCode::OK, "{:?}", tokens.body);
+    assert_eq!(tokens.body["scope"], "openid");
+    let id = id_token_claims(app, tokens.body["id_token"].as_str().unwrap()).await;
+    assert_eq!(id["email"], "ada@example.com", "{id:?}");
+    assert_eq!(id["email_verified"], false);
+    assert!(id.get("name").is_none(), "{id:?}");
+    assert!(id.get("groups").is_none(), "{id:?}");
+    assert_eq!(hook.calls(), 0, "issuing tokens never asks the hook");
+
+    let access = tokens.body["access_token"].as_str().unwrap();
+    let info = app
+        .with_bearer(Method::GET, "/v1/oauth2/userinfo", access)
+        .await;
+    assert_eq!(info.status, StatusCode::OK, "{:?}", info.body);
+    assert_eq!(info.body["name"], "Ada Lovelace");
+    assert!(
+        info.body.get("locale").is_none(),
+        "only the claim asked for"
+    );
+    assert!(info.body.get("department").is_none());
+    assert!(
+        info.body.get("email").is_none(),
+        "email was asked for in the ID token"
+    );
+    let request = hook.requests.lock().unwrap()[0].clone();
+    let request = jsonwebtoken::dangerous::insecure_decode::<Value>(&request)
+        .unwrap()
+        .claims;
+    assert_eq!(request["scopes"], json!([]));
+    assert_eq!(request["claims"], json!(["name"]));
+
+    // Konklav's own claims work one by one in userinfo too.
+    let claims = json!({"userinfo": {"email": null}}).to_string();
+    let code = authorize(&world, &[("scope", "openid"), ("claims", &claims)]).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    let access = tokens.body["access_token"].as_str().unwrap();
+    let info = app
+        .with_bearer(Method::GET, "/v1/oauth2/userinfo", access)
+        .await;
+    assert_eq!(info.body["email"], "ada@example.com", "{:?}", info.body);
+    assert!(info.body.get("groups").is_none());
 }

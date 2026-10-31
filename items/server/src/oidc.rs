@@ -178,14 +178,43 @@ pub struct Claims {
     pub groups: Option<Vec<String>>,
 }
 
+/// Konklav's own scopes, with the claims each covers.
+pub const OWN_SCOPES: &[(&str, &[&str])] = &[
+    ("email", &["email", "email_verified"]),
+    ("phone", &["phone_number", "phone_number_verified"]),
+    ("groups", &["groups"]),
+];
+
+/// Which of Konklav's own claims to serve: those of the granted scopes, and
+/// single claims requested with the `claims` parameter.
+#[derive(Clone, Copy)]
+pub struct Selection<'a> {
+    pub scopes: &'a [String],
+    pub claims: &'a [String],
+}
+
+impl Selection<'_> {
+    /// Whether `scope`'s claims are wanted, as a scope or one by one. An
+    /// address and its verification state always go together.
+    fn wants(&self, scope: &str) -> bool {
+        self.scopes.iter().any(|s| s == scope)
+            || OWN_SCOPES
+                .iter()
+                .find(|(own, _)| *own == scope)
+                .is_some_and(|(_, covered)| {
+                    self.claims.iter().any(|c| covered.contains(&c.as_str()))
+                })
+    }
+}
+
 pub async fn claims(
     conn: &mut Connection,
     client: &OidcClient,
-    scopes: &[String],
+    selection: Selection<'_>,
     subject: SubjectId,
     credential: &Credential,
 ) -> Result<Claims, ApiError> {
-    let wants = |scope: &str| scopes.iter().any(|s| s == scope);
+    let wants = |scope: &str| selection.wants(scope);
     let mut claims = Claims::default();
     // The credential signed in with first, then the subject's others, so a
     // phone number reaches a client after a password sign-in too.
@@ -244,7 +273,7 @@ fn phone_of(credential: &Credential) -> Option<String> {
 
 /// The subject's global roles that the client may see.
 // r[impl oidc.provider.groups]
-pub async fn groups(
+async fn groups(
     conn: &mut Connection,
     client: &OidcClient,
     subject: SubjectId,
@@ -280,13 +309,14 @@ struct IdTokenClaims<'a> {
     amr: &'a [String],
     acr: &'static str,
     sid: konklav_core::SessionId,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    groups: Option<&'a [String]>,
+    #[serde(flatten)]
+    claims: &'a Claims,
 }
 
 /// Signs an ID token for `session` with the client's algorithm. Scope
 /// claims such as `email` are left to userinfo, since an access token is
-/// always issued alongside.
+/// always issued alongside; `claims` holds `groups` and what the client
+/// asked for in the ID token.
 // r[impl oidc.provider.id-token]
 pub fn id_token(
     auth: &AuthContext,
@@ -294,7 +324,7 @@ pub fn id_token(
     client: &OidcClient,
     session: &Session,
     nonce: Option<&str>,
-    groups: Option<&[String]>,
+    claims: &Claims,
 ) -> Result<String, ApiError> {
     let now = chrono::Utc::now();
     let expires = (now + auth.access_ttl).min(session.expires_at);
@@ -310,7 +340,7 @@ pub fn id_token(
         amr: &session.amr,
         acr: acr(session),
         sid: session.id,
-        groups,
+        claims,
     };
     sign_for(auth, provider, client, &token, None)
 }

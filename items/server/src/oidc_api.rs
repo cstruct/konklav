@@ -26,7 +26,9 @@ use konklav_authn::{RefreshToken, generate_secret, hash_challenge_secret};
 use konklav_core::{SessionId, TenantId};
 use konklav_store::challenges::{self, Challenge, NewChallenge, Purpose};
 use konklav_store::oidc_clients::{self, ClientKind, OidcClient};
-use konklav_store::sessions::{self, ClientKind as SessionClient, NewSession, Session, Stage};
+use konklav_store::sessions::{
+    self, ClientKind as SessionClient, NewSession, RequestedClaims, Session, Stage,
+};
 use konklav_store::{Connection, credentials};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -35,7 +37,7 @@ use subtle::ConstantTimeEq;
 use crate::claims_hook::ClaimsFor;
 use crate::cookies::{Cookie, SameSite};
 use crate::error::{ApiError, ApiJson, ErrorCode};
-use crate::oidc::{self, OpenIdProvider};
+use crate::oidc::{self, OpenIdProvider, Selection};
 use crate::subject_api::{self, Started};
 use crate::{AppState, issue};
 
@@ -142,7 +144,7 @@ pub async fn discovery(State(state): State<AppState>) -> Result<Response, ApiErr
         // r[impl oidc.provider.request-objects]
         "request_parameter_supported": false,
         "request_uri_parameter_supported": false,
-        "claims_parameter_supported": false,
+        "claims_parameter_supported": true,
         "prompt_values_supported": ["none", "login", "consent", "select_account"],
     });
     Ok((
@@ -170,6 +172,7 @@ struct AuthorizeQuery {
     login_hint: Option<String>,
     request: Option<String>,
     request_uri: Option<String>,
+    claims: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -200,6 +203,9 @@ struct RequestDetails {
     /// The error the login application refused the request with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     refusal: Option<String>,
+    /// Single claims asked for with the `claims` parameter.
+    #[serde(default)]
+    claims: RequestedClaims,
 }
 
 impl RequestDetails {
@@ -218,6 +224,8 @@ struct CodeDetails {
     nonce: Option<String>,
     #[serde(default)]
     code_challenge: Option<String>,
+    #[serde(default)]
+    claims: RequestedClaims,
     /// The client session the code was exchanged for, revoked if the code
     /// is presented again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -365,6 +373,9 @@ async fn authorize(state: &AppState, query: AuthorizeQuery) -> Result<Response, 
         Ok(granted) => granted,
         Err(error) => return Ok(fail(error)),
     };
+    let Some(claims) = requested_claims(provider, &client, query.claims.as_deref()) else {
+        return Ok(fail("invalid_request"));
+    };
 
     let id = uuid::Uuid::now_v7();
     let secret = generate_secret();
@@ -383,6 +394,7 @@ async fn authorize(state: &AppState, query: AuthorizeQuery) -> Result<Response, 
         requested_at: Utc::now().timestamp(),
         acceptance_hash: None,
         refusal: None,
+        claims,
     };
     challenges::create(
         &mut conn,
@@ -407,6 +419,56 @@ async fn authorize(state: &AppState, query: AuthorizeQuery) -> Result<Response, 
         cookie(state, &format!("{id}.{secret}"), LOGIN_REQUEST_MINUTES * 60),
     );
     Ok(response)
+}
+
+/// The claims a `claims` parameter asks for that a scope the client is
+/// registered for covers, or `None` when the parameter is malformed. Values
+/// and `essential` don't matter: a missing claim is never an error.
+// r[impl oidc.provider.claims-parameter]
+fn requested_claims(
+    provider: &OpenIdProvider,
+    client: &OidcClient,
+    raw: Option<&str>,
+) -> Option<RequestedClaims> {
+    let Some(raw) = raw.filter(|raw| !raw.is_empty()) else {
+        return Some(RequestedClaims::default());
+    };
+    let serde_json::Value::Object(request) = serde_json::from_str(raw).ok()? else {
+        return None;
+    };
+    // Hook and passed claims are only served from userinfo.
+    let names = |member: &str, own_only: bool| match request.get(member) {
+        None | Some(serde_json::Value::Null) => Some(Vec::new()),
+        Some(serde_json::Value::Object(claims)) => Some(
+            claims
+                .keys()
+                .filter(|claim| {
+                    claim_scope(provider, claim).is_some_and(|(scope, own)| {
+                        client.allows_scope(scope) && (own || !own_only)
+                    })
+                })
+                .cloned()
+                .collect(),
+        ),
+        Some(_) => None,
+    };
+    Some(RequestedClaims {
+        userinfo: names("userinfo", false)?,
+        id_token: names("id_token", true)?,
+    })
+}
+
+/// The scope that covers `claim`, and whether Konklav holds the claim
+/// itself.
+fn claim_scope<'a>(provider: &'a OpenIdProvider, claim: &str) -> Option<(&'a str, bool)> {
+    if let Some((scope, _)) = oidc::OWN_SCOPES
+        .iter()
+        .find(|(_, claims)| claims.contains(&claim))
+    {
+        return Some((scope, true));
+    }
+    let hook = provider.claims_hook.as_ref()?;
+    hook.scope_of(claim).map(|scope| (scope, false))
 }
 
 /// An S256 challenge: the base64url SHA-256 of a verifier, 43 characters
@@ -711,6 +773,7 @@ async fn resume(
                 scopes: details.scopes.clone(),
                 nonce: details.nonce.clone(),
                 code_challenge: details.code_challenge.clone(),
+                claims: details.claims.clone(),
                 issued_session: None,
             })
             .map_err(ApiError::internal)?,
@@ -1001,7 +1064,8 @@ async fn code_grant(
                 return Ok(Err("the sign-in has ended"));
             }
             let (session, refresh) =
-                start_client_session(conn, &parent, client, &details.scopes).await?;
+                start_client_session(conn, &parent, client, &details.scopes, &details.claims)
+                    .await?;
             let issued = CodeDetails {
                 issued_session: Some(session.id),
                 ..details.clone()
@@ -1055,6 +1119,7 @@ async fn start_client_session(
     parent: &Session,
     client: &OidcClient,
     scopes: &[String],
+    claims: &RequestedClaims,
 ) -> Result<(Session, RefreshToken), ApiError> {
     let id = SessionId::new_v7();
     let refresh = RefreshToken::generate(id);
@@ -1081,7 +1146,7 @@ async fn start_client_session(
             if let (Some(tenant), Some(membership)) = (parent.tenant_id, parent.membership_id) {
                 sessions::select_tenant(conn, session.id, tenant, membership).await?;
             }
-            Ok(sessions::bind_client(conn, session.id, &client.id, scopes).await?)
+            Ok(sessions::bind_client(conn, session.id, &client.id, scopes, claims).await?)
         })
         .await?;
     Ok((session, refresh))
@@ -1097,19 +1162,27 @@ async fn tokens_for(
 ) -> Result<Response, ApiError> {
     let provider = provider(state)?;
     let access = issue::access_token(conn, &state.auth, session).await?;
-    let groups = if session.oidc_scopes.iter().any(|s| s == "groups") {
-        Some(oidc::groups(conn, client, session.subject_id).await?)
-    } else {
-        None
-    };
-    let id_token = oidc::id_token(
-        &state.auth,
-        provider,
+    // `groups` from the scopes, and what the client asked for in the ID
+    // token; the other scopes' claims are in userinfo.
+    let groups: Vec<String> = session
+        .oidc_scopes
+        .iter()
+        .filter(|scope| *scope == "groups")
+        .cloned()
+        .collect();
+    let credential = credentials::get(conn, session.credential_id).await?;
+    let claims = oidc::claims(
+        conn,
         client,
-        session,
-        nonce,
-        groups.as_deref(),
-    )?;
+        Selection {
+            scopes: &groups,
+            claims: &session.oidc_claims.id_token,
+        },
+        session.subject_id,
+        &credential,
+    )
+    .await?;
+    let id_token = oidc::id_token(&state.auth, provider, client, session, nonce, &claims)?;
     let body = Tokens {
         access_token: access.access_token,
         token_type: "Bearer",
@@ -1187,7 +1260,14 @@ async fn client_credentials_grant(
                 },
             )
             .await?;
-            Ok(sessions::bind_client(conn, session.id, &client.id, &[]).await?)
+            Ok(sessions::bind_client(
+                conn,
+                session.id,
+                &client.id,
+                &[],
+                &RequestedClaims::default(),
+            )
+            .await?)
         })
         .await?;
     let access = issue::access_token(conn, &state.auth, &session).await?;
@@ -1555,7 +1635,11 @@ async fn peer_subject(
     };
     let principal = konklav_store::subjects::get(&mut conn, subject).await?;
     let credential = credentials::get(&mut conn, latest.credential_id).await?;
-    let claims = oidc::claims(&mut conn, &client, &client.scopes, subject, &credential).await?;
+    let selection = Selection {
+        scopes: &client.scopes,
+        claims: &[],
+    };
+    let claims = oidc::claims(&mut conn, &client, selection, subject, &credential).await?;
     drop(conn);
     let mut body = serde_json::to_value(&claims).map_err(ApiError::internal)?;
     body["sub"] = serde_json::json!(subject);
@@ -1570,6 +1654,7 @@ async fn peer_subject(
             tenant: latest.tenant_id,
             membership: latest.membership_id,
             granted: &client.scopes,
+            requested: &[],
         },
     )
     .await?;
@@ -1649,10 +1734,14 @@ async fn userinfo(
     let (_, session) =
         subject_api::verify_access_token_for(state, &mut conn, token, &client.audience).await?;
     let credential = credentials::get(&mut conn, session.credential_id).await?;
+    let selection = Selection {
+        scopes: &session.oidc_scopes,
+        claims: &session.oidc_claims.userinfo,
+    };
     let claims = oidc::claims(
         &mut conn,
         &client,
-        &session.oidc_scopes,
+        selection,
         session.subject_id,
         &credential,
     )
@@ -1669,6 +1758,7 @@ async fn userinfo(
             tenant: session.tenant_id,
             membership: session.membership_id,
             granted: &session.oidc_scopes,
+            requested: &session.oidc_claims.userinfo,
         },
     )
     .await?;

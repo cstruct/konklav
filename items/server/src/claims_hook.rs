@@ -77,6 +77,8 @@ pub struct ClaimsFor<'a> {
     pub membership: Option<MembershipId>,
     /// The scopes granted to the client, of which the hook's are asked for.
     pub granted: &'a [String],
+    /// Single claims the client asked for with the `claims` parameter.
+    pub requested: &'a [String],
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -86,6 +88,8 @@ struct Key {
     tenant: Option<TenantId>,
     membership: Option<MembershipId>,
     scopes: Vec<String>,
+    /// Single claims asked for beyond the scopes'.
+    claims: Vec<String>,
 }
 
 struct Entry {
@@ -153,6 +157,14 @@ impl ClaimsHook {
         self.scopes.keys().map(String::as_str)
     }
 
+    /// The scope `claim` is served under, if the hook serves it.
+    pub fn scope_of(&self, claim: &str) -> Option<&str> {
+        self.scopes
+            .iter()
+            .find(|(_, claims)| claims.iter().any(|c| c == claim))
+            .map(|(scope, _)| scope.as_str())
+    }
+
     /// The claims the hook can supply, for discovery.
     pub fn claims(&self) -> impl Iterator<Item = &str> {
         self.scopes.values().flatten().map(String::as_str)
@@ -174,7 +186,14 @@ impl ClaimsHook {
             .filter(|scope| self.scopes.contains_key(*scope))
             .cloned()
             .collect();
-        if scopes.is_empty() {
+        let claims: Vec<String> = request
+            .requested
+            .iter()
+            .filter(|claim| self.scope_of(claim).is_some())
+            .filter(|claim| !self.claims_of(&scopes).any(|c| c == claim.as_str()))
+            .cloned()
+            .collect();
+        if scopes.is_empty() && claims.is_empty() {
             return Ok(Map::new());
         }
         let key = Key {
@@ -183,6 +202,7 @@ impl ClaimsHook {
             tenant: request.tenant,
             membership: request.membership,
             scopes,
+            claims,
         };
         if let Some(claims) = self.cached(&key) {
             return Ok(claims);
@@ -229,7 +249,7 @@ impl ClaimsHook {
                 tenant: key.tenant,
                 membership: key.membership,
                 scopes: &key.scopes,
-                claims: self.claims_of(&key.scopes).collect(),
+                claims: self.wanted(key).collect(),
             },
             REQUEST_TYPE,
         );
@@ -255,7 +275,7 @@ impl ClaimsHook {
         else {
             return Err("the answer isn't a JSON object".into());
         };
-        Ok((self.allowed(&key.scopes, answer), max_age))
+        Ok((self.allowed(key, answer), max_age))
     }
 
     fn claims_of<'a>(&'a self, scopes: &'a [String]) -> impl Iterator<Item = &'a str> {
@@ -266,10 +286,17 @@ impl ClaimsHook {
             .map(String::as_str)
     }
 
-    /// Only the configured claims of `scopes`.
+    /// The claims of the key's scopes, then its single claims.
+    fn wanted<'a>(&'a self, key: &'a Key) -> impl Iterator<Item = &'a str> {
+        self.claims_of(&key.scopes)
+            .chain(key.claims.iter().map(String::as_str))
+    }
+
+    /// Only the configured claims of granted scopes, and the single claims
+    /// asked for.
     // r[impl oidc.provider.claims-hook.scopes]
-    fn allowed(&self, scopes: &[String], answer: Map<String, Value>) -> Map<String, Value> {
-        let allowed: Vec<&str> = self.claims_of(scopes).collect();
+    fn allowed(&self, key: &Key, answer: Map<String, Value>) -> Map<String, Value> {
+        let allowed: Vec<&str> = self.wanted(key).collect();
         answer
             .into_iter()
             .filter(|(name, _)| allowed.contains(&name.as_str()))
@@ -385,6 +412,7 @@ mod tests {
             tenant: None,
             membership: None,
             scopes: vec!["profile".into()],
+            claims: Vec::new(),
         }
     }
 

@@ -86,12 +86,24 @@ pub struct Session {
     pub oidc_client_id: Option<String>,
     /// The scopes granted to that client.
     pub oidc_scopes: Vec<String>,
+    /// Single claims the client asked for, beyond its scopes' claims.
+    pub oidc_claims: RequestedClaims,
     pub version: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
     pub revoked_at: Option<DateTime<Utc>>,
     pub revoked_reason: Option<String>,
+}
+
+/// Single claims an OIDC client asked for with the `claims` request
+/// parameter.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RequestedClaims {
+    #[serde(default)]
+    pub userinfo: Vec<String>,
+    #[serde(default)]
+    pub id_token: Vec<String>,
 }
 
 impl Session {
@@ -126,6 +138,8 @@ struct Row {
     parent_session_id: Option<uuid::Uuid>,
     oidc_client_id: Option<String>,
     oidc_scopes: Vec<Option<String>>,
+    oidc_userinfo_claims: Vec<Option<String>>,
+    oidc_id_token_claims: Vec<Option<String>>,
 }
 
 impl From<Row> for Session {
@@ -146,6 +160,10 @@ impl From<Row> for Session {
             parent_session_id: row.parent_session_id.map(Into::into),
             oidc_client_id: row.oidc_client_id,
             oidc_scopes: row.oidc_scopes.into_iter().flatten().collect(),
+            oidc_claims: RequestedClaims {
+                userinfo: row.oidc_userinfo_claims.into_iter().flatten().collect(),
+                id_token: row.oidc_id_token_claims.into_iter().flatten().collect(),
+            },
             version: row.version,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -702,11 +720,14 @@ pub async fn bind_client(
     id: SessionId,
     client: &str,
     scopes: &[String],
+    claims: &RequestedClaims,
 ) -> StoreResult<Session> {
     Ok(diesel::update(session::table.find(id.as_uuid()))
         .set((
             session::oidc_client_id.eq(client),
             session::oidc_scopes.eq(nullable(scopes)),
+            session::oidc_userinfo_claims.eq(nullable(&claims.userinfo)),
+            session::oidc_id_token_claims.eq(nullable(&claims.id_token)),
         ))
         .returning(Row::as_returning())
         .get_result(conn)

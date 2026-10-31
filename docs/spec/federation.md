@@ -210,10 +210,19 @@ tenant and membership as they do for direct logins.
 r[oidc.provider.claims]
 `userinfo` and ID tokens MUST only contain claims Konklav holds (the
 subject id, login identifiers with their verification state, and group
-claims) and those of a claims hook. A scope's claims MUST come from
-the credential signed in with when it holds them, and otherwise from the
-subject's other active credentials, preferring a verified email address. Konklav MUST NOT store profile
-data to serve claims.
+claims) and those of a claims hook. A scope's claims MUST come from the credential signed in with
+when it holds them, and otherwise from the subject's other active
+credentials, preferring a verified email address. Konklav MUST NOT store
+profile data to serve claims.
+
+r[oidc.provider.claims-parameter]
+The authorization endpoint MUST accept the `claims` request parameter for
+`userinfo` and `id_token`, and refuse one that isn't a JSON object of those
+members as `invalid_request`. A requested claim MUST only be served when a
+scope the client is registered for covers it; others MUST be ignored, and a
+missing `essential` claim MUST NOT be an error. Claims requested for the ID
+token MUST only be honoured for claims Konklav holds itself; a claims
+hook's MUST only be served from userinfo.
 
 r[oidc.provider.claims-hook]
 A claims hook, when configured, MUST only be called while serving userinfo
@@ -224,7 +233,9 @@ r[oidc.provider.claims-hook.request]
 The hook MUST be called with a `POST` whose body is a JWT signed with the
 ID-token key, with `typ` `konklav-claims-request+jwt`, the hook's URL as
 `aud`, an expiry of at most a minute, and the subject, client, tenant and
-membership, and the granted scopes the hook serves with their claims.
+membership, the granted scopes the hook serves, and the claims asked for:
+those scopes' claims and single claims requested with the `claims`
+parameter.
 
 r[oidc.provider.claims-hook.scopes]
 Only the claims configured for the granted scopes MUST be passed on from
