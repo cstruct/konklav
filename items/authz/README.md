@@ -41,6 +41,6 @@ cargo test -p konklav-authz
 
 ## Traceability and related docs
 
-- [Authorization spec](../../docs/spec/authorization.md)
+- [Authorization spec](../../docs/spec/authorization.md) and [item spec](../../docs/spec/software-items/authz.md)
 - [Entitlements and decisions](../../docs/architecture/entitlements-and-decisions.md)
 - [Nomenclature](../../docs/nomenclature.md)

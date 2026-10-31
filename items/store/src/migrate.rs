@@ -8,6 +8,7 @@ use crate::{Pool, PoolError};
 // templates and roles.
 // r[impl authz.invalidate.subject]
 // r[impl authz.invalidate.definition]
+// r[impl item.store.typed-data]
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
 #[derive(Debug, thiserror::Error)]

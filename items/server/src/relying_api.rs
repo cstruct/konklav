@@ -108,6 +108,7 @@ struct CheckResponse {
 /// token's session is still valid.
 // r[impl authz.api.check]
 // r[impl authz.api.check-equivalence]
+// r[depends item.authz.single-evaluator]
 async fn check(
     State(state): State<AppState>,
     headers: HeaderMap,

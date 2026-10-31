@@ -31,6 +31,7 @@ pub struct Actor {
 // r[impl token.access.standard-claims]
 // r[impl token.access.session-claims]
 // r[impl token.access.no-grants]
+// r[impl item.token.shared-claims]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AccessClaims {
     pub iss: String,

@@ -103,6 +103,7 @@ pub enum Decision {
 // r[impl session.flags.restrictive]
 // r[impl session.flags.assertive]
 // r[impl authn.step-up.demand]
+// r[impl item.authz.single-evaluator]
 #[must_use]
 pub fn evaluate(
     requirements: &Requirements,

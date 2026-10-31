@@ -34,6 +34,6 @@ cargo test -p konklav-token
 
 ## Traceability and related docs
 
-- [Tokens and claims spec](../../docs/spec/tokens-and-claims.md)
+- [Tokens and claims spec](../../docs/spec/tokens-and-claims.md) and [item spec](../../docs/spec/software-items/token.md)
 - [Sessions and tokens](../../docs/architecture/sessions-and-tokens.md)
 - [Nomenclature](../../docs/nomenclature.md)

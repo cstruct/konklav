@@ -70,7 +70,7 @@ cargo test -p konklav-store
 
 ## Traceability and related docs
 
-- [Platform spec: storage](../../docs/spec/platform.md)
+- [Platform spec: storage](../../docs/spec/platform.md) and [item spec](../../docs/spec/software-items/store.md)
 - [Storage architecture](../../docs/architecture/storage.md)
 - [Traceability guidance](../../docs/traceability-guidance.md)
 - [Nomenclature](../../docs/nomenclature.md)

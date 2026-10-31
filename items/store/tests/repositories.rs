@@ -102,6 +102,7 @@ async fn creating_a_subject_is_idempotent_on_its_id() {
     );
 }
 
+// r[verify item.store.typed-data]
 #[tokio::test(flavor = "multi_thread")]
 async fn the_database_rejects_credential_data_that_violates_its_schema() {
     let db = TestDatabase::new().await;

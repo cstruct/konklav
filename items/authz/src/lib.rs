@@ -5,6 +5,7 @@
 //! the rules can be pinned by golden tests and evaluated identically
 //! everywhere.
 
+// r[impl item.authz.sans-io]
 mod compile;
 mod evaluate;
 mod model;

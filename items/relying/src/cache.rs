@@ -240,6 +240,7 @@ impl Relying {
     // r[impl relying.decision.local]
     // r[impl relying.verify.offline]
     // r[impl relying.verify.session]
+    // r[depends item.authz.single-evaluator]
     pub fn decide(
         &mut self,
         token: &str,

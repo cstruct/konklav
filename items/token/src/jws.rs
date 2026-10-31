@@ -142,6 +142,7 @@ pub fn decode_claims_unverified(token: &str) -> Option<AccessClaims> {
 /// audience, expiry and issue time.
 ///
 /// `key_for` maps a `kid` to its verification key.
+// r[impl item.token.shared-claims]
 pub fn verify(
     token: &str,
     key_for: impl FnOnce(&str) -> Option<VerifyingKey>,

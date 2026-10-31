@@ -5,6 +5,7 @@
 //! verifiers (the relying core), so it performs no I/O and reads no clock:
 //! callers pass the current time in.
 
+// r[impl item.token.sans-io]
 mod claims;
 mod jwk;
 mod jws;

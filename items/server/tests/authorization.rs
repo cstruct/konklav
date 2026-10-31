@@ -514,6 +514,7 @@ async fn catalog_documents_are_validated() {
 }
 
 // r[verify authz.api.check-equivalence]
+// r[verify item.authz.single-evaluator]
 #[tokio::test(flavor = "multi_thread")]
 async fn local_evaluation_matches_the_check_api() {
     let world = world().await;

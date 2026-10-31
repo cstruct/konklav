@@ -21,12 +21,12 @@ Planned software items for v2 (see
 [`../../architecture/v2-overview.md`](../../architecture/v2-overview.md)):
 
 - `core`
-- `store`
-- `authz`
+- [`store`](store.md)
+- [`authz`](authz.md)
 - `authn`
 - `bootstrap`
 - `server`
-- `token`
+- [`token`](token.md)
 - [`relying`](relying.md)
 - [`console`](console.md)
 - `relying-client`

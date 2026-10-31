@@ -123,9 +123,9 @@ Use this heuristic:
 
 Examples in this repository:
 
-- `konklav-managed-config` owns the canonical managed-config bundle and directory-assembly behavior
-- `konklav-relying-auth` owns the JWT signing, verification, JWKS, and offline evaluation boundary
-- `konklav-controlplane-api` owns the shared Rust DTO boundary for control-plane operations
+- `konklav-token` owns the access-token payload and its verification, which the issuer and the relying core share
+- `konklav-authz` owns decision evaluation, which the check API and the relying core share
+- `konklav-relying` owns every decision and cache rule, which host bindings only translate
 
 ## Repository shape
 
@@ -151,15 +151,15 @@ Use the prefix:
 
 Examples:
 
-- `item.managed-config.root-bundle`
-- `item.relying-auth.validation-options`
-- `item.controlplane-api.shared-dto-boundary`
+- `item.token.shared-claims`
+- `item.authz.single-evaluator`
+- `item.relying.sans-io`
 
 Keep software-item rule names focused on stable producer-owned behavior, not on file structure or incidental implementation choices.
 
 Software-item rules should usually describe a small stable contract cluster rather than every individual type, function, or DTO.
 
-For example, one rule about managed-operation payload shape or one rule about subject-and-relying DTOs is usually better than one rule per request and response struct unless the individual DTOs truly have separate long-lived obligations.
+For example, one rule about the access-token payload is usually better than one rule per claim or struct unless they truly have separate long-lived obligations.
 
 ## Acceptance criteria for adding a software-item rule
 
@@ -177,4 +177,4 @@ Do not add a software-item rule when most of the following are true:
 - a local code comment or design note communicates it well enough
 - no other software item or long-lived boundary really depends on it
 
-Shared-boundary software items such as `konklav-managed-config`, `konklav-relying-auth`, and `konklav-controlplane-api` are often good fits for this layer because they own contracts that multiple consumers depend on.
+Shared-boundary software items such as `konklav-token`, `konklav-authz`, and `konklav-relying` are often good fits for this layer because they own contracts that multiple consumers depend on.

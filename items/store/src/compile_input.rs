@@ -41,6 +41,7 @@ pub struct CompileInput {
 /// the data.
 // r[impl authz.compile.inactive]
 // r[impl authz.compile.revision]
+// r[impl item.store.compile-snapshot]
 pub async fn load(
     conn: &mut AsyncPgConnection,
     subject_id: SubjectId,
