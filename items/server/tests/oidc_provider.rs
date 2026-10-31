@@ -70,7 +70,10 @@ async fn world() -> World {
 }
 
 async fn world_with(provider: OpenIdProvider) -> World {
-    let app = TestApp::with_openid_provider(provider).await;
+    world_in(TestApp::with_openid_provider(provider).await).await
+}
+
+async fn world_in(app: TestApp) -> World {
     let subject = app.human("ada@example.com", PASSWORD).await;
     for (method, path, body) in [
         (
@@ -1594,4 +1597,73 @@ async fn clients_can_ask_for_single_claims() {
         .await;
     assert_eq!(info.body["email"], "ada@example.com", "{:?}", info.body);
     assert!(info.body.get("groups").is_none());
+}
+
+// r[verify federation.pass-claims]
+#[tokio::test(flavor = "multi_thread")]
+async fn passed_claims_reach_clients_through_userinfo() {
+    use konklav_server::config::ClaimsHookFailure;
+    let hook = FakeHook::start().await;
+    let provider = hook.provider(ClaimsHookFailure::Omit, 0);
+    let app = TestApp::with_auth(|auth| {
+        auth.oidc = Some(provider);
+        auth.identity_providers = konklav_server::federation::Providers::from_settings([
+            konklav_server::federation::Settings {
+                id: "ops".into(),
+                pass_claims: [(
+                    "profile".to_owned(),
+                    vec!["name".to_owned(), "nickname".to_owned()],
+                )]
+                .into(),
+                ..Default::default()
+            },
+        ]);
+    })
+    .await;
+    let world = world_in(app).await;
+    let app = &world.app;
+    // As a federated login would have kept them on the login session.
+    let sid = konklav_token::decode_claims_unverified(&world.login_token)
+        .unwrap()
+        .sid;
+    let mut conn = app.db.pool().get().await.unwrap();
+    konklav_store::sessions::set_identity_claims(
+        &mut conn,
+        sid,
+        &json!({"profile": {"name": "Ada from upstream", "nickname": "Ada"}}),
+    )
+    .await
+    .unwrap();
+    drop(conn);
+
+    let discovery = app
+        .send(Method::GET, "/.well-known/openid-configuration", &[], None)
+        .await;
+    assert!(
+        discovery.body["claims_supported"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c == "nickname")
+    );
+
+    let info = userinfo_for(&world, "openid profile").await;
+    assert_eq!(info.status, StatusCode::OK, "{:?}", info.body);
+    assert_eq!(info.body["name"], "Ada Lovelace", "the hook's value wins");
+    assert_eq!(info.body["nickname"], "Ada");
+
+    // One by one with the claims parameter, without the scope.
+    let claims = json!({"userinfo": {"nickname": null}}).to_string();
+    let code = authorize(&world, &[("scope", "openid"), ("claims", &claims)]).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    let access = tokens.body["access_token"].as_str().unwrap();
+    let info = app
+        .with_bearer(Method::GET, "/v1/oauth2/userinfo", access)
+        .await;
+    assert_eq!(info.body["nickname"], "Ada", "{:?}", info.body);
+    assert!(info.body.get("name").is_none());
+
+    // Without the scope or a request, nothing passes.
+    let info = userinfo_for(&world, "openid email").await;
+    assert!(info.body.get("nickname").is_none());
 }

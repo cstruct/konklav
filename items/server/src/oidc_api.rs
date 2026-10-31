@@ -103,8 +103,22 @@ pub async fn discovery(State(state): State<AppState>) -> Result<Response, ApiErr
         "phone_number_verified",
         "groups",
     ];
+    for (scope, passed) in state.auth.identity_providers.passed() {
+        if !scopes.contains(&scope) {
+            scopes.push(scope);
+        }
+        for claim in passed {
+            if !claims.contains(&claim.as_str()) {
+                claims.push(claim);
+            }
+        }
+    }
     if let Some(hook) = &provider.claims_hook {
-        scopes.extend(hook.scopes());
+        scopes.extend(
+            hook.scopes()
+                .filter(|scope| !scopes.contains(scope))
+                .collect::<Vec<_>>(),
+        );
         for claim in hook.claims() {
             if !claims.contains(&claim) {
                 claims.push(claim);
@@ -373,7 +387,7 @@ async fn authorize(state: &AppState, query: AuthorizeQuery) -> Result<Response, 
         Ok(granted) => granted,
         Err(error) => return Ok(fail(error)),
     };
-    let Some(claims) = requested_claims(provider, &client, query.claims.as_deref()) else {
+    let Some(claims) = requested_claims(state, &client, query.claims.as_deref()) else {
         return Ok(fail("invalid_request"));
     };
 
@@ -426,7 +440,7 @@ async fn authorize(state: &AppState, query: AuthorizeQuery) -> Result<Response, 
 /// and `essential` don't matter: a missing claim is never an error.
 // r[impl oidc.provider.claims-parameter]
 fn requested_claims(
-    provider: &OpenIdProvider,
+    state: &AppState,
     client: &OidcClient,
     raw: Option<&str>,
 ) -> Option<RequestedClaims> {
@@ -443,7 +457,7 @@ fn requested_claims(
             claims
                 .keys()
                 .filter(|claim| {
-                    claim_scope(provider, claim).is_some_and(|(scope, own)| {
+                    claim_scope(state, claim).is_some_and(|(scope, own)| {
                         client.allows_scope(scope) && (own || !own_only)
                     })
                 })
@@ -459,16 +473,23 @@ fn requested_claims(
 }
 
 /// The scope that covers `claim`, and whether Konklav holds the claim
-/// itself.
-fn claim_scope<'a>(provider: &'a OpenIdProvider, claim: &str) -> Option<(&'a str, bool)> {
+/// itself rather than a claims hook or an identity provider.
+fn claim_scope<'a>(state: &'a AppState, claim: &str) -> Option<(&'a str, bool)> {
     if let Some((scope, _)) = oidc::OWN_SCOPES
         .iter()
         .find(|(_, claims)| claims.contains(&claim))
     {
         return Some((scope, true));
     }
-    let hook = provider.claims_hook.as_ref()?;
-    hook.scope_of(claim).map(|scope| (scope, false))
+    let hooked = state
+        .auth
+        .oidc
+        .as_ref()
+        .and_then(|provider| provider.claims_hook.as_ref())
+        .and_then(|hook| hook.scope_of(claim));
+    hooked
+        .or_else(|| state.auth.identity_providers.passed_scope_of(claim))
+        .map(|scope| (scope, false))
 }
 
 /// An S256 challenge: the base64url SHA-256 of a verifier, 43 characters
@@ -1146,7 +1167,14 @@ async fn start_client_session(
             if let (Some(tenant), Some(membership)) = (parent.tenant_id, parent.membership_id) {
                 sessions::select_tenant(conn, session.id, tenant, membership).await?;
             }
-            Ok(sessions::bind_client(conn, session.id, &client.id, scopes, claims).await?)
+            let session =
+                sessions::bind_client(conn, session.id, &client.id, scopes, claims).await?;
+            // Claims passed from an identity provider last as long as the
+            // sign-in they came with.
+            Ok(match &parent.identity_claims {
+                Some(passed) => sessions::set_identity_claims(conn, session.id, passed).await?,
+                None => session,
+            })
         })
         .await?;
     Ok((session, refresh))
@@ -1658,6 +1686,12 @@ async fn peer_subject(
         },
     )
     .await?;
+    add_passed_claims(
+        &mut body,
+        latest.identity_claims.as_ref(),
+        &client.scopes,
+        &[],
+    );
     Ok(([(header::CACHE_CONTROL, "no-store")], Json(body)).into_response())
 }
 
@@ -1762,7 +1796,39 @@ async fn userinfo(
         },
     )
     .await?;
+    add_passed_claims(
+        &mut body,
+        session.identity_claims.as_ref(),
+        &session.oidc_scopes,
+        &session.oidc_claims.userinfo,
+    );
     Ok(([(header::CACHE_CONTROL, "no-store")], Json(body)).into_response())
+}
+
+/// Adds the claims passed from an identity provider for granted scopes and
+/// requested claims to `body`, never replacing Konklav's or the hook's.
+// r[impl federation.pass-claims]
+fn add_passed_claims(
+    body: &mut serde_json::Value,
+    passed: Option<&serde_json::Value>,
+    scopes: &[String],
+    requested: &[String],
+) {
+    let (Some(serde_json::Value::Object(passed)), serde_json::Value::Object(body)) = (passed, body)
+    else {
+        return;
+    };
+    for (scope, claims) in passed {
+        let granted = scopes.contains(scope);
+        let serde_json::Value::Object(claims) = claims else {
+            continue;
+        };
+        for (name, value) in claims {
+            if granted || requested.contains(name) {
+                body.entry(name.clone()).or_insert_with(|| value.clone());
+            }
+        }
+    }
 }
 
 /// Adds the claims hook's claims to `body`, never replacing Konklav's own.

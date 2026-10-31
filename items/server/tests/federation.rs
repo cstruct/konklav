@@ -863,3 +863,45 @@ async fn providers_can_require_local_mfa() {
     );
     assert_eq!(take(None).await.code(), "UNAUTHENTICATED");
 }
+
+// r[verify federation.pass-claims]
+#[tokio::test(flavor = "multi_thread")]
+async fn configured_claims_are_kept_on_the_federated_session() {
+    let provider = FakeProvider::start().await;
+    let settings = Settings {
+        provisioning: Provisioning::Create,
+        pass_claims: [(
+            "profile".to_owned(),
+            vec!["name".to_owned(), "locale".to_owned()],
+        )]
+        .into(),
+        ..provider.settings()
+    };
+    let app = TestApp::with_identity_providers(Providers::from_settings([settings])).await;
+    let reply = federated_login(
+        &app,
+        &provider,
+        json!({"sub": "passing", "name": "Ada Lovelace", "department": "engines"}),
+    )
+    .await;
+    signed_in_subject(&app, &reply).await;
+    let mut conn = app.db.pool().get().await.unwrap();
+    let sessions = konklav_store::sessions::list(
+        &mut conn,
+        &konklav_store::sessions::SessionFilter::default(),
+        None,
+        None,
+        100,
+    )
+    .await
+    .unwrap();
+    let passed: Vec<_> = sessions
+        .iter()
+        .filter_map(|s| s.identity_claims.clone())
+        .collect();
+    assert_eq!(
+        passed,
+        [json!({"profile": {"name": "Ada Lovelace"}})],
+        "only configured claims the provider reported"
+    );
+}

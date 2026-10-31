@@ -246,6 +246,7 @@ diesel::table! {
         oidc_scopes -> Array<Nullable<Text>>,
         oidc_userinfo_claims -> Array<Nullable<Text>>,
         oidc_id_token_claims -> Array<Nullable<Text>>,
+        identity_claims -> Nullable<Jsonb>,
     }
 }
 

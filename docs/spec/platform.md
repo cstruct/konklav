@@ -111,6 +111,11 @@ r[retention.delivery-material]
 The challenge material in a stored `delivery.requested` event MUST be erased
 once the challenge has expired, not only withheld from the feed.
 
+r[retention.identity-claims]
+Claims passed from an identity provider MUST be erased from a session once
+it has been revoked or has expired, without waiting for the session itself
+to be deleted.
+
 ## Telemetry
 
 Konklav exports telemetry over OTLP to any collector or backend that

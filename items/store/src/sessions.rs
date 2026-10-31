@@ -88,6 +88,9 @@ pub struct Session {
     pub oidc_scopes: Vec<String>,
     /// Single claims the client asked for, beyond its scopes' claims.
     pub oidc_claims: RequestedClaims,
+    /// Claims passed from the identity provider the session was started
+    /// through, by scope, until the session ends.
+    pub identity_claims: Option<serde_json::Value>,
     pub version: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -140,6 +143,7 @@ struct Row {
     oidc_scopes: Vec<Option<String>>,
     oidc_userinfo_claims: Vec<Option<String>>,
     oidc_id_token_claims: Vec<Option<String>>,
+    identity_claims: Option<serde_json::Value>,
 }
 
 impl From<Row> for Session {
@@ -164,6 +168,7 @@ impl From<Row> for Session {
                 userinfo: row.oidc_userinfo_claims.into_iter().flatten().collect(),
                 id_token: row.oidc_id_token_claims.into_iter().flatten().collect(),
             },
+            identity_claims: row.identity_claims,
             version: row.version,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -729,6 +734,21 @@ pub async fn bind_client(
             session::oidc_userinfo_claims.eq(nullable(&claims.userinfo)),
             session::oidc_id_token_claims.eq(nullable(&claims.id_token)),
         ))
+        .returning(Row::as_returning())
+        .get_result(conn)
+        .await?
+        .into())
+}
+
+/// Keeps claims passed from an identity provider on the session, by scope.
+// r[impl federation.pass-claims]
+pub async fn set_identity_claims(
+    conn: &mut AsyncPgConnection,
+    id: SessionId,
+    claims: &serde_json::Value,
+) -> StoreResult<Session> {
+    Ok(diesel::update(session::table.find(id.as_uuid()))
+        .set(session::identity_claims.eq(claims))
         .returning(Row::as_returning())
         .get_result(conn)
         .await?

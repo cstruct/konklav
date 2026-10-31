@@ -154,6 +154,28 @@ pub async fn sessions(
     .await
 }
 
+/// Erases claims passed from identity providers from sessions that were
+/// revoked or expired before `now`.
+// r[impl retention.identity-claims]
+pub async fn identity_claims(
+    conn: &mut AsyncPgConnection,
+    now: DateTime<Utc>,
+    batch: i64,
+) -> StoreResult<usize> {
+    Ok(diesel::sql_query(
+        "update session set identity_claims = null where id in (
+             select id from session
+             where identity_claims is not null
+               and (revoked_at is not null or expires_at < $1)
+             limit $2
+         )",
+    )
+    .bind::<Timestamptz, _>(now)
+    .bind::<BigInt, _>(batch)
+    .execute(conn)
+    .await?)
+}
+
 /// Erases the challenge material from stored delivery requests whose
 /// challenge expired before `now`.
 // r[impl retention.delivery-material]

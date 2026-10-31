@@ -396,6 +396,12 @@ config_tree! {
             /// the subject with that login identifier. Off when empty.
             #[facet(default)]
             pub link_verified_email_domains: Vec<String>,
+            /// Claims the provider reports that Konklav passes on to its own
+            /// OIDC clients, by the scope they are served under, such as
+            /// `profile (name locale)`. They are kept only while the session
+            /// lasts.
+            #[facet(default)]
+            pub pass_claims: HashMap<String, Vec<String>>,
             /// Claim mapping: each rule that matches grants a global role, or
             /// a membership in a tenant with roles there.
             #[facet(default)]

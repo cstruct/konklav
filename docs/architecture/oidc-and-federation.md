@@ -287,6 +287,31 @@ oidc_provider {
   `no-store` or `no-cache` skips caching. When the cache is full, expired
   entries go first, then the oldest.
 
+### Passed claims
+
+An identity provider can be configured to pass claims it reports on to
+Konklav's own clients, without a claims hook, such as an upstream's `name`:
+
+```styx
+identity_providers ({
+    id ops
+    …
+    pass_claims {
+        profile (name given_name family_name locale)
+    }
+})
+```
+
+At a federated login, Konklav keeps the configured claims the provider
+reported (from its ID token and userinfo), by scope, on the session the
+login started. Client sessions started from it copy them, and userinfo
+serves them for granted scopes and requested claims; a hook's value wins.
+They are a copy for the session's lifetime, not profile data Konklav keeps:
+each federated login brings its own, and the sweeper erases them as soon as
+a session has been revoked or has expired. A chain of Konklavs passes
+claims along: an upstream with a claims hook serves `name` in userinfo, a
+downstream reads it at login and passes it to its own clients.
+
 The hook keeps `r[subject.no-profile]` and
 `r[platform.repo.relying-agnostic]`: Konklav names no relying system and
 stores nothing it answers. The alternative, letting the login application
@@ -461,6 +486,7 @@ Proposed defaults, to confirm before implementation:
 | Second signing algorithm | ES256, and RS256 when an RSA key is configured | RS256 only (wider support, larger keys and tokens) |
 | ID token claims | Subject id and groups; login identifiers from userinfo; a claims hook for the rest, in userinfo | Store profile data in Konklav; login identifiers in the ID token |
 | Claims hook authentication | A request JWT signed with the ID-token key | A shared secret |
+| Identity provider claims for clients | Passed claims, kept on the session until it ends | A copy on the federated credential; the upstream's refresh token kept to call its userinfo |
 | SAML | Deferred; brokers translate SAML to OIDC | Native SAML |
 
 ## Phases

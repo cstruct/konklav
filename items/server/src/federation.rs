@@ -61,6 +61,8 @@ pub struct Settings {
     /// Domains whose verified emails may link to the subject with that
     /// login identifier.
     pub link_verified_email_domains: Vec<String>,
+    /// Claims passed on to Konklav's own OIDC clients, by scope.
+    pub pass_claims: std::collections::BTreeMap<String, Vec<String>>,
     pub grants: Vec<crate::claim_mapping::Rule>,
     /// Keys used instead of the discovered ones.
     pub pinned_keys: Option<Arc<JwkSet>>,
@@ -545,6 +547,25 @@ impl Provider {
         Ok(())
     }
 
+    /// The configured claims of a login, by scope, to keep on its session;
+    /// `None` when there are none.
+    // r[impl federation.pass-claims]
+    #[must_use]
+    pub fn passed_claims(&self, claims: &IdClaims) -> Option<serde_json::Value> {
+        let mut passed = serde_json::Map::new();
+        for (scope, names) in &self.settings.pass_claims {
+            let values: serde_json::Map<String, serde_json::Value> = names
+                .iter()
+                .filter_map(|name| Some((name.clone(), claims.raw.get(name)?.clone())))
+                .filter(|(_, value)| !value.is_null())
+                .collect();
+            if !values.is_empty() {
+                passed.insert(scope.clone(), values.into());
+            }
+        }
+        (!passed.is_empty()).then(|| passed.into())
+    }
+
     /// The Konklav authentication methods a login is credited with: the
     /// federated marker, plus whatever the provider's `amr` and `acr` map
     /// to. Unmapped values are ignored.
@@ -597,6 +618,10 @@ impl Providers {
                     provider.id
                 ));
             }
+            crate::claims_hook::check_served(
+                &format!("identity provider `{}`: pass_claims", provider.id),
+                &provider.pass_claims,
+            )?;
             let settings = Settings {
                 id: provider.id.clone(),
                 issuer: provider.issuer.clone(),
@@ -636,6 +661,7 @@ impl Providers {
                     .iter()
                     .map(|domain| domain.to_lowercase())
                     .collect(),
+                pass_claims: provider.pass_claims.clone().into_iter().collect(),
                 pinned_keys: provider
                     .pinned_jwks_file
                     .as_ref()
@@ -683,6 +709,22 @@ impl Providers {
 
     pub fn iter(&self) -> impl Iterator<Item = &Arc<Provider>> {
         self.0.values()
+    }
+
+    /// The scope some provider passes `claim` under, if any.
+    #[must_use]
+    pub fn passed_scope_of(&self, claim: &str) -> Option<&str> {
+        self.iter()
+            .flat_map(|provider| &provider.settings.pass_claims)
+            .find(|(_, claims)| claims.iter().any(|c| c == claim))
+            .map(|(scope, _)| scope.as_str())
+    }
+
+    /// Every passed scope with its claims, for discovery.
+    pub fn passed(&self) -> impl Iterator<Item = (&str, &[String])> {
+        self.iter()
+            .flat_map(|provider| &provider.settings.pass_claims)
+            .map(|(scope, claims)| (scope.as_str(), claims.as_slice()))
     }
 }
 

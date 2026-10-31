@@ -457,6 +457,12 @@ async fn finish(
     )
     .await
     .map_err(|_| Failure::Provider)?;
+    let session = match provider.passed_claims(&claims) {
+        Some(passed) => konklav_store::sessions::set_identity_claims(conn, session.id, &passed)
+            .await
+            .map_err(|_| Failure::Provider)?,
+        None => session,
+    };
     signed_in(state, conn, &session, &refresh).await
 }
 

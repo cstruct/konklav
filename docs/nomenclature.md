@@ -389,6 +389,10 @@ Terms are introduced in dependency order: each definition only uses terms define
   - An optional endpoint of a relying system that Konklav's OpenID provider calls while serving userinfo, for profile claims such as `name` that Konklav doesn't hold.
   - The relying system stays the system of record: Konklav never stores what the hook returns, and caches it only in memory, for a bounded time.
 
+- `passed claims`
+  - Claims an identity provider reported, such as `name`, that Konklav is configured to pass on to its own OIDC clients.
+  - They are a copy kept on the federated session and the client sessions started from it, and erased when those sessions end.
+
 - `login hand-off`
   - How Konklav's OpenID provider gets a subject signed in without its own user interface: it redirects to a configured login application, which signs the subject in through the subject-facing surface and then completes the pending login request.
 

@@ -77,6 +77,15 @@ A federated login MUST create an ordinary Konklav session. The provider's
 tokens MUST NOT be passed to relying systems, and the provider's refresh
 token MUST NOT be stored unless configuration requires it.
 
+r[federation.pass-claims]
+A provider MAY be configured with claims to pass on, grouped by the scope
+they are served under, such as `profile (name locale)`. Konklav's own claims
+MUST NOT be passed. Konklav MUST keep the passed claims only on the session
+the federated login started and on the client sessions started from it,
+replacing them at each federated login, and serve them from userinfo for
+granted scopes and requested claims. A claims hook's value MUST win over a
+passed one.
+
 r[federation.session-lifetime]
 Each provider MUST be able to cap the lifetime of sessions it creates,
 independently of the instance-wide session lifetime.
@@ -210,10 +219,12 @@ tenant and membership as they do for direct logins.
 r[oidc.provider.claims]
 `userinfo` and ID tokens MUST only contain claims Konklav holds (the
 subject id, login identifiers with their verification state, and group
-claims) and those of a claims hook. A scope's claims MUST come from the credential signed in with
+claims), those of a claims hook, and those passed from an identity
+provider. A scope's claims MUST come from the credential signed in with
 when it holds them, and otherwise from the subject's other active
 credentials, preferring a verified email address. Konklav MUST NOT store
-profile data to serve claims.
+profile data to serve claims, beyond the session-scoped copies that
+`federation.pass-claims` allows.
 
 r[oidc.provider.claims-parameter]
 The authorization endpoint MUST accept the `claims` request parameter for
@@ -221,8 +232,8 @@ The authorization endpoint MUST accept the `claims` request parameter for
 members as `invalid_request`. A requested claim MUST only be served when a
 scope the client is registered for covers it; others MUST be ignored, and a
 missing `essential` claim MUST NOT be an error. Claims requested for the ID
-token MUST only be honoured for claims Konklav holds itself; a claims
-hook's MUST only be served from userinfo.
+token MUST only be honoured for claims Konklav holds itself; a claims hook's
+and passed claims MUST only be served from userinfo.
 
 r[oidc.provider.claims-hook]
 A claims hook, when configured, MUST only be called while serving userinfo

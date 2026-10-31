@@ -272,3 +272,40 @@ async fn one_sweeper_runs_at_a_time() {
             .is_some()
     );
 }
+
+// r[verify retention.identity-claims]
+#[tokio::test(flavor = "multi_thread")]
+async fn passed_claims_are_erased_once_the_session_ends() {
+    let app = TestApp::new().await;
+    app.human("ada@retention.example", PASSWORD).await;
+    let live = session(&app, "ada@retention.example").await;
+    let expired = session(&app, "ada@retention.example").await;
+    let revoked = session(&app, "ada@retention.example").await;
+    exec(
+        &app,
+        &format!(
+            "update session set identity_claims = '{{\"profile\": {{\"name\": \"Ada\"}}}}';
+             update session set expires_at = now() - interval '1 minute' where id = '{expired}';
+             update session set revoked_at = now(), revoked_reason = 'logout' where id = '{revoked}'"
+        ),
+    )
+    .await;
+    assert_eq!(sweep(&app).await.identity_claims, 2);
+    assert_eq!(
+        count(&app, "session where identity_claims is not null").await,
+        1
+    );
+    assert_eq!(
+        count(
+            &app,
+            &format!("session where id = '{live}' and identity_claims is not null")
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        count(&app, "session").await,
+        3,
+        "the sessions themselves stay"
+    );
+}

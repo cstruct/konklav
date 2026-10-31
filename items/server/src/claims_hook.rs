@@ -58,6 +58,30 @@ const RESERVED_CLAIMS: &[&str] = &[
     "active",
 ];
 
+/// Refuses scopes and claims Konklav serves itself among `scopes`, claims
+/// by scope that a hook or an identity provider would supply.
+pub(crate) fn check_served(
+    section: &str,
+    scopes: &HashMap<String, Vec<String>>,
+) -> Result<(), String> {
+    for (scope, claims) in scopes {
+        if RESERVED_SCOPES.contains(&scope.as_str()) || scope.starts_with("tenant:") {
+            return Err(format!(
+                "{section}: Konklav serves the `{scope}` scope itself"
+            ));
+        }
+        if let Some(claim) = claims
+            .iter()
+            .find(|c| RESERVED_CLAIMS.contains(&c.as_str()))
+        {
+            return Err(format!(
+                "{section}.{scope}: Konklav serves the `{claim}` claim itself"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub struct ClaimsHook {
     url: String,
     /// The claims of each scope the hook serves.
@@ -122,21 +146,7 @@ impl ClaimsHook {
     pub fn from_config(config: &ClaimsHookConfig) -> Result<Self, String> {
         reqwest::Url::parse(&config.url)
             .map_err(|error| format!("claims_hook.url `{}`: {error}", config.url))?;
-        for (scope, claims) in &config.scopes {
-            if RESERVED_SCOPES.contains(&scope.as_str()) || scope.starts_with("tenant:") {
-                return Err(format!(
-                    "claims_hook.scopes: Konklav serves the `{scope}` scope itself"
-                ));
-            }
-            if let Some(claim) = claims
-                .iter()
-                .find(|c| RESERVED_CLAIMS.contains(&c.as_str()))
-            {
-                return Err(format!(
-                    "claims_hook.scopes.{scope}: Konklav serves the `{claim}` claim itself"
-                ));
-            }
-        }
+        check_served("claims_hook.scopes", &config.scopes)?;
         let http = reqwest::Client::builder()
             .timeout(Duration::from_millis(config.timeout_ms.into()))
             .build()
