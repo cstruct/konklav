@@ -29,6 +29,8 @@ pub struct OpenIdProvider {
     rsa: Option<(EncodingKey, Jwk)>,
     pub login_url: String,
     pub jwks_uri: String,
+    /// Where userinfo gets profile claims, when configured.
+    pub claims_hook: Option<crate::claims_hook::ClaimsHook>,
 }
 
 impl OpenIdProvider {
@@ -44,14 +46,32 @@ impl OpenIdProvider {
                 format!("{}/.well-known/jwks.json", issuer.trim_end_matches('/'))
             }),
         )?;
-        match &config.rsa_key_file {
+        let mut provider = match &config.rsa_key_file {
             Some(file) => {
                 let pem = std::fs::read_to_string(Path::new(file))
                     .map_err(|error| format!("reading {file}: {error}"))?;
-                provider.with_rsa_pem(&pem)
+                provider.with_rsa_pem(&pem)?
             }
-            None => Ok(provider),
-        }
+            None => provider,
+        };
+        provider.claims_hook = config
+            .claims_hook
+            .as_ref()
+            .map(crate::claims_hook::ClaimsHook::from_config)
+            .transpose()?;
+        Ok(provider)
+    }
+
+    /// Signs `claims` with the ES256 ID-token key, with `typ`.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the claims always serialize and the key signs.
+    pub fn sign_es256<T: Serialize>(&self, claims: &T, typ: &str) -> String {
+        let mut header = Header::new(Algorithm::ES256);
+        header.kid = Some(self.jwk.kid.clone());
+        header.typ = Some(typ.to_owned());
+        jsonwebtoken::encode(&header, claims, &self.key).expect("tokens sign")
     }
 
     /// Adds an RSA key for `RS256` ID tokens, from PKCS#8 PEM.
@@ -114,6 +134,7 @@ impl OpenIdProvider {
             rsa: None,
             login_url,
             jwks_uri,
+            claims_hook: None,
         })
     }
 }

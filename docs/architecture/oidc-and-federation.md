@@ -236,10 +236,54 @@ lets it see, such as roles named `ops-*` for environments. ID tokens carry
 `groups` but not `email` or `phone_number`: every code exchange also returns
 an access token, so OpenID Connect puts a scope's claims in
 `/v1/oauth2/userinfo`. A downstream Konklav reads them there before linking
-by email. Richer
-profile claims come from an optional claims hook, which isn't built yet: a
-relying-system endpoint that Konklav would call with the subject id. That
-keeps `r[platform.repo.relying-agnostic]`.
+by email.
+
+### Claims hook
+
+Profile claims such as `name` come from an optional claims hook: a relying
+system's endpoint, which stays the system of record. Konklav calls it only
+while serving userinfo and the peer subjects endpoint, never while issuing
+tokens, and only for a granted scope the hook serves:
+
+```styx
+oidc_provider {
+    claims_hook {
+        url https://profiles.internal/konklav/claims
+        timeout_ms 1500          // the default
+        on_failure omit          // or fail, which answers userinfo with 503
+        cache_ttl_seconds 300    // 0, the default, caches nothing
+        cache_entries 10000      // the default
+        scopes {
+            profile (name given_name family_name locale)
+            employee (department)
+        }
+    }
+}
+```
+
+- **Request:** `POST` with `Content-Type: application/jwt`. The body is
+  signed with the ES256 ID-token key, with `typ` `konklav-claims-request+jwt`,
+  so the hook verifies it against Konklav's JWKS, as it does access tokens.
+  It holds:
+  - `iss`, `aud` (the hook's URL), `iat`, `exp` (a minute later) and `jti`
+  - `sub`, `client_id`, and `tenant` and `membership` when the session has
+    them, so profiles can differ per tenant
+  - `scopes` (the granted ones the hook serves) and `claims` (theirs)
+- **Answer:** a JSON object. Konklav keeps only the claims configured for
+  the granted scopes, and never takes its own claims (`sub`, login
+  identifiers, `groups`, protocol claims) from it; configuring them is
+  refused at startup. `404` means no claims.
+- **Cache:** answers may be kept in memory, never in the database, by
+  subject, client, tenant, membership and scopes, for at most
+  `cache_ttl_seconds`. A `Cache-Control: max-age` shortens that, and
+  `no-store` or `no-cache` skips caching. When the cache is full, expired
+  entries go first, then the oldest.
+
+The hook keeps `r[subject.no-profile]` and
+`r[platform.repo.relying-agnostic]`: Konklav names no relying system and
+stores nothing it answers. The alternative, letting the login application
+attach claims to the session at login, would keep profile data in Konklav's
+sessions table and serve it stale until the next sign-in.
 
 ## Claim mapping
 
@@ -407,7 +451,8 @@ Proposed defaults, to confirm before implementation:
 | Peering in the first release | No: short sessions and back-channel logout first, peering next | Peering from the start |
 | Break-glass credential | Local secret keys with an alerting event; hardware keys once `public_key` exists | Bootstrap token |
 | Second signing algorithm | ES256, and RS256 when an RSA key is configured | RS256 only (wider support, larger keys and tokens) |
-| ID token claims | Subject id and groups; login identifiers from UserInfo; a claims hook for the rest | Store profile data in Konklav; login identifiers in the ID token |
+| ID token claims | Subject id and groups; login identifiers from userinfo; a claims hook for the rest, in userinfo | Store profile data in Konklav; login identifiers in the ID token |
+| Claims hook authentication | A request JWT signed with the ID-token key | A shared secret |
 | SAML | Deferred; brokers translate SAML to OIDC | Native SAML |
 
 ## Phases
@@ -449,7 +494,8 @@ two suites run against independent implementations:
 
 ## Open points
 
-- The claims hook for profile claims beyond login identifiers and groups.
+- The `claims` request parameter, so a client can ask for single claims such
+  as `name` without their scope.
 - Publishing the next ES256 key ahead of a rotation, as Ed25519 keys allow.
 - Token exchange (RFC 8693) for acting on behalf of a person.
 - Back-channel logout for sessions that expire rather than end.

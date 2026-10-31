@@ -36,6 +36,8 @@ pub enum ErrorCode {
     /// The server is serving too many requests, or this one took too long.
     Overloaded,
     SigningKeyUnavailable,
+    /// The claims hook failed and is configured to refuse userinfo then.
+    ClaimsHookUnavailable,
     Internal,
     DatabaseUnavailable,
     MigrationsPending,
@@ -57,6 +59,7 @@ impl ErrorCode {
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Overloaded
             | Self::SigningKeyUnavailable
+            | Self::ClaimsHookUnavailable
             | Self::DatabaseUnavailable
             | Self::MigrationsPending => StatusCode::SERVICE_UNAVAILABLE,
         }

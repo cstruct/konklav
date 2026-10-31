@@ -169,8 +169,8 @@ MUST record the status code and error code, and MUST be failed when the
 response is a server error.
 
 r[telemetry.traces.outbound]
-Requests to identity providers, their key sets and back-channel logout
-endpoints MUST be client spans named by operation, failed when they fail,
+Requests to identity providers, their key sets, back-channel logout
+endpoints and the claims hook MUST be client spans named by operation, failed when they fail,
 and MUST carry the trace in a `traceparent` header. Sweeps, back-channel
 logout runs and peer syncs MUST be spans of their own.
 

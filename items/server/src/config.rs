@@ -272,6 +272,33 @@ config_tree! {
             /// offer RS256; without this key, clients can't be registered
             /// for it.
             pub rsa_key_file: Option<String>,
+            /// A relying system's endpoint that userinfo asks for profile
+            /// claims Konklav doesn't hold, such as `name`.
+            pub claims_hook: Option<pub struct ClaimsHook {
+                /// Where to `POST` the signed claims request.
+                pub url: String,
+                /// The scopes the hook serves, each with its claims, such
+                /// as `profile (name given_name family_name)`.
+                pub scopes: HashMap<String, Vec<String>>,
+                #[facet(default = 1500)]
+                pub timeout_ms: u32,
+                /// What userinfo does when the hook fails.
+                #[facet(default)]
+                pub on_failure: #[derive(Default)] #[facet(rename_all = "snake_case")] pub enum ClaimsHookFailure {
+                    /// Serve userinfo without the hook's claims.
+                    #[default]
+                    Omit,
+                    /// Refuse userinfo with 503.
+                    Fail,
+                },
+                /// How long answers are cached in memory; 0 turns caching
+                /// off. An answer's `Cache-Control` can only shorten it.
+                #[facet(default)]
+                pub cache_ttl_seconds: u32,
+                /// The most answers cached at once.
+                #[facet(default = 10000)]
+                pub cache_entries: u32,
+            }>,
         }>,
         /// How long authentication endpoints take at least, so their
         /// response times don't reveal which identifiers exist. A section

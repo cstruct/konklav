@@ -4,6 +4,7 @@
 pub mod bootstrap;
 mod capabilities;
 pub mod claim_mapping;
+pub mod claims_hook;
 mod client_address;
 pub mod config;
 mod control_api;

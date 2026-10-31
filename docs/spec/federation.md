@@ -210,10 +210,38 @@ tenant and membership as they do for direct logins.
 r[oidc.provider.claims]
 `userinfo` and ID tokens MUST only contain claims Konklav holds (the
 subject id, login identifiers with their verification state, and group
-claims) unless a claims hook is configured. A scope's claims MUST come from
+claims) and those of a claims hook. A scope's claims MUST come from
 the credential signed in with when it holds them, and otherwise from the
 subject's other active credentials, preferring a verified email address. Konklav MUST NOT store profile
 data to serve claims.
+
+r[oidc.provider.claims-hook]
+A claims hook, when configured, MUST only be called while serving userinfo
+and the peer subjects endpoint, never while issuing tokens, and only when
+the access token's granted scopes include a scope the hook serves.
+
+r[oidc.provider.claims-hook.request]
+The hook MUST be called with a `POST` whose body is a JWT signed with the
+ID-token key, with `typ` `konklav-claims-request+jwt`, the hook's URL as
+`aud`, an expiry of at most a minute, and the subject, client, tenant and
+membership, and the granted scopes the hook serves with their claims.
+
+r[oidc.provider.claims-hook.scopes]
+Only the claims configured for the granted scopes MUST be passed on from
+the hook's answer. Claims Konklav serves itself, and the protocol claims,
+MUST NOT be taken from it. A `404` MUST mean the hook has no claims for the
+subject.
+
+r[oidc.provider.claims-hook.failure]
+When the hook fails, times out or answers badly, userinfo MUST either be
+served without the hook's claims or refused with `503`, as configured.
+
+r[oidc.provider.claims-hook.cache]
+What the hook returns MUST NOT be stored in the database. It MAY be cached
+in memory, by subject, client, tenant, membership and scopes, for at most the
+configured time to live, shortened by the answer's `Cache-Control`
+(`max-age`, or `no-store` to skip caching). The cache MUST hold a bounded
+number of entries.
 
 r[oidc.provider.groups]
 A client MAY receive a `groups` claim listing the subject's global roles

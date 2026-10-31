@@ -401,6 +401,32 @@ p1XNGpwF1zXMHj8NrRZRBsdiy2jZvNVSLlPqzmK3P4YLDAtSoKNCeXst
         provider.jwks_uri,
         "https://auth.example/.well-known/jwks.json"
     );
+    assert!(provider.claims_hook.is_none());
+
+    let hooked = |scopes: &str| {
+        format!(
+            "{CONFIG}oidc_provider {{\n    id_token_key_file \"{}\"\n    login_url \"https://login.example/\"\n    \
+             claims_hook {{\n        url \"https://profiles.example/claims\"\n        cache_ttl_seconds 60\n        \
+             scopes {{\n            {scopes}\n        }}\n    }}\n}}\n",
+            key.display()
+        )
+    };
+    let load_hook = |scopes: &str| {
+        let (_, _, _, tokens, ..) = load(
+            &files.write("hook.styx", &hooked(scopes)),
+            &files.write("s.styx", SECRETS),
+            &[],
+        )
+        .unwrap();
+        let config = tokens.oidc_provider.unwrap();
+        konklav_server::oidc::OpenIdProvider::load(&config, &tokens.tokens.issuer)
+            .map(|provider| provider.claims_hook.is_some())
+    };
+    assert_eq!(load_hook("profile (name given_name)"), Ok(true));
+    assert!(
+        load_hook("profile (name email)").is_err(),
+        "a hook can't supply Konklav's own claims"
+    );
 }
 
 // r[verify federation.peer.pinning]

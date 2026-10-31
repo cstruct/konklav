@@ -104,7 +104,7 @@ async fn world_with(provider: OpenIdProvider) -> World {
             json!({
                 "kind": "confidential",
                 "redirect_uris": [REDIRECT],
-                "scopes": ["openid", "email", "phone", "groups", "tenant"],
+                "scopes": ["openid", "email", "phone", "groups", "tenant", "profile"],
                 "audience": "console",
                 "visible_groups": ["ops-*"],
             }),
@@ -965,7 +965,7 @@ async fn resume(world: &World, answered: &common::Reply, browser: &str) -> HashM
 #[tokio::test(flavor = "multi_thread")]
 async fn scopes_the_client_may_not_have_are_dropped() {
     let world = world().await;
-    let code = authorize(&world, &[("scope", "openid email profile admin email")]).await;
+    let code = authorize(&world, &[("scope", "openid email address admin email")]).await;
     let tokens = exchange(&world, &code, VERIFIER).await;
     assert_eq!(tokens.status, StatusCode::OK, "{:?}", tokens.body);
     assert_eq!(tokens.body["scope"], "openid email");
@@ -1301,4 +1301,227 @@ async fn scope_claims_come_from_any_of_the_subjects_credentials() {
     assert_eq!(info.body["phone_number"], "+46700000000", "{:?}", info.body);
     assert_eq!(info.body["phone_number_verified"], true);
     assert_eq!(info.body["email"], "ada@example.com");
+}
+
+/// What the fake claims hook answers.
+#[derive(Clone, Copy)]
+enum HookAnswer {
+    Profile,
+    Missing,
+    Broken,
+}
+
+struct FakeHook {
+    url: String,
+    answer: std::sync::Arc<std::sync::Mutex<HookAnswer>>,
+    /// The signed requests received.
+    requests: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl FakeHook {
+    async fn start() -> Self {
+        use axum::routing::post;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/claims", listener.local_addr().unwrap());
+        let answer = std::sync::Arc::new(std::sync::Mutex::new(HookAnswer::Profile));
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (answering, recording) = (answer.clone(), requests.clone());
+        let router = axum::Router::new().route(
+            "/claims",
+            post(move |body: String| {
+                recording.lock().unwrap().push(body);
+                let answer = *answering.lock().unwrap();
+                async move {
+                    use axum::response::IntoResponse;
+                    match answer {
+                        // An address and a department too, which the hook
+                        // may not supply here.
+                        HookAnswer::Profile => axum::Json(json!({
+                            "name": "Ada Lovelace",
+                            "locale": "en-GB",
+                            "email": "someone-else@example.com",
+                            "department": "engines",
+                        }))
+                        .into_response(),
+                        HookAnswer::Missing => StatusCode::NOT_FOUND.into_response(),
+                        HookAnswer::Broken => StatusCode::BAD_GATEWAY.into_response(),
+                    }
+                }
+            }),
+        );
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        Self {
+            url,
+            answer,
+            requests,
+        }
+    }
+
+    fn provider(
+        &self,
+        on_failure: konklav_server::config::ClaimsHookFailure,
+        ttl: u32,
+    ) -> OpenIdProvider {
+        let mut provider = provider();
+        provider.claims_hook = Some(
+            konklav_server::claims_hook::ClaimsHook::from_config(
+                &konklav_server::config::ClaimsHook {
+                    url: self.url.clone(),
+                    scopes: HashMap::from([
+                        ("profile".into(), vec!["name".into(), "locale".into()]),
+                        ("employee".into(), vec!["department".into()]),
+                    ]),
+                    timeout_ms: 1000,
+                    on_failure,
+                    cache_ttl_seconds: ttl,
+                    cache_entries: 100,
+                },
+            )
+            .unwrap(),
+        );
+        provider
+    }
+
+    fn calls(&self) -> usize {
+        self.requests.lock().unwrap().len()
+    }
+}
+
+async fn userinfo_for(world: &World, scope: &str) -> common::Reply {
+    let code = authorize(world, &[("scope", scope)]).await;
+    let tokens = exchange(world, &code, VERIFIER).await;
+    assert_eq!(tokens.status, StatusCode::OK, "{:?}", tokens.body);
+    let access = tokens.body["access_token"].as_str().unwrap();
+    world
+        .app
+        .with_bearer(Method::GET, "/v1/oauth2/userinfo", access)
+        .await
+}
+
+// r[verify oidc.provider.claims-hook]
+// r[verify oidc.provider.claims-hook.request]
+// r[verify oidc.provider.claims-hook.scopes]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_claims_hook_serves_profile_claims_in_userinfo() {
+    use konklav_server::config::ClaimsHookFailure;
+    let hook = FakeHook::start().await;
+    let world = world_with(hook.provider(ClaimsHookFailure::Omit, 0)).await;
+    let app = &world.app;
+
+    let discovery = app
+        .send(Method::GET, "/.well-known/openid-configuration", &[], None)
+        .await;
+    let listed = |field: &str, value: &str| {
+        discovery.body[field]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == value)
+    };
+    assert!(listed("scopes_supported", "profile"));
+    assert!(listed("claims_supported", "name"));
+
+    // Without a hook scope granted, the hook isn't asked.
+    let info = userinfo_for(&world, "openid email").await;
+    assert_eq!(info.status, StatusCode::OK, "{:?}", info.body);
+    assert!(info.body.get("name").is_none());
+    assert_eq!(hook.calls(), 0);
+
+    let code = authorize(&world, &[("scope", "openid email profile employee")]).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    let id = id_token_claims(app, tokens.body["id_token"].as_str().unwrap()).await;
+    assert!(id.get("name").is_none(), "ID tokens never ask the hook");
+    assert_eq!(hook.calls(), 0);
+    let access = tokens.body["access_token"].as_str().unwrap();
+    let info = app
+        .with_bearer(Method::GET, "/v1/oauth2/userinfo", access)
+        .await;
+    assert_eq!(info.status, StatusCode::OK, "{:?}", info.body);
+    assert_eq!(info.body["name"], "Ada Lovelace");
+    assert_eq!(info.body["locale"], "en-GB");
+    assert_eq!(
+        info.body["email"], "ada@example.com",
+        "Konklav's own claims win"
+    );
+    assert!(
+        info.body.get("department").is_none(),
+        "the client wasn't granted the employee scope"
+    );
+
+    // The request is signed with the ID-token key, for the hook.
+    let request = hook.requests.lock().unwrap()[0].clone();
+    let header = jsonwebtoken::decode_header(&request).unwrap();
+    assert_eq!(header.typ.as_deref(), Some("konklav-claims-request+jwt"));
+    let jwks: Value = app
+        .send(Method::GET, "/.well-known/jwks.json", &[], None)
+        .await
+        .body;
+    let ec = jwks["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|k| k["kid"] == header.kid.as_deref().unwrap())
+        .unwrap();
+    let jwk: Jwk = serde_json::from_value(ec.clone()).unwrap();
+    let mut validation = Validation::new(jsonwebtoken::Algorithm::ES256);
+    validation.set_audience(&[&hook.url]);
+    validation.set_issuer(&[ISSUER]);
+    let claims =
+        jsonwebtoken::decode::<Value>(&request, &DecodingKey::from_jwk(&jwk).unwrap(), &validation)
+            .unwrap()
+            .claims;
+    assert_eq!(claims["sub"], world.subject);
+    assert_eq!(claims["client_id"], "console");
+    assert_eq!(claims["scopes"], json!(["profile"]));
+    assert_eq!(claims["claims"], json!(["name", "locale"]));
+    assert!(claims["exp"].as_i64().unwrap() - claims["iat"].as_i64().unwrap() <= 60);
+
+    // 404 means no profile.
+    *hook.answer.lock().unwrap() = HookAnswer::Missing;
+    let info = app
+        .with_bearer(Method::GET, "/v1/oauth2/userinfo", access)
+        .await;
+    assert_eq!(info.status, StatusCode::OK, "{:?}", info.body);
+    assert!(info.body.get("name").is_none());
+}
+
+// r[verify oidc.provider.claims-hook.failure]
+#[tokio::test(flavor = "multi_thread")]
+async fn claims_hook_failures_omit_or_refuse_as_configured() {
+    use konklav_server::config::ClaimsHookFailure;
+    let hook = FakeHook::start().await;
+    *hook.answer.lock().unwrap() = HookAnswer::Broken;
+    let world = world_with(hook.provider(ClaimsHookFailure::Omit, 0)).await;
+    let info = userinfo_for(&world, "openid email profile").await;
+    assert_eq!(info.status, StatusCode::OK, "{:?}", info.body);
+    assert!(info.body.get("name").is_none());
+    assert_eq!(info.body["email"], "ada@example.com");
+
+    let world = world_with(hook.provider(ClaimsHookFailure::Fail, 0)).await;
+    let info = userinfo_for(&world, "openid email profile").await;
+    assert_eq!(
+        info.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{:?}",
+        info.body
+    );
+}
+
+// r[verify oidc.provider.claims-hook.cache]
+#[tokio::test(flavor = "multi_thread")]
+async fn claims_hook_answers_are_cached_for_their_ttl() {
+    use konklav_server::config::ClaimsHookFailure;
+    let hook = FakeHook::start().await;
+    let world = world_with(hook.provider(ClaimsHookFailure::Omit, 60)).await;
+    let code = authorize(&world, &[("scope", "openid profile")]).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    let access = tokens.body["access_token"].as_str().unwrap();
+    for _ in 0..3 {
+        let info = world
+            .app
+            .with_bearer(Method::GET, "/v1/oauth2/userinfo", access)
+            .await;
+        assert_eq!(info.body["name"], "Ada Lovelace");
+    }
+    assert_eq!(hook.calls(), 1, "answered from memory after the first call");
 }

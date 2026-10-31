@@ -385,6 +385,10 @@ Terms are introduced in dependency order: each definition only uses terms define
   - A registration at Konklav's OpenID provider, for a relying system, tool or other Konklav instance, with its own redirect URIs, audience and visible claims.
   - Prefer `relying system` when the software's role, not its registration, is what matters.
 
+- `claims hook`
+  - An optional endpoint of a relying system that Konklav's OpenID provider calls while serving userinfo, for profile claims such as `name` that Konklav doesn't hold.
+  - The relying system stays the system of record: Konklav never stores what the hook returns, and caches it only in memory, for a bounded time.
+
 - `login hand-off`
   - How Konklav's OpenID provider gets a subject signed in without its own user interface: it redirects to a configured login application, which signs the subject in through the subject-facing surface and then completes the pending login request.
 

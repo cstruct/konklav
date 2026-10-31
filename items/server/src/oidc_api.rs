@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
+use crate::claims_hook::ClaimsFor;
 use crate::cookies::{Cookie, SameSite};
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::oidc::{self, OpenIdProvider};
@@ -81,6 +82,33 @@ fn endpoint(state: &AppState, path: &str) -> String {
 // r[impl oidc.provider.discovery]
 pub async fn discovery(State(state): State<AppState>) -> Result<Response, ApiError> {
     let provider = provider(&state)?;
+    let mut scopes = vec!["openid", "email", "phone", "groups"];
+    let mut claims = vec![
+        "iss",
+        "sub",
+        "aud",
+        "azp",
+        "exp",
+        "iat",
+        "auth_time",
+        "nonce",
+        "amr",
+        "acr",
+        "sid",
+        "email",
+        "email_verified",
+        "phone_number",
+        "phone_number_verified",
+        "groups",
+    ];
+    if let Some(hook) = &provider.claims_hook {
+        scopes.extend(hook.scopes());
+        for claim in hook.claims() {
+            if !claims.contains(&claim) {
+                claims.push(claim);
+            }
+        }
+    }
     let document = serde_json::json!({
         "issuer": state.auth.issuer,
         "authorization_endpoint": endpoint(&state, "authorize"),
@@ -107,11 +135,8 @@ pub async fn discovery(State(state): State<AppState>) -> Result<Response, ApiErr
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt", "none"],
         "token_endpoint_auth_signing_alg_values_supported": ["ES256", "ES384", "RS256", "PS256", "EdDSA"],
-        "scopes_supported": ["openid", "email", "phone", "groups"],
-        "claims_supported": [
-            "iss", "sub", "aud", "azp", "exp", "iat", "auth_time", "nonce", "amr", "acr", "sid",
-            "email", "email_verified", "phone_number", "phone_number_verified", "groups",
-        ],
+        "scopes_supported": scopes,
+        "claims_supported": claims,
         "acr_values_supported": [oidc::ACR_SINGLE, oidc::ACR_MULTI],
         "authorization_response_iss_parameter_supported": true,
         // r[impl oidc.provider.request-objects]
@@ -1531,10 +1556,23 @@ async fn peer_subject(
     let principal = konklav_store::subjects::get(&mut conn, subject).await?;
     let credential = credentials::get(&mut conn, latest.credential_id).await?;
     let claims = oidc::claims(&mut conn, &client, &client.scopes, subject, &credential).await?;
+    drop(conn);
     let mut body = serde_json::to_value(&claims).map_err(ApiError::internal)?;
     body["sub"] = serde_json::json!(subject);
     body["active"] =
         serde_json::json!(principal.state == konklav_store::subjects::SubjectState::Active);
+    add_hook_claims(
+        &state,
+        &mut body,
+        &ClaimsFor {
+            subject,
+            client: &client.id,
+            tenant: latest.tenant_id,
+            membership: latest.membership_id,
+            granted: &client.scopes,
+        },
+    )
+    .await?;
     Ok(([(header::CACHE_CONTROL, "no-store")], Json(body)).into_response())
 }
 
@@ -1619,7 +1657,39 @@ async fn userinfo(
         &credential,
     )
     .await?;
+    drop(conn);
     let mut body = serde_json::to_value(&claims).map_err(ApiError::internal)?;
     body["sub"] = serde_json::json!(session.subject_id);
+    add_hook_claims(
+        state,
+        &mut body,
+        &ClaimsFor {
+            subject: session.subject_id,
+            client: &client.id,
+            tenant: session.tenant_id,
+            membership: session.membership_id,
+            granted: &session.oidc_scopes,
+        },
+    )
+    .await?;
     Ok(([(header::CACHE_CONTROL, "no-store")], Json(body)).into_response())
+}
+
+/// Adds the claims hook's claims to `body`, never replacing Konklav's own.
+async fn add_hook_claims(
+    state: &AppState,
+    body: &mut serde_json::Value,
+    request: &ClaimsFor<'_>,
+) -> Result<(), ApiError> {
+    let provider = provider(state)?;
+    let Some(hook) = &provider.claims_hook else {
+        return Ok(());
+    };
+    let claims = hook.fetch(provider, &state.auth.issuer, request).await?;
+    if let serde_json::Value::Object(body) = body {
+        for (name, value) in claims {
+            body.entry(name).or_insert(value);
+        }
+    }
+    Ok(())
 }
