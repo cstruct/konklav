@@ -42,6 +42,8 @@ pub struct Setup {
     pub login_url: Option<String>,
     /// Origins allowed to use browser sign-in.
     pub browser_origins: Vec<String>,
+    /// A claims hook serving the `profile` scope, for an OpenID provider.
+    pub claims_hook: Option<String>,
     /// More Styx for the config file.
     pub config: String,
     /// More Styx for the secrets file.
@@ -115,7 +117,9 @@ impl Server {
             )
         });
         let oidc = match &setup.login_url {
-            Some(login_url) => provider_config(&dir, login_url).await?,
+            Some(login_url) => {
+                provider_config(&dir, login_url, setup.claims_hook.as_deref()).await?
+            }
             None => String::new(),
         };
         let origins = setup
@@ -346,7 +350,7 @@ impl Drop for Server {
 
 /// The `oidc_provider` section, with an ES256 and an RSA ID-token key
 /// written into `dir`.
-async fn provider_config(dir: &Path, login_url: &str) -> Result<String> {
+async fn provider_config(dir: &Path, login_url: &str, hook: Option<&str>) -> Result<String> {
     let key = loop {
         if let Ok(key) = p256::SecretKey::from_slice(&random::<32>()) {
             break key;
@@ -367,12 +371,38 @@ async fn provider_config(dir: &Path, login_url: &str) -> Result<String> {
         pem("PRIVATE KEY", der.as_ref()),
     )
     .await?;
+    let hook = hook.map_or_else(String::new, |url| {
+        format!(
+            "    claims_hook {{\n        url {}\n        scopes {{\n            \
+             profile ({})\n        }}\n    }}\n",
+            quoted(url),
+            PROFILE_CLAIMS.join(" ")
+        )
+    });
     Ok(format!(
         "oidc_provider {{\n    id_token_key_file id-token-key.pem\n    \
-         rsa_key_file id-token-rsa-key.pem\n    login_url {}\n}}\n",
+         rsa_key_file id-token-rsa-key.pem\n    login_url {}\n{hook}}}\n",
         quoted(login_url)
     ))
 }
+
+/// The claims a [`Setup::claims_hook`] serves for the `profile` scope.
+pub const PROFILE_CLAIMS: &[&str] = &[
+    "name",
+    "given_name",
+    "family_name",
+    "middle_name",
+    "nickname",
+    "preferred_username",
+    "profile",
+    "picture",
+    "website",
+    "gender",
+    "birthdate",
+    "zoneinfo",
+    "locale",
+    "updated_at",
+];
 
 /// `der` as a PEM block.
 fn pem(label: &str, der: &[u8]) -> String {

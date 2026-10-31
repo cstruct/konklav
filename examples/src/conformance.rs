@@ -6,7 +6,8 @@
 //! remembers the sign-in in a cookie of its own, so `prompt=none` can be
 //! answered without asking. Without one, it refuses `prompt=none` with
 //! `login_required`. When a remembered sign-in doesn't satisfy a request
-//! (an old `max_age`, or `prompt=login`), it asks again.
+//! (an old `max_age`, or `prompt=login`), it asks again. It is also
+//! Konklav's claims hook, serving the test user's `profile` claims.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -16,7 +17,7 @@ use axum::Router;
 use axum::extract::{Form, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use reqwest::Method;
 use serde_json::{Value, json};
 
@@ -58,13 +59,16 @@ pub async fn start(
     alias: &str,
 ) -> Result<Conformance> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let origin = format!("http://{host}:{}", listener.local_addr()?.port());
+    let port = listener.local_addr()?.port();
+    let origin = format!("http://{host}:{port}");
     let konklav = Server::start(&Setup {
         binary: Some(binary.to_owned()),
         issuer_host: Some(host.to_owned()),
         issuer,
         login_url: Some(format!("{origin}/sign-in")),
         browser_origins: vec![origin.clone()],
+        // Konklav runs on this machine, so it reaches the hook directly.
+        claims_hook: Some(format!("http://127.0.0.1:{port}/claims")),
         ..Setup::default()
     })
     .await?;
@@ -92,7 +96,7 @@ pub async fn start(
                 Some(json!({
                     "kind": "confidential",
                     "redirect_uris": [callback, format!("{callback}?dummy1=lorem&dummy2=ipsum")],
-                    "scopes": ["openid", "email", "phone"],
+                    "scopes": ["openid", "email", "phone", "profile"],
                     "audience": id,
                     "id_token_alg": alg,
                     // The suite's Basic OP plan sends no PKCE.
@@ -118,6 +122,7 @@ pub async fn start(
     });
     let router = Router::new()
         .route("/sign-in", get(show).post(sign_in))
+        .route("/claims", post(profile))
         .with_state(page);
     tokio::spawn(async move { axum::serve(listener, router).await });
 
@@ -188,6 +193,27 @@ fn config(issuer: &str, login: &str, alias: &str, clients: &[Value]) -> Value {
         "browser": sign_in(false),
         "override": overrides,
     })
+}
+
+/// The claims hook: the test user's profile, whoever is asked about,
+/// since the test user is the only one.
+async fn profile() -> axum::Json<Value> {
+    axum::Json(json!({
+        "name": "Conformance Q. Tester",
+        "given_name": "Conformance",
+        "family_name": "Tester",
+        "middle_name": "Q.",
+        "nickname": "Connie",
+        "preferred_username": "conformance",
+        "profile": "https://example.com/conformance",
+        "picture": "https://example.com/conformance.png",
+        "website": "https://example.com",
+        "gender": "female",
+        "birthdate": "1990-01-01",
+        "zoneinfo": "Europe/Stockholm",
+        "locale": "en-GB",
+        "updated_at": 1_793_404_800,
+    }))
 }
 
 #[derive(serde::Deserialize)]

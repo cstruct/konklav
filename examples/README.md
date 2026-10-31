@@ -69,8 +69,9 @@ Last run with suite release v5.3.4, both plans had no failures.
 
 - **Warnings:**
   - Konklav's `konklav_peer_*` discovery fields are reported as unexpected.
-  - There is no `name` claim. Konklav stores no profile data.
-- **Skipped:** the profile, address and all-scopes tests, and request objects. Konklav doesn't support these.
+  - `oidcc-claims-essential` asks for `name` with the `claims` request parameter, which Konklav doesn't support.
+- **Profile claims** come from the example's claims hook, so the profile test runs.
+- **Skipped:** the address and all-scopes tests, and request objects. Konklav doesn't support these.
 - **Review:** the second sign-in and error-page screenshots, as for any provider.
 
 ## Layout
