@@ -211,8 +211,7 @@ pub async fn list(
 /// offers it again until it is accepted anew. Offering the same terms again
 /// changes nothing. A share's owner can't change.
 ///
-/// It writes several rows: run it in the caller's transaction, which also
-/// lets the caller find the events it produced.
+/// It writes several rows: run it in a transaction.
 // r[impl authz.share.shape]
 // r[impl authz.share.acceptance]
 // r[impl authz.share.unique]

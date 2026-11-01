@@ -524,3 +524,45 @@ async fn the_migrations_seed_exactly_the_builtin_roles() {
         1
     );
 }
+
+// r[verify platform.idempotency.write-cursor]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_write_cursor_counts_events_from_savepoints() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let (_, tenant, _) = setup(&mut conn).await;
+    // `roles::put` runs its own transaction: inside the caller's, that is a
+    // savepoint, whose rows carry a subtransaction id.
+    let cursor = conn
+        .transaction::<_, StoreError, _>(async |conn| {
+            roles::put(conn, tenant, "nested", &RoleDefinition::default()).await?;
+            Ok(events::last_in_transaction(conn).await?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(cursor, Some(events::head(&mut conn).await.unwrap()));
+
+    // A rolled-back savepoint's events don't count, and nothing leaks into
+    // the next transaction.
+    let before = events::head(&mut conn).await.unwrap();
+    let (inner, after_rollback) = conn
+        .transaction::<_, StoreError, _>(async |conn| {
+            let inner = conn
+                .transaction::<(), StoreError, _>(async |conn| {
+                    roles::put(conn, tenant, "undone", &RoleDefinition::default()).await?;
+                    Err(StoreError::Conflict("undo".into()))
+                })
+                .await;
+            Ok((inner, events::last_in_transaction(conn).await?))
+        })
+        .await
+        .unwrap();
+    assert!(inner.is_err());
+    assert_eq!(after_rollback, None);
+    assert_eq!(events::head(&mut conn).await.unwrap(), before);
+    let untouched = conn
+        .transaction::<_, StoreError, _>(async |conn| Ok(events::last_in_transaction(conn).await?))
+        .await
+        .unwrap();
+    assert_eq!(untouched, None);
+}

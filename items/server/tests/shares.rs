@@ -93,6 +93,11 @@ async fn world() -> World {
             )
             .await;
         assert!(reply.status.is_success(), "{:?}", reply.body);
+        // r[verify platform.idempotency.write-cursor]
+        assert!(
+            reply.body["cursor"].is_i64(),
+            "role writes report their cursor"
+        );
     }
     let reader = member(&app, &recipient, "reader", None).await;
     let q3_reader = member(

@@ -52,8 +52,10 @@ pub async fn after(
 /// report. Call it inside the writing transaction.
 // r[impl platform.idempotency.write-cursor]
 pub async fn last_in_transaction(conn: &mut AsyncPgConnection) -> QueryResult<Option<Cursor>> {
+    // Kept by a trigger on `event`, so events written inside savepoints
+    // count too.
     diesel::sql_query(
-        "select max(cursor) as cursor from event where xmin = pg_current_xact_id()::xid",
+        "select nullif(current_setting('konklav.last_event', true), '')::bigint as cursor",
     )
     .get_result::<LastCursor>(conn)
     .await
