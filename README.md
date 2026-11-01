@@ -27,7 +27,7 @@ Run the commands from the repository root.
 
 1. Start Postgres. Konklav needs PostgreSQL 18 with the
    [`pg_jsonschema`](https://github.com/supabase/pg_jsonschema) extension,
-   and `dev/` builds and runs such a container on `localhost:55432`:
+   and `dev/` builds and runs such a container on `localhost:15432`:
 
    ```sh
    docker compose -f dev/compose.yaml up -d --wait

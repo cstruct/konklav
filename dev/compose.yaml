@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: konklav
       POSTGRES_DB: konklav
     ports:
-      - "${KONKLAV_DEV_PG_PORT:-55432}:5432"
+      - "${KONKLAV_DEV_PG_PORT:-15432}:5432"
     # Postgres 18 images keep data in a versioned directory below
     # /var/lib/postgresql, so the volume is mounted there instead of at
     # .../data. That also lets future major upgrades live side by side.

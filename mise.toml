@@ -20,7 +20,9 @@ uv = "0.8.24"
 "cargo:diesel_cli" = { version = "2.3.14", default-features = false, features = "postgres-bundled" }
 
 [env]
-KONKLAV_DEV_PG_PORT = "55432"
+# Below the ephemeral port ranges (32768+ on Linux, 49152+ on macOS), so an
+# outgoing connection can never be holding it when Postgres starts.
+KONKLAV_DEV_PG_PORT = "15432"
 DATABASE_URL = "postgres://konklav:konklav@localhost:{{env.KONKLAV_DEV_PG_PORT}}/konklav"
 KONKLAV_CONFIG = "{{config_root}}/config/dev.styx"
 KONKLAV_SECRETS = "{{config_root}}/config/dev.secrets.styx"

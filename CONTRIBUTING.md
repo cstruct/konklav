@@ -55,7 +55,7 @@ need Docker for the local Postgres and the OpenSSL headers (for example
 
 ```sh
 mise trust && mise install
-mise run db:up      # Postgres 18 with pg_jsonschema in Docker on localhost:55432
+mise run db:up      # Postgres 18 with pg_jsonschema in Docker on localhost:15432
 ```
 
 mise sets `DATABASE_URL`, `KONKLAV_CONFIG` and `KONKLAV_SECRETS` for the

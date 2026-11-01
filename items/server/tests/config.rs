@@ -173,7 +173,7 @@ fn the_dev_config_loads() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config");
     let (_, database, _, _, browser, _, _, mfa) =
         load(&root.join("dev.styx"), &root.join("dev.secrets.styx"), &[]).unwrap();
-    assert_eq!(database.database.port, 55432);
+    assert_eq!(database.database.port, 15432);
     let passkeys = browser.passkeys.as_ref().unwrap();
     assert!(
         konklav_server::passkeys::Verifier::from_config(passkeys, browser.browser.as_ref()).is_ok()

@@ -6,7 +6,7 @@ listen {
 
 database {
     host localhost
-    port 55432
+    port 15432
     name konklav
     user konklav
     max_connections 10
