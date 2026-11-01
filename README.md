@@ -20,41 +20,45 @@ It is designed around:
 
 ## Quickstart
 
-This runs Konklav locally, opens the operators' console and creates the
-first operator. You need [mise](https://mise.jdx.dev), Docker and the
-OpenSSL headers (for example `brew install openssl@3`).
+This builds Konklav from a checkout, runs it locally with the development
+configuration and creates the first operator. You need Rust 1.88 or later,
+Docker, and OpenSSL with its headers (for example `brew install openssl@3`).
+Run the commands from the repository root.
 
-1. Install the toolchain and start the server:
+1. Start Postgres. Konklav needs PostgreSQL 18 with the
+   [`pg_jsonschema`](https://github.com/supabase/pg_jsonschema) extension,
+   and `dev/` builds and runs such a container on `localhost:55432`:
 
    ```sh
-   mise trust && mise install
-   mise run serve
+   docker compose -f dev/compose.yaml up -d --wait
    ```
 
-   This starts Postgres in Docker, applies migrations, creates a development
-   signing key and serves the three surfaces:
+2. Install `konklav-server`:
+
+   ```sh
+   cargo install --locked --path items/server
+   ```
+
+3. Point it at the development configuration, create a signing key, apply
+   the migrations and serve:
+
+   ```sh
+   export KONKLAV_CONFIG=config/dev.styx KONKLAV_SECRETS=config/dev.secrets.styx
+   openssl genpkey -algorithm Ed25519 -out config/dev.signing-key.pem
+   konklav-server migrate
+   konklav-server serve
+   ```
+
+   It serves the three surfaces:
    - subject-facing on `127.0.0.1:8080`
    - relying on `:8081`
    - control-plane on `:8082`
 
-2. In a second terminal, start the console:
-
-   ```sh
-   mise run console:serve
-   ```
-
-   Open <http://localhost:8083>. Use `localhost` rather than `127.0.0.1`,
-   because passkeys don't work on IP addresses.
-
-3. Sign in with the bootstrap token. The development one is
-   `control.bootstrap_token` in
-   [`config/dev.secrets.styx`](config/dev.secrets.styx). The control plane
-   accepts it for everything, and it is only meant for creating the first
-   operator.
-
 4. Create the first operator, a human subject with a password credential
-   and the built-in `konklav.admin` global role. You can do this in the
-   console, or with the control-plane API:
+   and the built-in `konklav.admin` global role. Until one exists, the
+   control plane accepts only the bootstrap token, `control.bootstrap_token`
+   in [`config/dev.secrets.styx`](config/dev.secrets.styx). In a second
+   terminal:
 
    ```sh
    TOKEN=konklav-dev-control-token-0123456789
@@ -71,10 +75,9 @@ OpenSSL headers (for example `brew install openssl@3`).
    ```
 
    A `409` means the identifier is already taken in your database. Pick
-   another, or start over with an empty database with `mise run db:reset`.
+   another one.
 
-5. Sign out of the console and sign in again as `ada@example.com`. To get
-   an access token without the console:
+5. Sign in as the operator:
 
    ```sh
    curl -X POST localhost:8080/v1/login/password \
@@ -82,15 +85,31 @@ OpenSSL headers (for example `brew install openssl@3`).
      -d '{"identifier": "ada@example.com", "password": "correct horse"}'
    ```
 
-   In a real deployment, remove the bootstrap token from the secrets file
-   once an operator exists.
+   The response holds an access token for the control plane. In a real
+   deployment, remove the bootstrap token from the secrets file once an
+   operator exists.
 
 To start from a populated database instead, seed it with the example
 bootstrap set:
 
 ```sh
-cargo run -p konklav-server -- bootstrap examples/bootstrap/nested/seed.styx
+konklav-server bootstrap examples/bootstrap/nested/seed.styx
 ```
+
+### The console
+
+The operators' console is a browser UI over the control plane. To serve it
+against the server above on <http://localhost:8083>:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install --locked trunk
+cd items/console && trunk serve
+```
+
+Use `localhost` rather than `127.0.0.1`, because passkeys don't work on IP
+addresses. Sign in as the operator, or use the bootstrap token to create
+one there instead of with `curl`.
 
 ## Where next
 
@@ -102,7 +121,7 @@ cargo run -p konklav-server -- bootstrap examples/bootstrap/nested/seed.styx
   [`docs/architecture/`](docs/architecture/).
 - **Runnable scenarios:** [`examples/`](examples/README.md) has email-link
   sign-in with a delivery worker, one Konklav signing people in to another,
-  and seeding a deployment. Run one with `mise run example <name>`.
+  and seeding a deployment.
 - **Integrating a relying system:** the relying SDK, as the
   [Python binding](items/py/README.md) or the
   [native Rust client](items/relying-client/README.md), on top of the
@@ -115,6 +134,8 @@ cargo run -p konklav-server -- bootstrap examples/bootstrap/nested/seed.styx
   for signing in through identity providers and acting as an OpenID
   provider.
 - **Exact behavior:** the normative specs in [`docs/spec/`](docs/spec/README.md).
+- **Working on Konklav:** [`CONTRIBUTING.md`](CONTRIBUTING.md) covers the
+  development environment, tests and releases.
 
 ## What it does
 
@@ -145,91 +166,11 @@ cargo run -p konklav-server -- bootstrap examples/bootstrap/nested/seed.styx
 The Python binding isn't published to PyPI yet. v1, a prototype backed by
 Feldera, is preserved at tag `v1`.
 
-## Repository layout
-
-- `docs/nomenclature.md`: the shared vocabulary.
-- `docs/spec/`: normative, Tracey-managed requirements.
-- `docs/architecture/`: rationale and design notes, starting with
-  [`v2-overview.md`](docs/architecture/v2-overview.md).
-- `items/`: software items:
-  - `core`: identifiers
-  - `token`: claims, JWS, JWKS
-  - `authn`: hashing, refresh tokens
-  - `authz`: entitlement compilation and evaluation
-  - `bootstrap`: reading bootstrap sets (CSV tables and Styx documents)
-  - `store`: Postgres, migrations, repositories
-  - `server`: the binary
-  - `relying`: the sans-I/O relying core
-  - `relying-client`: the native Rust host
-  - `py`: the Python binding (maturin)
-  - `console`: the operators' web UI (Leptos, WASM)
-  - `test-support`: shared test helpers
-- `config/`: development configuration.
-- `examples/`: runnable examples that start real servers and that the tests
-  also run (see [`examples/README.md`](examples/README.md)):
-  - email-link sign-in, delivered over SMTP by a reference delivery worker
-  - one Konklav signing people in to another
-  - seeding a deployment with `bootstrap`
-  - the example bootstrap sets, nested and flat
-- `dev/`: local services for development.
-- `.agents/`: agent skills and the planning standard.
-
-## Development environment
-
-[mise](https://mise.jdx.dev) manages the toolchain, the environment and the
-local services. It covers Rust, Tracey and Diesel's CLI (which bundles libpq,
-so no system Postgres client is needed). Docker runs the local Postgres, and
-building the server needs the OpenSSL headers.
-
-```sh
-mise trust && mise install
-mise run db:up      # Postgres 18 with pg_jsonschema in Docker on localhost:55432
-```
-
-mise sets `DATABASE_URL`, `KONKLAV_CONFIG` and `KONKLAV_SECRETS` for the
-local setup. Everyday tasks:
-
-- `mise run serve` starts Postgres, migrates it and serves on ports 8080 to
-  8082.
-- `mise run console:serve` serves the operators' console on
-  <http://127.0.0.1:8083> against that server. Trunk, installed by mise,
-  builds it. `console:build` makes a release build. See
-  [`items/console`](items/console/README.md).
-- `mise run test` runs every test, each database test in its own database.
-  OIDC interoperability tests run against independent implementations:
-  - Ory Hydra, installed by mise, as an identity provider for Konklav
-    (`items/server/tests/hydra.rs`; skipped if `hydra` isn't on the PATH)
-  - the `openidconnect` client library against Konklav as an OpenID
-    provider (`items/server/tests/openidconnect.rs`)
-- `mise run example <name>` runs one of the examples in `examples/`, such as
-  `smtp-delivery`, against servers it starts on fresh databases.
-- `mise run hydra` runs Hydra in memory (public `:4444`, admin `:4445`) for
-  trying identity-provider logins by hand.
-- `mise run lint` checks formatting, clippy (warnings are errors, including
-  for the console's WASM target), Tracey validation and the GitHub Actions
-  workflows (actionlint).
-- `mise run migrate` applies migrations; `mise run db:schema` regenerates the
-  Diesel schema.
-- `cargo run -p konklav-server -- bootstrap [--dry-run] <paths>` loads
-  tenants, people and grants from CSV tables or Styx documents, for seeding
-  a database or moving another system's data in. See
-  [`items/bootstrap`](items/bootstrap/README.md).
-
-Other database tasks:
-
-- `db:down` stops Postgres and keeps its data.
-- `db:reset` stops it and deletes the data.
-- `db:status` shows its status.
-- `db:logs` follows its logs.
-- `db:psql` opens psql inside the container.
-
-To use another port, set `KONKLAV_DEV_PG_PORT`, for example in an untracked
-`mise.local.toml`.
-
 ## Running in a container
 
-The image runs `serve` as a non-root user. Mount `config.styx`,
-`secrets.styx` and the key files they name at `/etc/konklav`:
+The image runs `konklav-server serve` as a non-root user. Mount
+`config.styx`, `secrets.styx` and the key files they name at
+`/etc/konklav`:
 
 ```sh
 docker run --rm -v ./deploy:/etc/konklav:ro konklav/konklav migrate
@@ -239,30 +180,8 @@ docker run -v ./deploy:/etc/konklav:ro -p 8080-8082:8080-8082 konklav/konklav
 [`config/dev.styx`](config/dev.styx) and
 [`config/dev.secrets.styx`](config/dev.secrets.styx) show the shape of both
 files, and [`items/server`](items/server/README.md) describes the settings.
-
-Konklav's schema needs PostgreSQL 18 with the
-[`pg_jsonschema`](https://github.com/supabase/pg_jsonschema) extension;
-`dev/postgres` builds such an image.
-
-## CI and releases
-
-GitHub Actions runs `mise run lint` and `mise run test` on every push to
-`main` and every pull request (`.github/workflows/ci.yml`), and checks that
-the container image builds.
-
-To release, set `version` under `[workspace.package]` in `Cargo.toml`, then
-push a matching `v<version>` tag. The release workflow:
-
-1. Runs CI again.
-2. Builds `konklav-server` for x86_64 and aarch64 Linux and aarch64 macOS,
-   and the console as a static bundle.
-3. Pushes a linux/amd64 and linux/arm64 image to Docker Hub. The repository is
-   the `DOCKERHUB_IMAGE` variable; the `deploy` environment holds
-   `DOCKERHUB_USERNAME` and the `DOCKERHUB_TOKEN` secret.
-4. Publishes a GitHub release with the archives and `SHA256SUMS`.
-
-A version with a pre-release part, such as `0.2.0-rc.1`, makes a
-pre-release, and its image gets only that exact tag.
+The database must be PostgreSQL 18 with `pg_jsonschema`;
+[`dev/postgres`](dev/postgres/Dockerfile) builds such an image.
 
 ## Stack
 
