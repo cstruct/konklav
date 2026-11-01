@@ -416,6 +416,29 @@ pub fn explain(subject: &str, tenant: &str, action: &str) -> Request {
     .query("action", Some(action))
 }
 
+/// Explains the decision for `requirements`, optionally for one of the
+/// subject's sessions.
+#[must_use]
+pub fn explain_decision(
+    subject: &str,
+    tenant: &str,
+    session: &str,
+    requirements: &Value,
+) -> Request {
+    let mut body = json!({"requirements": requirements});
+    if !tenant.trim().is_empty() {
+        body["tenant"] = json!(tenant.trim());
+    }
+    if !session.trim().is_empty() {
+        body["session"] = json!(session.trim());
+    }
+    Request::control(
+        Method::Post,
+        format!("/subjects/{}/explain-decision", encode(subject)),
+    )
+    .json(body)
+}
+
 // --- Invites -----------------------------------------------------------------
 
 #[must_use]

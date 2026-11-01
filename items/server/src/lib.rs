@@ -11,6 +11,7 @@ mod control_api;
 mod control_authz;
 mod cookies;
 pub mod error;
+mod explain_api;
 pub mod federation;
 mod federation_api;
 pub mod feed;

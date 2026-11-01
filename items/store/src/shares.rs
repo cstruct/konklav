@@ -350,10 +350,27 @@ pub async fn accepted_for(
     conn: &mut AsyncPgConnection,
     recipient: TenantId,
 ) -> StoreResult<Vec<konklav_authz::Share>> {
+    in_state_for(conn, recipient, "accepted").await
+}
+
+/// The shares with `recipient` waiting to be accepted, from active owner
+/// tenants, so explanations can say a share isn't accepted yet.
+pub async fn offered_for(
+    conn: &mut AsyncPgConnection,
+    recipient: TenantId,
+) -> StoreResult<Vec<konklav_authz::Share>> {
+    in_state_for(conn, recipient, "offered").await
+}
+
+async fn in_state_for(
+    conn: &mut AsyncPgConnection,
+    recipient: TenantId,
+    state: &str,
+) -> StoreResult<Vec<konklav_authz::Share>> {
     let rows: Vec<Row> = share::table
         .inner_join(tenant::table.on(tenant::id.eq(share::owner_tenant_id)))
         .filter(share::recipient_tenant_id.eq(recipient.as_uuid()))
-        .filter(share::state.eq("accepted"))
+        .filter(share::state.eq(state))
         .filter(tenant::state.eq("active"))
         .select(Row::as_select())
         .load(conn)

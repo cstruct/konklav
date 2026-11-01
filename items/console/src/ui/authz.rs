@@ -11,7 +11,10 @@ use super::common::{
 };
 use super::console::use_console;
 use crate::api::endpoints;
-use crate::api::types::{Assignment, Entitlements, Explanation, Role, Template};
+use crate::api::types::{
+    ActionExplanation, Assignment, Contribution, DecisionExplanation, Entitlements, Explanation,
+    Role, Template,
+};
 use crate::grants::Capability;
 
 #[component]
@@ -477,6 +480,104 @@ pub fn Explain(subject: Signal<String>) -> impl IntoView {
             <button type="submit">"Explain"</button>
         </form>
         {loaded(explanation, |explanation: Option<Explanation>| explanation.map(|explanation| view! { <ExplanationView explanation/> }))}
+        <h3>"Explain a decision"</h3>
+        <ExplainDecision subject tenant=tenant.into()/>
+    }
+}
+
+/// Requirements for `actions` (comma-separated) tenant-wide, or at a scope
+/// when `id` is given, of another tenant when `owner` is.
+fn decision_requirements(kind: &str, id: &str, owner: &str, actions: &str) -> Value {
+    let actions: Vec<&str> = actions
+        .split(',')
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .collect();
+    if id.trim().is_empty() {
+        return json!({"tenant": actions});
+    }
+    let mut scope = json!({"kind": kind.trim(), "id": id.trim(), "actions": actions});
+    if !owner.trim().is_empty() {
+        scope["tenant"] = json!(owner.trim());
+    }
+    json!({"scopes": [scope]})
+}
+
+/// Why the subject would be allowed or denied actions, optionally for one
+/// of its sessions.
+#[component]
+fn ExplainDecision(subject: Signal<String>, tenant: Signal<String>) -> impl IntoView {
+    let console = use_console();
+    let actions = RwSignal::new(String::new());
+    let kind = RwSignal::new("project".to_owned());
+    let id = RwSignal::new(String::new());
+    let owner = RwSignal::new(String::new());
+    let session = RwSignal::new(String::new());
+    let asked = RwSignal::new(None::<(String, String, Value)>);
+    let explanation = LocalResource::new(move || async move {
+        match asked.get() {
+            Some((tenant, session, requirements)) => console
+                .call::<DecisionExplanation>(endpoints::explain_decision(
+                    &subject.get(),
+                    &tenant,
+                    &session,
+                    &requirements,
+                ))
+                .await
+                .map(Some),
+            None => Ok(None),
+        }
+    });
+    let explain = move |event: SubmitEvent| {
+        event.prevent_default();
+        asked.set(Some((
+            tenant.get_untracked(),
+            session.get_untracked(),
+            decision_requirements(
+                &kind.get_untracked(),
+                &id.get_untracked(),
+                &owner.get_untracked(),
+                &actions.get_untracked(),
+            ),
+        )));
+    };
+    view! {
+        <form class="filters" on:submit=explain>
+            <Field label="Actions" value=actions placeholder="document:read, document:write"/>
+            <Field label="Scope kind" value=kind placeholder="project"/>
+            <Field label="Scope id" value=id placeholder="tenant-wide if blank"/>
+            <Field label="Owner tenant" value=owner placeholder="this tenant if blank"/>
+            <Field label="Session" value=session placeholder="no authentication checks if blank"/>
+            <button type="submit">"Explain decision"</button>
+        </form>
+        {loaded(explanation, |explanation: Option<DecisionExplanation>| explanation.map(|explanation| view! { <DecisionView explanation/> }))}
+    }
+}
+
+#[component]
+fn DecisionView(explanation: DecisionExplanation) -> impl IntoView {
+    let verdict = if explanation.allowed {
+        "Allowed."
+    } else {
+        "Denied."
+    };
+    view! {
+        <p class="notice">{verdict}</p>
+        <ul>
+            {explanation.checks.into_iter().map(|check| view! {
+                <li class:revoked=!check.passed>
+                    {if check.passed { "✓ " } else { "✗ " }}{check.message}
+                </li>
+            }).collect_view()}
+        </ul>
+        {explanation.actions.into_iter().map(|action: ActionExplanation| view! {
+            <p class:revoked=!action.granted>
+                <code>{action.action.clone()}</code>" at "{action.level.clone()}
+                {action.owner_tenant.clone().map(|owner| view! { " of tenant "<Id id=owner/> })}
+                ": "{action.message.clone()}
+            </p>
+            <Contributions contributions=action.contributions/>
+        }).collect_view()}
     }
 }
 
@@ -518,11 +619,19 @@ fn ExplanationView(explanation: Explanation) -> impl IntoView {
     };
     view! {
         <p class="notice">{granted}</p>
-        {(!explanation.contributions.is_empty()).then(|| view! {
+        <Contributions contributions=explanation.contributions/>
+    }
+}
+
+/// The policies bearing on an action.
+#[component]
+fn Contributions(contributions: Vec<Contribution>) -> impl IntoView {
+    view! {
+        {(!contributions.is_empty()).then(|| view! {
             <table>
                 <thead><tr><th>"Assignment"</th><th>"Level"</th><th>"Policy"</th><th>"Effect"</th><th>"Priority"</th><th>"From template"</th></tr></thead>
                 <tbody>
-                    {explanation.contributions.into_iter().map(|c| view! {
+                    {contributions.into_iter().map(|c| view! {
                         <tr class:revoked=c.effect == "deny">
                             <td><Id id=c.assignment.clone()/></td>
                             <td>{c.level.clone()}</td>
@@ -541,6 +650,22 @@ fn ExplanationView(explanation: Explanation) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decision_requirements_are_tenant_wide_or_at_a_scope() {
+        assert_eq!(
+            decision_requirements("project", "", "", "document:read, document:write"),
+            json!({"tenant": ["document:read", "document:write"]})
+        );
+        assert_eq!(
+            decision_requirements("project", " p1 ", "", "document:read"),
+            json!({"scopes": [{"kind": "project", "id": "p1", "actions": ["document:read"]}]})
+        );
+        assert_eq!(
+            decision_requirements("project", "p-17", "t-1", "document:read"),
+            json!({"scopes": [{"kind": "project", "id": "p-17", "tenant": "t-1", "actions": ["document:read"]}]})
+        );
+    }
 
     #[test]
     fn policies_summarise_as_actions_with_denies_marked() {

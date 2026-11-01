@@ -235,3 +235,23 @@ scopes before asking Konklav or the relying core.
 r[authz.explain]
 The control plane MUST be able to explain an entitlement in terms of the
 assignments, roles, templates and policies that produced it.
+
+r[authz.explain.decision]
+The control plane MUST be able to explain a decision for a subject, a tenant
+and requirements, optionally in the context of one of the subject's
+sessions. For each required action at each level it MUST say whether the
+action is granted and why, in words and as data: the policy that allows it
+(with denies that don't cancel it), the deny that cancels it and the allows
+that deny overrides, that it is granted only at other scopes, that no policy
+grants it, or what about a share grants it or doesn't.
+
+r[authz.explain.checks]
+A decision explanation MUST also report each other check that decides the
+outcome: whether the subject, its membership and the tenant are active, and
+with a session, whether the session is current, and the token kind, session
+flag and step-up checks.
+
+r[authz.explain.agreement]
+A decision explanation MUST agree with the decision the check API reaches
+for the same state: it allows exactly when every check passes and every
+required action is granted.

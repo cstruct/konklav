@@ -300,6 +300,9 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `decision`
   - The outcome of evaluating requirements against an access token, its session, and an entitlement set: `allow`, `deny`, or a step-up demand.
 
+- `decision explanation`
+  - A control-plane account of why a decision allows or denies: every check it makes, and for each required action, the policy that allows or denies it, or why nothing does.
+
 - `share`
   - One tenant's scope made available to another tenant, with the actions the other tenant may use there.
   - The `owner tenant` holds the scope. The `recipient tenant` receives it, either tenant-wide or at one of its own scopes, such as a project.

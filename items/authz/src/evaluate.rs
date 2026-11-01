@@ -265,7 +265,7 @@ fn shared_actions<'a>(
     (granted, obligations)
 }
 
-fn step_up_satisfied(step_up: &StepUp, claims: &AccessClaims, now: i64) -> bool {
+pub(crate) fn step_up_satisfied(step_up: &StepUp, claims: &AccessClaims, now: i64) -> bool {
     let counted = claims
         .amr
         .iter()

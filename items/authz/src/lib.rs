@@ -8,11 +8,16 @@
 // r[impl item.authz.sans-io]
 mod compile;
 mod evaluate;
+mod explain;
 mod model;
 
-pub use compile::{Contribution, Explanation, compile, explain, shared};
+pub use compile::{compile, shared};
 pub use evaluate::{
     Decision, DenyReason, Obligation, Requirements, ScopeRequirement, StepUp, evaluate,
+};
+pub use explain::{
+    ActionExplanation, Check, Contribution, DecisionExplanation, ExplainInput, Explanation, Reason,
+    SessionContext, explain, explain_decision,
 };
 pub use model::{
     Assignment, Catalog, Effect, EntitlementSet, Entitlements, Group, Level, Policy, Scope, Share,

@@ -265,6 +265,35 @@ pub struct Contribution {
     pub from_template: bool,
 }
 
+/// Why a decision allows or denies.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct DecisionExplanation {
+    /// The check API's decision, when explained for a session.
+    #[serde(default)]
+    pub decision: Option<Value>,
+    pub allowed: bool,
+    pub checks: Vec<DecisionCheck>,
+    pub actions: Vec<ActionExplanation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct DecisionCheck {
+    pub check: String,
+    pub passed: bool,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct ActionExplanation {
+    pub action: String,
+    pub level: String,
+    #[serde(default)]
+    pub owner_tenant: Option<String>,
+    pub granted: bool,
+    pub message: String,
+    pub contributions: Vec<Contribution>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct SigningKey {
     pub kid: String,

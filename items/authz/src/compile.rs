@@ -4,10 +4,54 @@ use crate::{Assignment, Catalog, Effect, Entitlements, Level, Scope, Share, Shar
 
 /// Where a policy lands once its assignment and scope binding are known.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Placement {
+pub(crate) enum Placement {
     Global,
     Tenant,
     Scope(Scope),
+}
+
+impl Placement {
+    /// Where `assignment`'s policy lands, given whether it is scope-bound.
+    pub(crate) fn of(level: &Level, scope_bound: bool) -> Self {
+        match (level, scope_bound) {
+            (Level::Global, _) => Self::Global,
+            (Level::Scope(scope), true) => Self::Scope(scope.clone()),
+            (Level::Tenant | Level::Scope(_), _) => Self::Tenant,
+        }
+    }
+
+    /// `global`, `tenant`, or `<scope kind>/<scope id>`.
+    pub(crate) fn name(&self) -> String {
+        match self {
+            Self::Global => "global".into(),
+            Self::Tenant => "tenant".into(),
+            Self::Scope(scope) => format!("{}/{}", scope.kind, scope.id),
+        }
+    }
+}
+
+/// The policies of `assignment` that apply: its role's own, then its
+/// template's for actions the role doesn't override, each marked with
+/// whether it came from the template.
+pub(crate) fn effective_policies(
+    assignment: &Assignment,
+) -> impl Iterator<Item = (&crate::Policy, bool)> {
+    let overridden: BTreeSet<&str> = assignment
+        .role_policies
+        .iter()
+        .map(|policy| policy.action.as_str())
+        .collect();
+    assignment
+        .role_policies
+        .iter()
+        .map(|policy| (policy, false))
+        .chain(
+            assignment
+                .template_policies
+                .iter()
+                .filter(move |policy| !overridden.contains(policy.action.as_str()))
+                .map(|policy| (policy, true)),
+        )
 }
 
 /// Compiles active assignments into an entitlement set.
@@ -38,23 +82,8 @@ pub fn compile(catalog: &Catalog, assignments: &[Assignment]) -> Entitlements {
     let mut winners: BTreeMap<(Placement, String), (i32, Effect)> = BTreeMap::new();
 
     for assignment in assignments {
-        let overridden: BTreeSet<&str> = assignment
-            .role_policies
-            .iter()
-            .map(|policy| policy.action.as_str())
-            .collect();
-        let effective = assignment.role_policies.iter().chain(
-            assignment
-                .template_policies
-                .iter()
-                .filter(|policy| !overridden.contains(policy.action.as_str())),
-        );
-        for policy in effective {
-            let placement = match (&assignment.level, policy.scope_bound) {
-                (Level::Global, _) => Placement::Global,
-                (Level::Scope(scope), true) => Placement::Scope(scope.clone()),
-                (Level::Tenant | Level::Scope(_), _) => Placement::Tenant,
-            };
+        for (policy, _) in effective_policies(assignment) {
+            let placement = Placement::of(&assignment.level, policy.scope_bound);
             for action in catalog.expand(&policy.action) {
                 let candidate = (assignment.priority, policy.effect);
                 winners
@@ -130,93 +159,6 @@ pub fn shared(catalog: &Catalog, entitlements: &Entitlements, shares: &[Share]) 
 }
 
 /// Higher priority wins; at equal priority, deny wins.
-fn beats(candidate: (i32, Effect), current: (i32, Effect)) -> bool {
+pub(crate) fn beats(candidate: (i32, Effect), current: (i32, Effect)) -> bool {
     candidate.0 > current.0 || (candidate.0 == current.0 && candidate.1 == Effect::Deny)
-}
-
-/// One policy that bears on an action, and where it lands.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-pub struct Contribution {
-    pub assignment: String,
-    /// `global`, `tenant`, or `<scope kind>/<scope id>`.
-    pub level: String,
-    /// The policy's action or group, as written.
-    pub policy: String,
-    pub effect: crate::Effect,
-    pub priority: i32,
-    pub from_template: bool,
-}
-
-/// Why a subject has (or lacks) an action.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-pub struct Explanation {
-    pub action: String,
-    pub contributions: Vec<Contribution>,
-    /// The levels where the action ends up granted.
-    pub granted_at: Vec<String>,
-}
-
-fn level_name(placement: &Placement) -> String {
-    match placement {
-        Placement::Global => "global".into(),
-        Placement::Tenant => "tenant".into(),
-        Placement::Scope(scope) => format!("{}/{}", scope.kind, scope.id),
-    }
-}
-
-/// Explains `action`: every effective policy whose expansion includes it,
-/// with its placement, and where the compiled set grants it.
-// r[impl authz.explain]
-#[must_use]
-pub fn explain(catalog: &Catalog, assignments: &[Assignment], action: &str) -> Explanation {
-    let mut contributions = Vec::new();
-    for assignment in assignments {
-        let overridden: BTreeSet<&str> = assignment
-            .role_policies
-            .iter()
-            .map(|p| p.action.as_str())
-            .collect();
-        let role = assignment.role_policies.iter().map(|p| (p, false));
-        let template = assignment
-            .template_policies
-            .iter()
-            .filter(|p| !overridden.contains(p.action.as_str()))
-            .map(|p| (p, true));
-        for (policy, from_template) in role.chain(template) {
-            if !catalog.expand(&policy.action).contains(action) {
-                continue;
-            }
-            let placement = match (&assignment.level, policy.scope_bound) {
-                (Level::Global, _) => Placement::Global,
-                (Level::Scope(scope), true) => Placement::Scope(scope.clone()),
-                (Level::Tenant | Level::Scope(_), _) => Placement::Tenant,
-            };
-            contributions.push(Contribution {
-                assignment: assignment.label.clone(),
-                level: level_name(&placement),
-                policy: policy.action.clone(),
-                effect: policy.effect,
-                priority: assignment.priority,
-                from_template,
-            });
-        }
-    }
-    let compiled = compile(catalog, assignments);
-    let mut granted_at = Vec::new();
-    if compiled.global.contains(action) {
-        granted_at.push("global".to_owned());
-    }
-    if compiled.tenant.contains(action) {
-        granted_at.push("tenant".to_owned());
-    }
-    for (scope, actions) in &compiled.scoped {
-        if actions.contains(action) {
-            granted_at.push(format!("{}/{}", scope.kind, scope.id));
-        }
-    }
-    Explanation {
-        action: action.to_owned(),
-        contributions,
-        granted_at,
-    }
 }
