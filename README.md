@@ -1,143 +1,197 @@
-# Conclave
+# Konklav
 
-Conclave is a spec-driven identity and access management monorepo aimed at a federated, multi-tenant control plane. The shape is intentionally close to "Keycloak-esque", but biased toward clear tenancy boundaries, decentralized authorization decisions, and explicit traceability from requirement to code.
+Konklav is a standalone identity and access service. It owns subjects,
+credentials, sessions, tokens, tenants, memberships, roles and policies.
+Relying systems verify its tokens offline and get authorization decisions
+through a small SDK that caches entitlements and keeps them fresh from a
+change feed.
 
-## Goals
+It is designed around:
 
-- Multi-tenant identity, user, and organization management.
-- Authentication and SSO flows that can span local and federated identities.
-- IAM primitives that can support roles, permissions, policy, and delegation.
-- Authorization data that can travel in JWTs or similar artifacts so downstream services can make decisions without a round-trip to a central policy engine for every request.
-- A repo structure that stays workable as the project moves from hobby code to production concerns.
+- **clear tenancy boundaries:** a tenant tree in which a parent grants
+  nothing implicitly
+- **agnosticism:** actions, scope kinds, facts and session flags are catalog
+  data; Konklav knows nothing about any relying system's domain
+- **fast revocation without callbacks:** session and entitlement changes
+  reach relying systems over SSE within about a second, and relying systems
+  fall back to a central check API and fail closed when they can't keep up
+- **traceability:** requirements live in Tracey-managed specs and are linked
+  from code and tests
 
-## Repository shape
+## Quickstart
 
-This repo is organized around Tracey specifications:
+This builds Konklav from a checkout, runs it locally with the development
+configuration and creates the first operator. You need Rust 1.88 or later,
+Docker, and OpenSSL with its headers (for example `brew install openssl@3`).
+Run the commands from the repository root.
 
-- Specs live in `docs/spec/`.
-- Shared terminology lives in `docs/nomenclature.md`.
-- Rust implementation code lives in `items/`.
-- Tracey configuration lives in `.config/tracey/config.styx`.
+1. Start Postgres. Konklav needs PostgreSQL 18 with the
+   [`pg_jsonschema`](https://github.com/supabase/pg_jsonschema) extension,
+   and `dev/` builds and runs such a container on `localhost:15432`:
 
-The repository keeps normative requirements in specs, shared vocabulary in nomenclature, and implementation code in workspace crates.
+   ```sh
+   docker compose -f dev/compose.yaml up -d --wait
+   ```
 
-## Spec map
+2. Install `konklav-server`:
 
-- `docs/nomenclature.md`: shared project terminology for subjects, operators, service principals, and relying systems.
-- `docs/spec/platform.md`: repo shape, traceability, and server bootstrap.
-- `docs/spec/managed-configuration.md`: declarative control-plane management, three-way reconciliation, and apply semantics.
-- `docs/spec/tenancy-and-identity.md`: tenants, identities, memberships, and delegated tenant administration.
-- `docs/spec/authn-and-authz.md`: sessions, SSO, actions, roles, policies, compiled authorization, and assumption flows.
-- `docs/spec/tokens-and-claims.md`: JWT shape, authorization snapshots, and downstream token usage.
-- `docs/spec/federation-and-protocols.md`: brokered identity, directory sync, OIDC, and SAML.
+   ```sh
+   cargo install --locked --path items/server
+   ```
 
-## Server
+3. Point it at the development configuration, create a signing key, apply
+   the migrations and serve:
 
-The server uses:
+   ```sh
+   export KONKLAV_CONFIG=config/dev.styx KONKLAV_SECRETS=config/dev.secrets.styx
+   openssl genpkey -algorithm Ed25519 -out config/dev.signing-key.pem
+   konklav-server migrate
+   konklav-server serve
+   ```
 
-- `actix-web` as the HTTP framework
-- `Styx` for typed local config in `config/server.conf.styx` and `config/server.secrets.styx`
-- `Feldera` as an external incremental-compute dependency accessed over HTTP
+   It serves the three surfaces:
+   - subject-facing on `127.0.0.1:8080`
+   - relying on `:8081`
+   - control-plane on `:8082`
 
-This keeps the server on a thin client boundary to Feldera rather than coupling the control plane to embedded-database assumptions.
+4. Create the first operator, a human subject with a password credential
+   and the built-in `konklav.admin` global role. Until one exists, the
+   control plane accepts only the bootstrap token, `control.bootstrap_token`
+   in [`config/dev.secrets.styx`](config/dev.secrets.styx). In a second
+   terminal:
 
-Before the first local run, generate `config/server.signing-private-key.pem` as described in [CONTRIBUTING.md](CONTRIBUTING.md).
+   ```sh
+   TOKEN=konklav-dev-control-token-0123456789
+   ID=$(uuidgen | tr A-Z a-z)
+   curl -X PUT localhost:8082/v1/subjects/$ID \
+     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+     -d '{"kind": "human"}'
+   curl -X POST localhost:8082/v1/subjects/$ID/credentials \
+     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+     -d '{"kind": "password", "identifier": "ada@example.com", "password": "correct horse"}'
+   curl -X POST localhost:8082/v1/subjects/$ID/global-assignments \
+     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+     -d '{"role": "konklav.admin"}'
+   ```
 
-To run the server:
+   A `409` means the identifier is already taken in your database. Pick
+   another one.
 
-```bash
-cargo run -p conclave-server
+5. Sign in as the operator:
+
+   ```sh
+   curl -X POST localhost:8080/v1/login/password \
+     -H 'Content-Type: application/json' \
+     -d '{"identifier": "ada@example.com", "password": "correct horse"}'
+   ```
+
+   The response holds an access token for the control plane. In a real
+   deployment, remove the bootstrap token from the secrets file once an
+   operator exists.
+
+To start from a populated database instead, seed it with the example
+bootstrap set:
+
+```sh
+konklav-server bootstrap examples/bootstrap/nested/seed.styx
 ```
 
-The server exposes three HTTP surfaces:
+### The console
 
-- control-plane surface
-  - health and readiness
-  - runtime metadata
-  - managed configuration validate, plan, and apply
-  - invite creation
-- subject-facing surface
-  - invite redemption
-  - direct login
-  - tenant assumption token issuance
-  - token validation
-- relying-system surface
-  - revision discovery
-  - action-catalog lookup
-  - JWKS publication
+The operators' console is a browser UI over the control plane. To serve it
+against the server above on <http://localhost:8083>:
 
-Representative endpoints:
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install --locked trunk
+cd items/console && trunk serve
+```
 
-- `GET /healthz`
-- `GET /readyz`
-- `GET /v1/meta`
-- `POST /v1/managed/validate`
-- `POST /v1/managed/plan`
-- `POST /v1/managed/apply`
-- `POST /v1/invites`
-- `POST /v1/invites/redeem`
-- `POST /v1/login`
-- `POST /v1/auth/tokens/assume`
-- `POST /v1/auth/tokens/validate`
-- `GET /v1/revisions`
-- `GET /v1/authz/catalog`
+Use `localhost` rather than `127.0.0.1`, because passkeys don't work on IP
+addresses. Sign in as the operator, or use the bootstrap token to create
+one there instead of with `curl`.
 
-See [items/server/src/http.rs](items/server/src/http.rs) for the route definitions and how they are split across the three surfaces.
+## Where next
 
-Config defaults live in `config/server.conf.styx` and `config/server.secrets.styx`, and the managed playground data lives in the public config file's adjacent managed-config directory. Common local overrides include:
+- **Vocabulary:** [`docs/nomenclature.md`](docs/nomenclature.md) defines
+  subjects, tenants, memberships, roles, entitlement sets and the rest.
+  Konklav's docs and APIs use these terms precisely.
+- **How it fits together:** the
+  [overview](docs/architecture/overview.md), then the other notes in
+  [`docs/architecture/`](docs/architecture/).
+- **Runnable scenarios:** [`examples/`](examples/README.md) has email-link
+  sign-in with a delivery worker, one Konklav signing people in to another,
+  and seeding a deployment.
+- **Integrating a relying system:** the relying SDK, as the
+  [Python binding](items/py/README.md) or the
+  [native Rust client](items/relying-client/README.md), on top of the
+  [relying core](items/relying/README.md).
+- **Operating it:** the [server](items/server/README.md) (commands,
+  configuration, every endpoint), the [console](items/console/README.md),
+  and [bootstrap sets](items/bootstrap/README.md) for seeding and
+  importing.
+- **Federation:** [OIDC and federation](docs/architecture/oidc-and-federation.md),
+  for signing in through identity providers and acting as an OpenID
+  provider.
+- **Exact behavior:** the normative specs in [`docs/spec/`](docs/spec/README.md).
+- **Working on Konklav:** [`CONTRIBUTING.md`](CONTRIBUTING.md) covers the
+  development environment, tests and releases.
 
-- `CONCLAVE_CONFIG`
-- `CONCLAVE_SECRETS`
-- `CONCLAVE_MANAGED_DIR`
-- `CONCLAVE_CONTROL_PLANE_HOST`
-- `CONCLAVE_CONTROL_PLANE_PORT`
-- `CONCLAVE_SUBJECT_HOST`
-- `CONCLAVE_SUBJECT_PORT`
-- `CONCLAVE_RELYING_HOST`
-- `CONCLAVE_RELYING_PORT`
-- `CONCLAVE_BOOTSTRAP_SUBJECT`
-- `CONCLAVE_BOOTSTRAP_DISPLAY_NAME`
-- `CONCLAVE_JWT_ISSUER`
-- `CONCLAVE_JWT_DEFAULT_AUDIENCE`
-- `CONCLAVE_JWT_SIGNING_PRIVATE_KEY_FILE`
-- `CONCLAVE_JWT_TTL_SECONDS`
-- `CONCLAVE_FELDERA_ENABLED`
-- `CONCLAVE_FELDERA_BASE_URL`
-- `CONCLAVE_FELDERA_PIPELINE_PREFIX`
-- `CONCLAVE_FELDERA_READINESS_PROBE`
-- `CONCLAVE_FELDERA_COMPILE_PROFILE`
-- `CONCLAVE_FELDERA_AUTO_START`
-- `CONCLAVE_FELDERA_START_INITIAL`
+## What it does
 
-Secret-bearing values such as the bootstrap token and optional Feldera API key live in `config/server.secrets.styx`. The JWT signing key is read from the PEM file referenced by `jwt.signing_private_key_file` in `config/server.conf.styx`. Conclave accepts CLI and env overrides for locating config files and the PEM path, but not for supplying secret values directly.
+- **Subjects and credentials:** humans and service principals; passwords,
+  secret keys, passkeys, email links and phone codes; MFA (TOTP and email
+  codes), step-up, invites, password reset and change, and impersonation.
+- **Sessions and tokens:** server-side sessions with refresh rotation and
+  reuse detection, browser cookies with CSRF checks, and Ed25519 access
+  tokens published through JWKS.
+- **Tenancy and authorization:** tenants and memberships with facts, the
+  action catalog, templates, roles and assignments, compiled entitlement
+  sets, session flags, and the entitlements and check APIs.
+- **Change feed and relying SDK:** SSE with resume, reset and batches; a
+  sans-I/O relying core that also builds for wasm, with a native Rust client
+  and a Python binding.
+- **Messaging:** Konklav never sends messages. It emits delivery requests
+  on the change feed for a relying system's worker to send.
+- **Control plane:** authorized by `konklav:` capabilities, with listings,
+  entitlement explanations and an operators' console.
+- **Import:** a bulk import API and a `bootstrap` command that keep existing
+  ids and can be re-run, including Argon2 password hashes, MFA seeds and
+  sessions.
+- **Federation:** OpenID Connect in both directions: signing in through
+  identity providers with claim mapping; acting as an OpenID provider with
+  client credentials, revocation and logout; peering between Konklav
+  instances; and workload tokens.
 
-See [items/server/src/config.rs](items/server/src/config.rs) for the full set of startup overrides and default values.
+The Python binding isn't published to PyPI yet. v1, a prototype backed by
+Feldera, is preserved at tag `v1`.
 
-The local development model is compile-first:
+## Running in a container
 
-- the action catalog gets a system-managed revision and stable bit positions from config content
-- export templates and assignable local roles are modeled separately
-- template lineage is resolved locally, including deterministic selector-based overrides
-- tenant-managed authz config can define `tenant:` and `sys:` actions, but not built-in `conclave:` control-plane capabilities
-- Conclave control-plane capabilities are modeled separately from tenant-managed authz, with child-tenant assumption authorized through explicit assumption grants
-- the root tenant and tenant tree are bootstrapped from config
-- memberships compile tenant-local effective grants up front
-- explicit parent-to-child assumption grants mint time-bounded target-tenant tokens
-- JWTs carry a compact `az` snapshot with catalog revision, policy revision, tenant bits, scoped bits, and portable facts
-- offline token validation checks signature, expiry, tenant context, current revisions, and optional scoped action access
-- the compiled result is exposed over HTTP
-- a Feldera SQL program is generated from that compiled state so we can iterate on schema and incremental views before wiring persistence
+The image runs `konklav-server serve` as a non-root user. Mount
+`config.styx`, `secrets.styx` and the key files they name at
+`/etc/konklav`:
 
-The Feldera integration can now also:
+```sh
+docker run --rm -v ./deploy:/etc/konklav:ro konklav/konklav migrate
+docker run -v ./deploy:/etc/konklav:ro -p 8080-8082:8080-8082 konklav/konklav
+```
 
-- compare the desired authz pipeline against a live Feldera pipeline
-- report a sync plan
-- create the pipeline if it does not exist
-- patch it if it exists and is stopped
-- refuse code updates while the remote pipeline is not stopped
-- request pipeline start using the configured initial mode
+[`config/dev.styx`](config/dev.styx) and
+[`config/dev.secrets.styx`](config/dev.secrets.styx) show the shape of both
+files, and [`items/server`](items/server/README.md) describes the settings.
+The database must be PostgreSQL 18 with `pg_jsonschema`;
+[`dev/postgres`](dev/postgres/Dockerfile) builds such an image.
 
-The sample bundles to look at are:
+## Stack
 
-- `config/authz.styx`: action catalog, export templates, and tenant-local roles
-- `config/tenants.styx`: root tenant, child tenants, memberships, and delegated assumption grants
+- Rust, axum, tokio
+- PostgreSQL via Diesel (`diesel-async`, embedded forward-only migrations)
+- `ordna` for layered configuration with separate secrets
+- Ed25519 JWTs published through JWKS
+- pyo3 for the Python relying binding
+- Leptos and Trunk for the console
+
+## License
+
+Konklav is licensed under the [MIT License](LICENSE).

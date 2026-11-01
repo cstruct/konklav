@@ -1,40 +1,321 @@
 # Platform
 
-This file defines the repo-level requirements that let the project stay spec-driven as it grows.
+Repository-level and runtime requirements.
 
 ## Repository shape
 
-r[platform.monorepo.structure]
-The repository MUST keep specifications under `docs/spec/` and implementation code under language-specific workspace roots so Tracey can map requirements to code as the system evolves.
+r[platform.repo.spec-first]
+User-facing capabilities MUST be described in Tracey-managed specifications
+under `docs/spec/` before they are treated as implementation targets.
 
-r[platform.traceability.spec-first]
-User-facing capabilities MUST be described in Tracey-managed specifications before they are treated as implementation targets.
+r[platform.repo.relying-agnostic]
+Konklav code, specs and architecture notes MUST NOT depend on or name a
+specific relying system. Relying-system concepts such as scope kinds, action
+names, fact keys and session flags MUST enter Konklav only as catalog data.
 
-## Server foundation
+## Runtime
 
-r[platform.server.bootstrap]
-The repository MUST provide a Rust server workspace member that can build and run as the authoritative Conclave control-plane API entry point.
+r[platform.server.single-binary]
+Konklav MUST run as one server binary that serves the subject-facing,
+relying and control-plane surfaces.
 
-r[platform.cli.operator-interface]
-The repository MUST provide a Rust CLI workspace member that serves as the operator interface for validating, planning, and applying managed configuration against the Conclave control plane.
+r[platform.server.surface-separation]
+The server MUST keep the three surfaces separately routable so that
+deployments can expose them on different listeners or ingress paths.
 
-r[platform.relying-auth.library]
-The repository MUST provide a Rust library workspace member that lets relying systems validate Conclave-issued JWTs and evaluate token-carried authorization snapshots offline.
+r[platform.server.versioned-paths]
+Every HTTP endpoint other than health checks and `/.well-known/*` MUST live
+under a major-version prefix, starting with `/v1`.
 
-r[platform.server.control-plane-boundary]
-The first server component MUST own the orchestration boundary for tenants, identities, authentication, authorization, and federation even if those domains are later split into separate services.
+r[platform.server.client-address]
+The server MUST take a client's address from the connection, unless the
+connection comes from a configured trusted proxy. Then it MUST use the last
+address in `X-Forwarded-For` that is not a trusted proxy, so clients can't
+choose their own address by sending the header.
 
-r[platform.server.multi-surface-runtime]
-The first server component MUST support distinct control-plane, subject-facing, and relying-system HTTP surfaces even when they run from one process.
+r[platform.server.limits]
+Every listener MUST bound request body size, how long a request may take to
+be answered, and how many requests it serves at once, refusing the excess
+with a typed error. Change-feed streams MUST count against the time bound
+only until they start.
 
-r[platform.server.split-config-files]
-The server MUST load ordinary runtime config and secret-bearing runtime config from separate startup files rather than one combined config document.
+r[platform.server.health]
+The server MUST expose a liveness endpoint and a readiness endpoint. The
+readiness endpoint MUST fail while the database is unreachable or migrations
+are pending.
 
-r[platform.server.strict-config-secrets-boundary]
-The server MUST reject secret-bearing fields in the ordinary runtime-config file and MUST reject non-secret runtime fields in the secret-bearing config file.
+## Configuration
 
-r[platform.server.explicit-secrets-path]
-The server MUST let operators configure the secret-bearing startup-config file path explicitly and independently from the ordinary runtime-config file path.
+r[platform.config.layered]
+Runtime configuration MUST be loaded from layered sources (files, then
+environment) so that each value's winning source can be reported.
 
-r[platform.server.secret-file-only-values]
-The server MUST require secret-bearing startup material to come from the secret-bearing config file or from referenced secret files rather than direct command-line or environment-variable value overrides.
+r[platform.config.secrets-separate]
+Secret-bearing configuration MUST load only from secret sources (secret
+files or files they reference). The environment and command-line flags MUST
+NOT supply secret values, though they MAY locate secret files.
+
+r[platform.config.bootstrap-token]
+A bootstrap control-plane token MUST be at least 32 characters, or the
+server MUST refuse to start. Its use MUST be logged, the server MUST warn
+at startup while one is configured, and it MUST stop being accepted after
+its configured expiry.
+
+r[platform.config.report-all-errors]
+Configuration loading MUST report every problem it finds (unknown keys,
+misplaced secrets, decode errors) together, not just the first one.
+
+## Storage
+
+r[platform.storage.postgres]
+Konklav MUST persist its authoritative state in a PostgreSQL database that
+it owns exclusively. Relying systems MUST NOT read or write that database
+directly.
+
+r[platform.storage.forward-migrations]
+Schema changes MUST be applied as forward-only migrations that the server
+can verify at startup.
+
+r[platform.storage.transactional-events]
+Every state change that produces a change-feed event MUST write that event
+in the same database transaction as the change itself.
+
+## Retention
+
+r[retention.sweep]
+A sweeper MUST periodically delete what retention allows, in batches of a
+bounded size, so that no table grows without bound. With several server
+instances on one database, at most one sweeper MUST run at a time.
+
+r[retention.challenges]
+A challenge MUST be deleted once it has expired, but not before the longest
+send-limit window has passed since it was created, since send limits count
+challenges.
+
+r[retention.login-attempts]
+A login attempt MUST be deleted once the longest rate-limit window has
+passed since it was made.
+
+r[retention.assertions]
+A recorded client-assertion or bearer-assertion identifier MUST be deleted
+once the assertion it was recorded for has expired.
+
+r[retention.sessions]
+A session MUST be deleted a configured period after it expired or was
+revoked, together with its refresh history and the challenges that refer to
+it. A session MUST NOT be deleted while it has not ended, while a
+back-channel logout for it is pending, or while an impersonation session
+started from it is kept.
+
+r[retention.delivery-material]
+The challenge material in a stored `delivery.requested` event MUST be erased
+once the challenge has expired, not only withheld from the feed.
+
+r[retention.identity-claims]
+Claims passed from an identity provider MUST be erased from a session once
+it has been revoked or has expired, without waiting for the session itself
+to be deleted.
+
+## Telemetry
+
+Konklav exports telemetry over OTLP to any collector or backend that
+accepts it. Telemetry is for operators; relying systems use the change feed.
+
+r[telemetry.init]
+Telemetry MUST be set up from configuration before the server is built,
+with the providers of the enabled signals installed globally, and MUST be
+flushed and shut down when the server stops.
+
+r[telemetry.endpoints]
+A signal MUST be exported to its own endpoint when one is configured, used
+as is, and otherwise to the OTLP endpoint, with the signal's path (such as
+`/v1/metrics`) appended over HTTP. Without either, the standard
+`OTEL_EXPORTER_OTLP_*` environment variables MUST apply. Export headers are
+secret configuration.
+
+r[telemetry.privacy]
+Telemetry MUST NOT record login identifiers, secrets, tokens, codes, client
+addresses or request paths. Requests MUST be named by their route template,
+never by a path with ids in it.
+
+r[telemetry.metrics]
+When metrics are enabled, they MUST be exported periodically over OTLP, with
+the configured service name and resource attributes. Their attributes MUST
+be low-cardinality: surfaces, route templates, methods, status codes, error
+codes, kinds and outcomes.
+
+r[telemetry.metrics.requests]
+The duration of every request MUST be recorded as
+`http.server.request.duration`, with its method, route template, status
+code, the surfaces of its listener and, for an error response, its error
+code. Requests refused before routing, for being too many or taking too
+long, MUST be counted by reason.
+
+r[telemetry.metrics.internals]
+Konklav MUST record:
+- how long password hashing waited for a slot, and how many slots are busy
+- access tokens issued, by kind
+- open change-feed streams
+- back-channel logout deliveries, by outcome
+- rows the sweeper deleted, by kind
+- the database pool's connections, by whether they are in use
+- outbound HTTP requests, by operation and outcome
+
+r[telemetry.traces]
+When traces are enabled, spans MUST be exported over OTLP in batches with
+the configured service name and resource attributes. The configured share
+of traces Konklav starts MUST be sampled, and a trace continued from a
+caller MUST follow the caller's sampling decision.
+
+r[telemetry.traces.requests]
+Every request MUST be a server span named by its method and route template,
+continuing the trace named by its W3C `traceparent` header, if any. The span
+MUST record the status code and error code, and MUST be failed when the
+response is a server error.
+
+r[telemetry.traces.outbound]
+Requests to identity providers, their key sets, back-channel logout
+endpoints and the claims hook MUST be client spans named by operation, failed when they fail,
+and MUST carry the trace in a `traceparent` header. Sweeps, back-channel
+logout runs and peer syncs MUST be spans of their own.
+
+r[telemetry.logs]
+Logs MUST be written to stderr, filtered by the configured level, or by
+`RUST_LOG` when set, as human-readable text or as one JSON object per line.
+A JSON line MUST carry its time, level, target, message and fields, the
+spans it is in, and the trace and span ids when traced. An invalid level
+MUST be refused.
+
+r[telemetry.logs.export]
+When log export is enabled, logs MUST be sent over OTLP in batches with the
+trace context of the span they were logged in, filtered by the same level,
+leaving out what the exporters themselves log.
+
+## Errors
+
+r[platform.error.typed-codes]
+Every error response MUST carry a stable machine-readable code in
+`SCREAMING_SNAKE_CASE` and a human-readable message. Clients MUST be able to
+rely on codes, not messages.
+
+r[platform.error.no-enumeration]
+Authentication failures MUST NOT reveal whether a login identifier, subject
+or credential exists.
+
+r[platform.error.retry-after]
+A `RATE_LIMITED` response MUST carry a `Retry-After` header whose value
+includes random jitter, so that clients refused at the same time don't
+retry at the same time.
+
+## Idempotency
+
+r[platform.idempotency.client-ids]
+Control-plane create operations for tenants, subjects and memberships MUST
+accept a caller-supplied identifier and MUST be idempotent on that
+identifier: repeating an identical request succeeds, and repeating it with
+conflicting content fails with a typed conflict error.
+
+r[platform.idempotency.write-cursor]
+Every successful state-changing response MUST include the change-feed cursor
+of the last event the change produced, so that callers can wait for their
+own writes to propagate.
+
+## Import
+
+r[import.idempotent]
+Konklav MUST offer a bulk import of subjects, credentials, MFA factors and
+sessions that keeps the imported identifiers and can be re-run: records
+whose identifiers already exist are skipped. Import MUST require a
+dedicated control-plane capability.
+
+r[import.credentials]
+Imported password and secret-key credentials MUST be accepted as Argon2
+hashes and stored as given, so existing secrets keep working.
+
+r[import.credentials.secret-key-rotation]
+Re-importing an active secret-key credential with different slots MUST
+replace its slots, so a source system that still rotates keys before
+cutover stays in step. Other credential kinds MUST NOT be changed by a
+re-import.
+
+r[import.mfa]
+Imported TOTP seeds MUST be encrypted with Konklav's own keys on arrival.
+
+r[import.sessions]
+Imported sessions MUST keep their identifiers, versions and expiry, with a
+refresh-token hash supplied by the importer, so that people stay signed in
+across a migration.
+
+## Bootstrap
+
+r[bootstrap.command]
+The server binary MUST offer a `bootstrap` command that reads a bootstrap
+set from files and applies it to the database directly, without serving
+any surface. It MUST refuse to run while migrations are pending.
+
+r[bootstrap.formats]
+The command MUST accept flat tables (CSV, one file per kind of record,
+with a fixed header) and nested documents (Styx), and MUST accept both in
+one run, read into a single bootstrap set.
+
+r[bootstrap.contents]
+A bootstrap set MAY contain the action catalog, templates, tenants,
+subjects, credentials (federated ones included), MFA factors, memberships,
+membership and global role assignments, and sessions.
+
+r[bootstrap.ids]
+Every record's identifier MUST be resolved the same way in both formats:
+- an identifier that is a UUID MUST be used as given
+- any other identifier is an external id, and MUST become UUID version 5
+  of the set's id namespace and `<kind>:<external id>`
+- in nested documents, a record without an identifier is found by its
+  natural key:
+  - a tenant's key MUST be treated as its external id
+  - a subject MUST be the one with an active credential for its login
+    identifier, or else a new subject, which the set MUST give a credential
+    for that identifier
+  - a credential MUST be the active one of its kind for its login
+    identifier, and a membership the subject's active one in the tenant,
+    or else a new one
+  - an MFA factor MUST be identified by its subject and its position among
+    that subject's factors in the set
+
+A set that uses external ids or tenant keys MUST declare an id namespace.
+Flat tables MUST give every record an identifier.
+
+r[bootstrap.idempotent]
+Applying a bootstrap set MUST create the records that don't exist and skip
+those that exist with the same content. A record that exists with
+different content MUST be reported as a conflict, with two exceptions:
+secret-key slots are replaced as `import.credentials.secret-key-rotation`
+describes, and a session that exists is skipped, since sessions change as
+they are used. The set's catalog MUST be merged into the stored one: its
+new entries are added, and an entry it declares differently from the
+stored one is a conflict. Applying MUST NOT delete or change anything the
+set doesn't name.
+
+r[bootstrap.validate-first]
+Before writing anything, the command MUST read every file, resolve every
+identifier and reference, check the set against the catalog (in the set or
+already stored), and report every problem it finds together, each with its
+file and line.
+
+r[bootstrap.atomic]
+A run MUST apply in one transaction: either everything in the set is
+applied or nothing is. A conflict MUST fail the run.
+
+r[bootstrap.dry-run]
+The command MUST offer a dry run that does everything except commit, and
+reports how many records of each kind would be created, skipped or in
+conflict.
+
+r[bootstrap.secrets]
+Passwords and secret keys MUST arrive as Argon2 hashes, as
+`import.credentials` describes. Plaintext passwords MUST be refused unless
+the run explicitly allows them, and are then hashed before they are
+stored. TOTP seeds MUST be encrypted on arrival, as `import.mfa` describes.
+
+r[bootstrap.events]
+Applying a bootstrap set MUST emit the same events as the equivalent
+control-plane writes, in the same transaction, so relying systems see the
+result on the change feed.

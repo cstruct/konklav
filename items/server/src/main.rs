@@ -1,97 +1,322 @@
-mod authz;
-mod config;
-mod control_plane;
-mod feldera;
-mod http;
-mod managed_store;
-mod state;
-mod tenants;
-mod types;
+use std::path::PathBuf;
+use std::process::ExitCode;
 
-use std::io;
+use clap::{Parser, Subcommand};
+use konklav_server::AppState;
+use konklav_server::AuthContext;
+use konklav_server::config::{
+    self, BootstrapContexts, BrowserConfig, ControlConfig, DatabaseConfig, FeedConfig,
+    ListenConfig, MfaConfig, MigrateContexts, ServeContexts, ServerContexts, TelemetryConfig,
+    TokensConfig,
+};
+use konklav_server::feed::FeedHub;
+use konklav_server::keys::ConfiguredKeys;
+use konklav_server::serve::{BoundServer, shutdown_signal};
+use ordna_core::ConfigContexts;
+use std::path::Path;
+use std::sync::Arc;
 
-use actix_web::{web, App, HttpServer};
-use conclave_managed_config::ManagedConfig;
-use conclave_relying_auth::JwtSigner;
-use tracing_subscriber::EnvFilter;
-
-use crate::config::AppConfig;
-use crate::http::AppState;
-
-// r[impl platform.server.bootstrap]
-// r[depends item.relying-auth.ed25519-jwt-boundary]
-#[actix_web::main]
-async fn main() -> io::Result<()> {
-    initialize_tracing();
-
-    let loaded = AppConfig::load().map_err(io::Error::other)?;
-    let managed = ManagedConfig::load_from_dir(&loaded.managed_dir).map_err(io::Error::other)?;
-    let signer = JwtSigner::from_seed(
-        loaded
-            .signing_private_key_bytes()
-            .map_err(io::Error::other)?,
-    );
-    let verifier = signer.verifier();
-    let state = AppState::from_loaded_config(loaded, managed, signer, verifier)
-        .await
-        .map_err(io::Error::other)?;
-    let feldera_sync = state
-        .sync_feldera_on_startup()
-        .await
-        .map_err(io::Error::other)?;
-    let control_plane_bind = state.control_plane_bind_address();
-    let subject_bind = state.subject_bind_address();
-    let relying_bind = state.relying_bind_address();
-
-    tracing::info!(
-        control_plane_bind,
-        subject_bind,
-        relying_bind,
-        feldera_sync = ?feldera_sync,
-        "starting conclave server"
-    );
-
-    let control_plane = HttpServer::new({
-        let state = state.clone();
-        move || {
-            App::new()
-                .app_data(web::Data::new(state.clone()))
-                .configure(http::configure_control_plane)
-        }
-    })
-    .bind(&control_plane_bind)?
-    .run();
-
-    let subject = HttpServer::new({
-        let state = state.clone();
-        move || {
-            App::new()
-                .app_data(web::Data::new(state.clone()))
-                .configure(http::configure_subject)
-        }
-    })
-    .bind(&subject_bind)?
-    .run();
-
-    let relying = HttpServer::new(move || {
-        App::new()
-            .app_data(web::Data::new(state.clone()))
-            .configure(http::configure_relying)
-    })
-    .bind(&relying_bind)?
-    .run();
-
-    futures_util::future::try_join3(control_plane, subject, relying)
-        .await
-        .map(|_| ())
+/// The Konklav identity and access server.
+#[derive(Parser)]
+#[command(version)]
+struct Cli {
+    /// The public configuration file (Styx).
+    #[arg(long, env = "KONKLAV_CONFIG")]
+    config: PathBuf,
+    /// The secrets configuration file (Styx). Only secret values may be set
+    /// here, and secret values may only be set here.
+    #[arg(long, env = "KONKLAV_SECRETS")]
+    secrets: PathBuf,
+    #[command(subcommand)]
+    command: Command,
 }
 
-fn initialize_tracing() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+#[derive(Subcommand)]
+enum Command {
+    /// Serve the HTTP surfaces.
+    Serve,
+    /// Apply pending database migrations, then exit.
+    Migrate,
+    /// Load and validate the configuration, then exit.
+    CheckConfig,
+    /// Apply a bootstrap set (CSV tables, Styx documents and a
+    /// catalog.json, or directories of them) to the database, then exit.
+    ///
+    /// Exits 0 when the set was applied or a dry run found nothing wrong,
+    /// 1 when the files or records have problems, and 2 when records
+    /// conflict with stored ones.
+    Bootstrap {
+        /// Do everything but commit, and report what would happen.
+        #[arg(long)]
+        dry_run: bool,
+        /// Accept plaintext passwords, for development seeds.
+        #[arg(long)]
+        allow_plaintext_passwords: bool,
+        /// Files and directories to read.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
+}
 
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .without_time()
-        .try_init();
+#[tokio::main]
+async fn main() -> ExitCode {
+    let cli = Cli::parse();
+    let result = match &cli.command {
+        Command::Serve => match load::<ServeContexts>(&cli) {
+            Ok((listen, database, telemetry, tokens, browser, control, feed, mfa)) => {
+                let telemetry = match konklav_server::telemetry::init(&telemetry.telemetry) {
+                    Ok(telemetry) => telemetry,
+                    Err(error) => {
+                        eprintln!("{error}");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                let served = serve(listen, database, tokens, browser, control, feed, mfa).await;
+                if let Err(error) = &served {
+                    tracing::error!("{error}");
+                }
+                telemetry.shutdown();
+                return if served.is_ok() {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                };
+            }
+            Err(code) => return code,
+        },
+        Command::Migrate => match load::<MigrateContexts>(&cli) {
+            Ok((database, telemetry)) => {
+                if let Err(code) = init_logs(&telemetry) {
+                    return code;
+                }
+                migrate(database).await
+            }
+            Err(code) => return code,
+        },
+        Command::Bootstrap {
+            dry_run,
+            allow_plaintext_passwords,
+            paths,
+        } => match load::<BootstrapContexts>(&cli) {
+            Ok((database, telemetry, mfa)) => {
+                if let Err(code) = init_logs(&telemetry) {
+                    return code;
+                }
+                let options = konklav_server::bootstrap::Options {
+                    dry_run: *dry_run,
+                    allow_plaintext_passwords: *allow_plaintext_passwords,
+                };
+                return bootstrap(database, mfa, paths, options).await;
+            }
+            Err(code) => return code,
+        },
+        // Validates what `serve` needs, which is every context.
+        Command::CheckConfig => match load::<ServeContexts>(&cli) {
+            Ok((_, _, _, _, _, control, _, _)) => {
+                if let Err(error) = control.bootstrap_expiry() {
+                    eprintln!("{error}");
+                    return ExitCode::FAILURE;
+                }
+                println!("configuration is valid");
+                return ExitCode::SUCCESS;
+            }
+            Err(code) => return code,
+        },
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            tracing::error!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn load<X: ConfigContexts<ServerContexts>>(cli: &Cli) -> Result<X, ExitCode> {
+    config::load(&cli.config, &cli.secrets, config::process_env()).map_err(|error| {
+        eprintln!("{error}");
+        ExitCode::FAILURE
+    })
+}
+
+async fn migrate(config: DatabaseConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = konklav_store::connect(&config.database.connect_options())?;
+    let applied = konklav_store::run_pending_migrations(&pool).await?;
+    if applied.is_empty() {
+        tracing::info!("no pending migrations");
+    }
+    for version in applied {
+        tracing::info!(%version, "applied migration");
+    }
+    Ok(())
+}
+
+async fn bootstrap(
+    database: DatabaseConfig,
+    mfa: MfaConfig,
+    paths: &[PathBuf],
+    options: konklav_server::bootstrap::Options,
+) -> ExitCode {
+    let set = match konklav_bootstrap::read(paths) {
+        Ok(set) => set,
+        Err(problems) => {
+            for problem in problems {
+                eprintln!("{problem}");
+            }
+            return ExitCode::from(1);
+        }
+    };
+    let secrets = match mfa.mfa.as_ref().map(|mfa| {
+        konklav_authn::SecretBox::new(
+            mfa.totp_keys
+                .iter()
+                .map(|key| (key.id.as_str(), key.key.as_str())),
+        )
+    }) {
+        Some(Ok(secrets)) => secrets,
+        None => konklav_authn::SecretBox::new([]).expect("an empty key set is valid"),
+        Some(Err(error)) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let result = async {
+        let pool = konklav_store::connect(&database.database.connect_options())?;
+        let pending = konklav_store::pending_migrations(&pool).await?;
+        if !pending.is_empty() {
+            return Err(format!(
+                "{} migration(s) pending; run `migrate` first",
+                pending.len()
+            )
+            .into());
+        }
+        let report = konklav_server::bootstrap::run(&pool, &secrets, set, options)
+            .await
+            .map_err(|error| error.message)?;
+        Ok::<_, Box<dyn std::error::Error>>(report)
+    }
+    .await;
+    match result {
+        Ok(report) => {
+            print!("{report}");
+            if !report.problems.is_empty() {
+                ExitCode::from(1)
+            } else if !report.conflicts.is_empty() {
+                ExitCode::from(2)
+            } else {
+                println!(
+                    "{}",
+                    if report.committed {
+                        "applied"
+                    } else {
+                        "dry run: nothing written"
+                    }
+                );
+                ExitCode::SUCCESS
+            }
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn serve(
+    listen: ListenConfig,
+    database: DatabaseConfig,
+    tokens: TokensConfig,
+    browser: BrowserConfig,
+    control: ControlConfig,
+    feed: FeedConfig,
+    mfa: MfaConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let oidc = tokens
+        .oidc_provider
+        .as_ref()
+        .map(|config| konklav_server::oidc::OpenIdProvider::load(config, &tokens.tokens.issuer))
+        .transpose()?;
+    let pacing = konklav_server::pacing::Pacing {
+        floor: tokens.pacing_floor(),
+        jitter: tokens.pacing_jitter(),
+    };
+    let tokens = tokens.tokens;
+    let keys = ConfiguredKeys::load(
+        Path::new(&tokens.signing_key_file),
+        &tokens.published_key_files,
+    )?;
+    let pool = konklav_store::connect(&database.database.connect_options())?;
+    match konklav_store::pending_migrations(&pool).await {
+        Ok(pending) if !pending.is_empty() => tracing::warn!(
+            count = pending.len(),
+            "migrations are pending; readiness will fail until `migrate` runs"
+        ),
+        Ok(_) => {}
+        Err(error) => tracing::warn!(%error, "could not check migrations at startup"),
+    }
+    match pool.get().await {
+        Ok(mut conn) => keys.sync(&mut conn).await?,
+        Err(error) => tracing::warn!(%error, "could not publish signing keys at startup"),
+    }
+    let mut auth = AuthContext::new(&tokens, browser.browser.as_ref(), &control, keys.signer);
+    auth.control_token_expires_at = control.bootstrap_expiry()?;
+    if auth.control_token.is_some() {
+        tracing::warn!(
+            expires_at = ?auth.control_token_expires_at,
+            "a bootstrap control token is configured and grants every capability; \
+             remove it once an operator holds konklav:control:all"
+        );
+    }
+    if let Some(mfa) = &mfa.mfa {
+        auth.secrets = konklav_authn::SecretBox::new(
+            mfa.totp_keys
+                .iter()
+                .map(|key| (key.id.as_str(), key.key.as_str())),
+        )?;
+    }
+    auth.pacing = pacing;
+    auth.trusted_proxies
+        .clone_from(&listen.listen.trusted_proxies);
+    auth.oidc = oidc;
+    auth.identity_providers = konklav_server::federation::Providers::from_config(&browser)?;
+    auth.passkeys = browser
+        .passkeys
+        .as_ref()
+        .map(|passkeys| {
+            konklav_server::passkeys::Verifier::from_config(passkeys, browser.browser.as_ref())
+        })
+        .transpose()?;
+    let hub = Arc::new(FeedHub::new(feed.poll_interval()).with_max_streams(feed.max_streams()));
+    tokio::spawn(konklav_server::feed::listen(
+        database.database.connect_options().url,
+        hub.clone(),
+    ));
+    tokio::spawn(konklav_server::sweeper::sweep_forever(
+        pool.clone(),
+        feed.sweeper(),
+    ));
+    let _pool_gauge = konklav_server::telemetry::metrics::observe_pool(pool.clone());
+    let state = AppState {
+        pool,
+        auth: Arc::new(auth),
+        feed: hub,
+    };
+    tokio::spawn(konklav_server::oidc::deliver_logouts_forever(state.clone()));
+    tokio::spawn(konklav_server::peering::sync_forever(state.clone()));
+    let server = BoundServer::bind(&listen.listen, state)
+        .await?
+        .with_limits(konklav_server::serve::Limits::from_config(&listen));
+    server.run(shutdown_signal()).await?;
+    Ok(())
+}
+
+/// Sets up logging alone, for commands that run once and exit.
+fn init_logs(config: &TelemetryConfig) -> Result<(), ExitCode> {
+    match konklav_server::telemetry::init(&config.telemetry.logs_only()) {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            eprintln!("{error}");
+            Err(ExitCode::FAILURE)
+        }
+    }
 }

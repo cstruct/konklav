@@ -1,0 +1,43 @@
+listen {
+    subject "127.0.0.1:8080"
+    relying "127.0.0.1:8081"
+    control "127.0.0.1:8082"
+}
+
+database {
+    host localhost
+    port 15432
+    name konklav
+    user konklav
+    max_connections 10
+}
+
+// Logs, and exporting traces, metrics and logs over OTLP (off by default).
+// With an OpenTelemetry Collector on localhost, set `otlp.endpoint` to
+// "http://localhost:4318" and enable a signal, as in `traces {enabled true}`.
+telemetry {
+    service_name konklav-dev
+    logs {level "info,konklav_server=debug"}
+}
+
+tokens {
+    issuer "http://127.0.0.1:8080"
+    audience konklav-dev
+    signing_key_file "config/dev.signing-key.pem"
+}
+
+// Origins whose pages may use browser sign-in with the refresh cookie. The
+// console (`mise run console:serve`) serves on port 8083 and proxies /v1
+// and /control/v1 here, so Konklav sees requests from that origin.
+browser {
+    allowed_origins ("http://localhost:5173" "http://127.0.0.1:8083" "http://localhost:8083")
+    secure_cookies false
+}
+
+// WebAuthn does not accept IP addresses, so open the console at
+// http://localhost:8083 to use passkeys.
+passkeys {
+    rp_id localhost
+    rp_name "Konklav (dev)"
+    origins ("http://localhost:8083" "http://localhost:5173")
+}

@@ -1,0 +1,18 @@
+[package]
+name = "konklav-test-support"
+description = "Test helpers: isolated databases on the development Postgres server"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+konklav-store.workspace = true
+diesel.workspace = true
+diesel-async.workspace = true
+tokio.workspace = true
+uuid = { workspace = true, features = ["v7"] }
+
+[lints]
+workspace = true

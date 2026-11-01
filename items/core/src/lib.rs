@@ -1,12 +1,11 @@
-pub type DynError = Box<dyn std::error::Error + Send + Sync>;
+//! Identifiers and small value types shared across Konklav software items.
+//!
+//! Keep this crate tiny: only types that several software items need to agree
+//! on belong here.
 
-pub type ActionName = String;
-pub type CatalogRevision = u32;
-pub type PolicyRevision = u64;
+mod cursor;
+pub mod feed;
+mod id;
 
-pub type RoleKey = String;
-pub type ScopeId = String;
-pub type ScopeKind = String;
-pub type SubjectId = String;
-pub type TemplateKey = String;
-pub type TenantId = String;
+pub use cursor::Cursor;
+pub use id::{CredentialId, MembershipId, SessionId, ShareId, SubjectId, TenantId};

@@ -1,6 +1,6 @@
 # Software-Item READMEs
 
-This note defines the default README format for Conclave software items.
+This note defines the default README format for Konklav software items.
 
 Use `software item` as the architecture and traceability term. Use `crate` only when the Rust packaging boundary is the point.
 
@@ -87,8 +87,8 @@ Mermaid diagrams are optional. Use them when the software item sits in a relatio
 
 Include:
 
-- direct Conclave software-item dependencies
-- direct Conclave software-item dependents
+- direct Konklav software-item dependencies
+- direct Konklav software-item dependents
 - external runtime systems when they materially shape the software item's contract, runtime behavior, or data model
 - third-party libraries only when they are central enough that omitting them would hide an important architectural constraint
 

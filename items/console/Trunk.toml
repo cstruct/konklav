@@ -1,0 +1,28 @@
+# Builds the console with `trunk build` and serves it with `trunk serve`
+# (or `mise run console:serve` / `console:build` from the repository root).
+
+[build]
+target = "index.html"
+# Outside the source tree, next to cargo's output.
+dist = "../../target/console/dist"
+
+[watch]
+watch = ["src", "index.html", "style.css", "Cargo.toml"]
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8083
+open = false
+
+# The console reaches Konklav on its own origin, so the refresh cookie
+# (SameSite=Strict, scoped to /v1/refresh and /v1/sign-out) is first-party
+# and no CORS is involved. These match `mise run serve` and config/dev.styx.
+
+# The subject-facing surface keeps its /v1 paths.
+[[proxy]]
+backend = "http://127.0.0.1:8080/v1/"
+
+# The control-plane surface moves under /control, since its paths overlap.
+[[proxy]]
+rewrite = "/control/v1/"
+backend = "http://127.0.0.1:8082/v1/"

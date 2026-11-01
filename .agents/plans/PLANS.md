@@ -1,4 +1,4 @@
-# Conclave Plan Standard
+# Konklav Plan Standard
 
 This file defines the shared standard for task-specific planning documents in this repository.
 

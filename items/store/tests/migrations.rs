@@ -1,0 +1,48 @@
+use diesel_async::RunQueryDsl;
+use konklav_test_support::TestDatabase;
+
+// r[verify platform.storage.forward-migrations]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_migrated_database_has_no_pending_migrations() {
+    let db = TestDatabase::new().await;
+    let none = Vec::<String>::new();
+    assert_eq!(
+        konklav_store::pending_migrations(db.pool()).await.unwrap(),
+        none
+    );
+    assert_eq!(
+        konklav_store::run_pending_migrations(db.pool())
+            .await
+            .unwrap(),
+        none,
+        "running migrations again must be a no-op"
+    );
+}
+
+// r[verify platform.storage.postgres]
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unmigrated_database_reports_and_applies_every_migration() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    // Recreate an unmigrated state inside the isolated database.
+    for statement in ["drop schema public cascade", "create schema public"] {
+        diesel::sql_query(statement)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+    }
+    drop(conn);
+
+    let pending = konklav_store::pending_migrations(db.pool()).await.unwrap();
+    assert!(
+        pending
+            .iter()
+            .any(|name| name.ends_with("create_event_outbox"))
+    );
+
+    let applied = konklav_store::run_pending_migrations(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(applied.len(), pending.len());
+    konklav_store::ping(db.pool()).await.unwrap();
+}

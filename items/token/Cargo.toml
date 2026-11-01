@@ -1,0 +1,23 @@
+[package]
+name = "konklav-token"
+description = "Konklav access-token claims, EdDSA JWS signing and verification, and JWKS"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+konklav-core.workspace = true
+base64.workspace = true
+ed25519-dalek.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+konklav-core = { workspace = true, features = ["generate"] }
+
+[lints]
+workspace = true

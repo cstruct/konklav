@@ -1,34 +1,37 @@
 # Software-Item Specs
 
-This directory holds Tracey-managed software-item implementation specs.
-
-These specs sit below the product-spec layer in `../` and capture stable implementation-contract obligations owned by individual software items.
+This directory holds Tracey-managed implementation specs for individual
+software items. They sit below the product specs in `../` and capture stable
+implementation contracts that one software item owns.
 
 Use this directory for:
 
-- stable producer-owned contracts
-- shared boundary behavior that multiple software items depend on
-- implementation-level obligations that are too specific for product specs but too important for README-only documentation
-- small stable contract clusters rather than one rule per type by default
+- stable contracts that one software item provides to others
+- boundary behavior that several software items depend on
+- implementation obligations that are too specific for product specs but
+  too important to live only in a README
 
-Do not use this directory for:
+Do not use it for product behavior, design rationale (see
+`../../architecture/`), onboarding material, or local implementation
+details.
 
-- general product behavior that belongs in the main product specs
-- design rationale that belongs in `../../architecture/`
-- operational onboarding material that belongs in crate READMEs
-- local implementation details that belong in code comments
-- exhaustive one-rule-per-type inventories unless the individual types really carry separate long-lived obligations
+Rule naming convention: `item.<software-item>.*`.
 
-Rule naming convention:
+Planned software items (see
+[`../../architecture/overview.md`](../../architecture/overview.md)):
 
-- `item.<software-item>.*`
+- `core`
+- [`store`](store.md)
+- [`authz`](authz.md)
+- `authn`
+- `bootstrap`
+- `server`
+- [`token`](token.md)
+- [`relying`](relying.md)
+- [`console`](console.md)
+- `relying-client`
+- `py` (built separately by maturin)
+- `cli`
+- `test-support` (test-only)
 
-Consumer `r[depends ...]` references are optional.
-
-Add them sparingly when a consuming software item clearly relies on the producer-owned contract in a way that would matter during future review or refactoring.
-
-Software-item specs in this directory include:
-
-- `managed-config.md`
-- `relying-auth.md`
-- `controlplane-api.md`
+Specs are added as each item is built.

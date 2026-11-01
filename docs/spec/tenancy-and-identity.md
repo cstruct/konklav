@@ -1,54 +1,143 @@
 # Tenancy And Identity
 
-This file establishes the requirements for tenant topology, memberships, delegated tenant administration, and identity subjects.
+Tenants, subjects, credentials, memberships and facts.
 
 ## Tenants
 
-r[tenant.namespace.isolation]
-Every tenant MUST have an explicit namespace boundary so identities, memberships, roles, and policy assignments can be isolated by default.
-
-r[tenant.lifecycle.state-machine]
-Tenant creation, suspension, and deletion MUST follow an explicit lifecycle model so administrative behavior is auditable and reversible where possible.
-
 r[tenant.root.bootstrap]
-The platform MUST always materialize a root tenant with the reserved identifier `root` before runtime tenant provisioning begins, even when the managed tenant list omits an explicit root entry.
+Konklav MUST always have a root tenant, created before any other tenant.
+Its identifier is the nil UUID, and APIs MUST also accept `root` for it.
 
-r[tenant.root.managed-entry]
-If managed tenant configuration includes the root tenant, the platform MUST treat that entry as configuration for the pre-existing bootstrap root tenant rather than as creation of an additional tenant.
+r[tenant.tree.single-parent]
+Every non-root tenant MUST have exactly one parent tenant.
 
-r[tenant.tree.parent-reference]
-Every non-root tenant MUST record exactly one parent tenant reference so delegated administration can be modeled explicitly without collapsing tenant boundaries.
+r[tenant.tree.no-implicit-access]
+A parent-child relationship MUST NOT by itself grant any subject access in
+the child tenant. Access across tenants requires a membership or an explicit
+assumption grant.
 
-r[tenant.tree.root-default-parent]
-The baseline tenant provisioning model MUST support creating direct child tenants beneath the bootstrap root tenant.
+r[tenant.lifecycle.states]
+A tenant MUST be in exactly one of the states `active`, `suspended` or
+`deleted`. Only `active` tenants accept new sessions or token issuance.
 
-r[tenant.admin.no-implicit-child-access]
-A parent-child tenant relationship MUST NOT by itself grant direct access to child tenant resources without an explicit delegated assumption flow or child-tenant policy grant.
+r[tenant.lifecycle.suspend-revokes]
+Moving a tenant out of `active` MUST revoke every session targeting that
+tenant.
 
-## Subjects and memberships
+r[tenant.authority]
+Konklav MUST be the source of truth for tenant existence, parentage and
+lifecycle state. Relying systems MAY keep projections, keyed by the same
+identifier, for their own data.
 
-r[user.membership.tenant-binding]
-Tenant memberships MUST bind a subject to a tenant through a first-class membership record rather than relying on implicit global user state.
+r[tenant.facts]
+Tenants MUST be able to carry facts declared in the action catalog.
 
-r[user.profile.externalized-attributes]
-Tenant-member profile attributes MUST distinguish between locally managed data and data materialized from upstream identity providers.
+## Subjects
 
-r[user.assumption.delegated-principal]
-Cross-tenant role assumption MUST preserve the originating subject and tenant as delegated actor context rather than collapsing multiple operators into a shared synthetic child-tenant user identity.
+r[subject.identifier.stable]
+Every subject MUST have a stable identifier that never changes when its
+credentials, login identifiers or memberships change.
 
-## Identities
+r[subject.kind]
+Every subject MUST have a kind, `human` or `service`. Service subjects MUST
+NOT authenticate with interactive credentials.
 
-r[identity.subject.global-identifier]
-Every identity subject MUST have a stable internal identifier that survives username changes, email changes, and upstream provider remaps.
+r[subject.state]
+A subject MUST be either `active` or `disabled`. Disabling a subject MUST
+revoke all of its sessions and block new ones.
 
-r[identity.subject.linked-credentials]
-An identity subject MUST be able to link multiple credential or federation sources to the same internal subject record.
+r[subject.no-profile]
+Konklav MUST NOT be the system of record for subject profile data such as
+display names, language or country. It stores only what authentication and
+authorization need.
 
-r[identity.subject.linked-credentials.versioned-history]
-Linked subject credentials MUST preserve temporal history so replacement, revocation, and recovery remain auditable rather than overwriting prior credential state in place.
+## Credentials
 
-r[identity.subject.invite-redeem]
-The platform MUST support issuing a subject invite and redeeming it into a linked credential without requiring a provider-specific email delivery implementation.
+r[credential.linked]
+A subject MUST be able to hold several credentials. Each credential belongs
+to exactly one subject.
 
-r[identity.subject.invite.audit-history]
-Issued subject invites MUST preserve auditable issue, expiry, and redemption state across control-plane restarts.
+r[credential.identifier.unique]
+A login identifier MUST be unique among active credentials of the same kind.
+
+r[credential.history]
+Credential replacement and revocation MUST preserve history. A credential
+MUST NOT be overwritten in place.
+
+r[credential.password.hashing]
+Password credentials MUST be stored with a memory-hard password hash
+(Argon2id). Konklav MUST be able to verify hashes imported from earlier
+systems that use compatible Argon2id encodings, and MUST rehash them under
+current parameters on successful login.
+
+r[credential.password.hash-input]
+Creating a password credential through the control plane MUST accept
+either a password or an Argon2id PHC hash, but not both. A hash MUST be
+rejected as an invalid request unless it parses as Argon2id with valid
+parameters. Konklav then stores it as given, so the password never has to
+reach Konklav.
+
+r[credential.secret-key.dual]
+Secret-key credentials MUST support two independently rotatable keys with
+their own creation and expiry times, so that a service principal can rotate
+without downtime.
+
+r[credential.secret-key.hashed]
+Secret-key values MUST only be shown once, when created, and MUST be stored
+as hashes.
+
+r[credential.public-key.stored]
+Public-key credentials MUST store only public material: the public key and
+its algorithm, the signature counter, the attestation format and a label
+chosen by the subject. Their login identifier is the credential ID in
+unpadded base64url, compared case-sensitively.
+
+r[credential.public-key.no-mfa]
+Public-key credentials MUST NOT require MFA factors, because user
+verification already makes a passkey login multi-factor.
+
+r[credential.mfa-requirement]
+A credential MUST be able to declare how many MFA factors it requires
+before login completes.
+
+r[credential.revocation-ends-sessions]
+Revoking or replacing a credential MUST revoke the sessions established with
+it, except where the operation explicitly keeps the caller's current
+session (for example, a password change).
+
+## Memberships
+
+r[membership.first-class]
+A subject's presence in a tenant MUST be a first-class membership record
+with its own identifier.
+
+r[membership.unique]
+A subject MUST have at most one active membership per tenant.
+
+r[membership.state]
+A membership MUST be `active` or `ended`. Ending a membership MUST revoke the
+sessions targeting it and remove its contributions to entitlements.
+
+r[membership.facts]
+Memberships MUST be able to carry facts declared in the action catalog.
+Relying systems MAY write membership facts through the control plane.
+
+## Facts
+
+r[fact.typed]
+Facts MUST be typed (string, integer, boolean, string list or date range)
+according to their catalog declaration. A date range is an object with
+`from` and `until` dates (`YYYY-MM-DD`), `from` not after `until`. Writing a fact that is undeclared or of the wrong
+type MUST fail.
+
+r[fact.unique-keys]
+A fact key MUST be declared for at most one target (tenant, membership or
+share), so that tokens can carry tenant and membership facts side by side.
+
+r[fact.portability]
+Every fact key MUST be declared portable or non-portable. Only portable
+facts may appear in tokens, and share facts MUST NOT be portable.
+
+r[fact.bounded]
+Konklav MUST enforce a configured size limit on the portable facts that a
+token can carry.

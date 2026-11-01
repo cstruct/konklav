@@ -1,0 +1,19 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "konklav-relying"
+version = "1.0.0"
+description = "Decide Konklav authorization locally: token verification, cached entitlements and the change feed"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = ["httpx>=0.28"]
+
+[dependency-groups]
+dev = ["pytest>=8", "cryptography>=45", "maturin>=1.9,<2"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "konklav_relying._core"
+features = ["pyo3/extension-module"]

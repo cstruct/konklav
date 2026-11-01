@@ -1,0 +1,9 @@
+drop index event_delivery_material_idx;
+drop index backchannel_logout_session_idx;
+drop index session_parent_idx;
+drop index session_revoked_at_idx;
+drop index bearer_assertion_expires_at_idx;
+drop index client_assertion_expires_at_idx;
+drop index login_attempt_attempted_at_idx;
+drop index challenge_session_idx;
+drop index challenge_expires_at_idx;

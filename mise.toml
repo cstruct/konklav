@@ -1,0 +1,136 @@
+[tools]
+# The Rust toolchain, installed through rustup, with the WebAssembly target
+# the console and the relying core build for.
+rust = { version = "1.99.0", components = "rustfmt,clippy,rust-analyzer,rust-src", targets = "wasm32-unknown-unknown" }
+# Lints the GitHub Actions workflows.
+"github:rhysd/actionlint" = "1.7.7"
+# Tracks the spec in docs/spec against the code, from its GitHub releases.
+"github:bearcove/tracey" = "1.4.0"
+# Diesel's CLI for migrations and schema.rs. libpq is compiled in, so no
+# system Postgres client libraries are needed.
+# Builds and tests the Python relying binding (items/py).
+uv = "0.8.24"
+# An independent OpenID provider for integration tests of Konklav as an
+# identity-provider client. Runs in memory; see the `hydra` task.
+# The SQLite builds, which run in memory (`DSN=memory`).
+"github:ory/hydra" = { version = "25.4.0", platforms = { macos-arm64 = { asset_pattern = "hydra_*-macOS_sqlite_arm64.tar.gz" }, macos-x64 = { asset_pattern = "hydra_*-macOS_sqlite_64bit.tar.gz" }, linux-x64 = { asset_pattern = "hydra_*-linux_sqlite_64bit.tar.gz" }, linux-arm64 = { asset_pattern = "hydra_*-linux_sqlite_arm64.tar.gz" } } }
+# Builds and serves the console (items/console) as a WASM app; fetches the
+# matching wasm-bindgen CLI by itself.
+"github:trunk-rs/trunk" = "0.21.14"
+"cargo:diesel_cli" = { version = "2.3.14", default-features = false, features = "postgres-bundled" }
+
+[env]
+# Below the ephemeral port ranges (32768+ on Linux, 49152+ on macOS), so an
+# outgoing connection can never be holding it when Postgres starts.
+KONKLAV_DEV_PG_PORT = "15432"
+DATABASE_URL = "postgres://konklav:konklav@localhost:{{env.KONKLAV_DEV_PG_PORT}}/konklav"
+KONKLAV_CONFIG = "{{config_root}}/config/dev.styx"
+KONKLAV_SECRETS = "{{config_root}}/config/dev.secrets.styx"
+
+[tasks."db:up"]
+description = "Start the local Postgres and wait until it accepts connections"
+run = "docker compose -f dev/compose.yaml up -d --wait --build"
+
+[tasks."db:down"]
+description = "Stop the local Postgres, keeping its data"
+run = "docker compose -f dev/compose.yaml down"
+
+[tasks."db:reset"]
+description = "Stop the local Postgres and delete its data"
+run = "docker compose -f dev/compose.yaml down --volumes"
+
+[tasks."db:status"]
+description = "Show the status of the local Postgres"
+run = "docker compose -f dev/compose.yaml ps"
+
+[tasks."db:logs"]
+description = "Follow logs from the local Postgres"
+run = "docker compose -f dev/compose.yaml logs --follow"
+
+[tasks."db:psql"]
+description = "Open psql against the local database"
+run = "docker compose -f dev/compose.yaml exec postgres psql -U konklav -d konklav"
+
+[tasks.build]
+description = "Build every crate"
+run = "cargo build --workspace"
+
+[tasks.test]
+description = "Run every test; database tests use isolated databases on the local Postgres"
+depends = ["db:up", "py:test", "console:smoke"]
+run = "cargo test --workspace"
+
+[tasks."py:test"]
+description = "Build the Python relying binding and run its tests"
+dir = "items/py"
+run = ["uv sync -q --reinstall-package konklav-relying", "uv run -q pytest -q tests"]
+
+[tasks.lint]
+description = "Check formatting, lints, spec traceability and the CI workflows"
+run = [
+    "cargo fmt --all --check",
+    "cargo clippy --workspace --all-targets -- -D warnings",
+    "cargo build -q -p konklav-relying --target wasm32-unknown-unknown",
+    "cargo clippy -q -p konklav-console --target wasm32-unknown-unknown -- -D warnings",
+    "cargo fmt --manifest-path items/py/Cargo.toml --check",
+    "PYO3_PYTHON=$(cd items/py && uv python find) cargo clippy --manifest-path items/py/Cargo.toml -- -D warnings",
+    "actionlint",
+    "tracey query validate",
+]
+
+[tasks."console:serve"]
+description = "Serve the console on http://127.0.0.1:8083, proxying to `mise run serve`"
+dir = "items/console"
+run = "trunk serve"
+
+[tasks."console:build"]
+description = "Build the console for release into target/console/dist"
+dir = "items/console"
+run = "trunk build --release"
+
+[tasks."console:smoke"]
+description = "Build the console with trunk and check the bundle it produces"
+dir = "items/console"
+run = """
+trunk build --dist ../../target/console/smoke
+test -s ../../target/console/smoke/index.html
+grep -q 'konklav-console' ../../target/console/smoke/index.html
+ls ../../target/console/smoke/*.wasm >/dev/null
+"""
+
+[tasks.migrate]
+description = "Apply pending migrations to the local database"
+depends = ["db:up"]
+run = "cargo run -q -p konklav-server -- migrate"
+
+[tasks.hydra]
+description = "Run Ory Hydra in memory (public :4444, admin :4445) to try identity-provider logins by hand"
+run = "hydra serve all --dev"
+
+[tasks.hydra.env]
+DSN = "memory"
+URLS_SELF_ISSUER = "http://127.0.0.1:4444"
+URLS_LOGIN = "http://127.0.0.1:3000/login"
+URLS_CONSENT = "http://127.0.0.1:3000/consent"
+SECRETS_SYSTEM = "konklav-dev-only-hydra-system-secret"
+
+[tasks."dev:signing-key"]
+description = "Create the untracked development signing key if it is missing"
+run = "test -f config/dev.signing-key.pem || openssl genpkey -algorithm Ed25519 -out config/dev.signing-key.pem"
+
+[tasks.serve]
+description = "Run the server against the local database with config/dev.styx"
+depends = ["migrate", "dev:signing-key"]
+run = "cargo run -q -p konklav-server -- serve"
+
+[tasks."db:schema"]
+description = "Regenerate items/store/src/schema.rs from the migrations"
+depends = ["db:up"]
+dir = "items/store"
+run = "diesel migration run && diesel print-schema > src/schema.rs"
+
+[tasks.example]
+description = "Run an example from examples/: smtp-delivery, federation or bootstrap"
+depends = ["db:up"]
+usage = 'arg "<name>" help="The example to run"'
+run = "cargo build -q -p konklav-server && cargo run -q -p konklav-examples --bin ${usage_name?}"

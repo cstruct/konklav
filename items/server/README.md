@@ -1,175 +1,169 @@
-# Server
+# konklav-server
 
-`conclave-server` is the server that runs the Conclave control plane.
-
-It loads server and managed configuration, bootstraps runtime state, exposes the control-plane, subject-facing, and relying-system HTTP surfaces, and coordinates managed-state and runtime-auth flows.
+The Konklav server binary. It serves the subject-facing, relying and control-plane surfaces from one process.
 
 ## Responsibilities
 
-- Start the authoritative Conclave control-plane runtime.
-- Load typed server config and managed configuration during startup.
-- Expose the three HTTP surfaces used by operators, subjects, and relying systems.
-- Compile and serve current authorization and tenant state.
-- Reconcile managed configuration through validate, plan, and apply operations.
-- Bootstrap and reload persisted state through the Feldera-backed managed store when enabled.
-- Issue, validate, and publish JWT-related artifacts needed by Conclave subjects and relying systems.
+- Loading runtime configuration with ordna, in this order:
+  1. a Styx config file
+  2. a Styx secrets file
+  3. `KONKLAV__*` environment variables
 
-Out of scope:
+  Secret values are only accepted from the secrets file, and every problem is reported at once.
+- Configuration is split into ordna contexts (`ListenConfig`, `DatabaseConfig`, `LogConfig`), and each command loads only the ones it needs:
+  - `serve` and `check-config` load all three.
+  - `migrate` loads only the database and log contexts, so it runs without any `listen` settings.
+  - `bootstrap` loads the database, log and MFA contexts.
 
-- defining operator-facing managed-config input types
-- acting as the offline JWT validation library for relying systems
-- replacing the CLI as the primary operator interface for local workflow ergonomics
+  Keys belonging to contexts a command doesn't load are still validated, so typos are still caught.
+- Binding one listener per distinct surface address. Surfaces configured with the same address share a listener.
+- Sweeping (`sweeper.rs`): every `retention.sweep_interval_seconds` (default 300), one instance at a time deletes what retention allows, in batches of `retention.batch_size`:
+  - expired challenges once the one-day send-limit window has passed
+  - login attempts older than the one-day rate-limit window
+  - expired client- and bearer-assertion `jti`s
+  - sessions `retention.sessions_days` (default 30) after they ended
+  - events older than `feed.retention_hours`
 
-## Public Interface
+  It also erases the challenge material from stored `delivery.requested` events once their challenge has expired.
+- Telemetry (`telemetry.rs`), configured under `telemetry`:
+  - logs to stderr as text or JSON (`logs.format json`, with trace and span ids)
+  - traces, metrics and logs exported over OTLP (HTTP or gRPC) when `traces.enabled`, `metrics.enabled` or `logs.export` is set
+  - every request is a server span named by method and route template, continuing a caller's `traceparent`
+  - requests to identity providers, their keys, peers and back-channel logout endpoints are client spans that carry the trace
+  - metrics:
+    - request durations (`http.server.request.duration`) by route, status and error code
+    - refusals for load
+    - hashing wait and busy slots
+    - access tokens issued
+    - open feed streams
+    - logout deliveries
+    - rows swept
+    - pool connections
+    - outbound requests
 
-Primary entry points:
+  Telemetry never records login identifiers, secrets, tokens, codes, client addresses or request paths. Export headers, such as an API key, belong in the secrets file under `telemetry.otlp.headers`.
+- Working out each client's address from the connection, or from `X-Forwarded-For` when the connection comes from one of `listen.trusted_proxies`, for per-address rate limits.
+- Liveness (`/healthz`) and readiness (`/readyz`: database reachable and no pending migrations) on every listener.
+- The typed error model: `{"error": {"code": "SCREAMING_SNAKE_CASE", "message": "..."}}`, including for unknown endpoints and methods.
+- Graceful shutdown on Ctrl-C and SIGTERM.
+- Subject-facing surface (`/v1`):
+  - `login/password` and `login/secret-key`, rate limited per identifier, with failures that reveal nothing
+  - `refresh`, with rotation and reuse detection
+  - `sign-out` and `sign-out/others`
+  - browser clients get the refresh token as an `HttpOnly` cookie and must pass Origin and `X-Konklav-Client` checks
+- Subject-facing `login/tenant` moves a session into a tenant where the subject has an active membership. The new token carries `tid`, `mid` and portable facts. Logins may request restrictive session flags that the catalog marks as requestable.
+- `GET /v1/capabilities`: the `konklav:` capabilities the caller holds, for operator tools such as the console.
+- Passkeys (`src/passkeys.rs` wraps `webauthn-rs`; routes in `src/passkeys_api.rs`):
+  - registering from a recently authenticated full session (`passkeys/registration/options`, then `passkeys/registration`)
+  - usernameless login (`login/passkey/options`, then `login/passkey`), recording `swk` and `mfa`
+  - step-up (`step-up/passkey/options`, then `POST /v1/step-up` with `ceremony` and `passkey`)
+  - listing and removing the caller's own passkeys (`GET /v1/passkeys`, `DELETE /v1/passkeys/{id}`)
 
-- `src/main.rs`
-  - Starts the runtime, loads config, loads managed state, and binds the three HTTP surfaces.
-- `src/config.rs`
-  - Defines the typed server config, startup overrides, and schema generation for server config.
-- `src/http.rs`
-  - Defines the HTTP routes and splits them across the three server surfaces.
+  Each ceremony's `webauthn-rs` state lives in a single-use challenge until the second call; the stored key is versioned opaque JSON in the credential's data.
+- MFA (TOTP and email-code factors; partial sessions can list their active factors, and browsers get their cookie when MFA completes), step-up, magic-link and phone-code login, password reset and change, invite redemption, and impersonation. These emit `delivery.requested` for anything a relying system must send.
+- Relying surface, for service principals only:
+  - `/.well-known/jwks.json`
+  - `/v1/entitlements/{subject}[/{tenant}]`
+  - `/v1/check`, which decides from current state, session validity included
+- Control-plane surface (`/v1`):
+  - subjects (idempotent `PUT`, disable and enable)
+  - credentials (create, revoke, replace a password, rotate a secret-key slot). A password credential can be created from an Argon2id `password_hash` made elsewhere instead of a `password`.
+  - sessions (list, get, revoke by filter)
+  - signing keys (list, break-glass revoke)
+  - the catalog
+  - tenants (create with roles instantiated from templates; facts; state, where leaving `active` ends the tenant's sessions)
+  - memberships (create, facts, end, assignments)
+  - templates and roles, where roles of `root` are global roles
+  - global assignments
+  - invites (`POST /v1/invites`)
+  - an operator view of a subject's entitlements, with explanations (`/v1/subjects/{id}/explain`)
+  - listings of subjects (by kind or login identifier), tenants (by parent) and a tenant's memberships
 
-HTTP surface overview:
+  Each area requires a `konklav:` capability, held through a global role (`konklav:control:all` covers everything). Two built-in global roles ship with every instance and can be assigned but not changed: `konklav.admin` (`konklav:control:all`) and `konklav.delivery` (`konklav:delivery:read`). Role keys starting with `konklav.` are reserved for them. An optional bootstrap token from the secrets file is also accepted. Use it to create the first operator (a human subject with a password credential and the `konklav.admin` global role), then remove it.
 
-- Control-plane surface
-  - health and readiness
-  - runtime metadata
-  - managed configuration validate, plan, and apply
-  - invite creation
-- Subject-facing surface
-  - invite redemption
-  - login
-  - assumed tenant token issuance
-  - token validation
-- Relying-system surface
-  - revision discovery
-  - action-catalog lookup
-  - JWKS publication
+## Public interface
 
-Representative endpoints:
-
-- `GET /healthz`
-- `GET /readyz`
-- `GET /v1/meta`
-- `POST /v1/managed/validate`
-- `POST /v1/managed/plan`
-- `POST /v1/managed/apply`
-- `POST /v1/invites`
-- `POST /v1/invites/redeem`
-- `POST /v1/login`
-- `POST /v1/auth/tokens/assume`
-- `POST /v1/auth/tokens/validate`
-- `GET /v1/revisions`
-- `GET /v1/authz/catalog`
-- `GET /.well-known/jwks.json`
-
-See [`src/http.rs`](src/http.rs) for the route definitions.
+- CLI: `konklav-server --config <file> --secrets <file> <serve|migrate|check-config|bootstrap>`.
+  - The file paths can also come from `KONKLAV_CONFIG` and `KONKLAV_SECRETS`.
+- Configuration: the contexts in `src/config.rs`:
+  - `listen`, `database`, `log`
+  - `tokens`: issuer, audience, lifetimes and signing-key PEM files
+  - `browser`: allowed origins, cookie security, and the `passkeys` section (relying party ID and name, origins)
+  - `control`: the bootstrap token (secret) The development config is in `config/dev.styx` and `config/dev.secrets.styx`.
+- HTTP: health endpoints at the root; versioned endpoints under `/v1`. Each surface's routes are in `src/surface.rs`.
 
 ## Relationships
 
-### Dependency Summary
-
 | Software item | Relationship |
-| --- | --- |
-| `conclave-controlplane-api` | Provides shared request and response types for the control-plane HTTP contract. |
-| `conclave-core` | Provides shared value types used across config, auth, tenancy, and managed state. |
-| `conclave-managed-config` | Provides the managed desired-state model and directory-loading support used at startup and during validate, plan, and apply workflows. |
-| `conclave-relying-auth` | Provides JWT signing, verification, JWKS publication, and action-catalog response types used by the relying-system surface. |
-| `Feldera manager` | Acts as the authoritative persisted store for managed control-plane state when the Feldera-backed mode is enabled. |
-
-### Dependent Summary
-
-| Software item | Relationship |
-| --- | --- |
-| `conclave-cli` | Talks to this server's control-plane surface for validate, plan, apply, and invite workflows. |
-| External relying systems | Use the relying-system surface for JWKS, revision metadata, and action-catalog metadata needed for offline token evaluation. |
-| External subjects and operators | Interact with the subject-facing and control-plane surfaces for login, invite redemption, and managed operations. |
+|---|---|
+| `konklav-store` | Pool, migrations, readiness checks and every repository |
+| `konklav-authn` | Password and secret hashing, refresh tokens |
+| `konklav-token` | Signing access tokens, JWKS |
+| `konklav-authz` | Compiling entitlement sets and evaluating checks |
+| `webauthn-rs` | Passkey ceremonies. It links OpenSSL, so it stays in this crate: `konklav-authn` is a dependency of relying systems |
+| `konklav-test-support` | Isolated databases in tests |
+| PostgreSQL | Must be reachable for readiness and for every stateful endpoint |
 
 ## Running
 
-Run the server with:
-
 ```sh
-cargo run -p conclave-server
+mise run serve
 ```
 
-Before the first local run, generate `config/server.signing-private-key.pem` as described in [CONTRIBUTING.md](../../CONTRIBUTING.md).
+This starts Postgres, creates an untracked dev signing key if needed, applies migrations, and serves on `127.0.0.1:8080` (subject), `:8081` (relying) and `:8082` (control).
 
-By default the server loads:
+### Bootstrapping data
 
-- public server config from `config/server.conf.styx`
-- secret-bearing server config from `config/server.secrets.styx`
-- managed configuration from the public config file's adjacent managed-config directory, which is `config/` by default
+`bootstrap` applies a bootstrap set to the database directly: tenants, people, credentials and grants, from CSV tables, Styx documents and a `catalog.json`, or directories of them. The formats are described in [`konklav-bootstrap`](../bootstrap/README.md).
 
-Common startup overrides:
+```sh
+cargo run -p konklav-server -- bootstrap --dry-run examples/bootstrap/nested/seed.styx
+cargo run -p konklav-server -- bootstrap examples/bootstrap/nested/seed.styx
+```
 
-- `CONCLAVE_CONFIG`
-- `CONCLAVE_SECRETS`
-- `CONCLAVE_MANAGED_DIR`
-- `CONCLAVE_CONTROL_PLANE_HOST`
-- `CONCLAVE_CONTROL_PLANE_PORT`
-- `CONCLAVE_SUBJECT_HOST`
-- `CONCLAVE_SUBJECT_PORT`
-- `CONCLAVE_RELYING_HOST`
-- `CONCLAVE_RELYING_PORT`
-- `CONCLAVE_BOOTSTRAP_SUBJECT`
-- `CONCLAVE_JWT_ISSUER`
-- `CONCLAVE_JWT_DEFAULT_AUDIENCE`
-- `CONCLAVE_JWT_SIGNING_PRIVATE_KEY_FILE`
-- `CONCLAVE_JWT_TTL_SECONDS`
-- `CONCLAVE_FELDERA_ENABLED`
-- `CONCLAVE_FELDERA_BASE_URL`
-- `CONCLAVE_FELDERA_PIPELINE_PREFIX`
-- `CONCLAVE_FELDERA_READINESS_PROBE`
-- `CONCLAVE_FELDERA_COMPILE_PROFILE`
-- `CONCLAVE_FELDERA_AUTO_START`
-- `CONCLAVE_FELDERA_START_INITIAL`
-
-See [`src/config.rs`](src/config.rs) for the full set of startup overrides and default values.
-
-`config/server.secrets.styx` currently holds `bootstrap.token` and `feldera.api_key`. The server reads its JWT signing key from the PEM file referenced by `jwt.signing_private_key_file` in `config/server.conf.styx`. The server accepts `--secrets` or `CONCLAVE_SECRETS` to locate the secrets file, and it accepts `--jwt-signing-private-key-file` or `CONCLAVE_JWT_SIGNING_PRIVATE_KEY_FILE` to relocate the PEM path, but it intentionally does not accept direct CLI or environment-variable overrides for secret values.
+- **One transaction.** Every record is written in a savepoint of its own. The run reports each problem and conflict with its file and line, and commits only when there are none.
+- **Re-runnable.**
+  - Records that exist with the same content are skipped, so a set can be applied again.
+  - A record that exists with different content is a conflict.
+  - Nothing the set doesn't name is changed.
+- **`--dry-run`** does everything but commit, and prints what would be created, skipped, updated or in conflict.
+- **Passwords** must arrive as Argon2 hashes. `--allow-plaintext-passwords` accepts plaintext for development seeds and hashes it.
+- **Requirements:** it refuses to run while migrations are pending, and needs the `mfa` keys to import TOTP seeds.
+- **Exit codes:** 0 when the set applied or the dry run found nothing wrong, 1 for problems, 2 for conflicts.
 
 ## Testing
 
-Run the default server test suite with:
-
 ```sh
-cargo test -p conclave-server
+mise run test
 ```
 
-Run the ignored live-Feldera tests with:
+- Direct coverage:
+  - config layering, secrets placement and error reporting
+  - liveness, readiness (ready, database down, migrations pending) and typed errors, through the router
+  - binding and graceful shutdown of the listeners
+  - end-to-end auth flows through the router:
+    - login, refresh, reuse detection, sign-out
+    - browser cookies and CSRF checks
+    - secret-key slots
+    - credential replacement, subject disabling, MFA-required partial tokens
+    - session administration, signing-key revocation
+    - passkey registration, login, step-up and removal, with a software authenticator (`tests/passkeys.rs`)
+  - the runnable examples in `examples/`, against this build's binary (`tests/examples.rs`)
+  - telemetry: spans, metrics and logs exported to a fake OTLP collector, trace propagation in and out, and nothing identifying in what's exported (`tests/telemetry.rs`)
+  - retention: what the sweeper deletes and keeps, and its lock (`tests/retention.rs`)
+  - the bootstrap command, applying both example sets, re-runs, dry runs, conflicts and located problems (`tests/bootstrap.rs`)
+- Indirect coverage: none yet.
 
-```sh
-CONCLAVE_COMPONENT_FELDERA_URL=http://127.0.0.1:18080 cargo test -p conclave-server -- --ignored
-```
+## Behavior notes
 
-Coverage shape:
+- Surfaces on port `0` always get a listener of their own, because the OS picks a distinct port for each.
+- Key files in `tokens` are resolved relative to the working directory.
+- Building needs OpenSSL headers (for example `brew install openssl@3`), for `webauthn-rs`.
+- `serve` doesn't apply migrations. It warns about pending ones, and readiness fails until `migrate` runs.
 
-- Direct coverage
-  - unit-style tests for config loading, control-plane state, authz compilation, tenant compilation, Feldera SQL and pipeline sync behavior, and the Feldera-backed managed store
-  - `actix-web` tests for control-plane, subject-facing, and relying-system HTTP flows
-- Indirect coverage
-  - `conclave-cli` exercises the control-plane surface during managed-config workflows
-  - repository-level examples and local development flows exercise server startup against the default `config/*.styx` files
-
-## Behavior Notes
-
-- The server always binds three separate HTTP surfaces even when they run in one process.
-- Startup loads managed configuration before the runtime begins serving requests.
-- When Feldera-backed managed state is enabled, the server bootstraps the store if empty and then treats Feldera as the authoritative persisted source of managed state.
-- In Feldera-backed mode, relying-system revision metadata, action-catalog reads, and effective-grant reads come from the Feldera authz pipeline and fail closed if that compiled state is unavailable.
-- In Feldera-backed mode, JWKS publication and server-side JWT validation read persisted signing keys from the control-plane store rather than trusting only the active in-memory signer.
-- `readyz` can optionally perform a live Feldera manager reachability check when readiness probing is enabled.
-
-## Traceability And Related Docs
+## Traceability and related docs
 
 - [Platform spec](../../docs/spec/platform.md)
-- [Managed configuration spec](../../docs/spec/managed-configuration.md)
-- [Feldera control-plane architecture](../../docs/architecture/feldera-control-plane.md)
-- [Server config and secrets](../../docs/architecture/server-config-and-secrets.md)
-- [Typed temporal store note](../../docs/architecture/typed-temporal-store.md)
-- [Repository traceability guidance](../../docs/traceability-guidance.md)
-- [Software-item README guidance](../../docs/software-item-readmes.md)
-- [Project nomenclature](../../docs/nomenclature.md)
+- [overview](../../docs/architecture/overview.md)
+- [Traceability guidance](../../docs/traceability-guidance.md)
+- [Nomenclature](../../docs/nomenclature.md)

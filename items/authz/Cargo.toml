@@ -1,0 +1,21 @@
+[package]
+name = "konklav-authz"
+description = "Konklav authorization: entitlement compilation and decision evaluation, without I/O"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+konklav-core.workspace = true
+konklav-token.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+konklav-core = { workspace = true, features = ["generate"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -1,101 +1,35 @@
-# Core
+# konklav-core
 
-`conclave-core` is the Rust crate that holds the smallest stable set of shared Conclave value types.
-
-It is intentionally tiny: it provides common aliases for identifiers, keys, revisions, and a shared error type so the rest of the workspace can share basic vocabulary without collapsing into one large catch-all model crate.
+Library crate with the identifiers and small value types that several Konklav software items have to agree on.
 
 ## Responsibilities
 
-- Define stable shared aliases for common Conclave identifiers and revisions.
-- Provide a lightweight shared error type alias used across workspace crates.
-- Keep the shared foundation small enough that domain models stay owned by the software items that actually use them.
+- Typed UUID identifiers: `TenantId`, `SubjectId`, `MembershipId`, `SessionId`. They are time-ordered (UUID v7) when generated.
+- `Cursor`, the position of an event in the change feed.
 
-Out of scope:
-
-- owning transport DTOs
-- owning full managed-config trees
-- owning compiled authorization or tenant models
-
-## Public Interface
-
-Primary entry point:
-
-- `src/lib.rs`
-  - Defines the shared type aliases exported by this crate.
-
-Shared aliases include:
-
-- `DynError`
-- `ActionName`
-- `CatalogRevision`
-- `PolicyRevision`
-- `RoleKey`
-- `ScopeId`
-- `ScopeKind`
-- `SubjectId`
-- `TemplateKey`
-- `TenantId`
-
-See [`src/lib.rs`](src/lib.rs) for the alias set.
+It doesn't own domain models, persistence types or HTTP DTOs. Those stay with the software item that owns them.
 
 ## Relationships
 
-### Dependency Summary
-
 | Software item | Relationship |
-| --- | --- |
-| None | This crate is intentionally dependency-free inside the workspace. |
-
-### Dependent Summary
-
-| Software item | Relationship |
-| --- | --- |
-| `conclave-managed-config` | Reuses shared IDs, keys, and revision-like aliases in the managed desired-state model. |
-| `conclave-controlplane-api` | Reuses stable shared value types in transport DTOs. |
-| `conclave-relying-auth` | Reuses shared IDs, action names, and revision aliases in token and verification types. |
-| `conclave-server` | Reuses shared values across config, auth, tenancy, and managed-state code. |
-
-## Usage
-
-Use `conclave-core` when multiple software items need the same stable value type.
-
-```rust
-use conclave_core::{CatalogRevision, TenantId};
-
-let tenant_id: TenantId = "tenant-a".to_owned();
-let revision: CatalogRevision = 4;
-```
+|---|---|
+| `konklav-store` | Uses these identifiers in repositories |
+| `konklav-server` | Uses them at the HTTP boundary (from M2) |
 
 ## Running
 
-This software item is a library crate and is not run directly as its own process.
-
-It is exercised through every downstream workspace crate that reuses its shared aliases.
+This is a library and can't run on its own. It is exercised through its dependents.
 
 ## Testing
 
-Run this software item's crate-local tests with:
-
 ```sh
-cargo test -p conclave-core
+cargo test -p konklav-core
 ```
 
-Coverage shape:
+- Direct coverage: identifier round-trips, serde shape and ordering.
+- Indirect coverage: the store and server tests.
 
-- Direct coverage
-  - This crate has no crate-local test cases.
-  - Its surface is intentionally limited to shared type aliases.
-- Indirect coverage
-  - Every downstream workspace crate compiles and exercises these aliases as part of its own tests and runtime paths.
+## Traceability and related docs
 
-## Behavior Notes
-
-- This crate is intentionally small by design.
-- If a representation is domain-specific, it should usually stay with the software item that owns that domain rather than move into `conclave-core`.
-
-## Traceability And Related Docs
-
-- [Platform spec](../../docs/spec/platform.md)
-- [Repository traceability guidance](../../docs/traceability-guidance.md)
-- [Software-item README guidance](../../docs/software-item-readmes.md)
-- [Project nomenclature](../../docs/nomenclature.md)
+- [Nomenclature](../../docs/nomenclature.md)
+- [overview](../../docs/architecture/overview.md)
