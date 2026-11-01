@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use crate::compile::{Placement, beats, effective_policies};
 use crate::evaluate::step_up_satisfied;
 use crate::{
-    Assignment, Catalog, Decision, DenyReason, Effect, Entitlements, Requirements, Scope,
-    ScopeRequirement, Share, compile, evaluate, shared,
+    Assignment, Catalog, Decision, DenyReason, Effect, Entitlements, RegisteredScopes,
+    Registration, Requirements, Scope, Share, compile, evaluate, shared,
 };
 
 /// One policy that bears on an action, and where it lands.
@@ -325,6 +325,8 @@ pub struct ExplainInput<'a> {
     /// Shares with the tenant still waiting to be accepted.
     pub offered: &'a [Share],
     pub requirements: &'a Requirements,
+    /// The records of the registered scopes the requirements name.
+    pub registered: &'a RegisteredScopes,
     /// The tenant the decision is for; `None` for global-only decisions.
     pub tenant: Option<TenantId>,
     pub session: Option<SessionContext<'a>>,
@@ -428,14 +430,10 @@ fn shared_reason(
     input: &ExplainInput<'_>,
     compiled: &Entitlements,
     owner: TenantId,
-    required: &ScopeRequirement,
+    scope: &Scope,
     action: &str,
 ) -> (Reason, Vec<Contribution>) {
-    let matches = |share: &&Share| {
-        share.owner_tenant == owner
-            && share.scope.kind == required.kind
-            && share.scope.id == required.id
-    };
+    let matches = |share: &&Share| share.owner_tenant == owner && share.scope == *scope;
     let mut failures = Vec::new();
     for share in input.shares.iter().filter(matches) {
         let recipient = share
@@ -618,7 +616,11 @@ fn decision_checks(
         ));
         checks.extend(session_checks(requirements, session, input.now));
     }
-    if !requirements.tenant.is_empty() || !requirements.scopes.is_empty() {
+    let unregistered_scopes = requirements
+        .scopes
+        .iter()
+        .any(|required| !input.registered.kinds.contains(&required.kind));
+    if !requirements.tenant.is_empty() || unregistered_scopes {
         checks.push(Check::new(
             "tenant",
             tenant.is_some(),
@@ -629,7 +631,55 @@ fn decision_checks(
             },
         ));
     }
+    for required in &requirements.scopes {
+        let scope = Scope {
+            kind: required.kind.clone(),
+            id: required.id.clone(),
+        };
+        if let Some(record) = input.registered.lookup(&scope) {
+            checks.push(registered_check(&scope, record, required.tenant));
+        }
+    }
     checks
+}
+
+/// Whether a required registered scope is recorded, in the tenant the
+/// requirement names if it names one.
+// r[impl authz.registered.unknown-denies]
+fn registered_check(
+    scope: &Scope,
+    record: Option<&Registration>,
+    named: Option<TenantId>,
+) -> Check {
+    let level = format!("{}/{}", scope.kind, scope.id);
+    match record {
+        None => Check::new(
+            "registered_scope",
+            false,
+            format!("{level} isn't a registered scope, or has been removed."),
+        ),
+        Some(record) if named.is_some_and(|named| named != record.tenant) => Check::new(
+            "registered_scope",
+            false,
+            format!(
+                "{level} is registered in tenant {}, not the tenant the requirement names.",
+                record.tenant
+            ),
+        ),
+        Some(record) => {
+            let mut message = format!("{level} is registered in tenant {}", record.tenant);
+            if !record.containers.is_empty() {
+                let containers: Vec<String> = record
+                    .containers
+                    .iter()
+                    .map(|c| format!("{}/{}", c.kind, c.id))
+                    .collect();
+                let _ = write!(message, ", inside {}", containers.join(", "));
+            }
+            message.push('.');
+            Check::new("registered_scope", true, message)
+        }
+    }
 }
 
 /// Every required action at every level, explained.
@@ -675,6 +725,18 @@ fn action_explanations(
             kind: required.kind.clone(),
             id: required.id.clone(),
         };
+        if let Some(record) = input.registered.lookup(&scope) {
+            // An unknown scope fails its check; there is nothing to say per
+            // action.
+            if let Some(record) = record {
+                for action in &required.actions {
+                    actions.push(registered_explanation(
+                        input, compiled, tenant, record, action,
+                    ));
+                }
+            }
+            continue;
+        }
         let Some(owner) = required.tenant.filter(|owner| Some(*owner) != tenant) else {
             for action in &required.actions {
                 actions.push(explain_own(action, Some(&scope), false));
@@ -683,7 +745,7 @@ fn action_explanations(
         };
         for action in &required.actions {
             let level = format!("{}/{} of tenant {owner}", scope.kind, scope.id);
-            let (reason, contributions) = shared_reason(input, compiled, owner, required, action);
+            let (reason, contributions) = shared_reason(input, compiled, owner, &scope, action);
             actions.push(ActionExplanation {
                 action: action.clone(),
                 message: reason.message(action, &level),
@@ -696,6 +758,70 @@ fn action_explanations(
         }
     }
     actions
+}
+
+/// Why `action` is granted or not at a registered scope: globally, then at
+/// the scope itself or at each container, in its own tenant directly and
+/// from another tenant through shares. The first that grants it explains
+/// it; otherwise the first that doesn't.
+fn registered_explanation(
+    input: &ExplainInput<'_>,
+    compiled: &Entitlements,
+    tenant: Option<TenantId>,
+    record: &Registration,
+    action: &str,
+) -> ActionExplanation {
+    let scope = record.scope();
+    let level = format!("{}/{}", scope.kind, scope.id);
+    let own_tenant = tenant == Some(record.tenant);
+    let mut candidates = vec![(
+        "global".to_owned(),
+        own_reason(
+            input.catalog,
+            input.assignments,
+            compiled,
+            action,
+            None,
+            true,
+        ),
+    )];
+    if tenant.is_some() {
+        for candidate in std::iter::once(&scope).chain(&record.containers) {
+            let name = if *candidate == scope {
+                level.clone()
+            } else {
+                format!("{}/{} (containing {level})", candidate.kind, candidate.id)
+            };
+            let explained = if own_tenant {
+                own_reason(
+                    input.catalog,
+                    input.assignments,
+                    compiled,
+                    action,
+                    Some(candidate),
+                    false,
+                )
+            } else {
+                shared_reason(input, compiled, record.tenant, candidate, action)
+            };
+            candidates.push((name, explained));
+        }
+    }
+    let first_granted = candidates
+        .iter()
+        .position(|(_, (reason, _))| reason.granted());
+    // Without a grant, the most specific candidate explains best.
+    let chosen = first_granted.unwrap_or(candidates.len().min(2) - 1);
+    let (name, (reason, contributions)) = candidates.swap_remove(chosen);
+    ActionExplanation {
+        action: action.to_owned(),
+        message: reason.message(action, &name),
+        granted: reason.granted(),
+        level,
+        owner_tenant: (!own_tenant).then_some(record.tenant),
+        reason,
+        contributions,
+    }
 }
 
 /// Explains the decision for `input.requirements`, adding `checks` the
@@ -722,6 +848,7 @@ pub fn explain_decision(input: &ExplainInput<'_>, checks: Vec<Check>) -> Decisio
                 session.claims,
                 session.restrictive_flags,
                 &compiled,
+                input.registered,
                 input.now,
             )
         } else {

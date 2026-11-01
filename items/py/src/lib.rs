@@ -7,7 +7,7 @@
 use konklav_authz::{EntitlementSet, Requirements};
 use konklav_core::Cursor;
 use konklav_core::feed::{FeedEvent, SessionChanged};
-use konklav_relying::{Config, Key, Need, Relying};
+use konklav_relying::{Config, Key, Need, Relying, ScopeRecord};
 use konklav_token::JwkSet;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -94,6 +94,19 @@ impl Core {
         self.inner
             .on_entitlements(parse::<EntitlementSet>(set, "entitlement set")?, now);
         Ok(())
+    }
+
+    /// Applies a registered scope's record (the JSON body of
+    /// `/v1/registered-scopes/{kind}/{id}`).
+    fn on_registered_scope(&mut self, record: &str, now: u64) -> PyResult<()> {
+        self.inner
+            .on_registered_scope(parse::<ScopeRecord>(record, "registered scope")?, now);
+        Ok(())
+    }
+
+    /// Konklav answered `404` for the registered scope.
+    fn on_registered_scope_unknown(&mut self, kind: &str, id: &str, now: u64) {
+        self.inner.on_registered_scope_unknown(kind, id, now);
     }
 
     fn on_fetch_failed(&mut self, need: &str) -> PyResult<()> {

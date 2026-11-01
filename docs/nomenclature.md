@@ -106,7 +106,21 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `scope`
   - A specific resource inside a tenant, written as a `(scope kind, scope id)` pair.
   - Example: `(project, 0193a2f1-…)`.
-  - Konklav treats scope ids as opaque. It doesn't know whether the resource exists or what it contains, so a relying system resolves its own resources into scopes before asking for a decision.
+  - Konklav treats scope ids as opaque. It never knows what a resource contains, and unless the scope is a registered scope (below), it doesn't know whether the resource exists either, so a relying system resolves its own resources into scopes before asking for a decision.
+
+- `registered scope kind`
+  - A scope kind the catalog declares as `registered`. Konklav decides requirements at scopes of this kind only from its own record of the scope, so a relying system can name the scope alone.
+  - Example: a `document` kind whose ids are registered as they are created.
+
+- `registered scope`
+  - A scope of a registered scope kind that a relying system has recorded with Konklav, together with its owner tenant and its containing scopes.
+  - Its tenant is fixed for good once recorded, even if the scope is removed and recorded again.
+  - A registered scope that was never recorded, or has been removed, satisfies no requirement.
+  - Roles can't be assigned at a registered scope; access to it always comes from its tenant, its containing scopes, or a share of one of them.
+
+- `containing scope`
+  - A scope of a kind that isn't registered, which a registered scope belongs to, such as the project a document sits in.
+  - Actions held at any one containing scope apply to the registered scopes inside it.
 
 - `fact`
   - A typed key/value pair attached to a tenant, membership, session, or share, whose key is declared in the action catalog.
@@ -326,6 +340,7 @@ Terms are introduced in dependency order: each definition only uses terms define
     - `entitlements.changed`
     - `tenant.changed`
     - `share.changed`
+    - `scope.changed`
     - `signing_keys.changed`
     - `delivery.requested`
 

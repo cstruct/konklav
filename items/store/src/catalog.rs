@@ -39,6 +39,11 @@ pub struct ScopeKindEntry {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// Scopes of this kind are registered scopes: requirements at them are
+    /// decided from Konklav's record of each scope.
+    // r[impl authz.registered.catalog]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub registered: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -181,6 +186,16 @@ impl CatalogDocument {
                 .map(|g| (g.name.clone(), g.definition.clone()))
                 .collect(),
         }
+    }
+
+    /// The registered scope kinds.
+    #[must_use]
+    pub fn registered_kinds(&self) -> BTreeSet<String> {
+        self.scope_kinds
+            .iter()
+            .filter(|kind| kind.registered)
+            .map(|kind| kind.name.clone())
+            .collect()
     }
 
     #[must_use]
@@ -328,11 +343,19 @@ pub async fn load(conn: &mut AsyncPgConnection) -> StoreResult<CatalogDocument> 
     }
     document.scope_kinds = catalog_scope_kind::table
         .order(catalog_scope_kind::name.asc())
-        .select((catalog_scope_kind::name, catalog_scope_kind::description))
-        .load::<(String, String)>(conn)
+        .select((
+            catalog_scope_kind::name,
+            catalog_scope_kind::description,
+            catalog_scope_kind::registered,
+        ))
+        .load::<(String, String, bool)>(conn)
         .await?
         .into_iter()
-        .map(|(name, description)| ScopeKindEntry { name, description })
+        .map(|(name, description, registered)| ScopeKindEntry {
+            name,
+            description,
+            registered,
+        })
         .collect();
     document.facts = catalog_fact::table
         .order((catalog_fact::target.asc(), catalog_fact::key.asc()))
@@ -477,10 +500,14 @@ async fn replace_scope_kinds(
             .values((
                 catalog_scope_kind::name.eq(&kind.name),
                 catalog_scope_kind::description.eq(&kind.description),
+                catalog_scope_kind::registered.eq(kind.registered),
             ))
             .on_conflict(catalog_scope_kind::name)
             .do_update()
-            .set(catalog_scope_kind::description.eq(&kind.description))
+            .set((
+                catalog_scope_kind::description.eq(&kind.description),
+                catalog_scope_kind::registered.eq(kind.registered),
+            ))
             .execute(conn)
             .await
             .map_err(StoreError::from_constraint)?;

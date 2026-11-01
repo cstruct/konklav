@@ -3,10 +3,11 @@ use std::collections::BTreeSet;
 use konklav_token::{AccessClaims, TokenKind};
 use serde::{Deserialize, Serialize};
 
-use crate::{Entitlements, Scope};
+use crate::{Entitlements, RegisteredScopes, Registration, Scope};
 
 /// Actions required at one scope. The relying system resolves its own
-/// resources into scopes before asking.
+/// resources into scopes before asking, except registered scopes, which
+/// it names alone.
 // r[impl authz.resource-context.external]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScopeRequirement {
@@ -82,6 +83,12 @@ pub enum DenyReason {
     },
     /// Tenant or scope requirements, but the token targets no tenant.
     NoTenant,
+    /// A required registered scope was never recorded, has been removed,
+    /// or isn't in the tenant the requirement names.
+    UnknownScope {
+        kind: String,
+        id: String,
+    },
     MissingActions {
         actions: BTreeSet<String>,
     },
@@ -128,8 +135,9 @@ impl Decision {
 }
 
 /// Evaluates `requirements` for a verified token whose session is known to
-/// be current, given the restrictive flags declared in the catalog and the
-/// entitlement set for the token's subject and tenant.
+/// be current, given the restrictive flags declared in the catalog, the
+/// entitlement set for the token's subject and tenant, and the records of
+/// the registered scopes the requirements name.
 ///
 /// `now` is in Unix seconds.
 // r[impl session.flags.restrictive]
@@ -142,6 +150,7 @@ pub fn evaluate(
     claims: &AccessClaims,
     restrictive_flags: &BTreeSet<String>,
     entitlements: &Entitlements,
+    registered: &RegisteredScopes,
     now: i64,
 ) -> Decision {
     let accepted = requirements
@@ -175,8 +184,11 @@ pub fn evaluate(
         };
     }
 
-    if (!requirements.tenant.is_empty() || !requirements.scopes.is_empty()) && claims.tid.is_none()
-    {
+    let unregistered_scopes = requirements
+        .scopes
+        .iter()
+        .any(|required| !registered.kinds.contains(&required.kind));
+    if (!requirements.tenant.is_empty() || unregistered_scopes) && claims.tid.is_none() {
         return Decision::Deny {
             reason: DenyReason::NoTenant,
         };
@@ -199,33 +211,13 @@ pub fn evaluate(
             .filter(|a| !tenant.contains(a.as_str()))
             .cloned(),
     );
-    let mut obligations = Vec::new();
-    for required in &requirements.scopes {
-        if let Some(owner) = required.tenant.filter(|owner| Some(*owner) != claims.tid) {
-            let (granted, relied) = shared_actions(entitlements, owner, required, now);
-            missing.extend(
-                required
-                    .actions
-                    .iter()
-                    .filter(|a| !granted.contains(a.as_str()))
-                    .cloned(),
-            );
-            obligations.extend(relied);
-            continue;
+    let obligations = match scope_actions(requirements, claims, entitlements, registered, now) {
+        Ok((absent, obligations)) => {
+            missing.extend(absent);
+            obligations
         }
-        let scope = Scope {
-            kind: required.kind.clone(),
-            id: required.id.clone(),
-        };
-        let granted = entitlements.actions_at(Some(&scope));
-        missing.extend(
-            required
-                .actions
-                .iter()
-                .filter(|a| !granted.contains(a.as_str()))
-                .cloned(),
-        );
-    }
+        Err(reason) => return Decision::Deny { reason },
+    };
     if missing.is_empty() {
         Decision::Allow { obligations }
     } else {
@@ -235,24 +227,105 @@ pub fn evaluate(
     }
 }
 
+/// The actions required at scopes that aren't granted, and the obligations
+/// of the shares that grant the others; a deny reason for an unknown
+/// registered scope.
+fn scope_actions(
+    requirements: &Requirements,
+    claims: &AccessClaims,
+    entitlements: &Entitlements,
+    registered: &RegisteredScopes,
+    now: i64,
+) -> Result<(BTreeSet<String>, Vec<Obligation>), DenyReason> {
+    let mut missing = BTreeSet::new();
+    let mut obligations = Vec::new();
+    for required in &requirements.scopes {
+        let scope = Scope {
+            kind: required.kind.clone(),
+            id: required.id.clone(),
+        };
+        let (granted, relied) = if let Some(record) = registered.lookup(&scope) {
+            let Some(record) = record
+                .filter(|record| required.tenant.is_none_or(|tenant| tenant == record.tenant))
+            else {
+                return Err(DenyReason::UnknownScope {
+                    kind: scope.kind,
+                    id: scope.id,
+                });
+            };
+            registered_actions(entitlements, claims, record, &required.actions, now)
+        } else if let Some(owner) = required.tenant.filter(|owner| Some(*owner) != claims.tid) {
+            shared_actions(entitlements, owner, &scope, &required.actions, now)
+        } else {
+            (entitlements.actions_at(Some(&scope)), Vec::new())
+        };
+        missing.extend(
+            required
+                .actions
+                .iter()
+                .filter(|a| !granted.contains(a.as_str()))
+                .cloned(),
+        );
+        obligations.extend(relied);
+    }
+    Ok((missing, obligations))
+}
+
+/// The actions granted at a registered scope: in its own tenant, the
+/// global and tenant-wide actions and those at the scope or any one of its
+/// containers; from another tenant, global actions and what shares of the
+/// scope or of a container grant at `now`, with their obligations. Without
+/// a tenant, only global actions.
+// r[impl authz.registered.evaluation]
+// r[impl authz.registered.shares]
+// r[impl authz.registered.no-tenant]
+fn registered_actions<'a>(
+    entitlements: &'a Entitlements,
+    claims: &AccessClaims,
+    record: &Registration,
+    required: &BTreeSet<String>,
+    now: i64,
+) -> (BTreeSet<&'a str>, Vec<Obligation>) {
+    let mut granted: BTreeSet<&str> = entitlements.global.iter().map(String::as_str).collect();
+    let mut obligations = Vec::new();
+    let Some(tenant) = claims.tid else {
+        return (granted, obligations);
+    };
+    let scopes = std::iter::once(record.scope()).chain(record.containers.iter().cloned());
+    if tenant == record.tenant {
+        for scope in scopes {
+            granted.extend(entitlements.actions_at(Some(&scope)));
+        }
+    } else {
+        for scope in scopes {
+            let (shared, relied) =
+                shared_actions(entitlements, record.tenant, &scope, required, now);
+            granted.extend(shared);
+            obligations.extend(relied);
+        }
+    }
+    (granted, obligations)
+}
+
 /// The actions shares of `owner`'s scope grant at `now`, and an obligation
 /// for each share that grants a required action.
 fn shared_actions<'a>(
     entitlements: &'a Entitlements,
     owner: konklav_core::TenantId,
-    required: &ScopeRequirement,
+    scope: &Scope,
+    required: &BTreeSet<String>,
     now: i64,
 ) -> (BTreeSet<&'a str>, Vec<Obligation>) {
     let mut granted = BTreeSet::new();
     let mut obligations = Vec::new();
     for shared in entitlements.shared.iter().filter(|shared| {
         shared.owner_tenant == owner
-            && shared.kind == required.kind
-            && shared.id == required.id
+            && shared.kind == scope.kind
+            && shared.id == scope.id
             && shared.valid_at(now)
     }) {
         granted.extend(shared.actions.iter().map(String::as_str));
-        if shared.actions.iter().any(|a| required.actions.contains(a)) {
+        if shared.actions.iter().any(|a| required.contains(a)) {
             obligations.push(Obligation {
                 share: shared.share,
                 tenant: owner,

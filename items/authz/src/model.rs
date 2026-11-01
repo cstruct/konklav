@@ -28,6 +28,49 @@ pub struct Scope {
     pub id: String,
 }
 
+/// Konklav's record of an active registered scope: the tenant it belongs
+/// to and the scopes that contain it.
+// r[impl authz.registered.shape]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Registration {
+    pub kind: String,
+    pub id: String,
+    pub tenant: konklav_core::TenantId,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub containers: Vec<Scope>,
+}
+
+impl Registration {
+    #[must_use]
+    pub fn scope(&self) -> Scope {
+        Scope {
+            kind: self.kind.clone(),
+            id: self.id.clone(),
+        }
+    }
+}
+
+/// What evaluation knows about registered scopes: the catalog's registered
+/// kinds, and the records of the registered scopes a decision names. A
+/// scope of a registered kind with no record here, or a `None` record, is
+/// unknown.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RegisteredScopes {
+    pub kinds: BTreeSet<String>,
+    pub records: BTreeMap<Scope, Option<Registration>>,
+}
+
+impl RegisteredScopes {
+    /// The active record for `scope`, if its kind is registered: `Some(None)`
+    /// when it is unknown or removed, `None` when the kind isn't registered.
+    #[must_use]
+    pub fn lookup(&self, scope: &Scope) -> Option<Option<&Registration>> {
+        self.kinds
+            .contains(&scope.kind)
+            .then(|| self.records.get(scope).and_then(Option::as_ref))
+    }
+}
+
 /// How an action group expands.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -187,6 +230,11 @@ pub struct EntitlementSet {
     /// Restrictive session flags from the catalog, so the set can be
     /// evaluated without another lookup.
     pub restrictive_flags: BTreeSet<String>,
+    /// The catalog's registered scope kinds, so a relying core knows which
+    /// requirements need a registered scope's record.
+    // r[impl authz.compile.registered-kinds]
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub registered_kinds: BTreeSet<String>,
 }
 
 /// Scoped entitlements serialize as a list, since JSON keys must be strings.

@@ -19,6 +19,7 @@ mod migrate;
 pub mod oidc_clients;
 pub mod peer_cursors;
 mod pool;
+pub mod registered_scopes;
 pub mod roles;
 pub mod schema;
 pub mod sessions;

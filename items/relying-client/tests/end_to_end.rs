@@ -133,6 +133,7 @@ impl Server {
 
 struct World {
     server: Server,
+    tenant: uuid::Uuid,
     client: RelyingClient,
     token: String,
     session: String,
@@ -246,6 +247,7 @@ async fn world() -> World {
         membership,
         client,
         server,
+        tenant,
     }
 }
 
@@ -367,4 +369,107 @@ async fn writes_are_readable_after_awaiting_their_cursor() {
             reason: DenyReason::MissingActions { .. }
         }
     ));
+}
+
+fn reading_document(id: &str) -> Requirements {
+    Requirements {
+        scopes: vec![konklav_authz::ScopeRequirement {
+            tenant: None,
+            kind: "document".into(),
+            id: id.into(),
+            actions: BTreeSet::from(["project:read".to_owned()]),
+        }],
+        ..Requirements::default()
+    }
+}
+
+// r[verify relying.cache.registered]
+// r[verify relying.cache.registered-debounce]
+#[tokio::test(flavor = "multi_thread")]
+async fn registered_scopes_are_fetched_and_kept_fresh() {
+    let world = world().await;
+    until_trusted(&world.client).await;
+    world
+        .server
+        .control(
+            Method::PUT,
+            "/v1/catalog",
+            json!({
+                "actions": [{"name": "project:read"}],
+                "scope_kinds": [{"name": "project"}, {"name": "document", "registered": true}],
+            }),
+        )
+        .await;
+    let recorded = world
+        .server
+        .control(
+            Method::PUT,
+            "/v1/registered-scopes/document/d%2F1",
+            json!({"tenant": world.tenant}),
+        )
+        .await;
+    let cursor = Cursor::new(recorded["cursor"].as_i64().unwrap());
+    assert!(
+        world
+            .client
+            .await_cursor(cursor, Duration::from_secs(5))
+            .await
+    );
+    assert_eq!(
+        world
+            .client
+            .decide(&world.token, &reading_document("d/1"))
+            .await
+            .unwrap(),
+        Decision::allow(),
+        "ids are opaque, slashes included"
+    );
+    assert_eq!(
+        world
+            .client
+            .decide(&world.token, &reading_document("d-9"))
+            .await
+            .unwrap(),
+        Decision::Deny {
+            reason: DenyReason::UnknownScope {
+                kind: "document".into(),
+                id: "d-9".into()
+            }
+        }
+    );
+
+    let removed = world
+        .server
+        .http
+        .delete(format!(
+            "http://{}/v1/registered-scopes/document/d%2F1",
+            world.server.control
+        ))
+        .bearer_auth(CONTROL)
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    let cursor = Cursor::new(removed["cursor"].as_i64().unwrap());
+    assert!(
+        world
+            .client
+            .await_cursor(cursor, Duration::from_secs(5))
+            .await
+    );
+    assert_eq!(
+        world
+            .client
+            .decide(&world.token, &reading_document("d/1"))
+            .await
+            .unwrap(),
+        Decision::Deny {
+            reason: DenyReason::UnknownScope {
+                kind: "document".into(),
+                id: "d/1".into()
+            }
+        }
+    );
 }

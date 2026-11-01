@@ -5,10 +5,14 @@ use crate::{Pool, PoolError};
 
 // The migrations install the triggers that append `entitlements.changed`
 // for every write to memberships, assignments, subject state, the catalog,
-// templates, roles and shares, and `share.changed` for shares.
+// templates, roles and shares, `share.changed` for shares, and one
+// `scope.changed` per transaction for registered scopes. A foreign key keeps
+// role assignments off registered scope kinds.
 // r[impl authz.invalidate.subject]
 // r[impl authz.invalidate.definition]
 // r[impl authz.share.events]
+// r[impl authz.registered.events]
+// r[impl authz.assignment.not-registered]
 // r[impl item.store.typed-data]
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 

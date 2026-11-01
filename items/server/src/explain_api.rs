@@ -14,7 +14,7 @@ use konklav_core::{SessionId, SubjectId, TenantId};
 use konklav_store::sessions::{self, Stage};
 use konklav_store::subjects::{self, SubjectState};
 use konklav_store::tenants::{self, TenantState};
-use konklav_store::{Connection, compile_input, memberships, shares};
+use konklav_store::{Connection, compile_input, memberships, registered_scopes, shares};
 use konklav_token::{AccessClaims, TokenKind};
 use serde::Deserialize;
 
@@ -169,6 +169,12 @@ async fn explain(
         None => Vec::new(),
     };
     let restrictive_flags = input.document.restrictive_flags();
+    let registered = registered_scopes::for_requirements(
+        &mut conn,
+        input.document.registered_kinds(),
+        &body.requirements,
+    )
+    .await?;
     let now = Utc::now();
     let claims = session.as_ref().map(|session| claims_of(&state, session));
     let context = session
@@ -186,6 +192,7 @@ async fn explain(
             shares: &input.shares,
             offered: &offered,
             requirements: &body.requirements,
+            registered: &registered,
             tenant,
             session: context,
             now: now.timestamp(),

@@ -6,8 +6,10 @@ use axum::http::HeaderMap;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
+use konklav_authz::Scope;
 use konklav_authz::{Decision, EntitlementSet, Requirements, evaluate};
 use konklav_core::{Cursor, SubjectId, TenantId};
+use konklav_store::registered_scopes::{self, RegisteredScope};
 use konklav_store::subjects::{self, SubjectKind};
 use konklav_store::{Connection, compile_input, tenants};
 use serde::{Deserialize, Serialize};
@@ -21,6 +23,7 @@ pub fn routes() -> Router<AppState> {
         .route("/entitlements/{subject}", get(global_entitlements))
         .route("/entitlements/{subject}/{tenant}", get(tenant_entitlements))
         .route("/check", post(check))
+        .route("/registered-scopes/{kind}/{id}", get(registered_scope))
 }
 
 /// Only service principals may use the relying surface.
@@ -53,6 +56,7 @@ async fn compile_for(
         revision: input.revision,
         entitlements: input.compile(),
         restrictive_flags: input.document.restrictive_flags(),
+        registered_kinds: input.document.registered_kinds(),
     })
 }
 
@@ -134,15 +138,38 @@ async fn check(
         Err(error) => return Err(error),
     };
     let set = compile_for(&mut conn, claims.sub, claims.tid).await?;
+    let registered = registered_scopes::for_requirements(
+        &mut conn,
+        set.registered_kinds.clone(),
+        &body.requirements,
+    )
+    .await?;
     let decision = evaluate(
         &body.requirements,
         &claims,
         &set.restrictive_flags,
         &set.entitlements,
+        &registered,
         Utc::now().timestamp(),
     );
     Ok(Json(CheckResponse {
         decision,
         revision: Some(set.revision),
     }))
+}
+
+/// `GET /v1/registered-scopes/{kind}/{id}`: a registered scope's tenant,
+/// state and containing scopes, so a relying core can decide requirements
+/// that name it.
+// r[impl authz.registered.api]
+async fn registered_scope(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((kind, id)): Path<(String, String)>,
+) -> Result<Json<RegisteredScope>, ApiError> {
+    let mut conn = state.pool.get().await?;
+    require_service(&state, &mut conn, &headers).await?;
+    Ok(Json(
+        registered_scopes::get(&mut conn, &Scope { kind, id }).await?,
+    ))
 }
