@@ -32,4 +32,4 @@ cargo test -p konklav-core
 ## Traceability and related docs
 
 - [Nomenclature](../../docs/nomenclature.md)
-- [v2 overview](../../docs/architecture/v2-overview.md)
+- [overview](../../docs/architecture/overview.md)

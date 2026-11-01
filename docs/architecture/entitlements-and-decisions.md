@@ -108,9 +108,9 @@ with the same Rust compiler.
 
 ## Why not snapshots in tokens
 
-Tokens in v1 carried compiled bitsets (`az`). That suits relying systems
+Tokens in the first version carried compiled bitsets (`az`). That suits relying systems
 which tolerate token-lifetime staleness and have few scopes per subject.
-v2 targets systems that need revocation within seconds and subjects with
+Konklav targets systems that need revocation within seconds and subjects with
 many scopes, so grants travel separately and the token stays small. Adding
 an optional snapshot claim later for low-stakes relying systems would not
 conflict with this design.

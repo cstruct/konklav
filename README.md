@@ -117,7 +117,7 @@ one there instead of with `curl`.
   subjects, tenants, memberships, roles, entitlement sets and the rest.
   Konklav's docs and APIs use these terms precisely.
 - **How it fits together:** the
-  [v2 overview](docs/architecture/v2-overview.md), then the other notes in
+  [overview](docs/architecture/overview.md), then the other notes in
   [`docs/architecture/`](docs/architecture/).
 - **Runnable scenarios:** [`examples/`](examples/README.md) has email-link
   sign-in with a delivery worker, one Konklav signing people in to another,

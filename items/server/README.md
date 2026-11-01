@@ -164,6 +164,6 @@ mise run test
 ## Traceability and related docs
 
 - [Platform spec](../../docs/spec/platform.md)
-- [v2 overview](../../docs/architecture/v2-overview.md)
+- [overview](../../docs/architecture/overview.md)
 - [Traceability guidance](../../docs/traceability-guidance.md)
 - [Nomenclature](../../docs/nomenclature.md)

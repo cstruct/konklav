@@ -1,11 +1,11 @@
-# Konklav v2 overview
+# Konklav overview
 
-Status: accepted as direction for v2. This note is not normative; the specs
+Status: accepted as direction. This note is not normative; the specs
 in `docs/spec/` are.
 
-## Why v2
+## Why this design
 
-v1 (tag `v1`) proved the domain model and the vocabulary, but three choices
+The first version (tag `v1`) proved the domain model and the vocabulary, but three choices
 made it hard to finish and hard to adopt:
 
 - **Feldera as the authoritative store.** Append-only temporal tables,
@@ -17,16 +17,16 @@ made it hard to finish and hard to adopt:
   the number of scopes. Relying systems that need fast revocation still had
   to call back.
 - **Scope drift.** The history ended with a general-purpose configuration
-  library. That work now lives in `ordna`, which v2 uses.
+  library. That work now lives in `ordna`, which Konklav uses.
 
-v2 keeps the vocabulary and the ideas that held up: subjects, tenants as a
+This design keeps the vocabulary and the ideas that held up: subjects, tenants as a
 tree with no implicit parent access, memberships, templates and roles,
 compiled entitlements, actor chains, Ed25519 keys published through JWKS,
 and spec-first development with Tracey.
 
 ## Decisions
 
-| Area | v2 decision | Note |
+| Area | Decision | Note |
 |---|---|---|
 | Storage | Postgres owned by Konklav, accessed with Diesel (`diesel-async`) | [storage](storage.md) |
 | HTTP | axum, one binary, three separately routable surfaces | |

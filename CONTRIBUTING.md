@@ -25,7 +25,7 @@ with the [README](README.md).
 - `docs/nomenclature.md`: the shared vocabulary.
 - `docs/spec/`: normative, Tracey-managed requirements.
 - `docs/architecture/`: rationale and design notes, starting with
-  [`v2-overview.md`](docs/architecture/v2-overview.md).
+  [`overview.md`](docs/architecture/overview.md).
 - `items/`: software items:
   - `core`: identifiers
   - `token`: claims, JWS, JWKS

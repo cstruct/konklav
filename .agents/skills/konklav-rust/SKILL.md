@@ -11,7 +11,7 @@ description: Rust conventions for Konklav Rust workspace members. Use when editi
 - Keep `types.rs` narrow.
   - Put only semantically stable shared aliases or value types there.
   - Do not move every DTO or domain struct into `types.rs`.
-- When splitting crates, prefer ownership-based crates such as `core`, `store`, `authz`, `authn`, `server`, `relying` and `cli` (see `docs/architecture/v2-overview.md`) over a generic catch-all shared-model crate.
+- When splitting crates, prefer ownership-based crates such as `core`, `store`, `authz`, `authn`, `server`, `relying` and `cli` (see `docs/architecture/overview.md`) over a generic catch-all shared-model crate.
 - Keep `authz` compilation and the `relying` core free of I/O so they stay pure and testable.
 - If a `core` crate exists, keep it tiny.
   - Good candidates: stable identifier/revision types and small value types used by multiple crates.

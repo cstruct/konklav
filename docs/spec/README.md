@@ -1,6 +1,6 @@
 # Konklav Specs
 
-This directory holds the Tracey-managed requirements for Konklav v2.
+This directory holds the Tracey-managed requirements for Konklav.
 
 Use the vocabulary in [`../nomenclature.md`](../nomenclature.md). Specs never
 name a specific relying system.

@@ -17,8 +17,8 @@ details.
 
 Rule naming convention: `item.<software-item>.*`.
 
-Planned software items for v2 (see
-[`../../architecture/v2-overview.md`](../../architecture/v2-overview.md)):
+Planned software items (see
+[`../../architecture/overview.md`](../../architecture/overview.md)):
 
 - `core`
 - [`store`](store.md)
