@@ -1,4 +1,9 @@
-# Konklav
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/konklav-dark.svg">
+    <img alt="Konklav" src="docs/brand/konklav-light.svg" height="52">
+  </picture>
+</h1>
 
 Konklav is a standalone identity and access service. It owns subjects,
 credentials, sessions, tokens, tenants, memberships, roles and policies.
