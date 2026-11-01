@@ -197,7 +197,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-authz"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "konklav-core",
  "konklav-token",
@@ -207,7 +207,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-py"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "konklav-authz",
  "konklav-core",
@@ -229,7 +229,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-relying"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "konklav-authz",
  "konklav-core",
@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-token"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "base64",
  "ed25519-dalek",
