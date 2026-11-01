@@ -4,7 +4,7 @@ use leptos::prelude::*;
 use leptos_router::components::{A, Route, Router, Routes};
 use leptos_router::path;
 
-use super::common::{Id, Loading};
+use super::common::{Id, Loading, Mark};
 use super::console::{Console, Phase, use_console};
 use super::{authz, clients, home, invites, keys, passkeys, sessions, sign_in, subjects, tenants};
 use crate::grants::Capability;
@@ -34,7 +34,7 @@ fn Shell() -> impl IntoView {
     };
     view! {
         <header class="top">
-            <A href="/" attr:class="brand">"Konklav" <span>"console"</span></A>
+            <A href="/" attr:class="brand"><Mark size=26/> "konklav" <span>"console"</span></A>
             <span class="who">{who}</span>
             <A href="/passkeys" attr:class="link">"Passkeys"</A>
             <button class="link" on:click=move |_| console.sign_out()>"Sign out"</button>

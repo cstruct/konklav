@@ -1,4 +1,6 @@
-/* The Konklav console. Colours are the brand's Ink and Cardinal. */
+/* The Konklav console. Colours are the brand's Ink and Cardinal.
+   --accent fills, with --accent-ink on it; --accent-text is the accent
+   for text and outlines on the page, which dark mode keeps lighter. */
 
 :root {
   --ink: #16161d;
@@ -8,6 +10,7 @@
   --muted: #6b6a73;
   --accent: #b3202a;
   --accent-ink: #ffffff;
+  --accent-text: #b3202a;
   --warn: #8a5a00;
   --warn-bg: #fff4dc;
   --bad-bg: #fde8e9;
@@ -23,7 +26,8 @@
     --panel: #1b1b23;
     --line: #2f2f3a;
     --muted: #a4a2ab;
-    --accent: #e0454e;
+    --accent: #c0272f;
+    --accent-text: #f0757b;
     --warn: #f0c060;
     --warn-bg: #3a2e12;
     --bad-bg: #3d1a1d;
@@ -39,7 +43,7 @@ body {
   background: var(--paper);
 }
 
-a { color: var(--accent); text-decoration: none; }
+a { color: var(--accent-text); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 h1 { font-size: 1.5rem; margin: 0 0 1rem; }
@@ -57,8 +61,14 @@ code, pre, textarea.json { font-family: ui-monospace, "SF Mono", Menlo, monospac
   background: var(--panel);
 }
 
-.brand { font-weight: 600; color: var(--ink); font-size: 1.1rem; }
-.brand span { color: var(--accent); font-weight: 400; margin-left: 0.25rem; }
+.brand { display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 700; color: var(--ink); font-size: 1.15rem; letter-spacing: -0.02em; }
+.brand:hover { text-decoration: none; }
+.brand span { color: var(--muted); font-weight: 400; letter-spacing: 0; }
+
+.mark { flex-shrink: 0; }
+.mark .keyhole { fill: var(--accent); }
+.mark .arm { fill: var(--ink); }
+.sign-in .mark { display: block; margin-bottom: 1rem; }
 .who { margin-left: auto; color: var(--muted); }
 
 .layout { display: flex; min-height: calc(100vh - 3rem); }
@@ -143,9 +153,9 @@ button {
 }
 
 button:disabled { opacity: 0.5; cursor: default; }
-button.secondary { background: transparent; color: var(--accent); }
-button.danger { background: transparent; color: var(--accent); border-style: dashed; }
-button.link { background: none; border: none; color: var(--accent); padding: 0; }
+button.secondary { background: transparent; color: var(--accent-text); border-color: var(--accent-text); }
+button.danger { background: transparent; color: var(--accent-text); border-color: var(--accent-text); border-style: dashed; }
+button.link { background: none; border: none; color: var(--accent-text); padding: 0; }
 button.small { font-size: 0.8rem; padding: 0.15rem 0.5rem; }
 
 table { border-collapse: collapse; width: 100%; margin: 0.5rem 0 1rem; font-size: 0.9rem; }

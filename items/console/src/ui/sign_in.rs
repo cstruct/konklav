@@ -5,7 +5,7 @@ use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
-use super::common::{Field, Problem, invalid_input};
+use super::common::{Field, Mark, Problem, invalid_input};
 use super::console::{send, use_console};
 use crate::api::endpoints;
 use crate::api::types::{Ceremony, Factor, TokenResponse};
@@ -24,6 +24,7 @@ pub fn SignIn() -> impl IntoView {
     let mode = RwSignal::new(Mode::Password);
     view! {
         <main class="sign-in">
+            <Mark size=56/>
             <h1>"Konklav console"</h1>
             <div class="tabs">
                 <button class:active=move || mode.get() == Mode::Password on:click=move |_| mode.set(Mode::Password)>

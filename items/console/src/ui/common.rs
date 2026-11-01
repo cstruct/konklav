@@ -71,6 +71,22 @@ pub fn Id(#[prop(into)] id: String) -> impl IntoView {
     view! { <code class="id" title=id.clone()>{short(&id)}</code> }
 }
 
+/// The Konklav mark: a K whose stem is a keyhole. Its colours come from
+/// the stylesheet, so it follows the colour scheme.
+#[component]
+pub fn Mark(size: u32) -> impl IntoView {
+    view! {
+        <svg class="mark" viewBox="0 0 64 64" width=size height=size aria-hidden="true">
+            <g transform="translate(-1 0)">
+                <circle class="keyhole" cx="20" cy="17" r="10"/>
+                <polygon class="keyhole" points="15,22 25,22 28.5,58 11.5,58"/>
+                <polygon class="arm" points="26.2,36 46,7 56,7 27.2,49"/>
+                <polygon class="arm" points="33,37 39,30 56,58 45,58"/>
+            </g>
+        </svg>
+    }
+}
+
 #[component]
 pub fn Loading() -> impl IntoView {
     view! { <p class="muted">"Loading…"</p> }
