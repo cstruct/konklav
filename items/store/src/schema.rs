@@ -44,6 +44,7 @@ diesel::table! {
     catalog_scope_kind (name) {
         name -> Text,
         description -> Text,
+        registered -> Bool,
     }
 }
 
@@ -185,6 +186,19 @@ diesel::table! {
 }
 
 diesel::table! {
+    registered_scope (kind, id) {
+        kind -> Text,
+        id -> Text,
+        tenant_id -> Uuid,
+        containers -> Jsonb,
+        state -> Text,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+        kind_registered -> Bool,
+    }
+}
+
+diesel::table! {
     role (id) {
         id -> Uuid,
         tenant_id -> Uuid,
@@ -208,6 +222,7 @@ diesel::table! {
         scope_id -> Nullable<Text>,
         created_at -> Timestamptz,
         managed_by -> Nullable<Text>,
+        scope_kind_registered -> Bool,
     }
 }
 
@@ -352,9 +367,9 @@ diesel::joinable!(membership -> subject (subject_id));
 diesel::joinable!(membership -> tenant (tenant_id));
 diesel::joinable!(mfa_factor -> subject (subject_id));
 diesel::joinable!(oidc_client -> subject (service_subject_id));
+diesel::joinable!(registered_scope -> tenant (tenant_id));
 diesel::joinable!(role -> template (template_id));
 diesel::joinable!(role -> tenant (tenant_id));
-diesel::joinable!(role_assignment -> catalog_scope_kind (scope_kind));
 diesel::joinable!(role_assignment -> membership (membership_id));
 diesel::joinable!(role_assignment -> role (role_id));
 diesel::joinable!(role_assignment -> subject (subject_id));
@@ -387,6 +402,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     mfa_factor,
     oidc_client,
     peer_cursor,
+    registered_scope,
     role,
     role_assignment,
     role_policy,

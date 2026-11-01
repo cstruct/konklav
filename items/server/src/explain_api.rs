@@ -16,7 +16,7 @@ use konklav_store::compile_input::{self, CompileInput};
 use konklav_store::sessions::{self, Stage};
 use konklav_store::subjects::{self, SubjectState};
 use konklav_store::tenants::{self, TenantState};
-use konklav_store::{Connection, history, memberships, shares};
+use konklav_store::{Connection, history, memberships, registered_scopes, shares};
 use konklav_token::{AccessClaims, TokenKind};
 use serde::Deserialize;
 
@@ -131,12 +131,14 @@ struct Gathered {
     checks: Vec<Check>,
     input: CompileInput,
     offered: Vec<konklav_authz::Share>,
+    registered: konklav_authz::RegisteredScopes,
 }
 
 async fn gather(
     conn: &mut Connection,
     subject: SubjectId,
     tenant: Option<TenantId>,
+    requirements: &Requirements,
 ) -> Result<Gathered, ApiError> {
     let checks = activity_checks(conn, subject, tenant).await?;
     let input = compile_input::read(conn, subject, tenant).await?;
@@ -144,10 +146,14 @@ async fn gather(
         Some(tenant) => shares::offered_for(conn, tenant).await?,
         None => Vec::new(),
     };
+    let registered =
+        registered_scopes::for_requirements(conn, input.document.registered_kinds(), requirements)
+            .await?;
     Ok(Gathered {
         checks,
         input,
         offered,
+        registered,
     })
 }
 
@@ -228,12 +234,15 @@ async fn explain(
         checks,
         input,
         offered,
+        registered,
     } = match body.at {
         None => {
             conn.build_transaction()
                 .read_only()
                 .repeatable_read()
-                .run::<_, ApiError, _>(async |conn| gather(conn, subject, tenant).await)
+                .run::<_, ApiError, _>(async |conn| {
+                    gather(conn, subject, tenant, &body.requirements).await
+                })
                 .await?
         }
         Some(at) => {
@@ -243,7 +252,7 @@ async fn explain(
                 .repeatable_read()
                 .run::<_, ApiError, _>(async |conn| {
                     history::shadow(conn, at).await?;
-                    gather(conn, subject, tenant).await
+                    gather(conn, subject, tenant, &body.requirements).await
                 })
                 .await?
         }
@@ -265,6 +274,7 @@ async fn explain(
             shares: &input.shares,
             offered: &offered,
             requirements: &body.requirements,
+            registered: &registered,
             tenant,
             session: context,
             now: body.at.unwrap_or(now).timestamp(),

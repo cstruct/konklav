@@ -117,6 +117,10 @@ the same scope.
 r[authz.assignment.scope-kind]
 A scoped assignment MUST use a scope kind declared in the catalog.
 
+r[authz.assignment.not-registered]
+A scoped assignment MUST NOT use a registered scope kind (see Registered
+scopes).
+
 ## Compilation
 
 r[authz.compile.entitlements]
@@ -153,6 +157,10 @@ no entitlements.
 
 r[authz.compile.revision]
 Every entitlement set MUST carry the revision it was compiled at.
+
+r[authz.compile.registered-kinds]
+Every entitlement set MUST name the catalog's registered scope kinds, so a
+relying core knows which requirements need a registered scope's record.
 
 ## Sharing
 
@@ -200,6 +208,68 @@ Offering, accepting, changing or revoking a share MUST emit a
 `share.changed` event naming the share, both tenants and its state, and an
 `entitlements.changed` event for the recipient tenant.
 
+## Registered scopes
+
+r[authz.registered.catalog]
+A scope kind MAY be declared in the catalog as registered. A catalog change
+that stops declaring a kind as registered, or removes it, MUST be rejected
+while any registered scope of that kind is recorded, active or removed.
+
+r[authz.registered.shape]
+A registered scope MUST record its kind, its opaque id, its owner tenant and
+a possibly empty set of containing scopes. Each containing scope MUST be of
+a declared scope kind that is not registered. Its id stays opaque to
+Konklav, and Konklav MUST NOT require it to be recorded anywhere.
+
+r[authz.registered.tenant-fixed]
+A registered scope's tenant MUST NOT change once recorded. Recording it
+again in another tenant MUST fail as a conflict, including after the scope
+has been removed.
+
+r[authz.registered.containers]
+Recording a registered scope again in its own tenant MUST replace its
+containing scopes, so a relying system can move it between them.
+
+r[authz.registered.unknown-denies]
+A scope requirement at a registered scope kind MUST NOT be satisfied by any
+grant when the scope was never recorded or has been removed.
+
+r[authz.registered.evaluation]
+A scope requirement at an active registered scope MUST be decided against
+the scope's recorded tenant, whatever tenant the requirement names. When
+the requirement names a tenant other than the recorded one, it MUST NOT be
+satisfied. When the recorded tenant is the token's, each required action
+MUST be satisfied by the global or tenant-wide actions, or the actions at
+the scope itself or at any one of its containing scopes.
+
+r[authz.registered.shares]
+When a registered scope's tenant is not the token's, its required actions
+MUST be satisfied only by accepted shares owned by that tenant, valid at
+the time of the decision, of the scope itself or of one of its containing
+scopes, and the allow MUST carry their obligations.
+
+r[authz.registered.no-tenant]
+A token that targets no tenant MUST satisfy a requirement at a registered
+scope only through global actions.
+
+r[authz.registered.batch]
+The control plane MUST be able to record and remove up to 1000 registered
+scopes in one all-or-nothing request. A failure MUST name every entry that
+caused it.
+
+r[authz.registered.events]
+Recording, changing or removing registered scopes MUST emit one
+`scope.changed` event per transaction, naming each changed scope with its
+kind, id, tenant and state. It MUST NOT emit `entitlements.changed`.
+
+r[authz.registered.api]
+The relying surface MUST serve a registered scope's tenant, state and
+containing scopes by kind and id, to authorized relying systems.
+
+r[authz.registered.capability]
+Recording and removing registered scopes MUST require the
+`konklav:scopes:register` capability or `konklav:control:all`.
+
 ## Invalidation
 
 r[authz.invalidate.subject]
@@ -230,7 +300,8 @@ MUST reach the same decision.
 r[authz.resource-context.external]
 Decisions that depend on relying-system resources (for example, which
 scopes a resource belongs to) MUST be resolved by the relying system into
-scopes before asking Konklav or the relying core.
+scopes before asking Konklav or the relying core, except for registered
+scopes, which Konklav and the relying core resolve from Konklav's record.
 
 r[authz.explain]
 The control plane MUST be able to explain an entitlement in terms of the

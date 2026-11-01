@@ -29,6 +29,7 @@ pub mod pacing;
 pub mod passkeys;
 mod passkeys_api;
 pub mod peering;
+mod registered_scopes_api;
 mod relying_api;
 pub mod serve;
 mod shares_api;

@@ -38,7 +38,8 @@ insert into history_table (relation, key_columns) values
     ('role_policy', '{role_id,action}'),
     ('role_assignment', '{id}'),
     ('share', '{id}'),
-    ('share_action', '{share_id,action}');
+    ('share_action', '{share_id,action}'),
+    ('registered_scope', '{kind,id}');
 
 -- One version of one row: its content while it was current, from
 -- `valid_from` until `valid_until` (null while it still is).

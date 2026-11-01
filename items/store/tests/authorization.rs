@@ -36,6 +36,7 @@ fn document() -> CatalogDocument {
         scope_kinds: vec![ScopeKindEntry {
             name: "project".into(),
             description: String::new(),
+            registered: false,
         }],
         ..CatalogDocument::default()
     }

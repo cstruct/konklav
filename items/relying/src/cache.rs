@@ -1,7 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use konklav_authz::{Decision, DenyReason, EntitlementSet, Requirements, evaluate};
-use konklav_core::feed::{EntitlementsChanged, FeedEvent, FeedPayload, SessionChanged};
+use konklav_authz::{
+    Decision, DenyReason, EntitlementSet, RegisteredScopes, Registration, Requirements, Scope,
+    evaluate,
+};
+use konklav_core::feed::{
+    EntitlementsChanged, FeedEvent, FeedPayload, ScopeChanged, SessionChanged,
+};
 use konklav_core::{Cursor, SessionId, SubjectId, TenantId};
 use konklav_token::{AccessClaims, JwkSet, VerifyOptions};
 use serde::{Deserialize, Serialize};
@@ -27,6 +32,10 @@ pub enum Need {
     /// Fetch `/v1/entitlements/{subject}[/{tenant}]` and call
     /// [`Relying::on_entitlements`].
     Entitlements { key: Key },
+    /// Fetch `/v1/registered-scopes/{kind}/{id}` (each segment
+    /// percent-encoded) and call [`Relying::on_registered_scope`], or
+    /// [`Relying::on_registered_scope_unknown`] on `404`.
+    RegisteredScope { kind: String, id: String },
     /// The caches can't be trusted: ask `POST /v1/check` instead.
     Check,
 }
@@ -76,6 +85,63 @@ pub struct RequestDescriptor {
     pub url: String,
 }
 
+/// A registered scope's record, as `/v1/registered-scopes/{kind}/{id}`
+/// serves it. Other fields are ignored.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopeRecord {
+    pub kind: String,
+    pub id: String,
+    pub tenant: TenantId,
+    #[serde(default)]
+    pub containers: Vec<Scope>,
+    /// `active` or `removed`.
+    pub state: String,
+}
+
+impl ScopeRecord {
+    fn registration(self) -> Option<Registration> {
+        (self.state == "active").then_some(Registration {
+            kind: self.kind,
+            id: self.id,
+            tenant: self.tenant,
+            containers: self.containers,
+        })
+    }
+}
+
+/// What the core learned about a registered scope.
+#[derive(Clone, Debug)]
+enum Known {
+    Active(Registration),
+    /// Konklav doesn't know it, or it was removed.
+    Absent,
+}
+
+impl Known {
+    fn registration(&self) -> Option<Registration> {
+        match self {
+            Self::Active(record) => Some(record.clone()),
+            Self::Absent => None,
+        }
+    }
+}
+
+/// A cached registered scope; `known` is `None` until it is fetched.
+#[derive(Clone, Debug)]
+struct ScopeEntry {
+    known: Option<Known>,
+    /// Whether Konklav answered `404`: such entries expire sooner and go
+    /// as soon as an event names the scope.
+    unknown: bool,
+    fetched_at: u64,
+    stale: Option<(u64, Cursor)>,
+    last_used: u64,
+    in_flight: bool,
+    /// The feed cursor when the fetch was asked for: an event after it may
+    /// not be reflected in the result.
+    asked_at: Option<Cursor>,
+}
+
 #[derive(Clone, Debug)]
 struct Entry {
     set: Option<EntitlementSet>,
@@ -105,6 +171,7 @@ pub struct Relying {
     /// Sessions Konklav doesn't know: tokens for them are never valid.
     unknown_sessions: BTreeSet<SessionId>,
     entries: BTreeMap<Key, Entry>,
+    scopes: BTreeMap<Scope, ScopeEntry>,
     feed: Feed,
     /// The highest cursor a caller waits to read its own writes at.
     awaited: Option<Cursor>,
@@ -122,6 +189,7 @@ impl Relying {
             sessions: BTreeMap::new(),
             unknown_sessions: BTreeSet::new(),
             entries: BTreeMap::new(),
+            scopes: BTreeMap::new(),
             feed: Feed::default(),
             awaited: None,
         }
@@ -266,6 +334,7 @@ impl Relying {
             needs.push(Need::Entitlements { key });
             return Outcome::Need { needs };
         };
+        let registered = self.registered_for(&set, requirements, now, &mut needs);
         if !needs.is_empty() {
             return Outcome::Need { needs };
         }
@@ -275,8 +344,164 @@ impl Relying {
                 &claims,
                 &set.restrictive_flags,
                 &set.entitlements,
+                &registered,
                 now_seconds,
             ),
+        }
+    }
+
+    /// The records of the registered scopes `requirements` name, adding a
+    /// need for each one that isn't usable.
+    // r[impl relying.cache.registered]
+    fn registered_for(
+        &mut self,
+        set: &EntitlementSet,
+        requirements: &Requirements,
+        now: u64,
+        needs: &mut Vec<Need>,
+    ) -> RegisteredScopes {
+        let mut registered = RegisteredScopes {
+            kinds: set.registered_kinds.clone(),
+            records: BTreeMap::new(),
+        };
+        for required in &requirements.scopes {
+            if !registered.kinds.contains(&required.kind) {
+                continue;
+            }
+            let scope = Scope {
+                kind: required.kind.clone(),
+                id: required.id.clone(),
+            };
+            match self.usable_scope(&scope, now) {
+                Some(known) => {
+                    registered
+                        .records
+                        .insert(scope.clone(), known.registration());
+                }
+                None => {
+                    let asked_at = self.feed.cursor;
+                    let entry = self.scope_entry(&scope, now);
+                    entry.asked_at = asked_at;
+                    needs.push(Need::RegisteredScope {
+                        kind: scope.kind.clone(),
+                        id: scope.id.clone(),
+                    });
+                }
+            }
+            if let Some(entry) = self.scopes.get_mut(&scope) {
+                entry.last_used = now;
+            }
+        }
+        registered
+    }
+
+    /// The cached record of `scope`, if it may be used now.
+    // r[impl relying.cache.registered-debounce]
+    fn usable_scope(&self, scope: &Scope, now: u64) -> Option<Known> {
+        let entry = self.scopes.get(scope)?;
+        let known = entry.known.as_ref()?;
+        let ttl = if entry.unknown {
+            self.config.unknown_scope_ttl_ms
+        } else {
+            self.config.entitlement_ttl_ms
+        };
+        if now >= entry.fetched_at + ttl {
+            return None;
+        }
+        if let Some((since, cursor)) = entry.stale {
+            let awaited = self.awaited.is_some_and(|awaited| cursor <= awaited);
+            if awaited || now >= since + self.config.debounce_ms {
+                return None;
+            }
+        }
+        Some(known.clone())
+    }
+
+    fn scope_entry(&mut self, scope: &Scope, now: u64) -> &mut ScopeEntry {
+        self.scopes.entry(scope.clone()).or_insert(ScopeEntry {
+            known: None,
+            unknown: false,
+            fetched_at: now,
+            stale: None,
+            last_used: now,
+            in_flight: false,
+            asked_at: None,
+        })
+    }
+
+    /// Applies a registered scope's record fetched from Konklav.
+    pub fn on_registered_scope(&mut self, record: ScopeRecord, now: u64) {
+        let scope = Scope {
+            kind: record.kind.clone(),
+            id: record.id.clone(),
+        };
+        let known = record.registration().map_or(Known::Absent, Known::Active);
+        self.store_scope(&scope, known, false, now);
+    }
+
+    /// Konklav answered `404`: the scope was never registered.
+    // r[impl relying.cache.registered-unknown]
+    pub fn on_registered_scope_unknown(&mut self, kind: &str, id: &str, now: u64) {
+        let scope = Scope {
+            kind: kind.to_owned(),
+            id: id.to_owned(),
+        };
+        self.store_scope(&scope, Known::Absent, true, now);
+    }
+
+    fn store_scope(&mut self, scope: &Scope, known: Known, unknown: bool, now: u64) {
+        let entry = self.scope_entry(scope, now);
+        // An event after the fetch was asked for may not be reflected.
+        let still_stale = entry
+            .stale
+            .filter(|(_, cursor)| entry.asked_at.is_none_or(|asked| *cursor > asked));
+        entry.known = Some(known);
+        entry.unknown = unknown;
+        entry.fetched_at = now;
+        entry.stale = still_stale;
+        entry.in_flight = false;
+        self.evict_scopes();
+    }
+
+    /// Keeps at most the configured number of records, dropping the least
+    /// recently used.
+    fn evict_scopes(&mut self) {
+        let excess = self
+            .scopes
+            .len()
+            .saturating_sub(self.config.registered_capacity);
+        if excess == 0 {
+            return;
+        }
+        let mut by_use: Vec<(u64, Scope)> = self
+            .scopes
+            .iter()
+            .filter(|(_, entry)| !entry.in_flight)
+            .map(|(scope, entry)| (entry.last_used, scope.clone()))
+            .collect();
+        by_use.sort();
+        for (_, scope) in by_use.into_iter().take(excess) {
+            self.scopes.remove(&scope);
+        }
+    }
+
+    fn invalidate_scopes(&mut self, changed: &ScopeChanged, cursor: Cursor, now: u64) {
+        for changed in &changed.scopes {
+            let scope = Scope {
+                kind: changed.kind.clone(),
+                id: changed.id.clone(),
+            };
+            let Some(entry) = self.scopes.get_mut(&scope) else {
+                continue;
+            };
+            if entry.unknown && !entry.in_flight {
+                self.scopes.remove(&scope);
+                continue;
+            }
+            match entry.stale {
+                Some((_, ref mut stale_cursor)) => *stale_cursor = (*stale_cursor).max(cursor),
+                None => entry.stale = Some((now, cursor)),
+            }
         }
     }
 
@@ -348,6 +573,15 @@ impl Relying {
                     entry.in_flight = false;
                 }
             }
+            Need::RegisteredScope { kind, id } => {
+                let scope = Scope {
+                    kind: kind.clone(),
+                    id: id.clone(),
+                };
+                if let Some(entry) = self.scopes.get_mut(&scope) {
+                    entry.in_flight = false;
+                }
+            }
             Need::Session { .. } | Need::Check => {}
         }
     }
@@ -378,12 +612,20 @@ impl Relying {
                 self.invalidate(&changed, event.cursor, now);
             }
             FeedPayload::SigningKeysChanged(_) => self.jwks_wanted = true,
+            FeedPayload::ScopeChanged(changed) => {
+                self.invalidate_scopes(&changed, event.cursor, now);
+            }
             // r[impl relying.feed.reset]
             FeedPayload::Reset => {
                 self.sessions.clear();
                 self.unknown_sessions.clear();
                 self.jwks_wanted = true;
                 for entry in self.entries.values_mut() {
+                    entry.stale.get_or_insert((now, event.cursor));
+                }
+                self.scopes
+                    .retain(|_, entry| !entry.unknown || entry.in_flight);
+                for entry in self.scopes.values_mut() {
                     entry.stale.get_or_insert((now, event.cursor));
                 }
             }
@@ -424,7 +666,9 @@ impl Relying {
         let refreshed = self
             .entries
             .values()
-            .all(|entry| entry.stale.is_none_or(|(_, stale)| stale > cursor));
+            .map(|entry| entry.stale)
+            .chain(self.scopes.values().map(|entry| entry.stale))
+            .all(|stale| stale.is_none_or(|(_, stale)| stale > cursor));
         caught_up && refreshed
     }
 
@@ -465,6 +709,35 @@ impl Relying {
                 entry.in_flight = true;
                 handed_out += 1;
                 fetch.push(Need::Entitlements { key: *key });
+            } else {
+                next = next.min(due_at.max(now + 1));
+            }
+        }
+        let unknown_ttl = config.unknown_scope_ttl_ms;
+        self.scopes.retain(|_, entry| {
+            entry.in_flight
+                || (now.saturating_sub(entry.last_used) < ttl
+                    && !(entry.unknown && now >= entry.fetched_at + unknown_ttl))
+        });
+        let cursor = self.feed.cursor;
+        for (scope, entry) in &mut self.scopes {
+            // Records the core never got are fetched by `decide` itself.
+            if entry.in_flight || entry.known.is_none() || entry.unknown {
+                continue;
+            }
+            let due_at = match entry.stale {
+                Some((_, stale)) if awaited.is_some_and(|a| stale <= a) => now,
+                Some((since, _)) => since + config.debounce_ms,
+                None => (entry.fetched_at + ttl).saturating_sub(config.refresh_margin_ms),
+            };
+            if due_at <= now && handed_out < config.sweep_batch {
+                entry.in_flight = true;
+                entry.asked_at = cursor;
+                handed_out += 1;
+                fetch.push(Need::RegisteredScope {
+                    kind: scope.kind.clone(),
+                    id: scope.id.clone(),
+                });
             } else {
                 next = next.min(due_at.max(now + 1));
             }

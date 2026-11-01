@@ -105,6 +105,60 @@ PUT /v1/shares/{id}
 - **Events:** share writes emit `share.changed`, and `entitlements.changed`
   for the whole recipient tenant.
 
+## Registered scopes
+
+A relying system often knows only an object's id when a request arrives, as
+in `GET /documents/{id}`. Resolving the id into its tenant and projects is
+then the relying system's job, and forgetting to check the tenant lets a
+member of one tenant read another's object by guessing its id. A registered
+scope moves that resolution into Konklav:
+
+```json
+PUT /v1/registered-scopes/document/d-1
+{"tenant": "<tenant>", "containers": [{"kind": "project", "id": "p-1"}]}
+```
+
+- **Catalog:** a scope kind declared with `"registered": true`. Requirements
+  at other kinds are decided as before.
+- **Requirements** name the scope alone: `{"kind": "document", "id": "d-1",
+  "actions": [...]}`. Evaluation looks up the record:
+  - unknown or removed: deny with `unknown_scope`
+  - the token's tenant: the actions held tenant-wide, at the scope, or at
+    any one of its containers count. A deny at one container doesn't cancel
+    an allow at another, as with any deny.
+  - another tenant: only accepted shares of the scope or of a container,
+    with their obligations
+  - no tenant: only global actions
+- **The tenant is fixed.** Recording the scope in another tenant fails, even
+  after removing it, because removed records are kept. A move between
+  tenants is a new id.
+- **No assignments at registered scopes.** Access to an object always comes
+  from its tenant, its containers or a share, so per-object grants don't
+  multiply.
+- **Writes:** `PUT` and `DELETE` per scope, and `POST /v1/registered-scopes`
+  with up to 1000 `record` and `remove` changes, all or nothing, naming
+  every change that fails. They need `konklav:scopes:register`, so a relying
+  system's service principal can register objects without managing roles.
+  Each write returns its cursor.
+- **Events:** one `scope.changed {scopes: [{kind, id, tenant, state}]}` per
+  transaction. The first statement writes the event, later ones add their
+  scopes to it, and a transaction-local setting remembers which event that
+  is. Entitlement sets don't depend on registered scopes, so object writes
+  never emit `entitlements.changed`.
+- **Relying core:** the entitlement set names the registered kinds. The core
+  fetches a record from `GET /v1/registered-scopes/{kind}/{id}` the first
+  time a decision needs it, keeps a bounded cache, remembers unknown ids for
+  a few seconds so guessed ids don't each cost a fetch, and treats
+  `scope.changed` like `entitlements.changed`, with the same debounce bound.
+
+Objects are written to two places, the relying system's database and
+Konklav, so the relying system uses the same pattern as for [tenant
+projections](tenant-projections.md): record the object in Konklav (an
+idempotent `PUT`) before using it, and reconcile pending ones.
+
+Containment is one level deep. Nested containers, such as folders inside
+projects, are left until a deployment needs them.
+
 ## Decision path in the relying SDK
 
 ```
@@ -113,6 +167,8 @@ token ──verify (JWKS)──▶ claims
         ├─ session (sid, sv) ── cached state from `session.changed`
         │
         ├─ entitlements (sub, tid) ── cache ── miss/stale ─▶ GET /v1/entitlements
+        │
+        ├─ registered scopes named ── cache ── miss/stale ─▶ GET /v1/registered-scopes
         │
         └─ evaluate requirements locally
               actions ⊆ granted per level and scope

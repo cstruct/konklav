@@ -354,3 +354,62 @@ async fn versions_go_once_retention_has_passed_since_they_ended() {
         "the current version stays, however old"
     );
 }
+
+// r[verify history.record]
+// r[verify authz.explain.at]
+#[tokio::test(flavor = "multi_thread")]
+async fn removed_registered_scopes_count_as_of_before_their_removal() {
+    let world = world().await;
+    let reply = world
+        .app
+        .control(
+            Method::PUT,
+            "/v1/catalog",
+            Some(json!({
+                "actions": [{"name": "document:read"}],
+                "scope_kinds": [{"name": "document", "registered": true}],
+            })),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+    configure(&world.app, Some(Duration::days(30))).await;
+    let recorded = world
+        .app
+        .control(
+            Method::PUT,
+            "/v1/registered-scopes/document/d-1",
+            Some(json!({"tenant": world.tenant})),
+        )
+        .await;
+    assert_eq!(recorded.status, StatusCode::OK, "{:?}", recorded.body);
+    let registered = moment().await;
+    let removed = world
+        .app
+        .control(Method::DELETE, "/v1/registered-scopes/document/d-1", None)
+        .await;
+    assert_eq!(removed.status, StatusCode::OK, "{:?}", removed.body);
+
+    let explain = async |at: Option<DateTime<Utc>>| {
+        let mut body = json!({
+            "tenant": world.tenant,
+            "requirements": {"scopes": [{"kind": "document", "id": "d-1", "actions": ["document:read"]}]},
+        });
+        if let Some(at) = at {
+            body["at"] = Value::String(rfc3339(at));
+        }
+        world
+            .app
+            .control(
+                Method::POST,
+                &format!("/v1/subjects/{}/explain-decision", world.subject),
+                Some(body),
+            )
+            .await
+    };
+    let now = explain(None).await;
+    assert_eq!(now.status, StatusCode::OK, "{:?}", now.body);
+    assert_eq!(now.body["allowed"], false, "{:?}", now.body);
+    let then = explain(Some(registered)).await;
+    assert_eq!(then.status, StatusCode::OK, "{:?}", then.body);
+    assert_eq!(then.body["allowed"], true, "{:?}", then.body);
+}

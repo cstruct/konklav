@@ -75,7 +75,7 @@ decision, not a semantic one.
 
 History is optional (`history.enabled`). While it is on, an `after` row
 trigger on each tracked table (subjects, tenants, memberships, the catalog,
-templates, roles, policies, assignments, shares) ends the row's current
+templates, roles, policies, assignments, shares, registered scopes) ends the row's current
 version in `row_version` and records the new one. Versions are stored
 generically: the table, the primary key and the row as `jsonb`, with the
 period they were current. Adding a tracked table is a row in

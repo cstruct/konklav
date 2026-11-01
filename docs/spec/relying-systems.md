@@ -66,6 +66,21 @@ r[relying.cache.await-cursor]
 The relying SDK MUST let callers wait until it has applied all events up to
 a given cursor, so that a relying system can read its own writes.
 
+r[relying.cache.registered]
+The relying SDK MUST fetch a registered scope's record the first time a
+decision needs it, and keep it in a bounded cache with the same TTL as
+entitlement sets. It MUST NOT need every registered scope in advance.
+
+r[relying.cache.registered-unknown]
+The relying SDK MUST cache that a registered scope is unknown for a
+configured period (5 seconds by default), and drop that entry when a
+`scope.changed` event names the scope.
+
+r[relying.cache.registered-debounce]
+After a `scope.changed` event names a cached registered scope, its record
+MAY be used for at most the debounce window. After that, decisions for it
+MUST wait for the refreshed record.
+
 ## Feed and fallback
 
 r[relying.feed.consume]
@@ -73,8 +88,8 @@ The relying SDK MUST consume the change feed for the event kinds it caches,
 keeping its cursor.
 
 r[relying.feed.reset]
-On a `reset` event, the relying SDK MUST treat every cached session and
-entitlement set as stale.
+On a `reset` event, the relying SDK MUST treat every cached session,
+entitlement set and registered scope as stale.
 
 r[relying.fallback.lag]
 If the feed connection is lost, or no event or heartbeat arrives for three

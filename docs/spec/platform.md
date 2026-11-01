@@ -129,10 +129,11 @@ MUST be configurable.
 
 r[history.record]
 While history is enabled, every write to a subject, tenant, membership, the
-action catalog, a template, role, policy, role assignment or share MUST
-keep the row version it replaces, including when the row is deleted, in the
-same transaction as the write. Enabling history MUST record every such row
-as it is then, and history MUST NOT claim to know anything earlier.
+action catalog, a template, role, policy, role assignment, share or
+registered scope MUST keep the row version it replaces, including when the
+row is deleted, in the same transaction as the write. Enabling history MUST
+record every such row as it is then, and history MUST NOT claim to know
+anything earlier.
 
 r[history.disabled]
 While history is disabled, nothing MUST be recorded, and disabling it MUST

@@ -32,6 +32,7 @@ import json
 import logging
 import threading
 import time
+import urllib.parse
 from collections.abc import Mapping
 from typing import Any
 
@@ -246,6 +247,17 @@ class RelyingClient:
             response = _checked(await self._get(path))
             with self._lock:
                 self._core.on_entitlements(response.text, _now())
+        elif kind == "registered_scope":
+            kind_segment = urllib.parse.quote(need["kind"], safe="")
+            id_segment = urllib.parse.quote(need["id"], safe="")
+            response = await self._get(f"/v1/registered-scopes/{kind_segment}/{id_segment}")
+            if response.status_code == 404:
+                with self._lock:
+                    self._core.on_registered_scope_unknown(need["kind"], need["id"], _now())
+            else:
+                text = _checked(response).text
+                with self._lock:
+                    self._core.on_registered_scope(text, _now())
 
     async def _run_work(self) -> None:
         while True:
