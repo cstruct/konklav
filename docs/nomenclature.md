@@ -467,6 +467,17 @@ Terms are introduced in dependency order: each definition only uses terms define
   - How long Konklav keeps a row it no longer needs, such as an expired challenge or an ended session, before deleting it.
   - Each kind of row has its own rule, set either by configuration or by the longest window anything still reads it over, such as a rate limit's.
 
+- `history`
+  - An optional record, off by default, of past versions of the rows that compilation and decision explanations read: subjects, tenants, memberships, the action catalog, templates, roles, their policies, role assignments and shares.
+  - It keeps rows that were changed, deleted, or soft-deleted by a state such as an ended membership, so that a decision can be explained as of a past time.
+  - Sessions are not part of it.
+
+- `row version`
+  - One state of one row in the history, with the period it was current: from when it was written until it was changed or deleted.
+
+- `history horizon`
+  - The earliest time history can answer for: when history was enabled, or its retention ago, whichever is later.
+
 - `sweeper`
   - The background task that deletes what retention allows, in bounded batches, and erases delivery material from stored events once its challenge has expired.
   - Only one instance's sweeper runs at a time.

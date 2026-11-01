@@ -1,20 +1,22 @@
 //! Explaining decisions in the control plane: why a subject would be
-//! allowed or denied an operation, check by check and action by action.
+//! allowed or denied an operation, check by check and action by action,
+//! now or, with history enabled, as of a past time.
 
 use std::collections::BTreeMap;
 
 use axum::extract::{Path, State};
 use axum::routing::post;
 use axum::{Json, Router};
-use chrono::Utc;
+use chrono::{DateTime, SecondsFormat, Utc};
 use konklav_authz::{
     Check, DecisionExplanation, ExplainInput, Requirements, SessionContext, explain_decision,
 };
 use konklav_core::{SessionId, SubjectId, TenantId};
+use konklav_store::compile_input::{self, CompileInput};
 use konklav_store::sessions::{self, Stage};
 use konklav_store::subjects::{self, SubjectState};
 use konklav_store::tenants::{self, TenantState};
-use konklav_store::{Connection, compile_input, memberships, shares};
+use konklav_store::{Connection, history, memberships, shares};
 use konklav_token::{AccessClaims, TokenKind};
 use serde::Deserialize;
 
@@ -40,6 +42,10 @@ struct ExplainBody {
     session: Option<SessionId>,
     #[serde(default)]
     requirements: Requirements,
+    /// The time to explain the decision as of, as RFC 3339; now when
+    /// absent. Needs history, and can't be combined with a session.
+    #[serde(default)]
+    at: Option<DateTime<Utc>>,
 }
 
 /// Claims as an access token for `session` would carry them.
@@ -120,6 +126,56 @@ async fn activity_checks(
     Ok(checks)
 }
 
+/// What an explanation reads from the store, from one snapshot.
+struct Gathered {
+    checks: Vec<Check>,
+    input: CompileInput,
+    offered: Vec<konklav_authz::Share>,
+}
+
+async fn gather(
+    conn: &mut Connection,
+    subject: SubjectId,
+    tenant: Option<TenantId>,
+) -> Result<Gathered, ApiError> {
+    let checks = activity_checks(conn, subject, tenant).await?;
+    let input = compile_input::read(conn, subject, tenant).await?;
+    let offered = match tenant {
+        Some(tenant) => shares::offered_for(conn, tenant).await?,
+        None => Vec::new(),
+    };
+    Ok(Gathered {
+        checks,
+        input,
+        offered,
+    })
+}
+
+/// Refuses `at` unless history reaches it.
+// r[impl authz.explain.at]
+async fn check_reach(
+    conn: &mut Connection,
+    at: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Result<(), ApiError> {
+    let Some(status) = history::status(conn).await? else {
+        return Err(ApiError::invalid_request(
+            "history isn't enabled, so decisions can only be explained as of now",
+        ));
+    };
+    if at > now {
+        return Err(ApiError::invalid_request("`at` is in the future"));
+    }
+    let horizon = status.horizon(now);
+    if at < horizon {
+        return Err(ApiError::invalid_request(format!(
+            "history reaches back only to {}",
+            horizon.to_rfc3339_opts(SecondsFormat::Secs, true)
+        )));
+    }
+    Ok(())
+}
+
 /// `POST /v1/subjects/{id}/explain-decision`
 // r[impl authz.explain.decision]
 // r[impl authz.explain.checks]
@@ -137,7 +193,13 @@ async fn explain(
                 .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))
         })
         .transpose()?;
+    if body.at.is_some() && body.session.is_some() {
+        return Err(ApiError::invalid_request(
+            "`at` can't be combined with a session: history doesn't keep sessions",
+        ));
+    }
     let mut conn = state.pool.get().await?;
+    let now = Utc::now();
     let session = match body.session {
         Some(id) => {
             let session = sessions::get(&mut conn, id)
@@ -162,14 +224,31 @@ async fn explain(
         None => None,
     };
 
-    let checks = activity_checks(&mut conn, subject, tenant).await?;
-    let input = compile_input::load(&mut conn, subject, tenant).await?;
-    let offered = match tenant {
-        Some(tenant) => shares::offered_for(&mut conn, tenant).await?,
-        None => Vec::new(),
+    let Gathered {
+        checks,
+        input,
+        offered,
+    } = match body.at {
+        None => {
+            conn.build_transaction()
+                .read_only()
+                .repeatable_read()
+                .run::<_, ApiError, _>(async |conn| gather(conn, subject, tenant).await)
+                .await?
+        }
+        Some(at) => {
+            check_reach(&mut conn, at, now).await?;
+            // Not read-only: the shadow tables are created in it.
+            conn.build_transaction()
+                .repeatable_read()
+                .run::<_, ApiError, _>(async |conn| {
+                    history::shadow(conn, at).await?;
+                    gather(conn, subject, tenant).await
+                })
+                .await?
+        }
     };
     let restrictive_flags = input.document.restrictive_flags();
-    let now = Utc::now();
     let claims = session.as_ref().map(|session| claims_of(&state, session));
     let context = session
         .as_ref()
@@ -188,7 +267,7 @@ async fn explain(
             requirements: &body.requirements,
             tenant,
             session: context,
-            now: now.timestamp(),
+            now: body.at.unwrap_or(now).timestamp(),
         },
         checks,
     )))

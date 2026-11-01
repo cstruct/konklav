@@ -476,6 +476,18 @@ config_tree! {
             #[facet(default = 1000)]
             pub batch_size: u32,
         }>,
+        // r[impl history.config]
+        /// Versions of the rows authorization reads, kept so decisions can
+        /// be explained as of a past time. Every instance on a database
+        /// must agree.
+        pub history: Option<pub struct History {
+            /// Off by default. Turning it off discards what was recorded.
+            #[facet(default)]
+            pub enabled: bool,
+            /// Days a version is kept after it stopped being current.
+            #[facet(default = 90)]
+            pub retention_days: u32,
+        }>,
     }
 }
 
@@ -494,6 +506,16 @@ impl FeedConfig {
             .map_or(crate::feed::FeedHub::DEFAULT_MAX_STREAMS, |f| {
                 usize::try_from(f.max_streams).unwrap_or(usize::MAX)
             })
+    }
+
+    /// How long history keeps a version after it stopped being current, or
+    /// `None` when history is off.
+    #[must_use]
+    pub fn history_retention(&self) -> Option<chrono::Duration> {
+        self.history
+            .as_ref()
+            .filter(|history| history.enabled)
+            .map(|history| chrono::Duration::days(i64::from(history.retention_days.max(1))))
     }
 
     /// What the sweeper keeps, with the change feed's retention.

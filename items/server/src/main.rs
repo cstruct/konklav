@@ -258,6 +258,12 @@ async fn serve(
         Ok(mut conn) => keys.sync(&mut conn).await?,
         Err(error) => tracing::warn!(%error, "could not publish signing keys at startup"),
     }
+    match pool.get().await {
+        Ok(mut conn) => {
+            konklav_store::history::configure(&mut conn, feed.history_retention()).await?;
+        }
+        Err(error) => tracing::warn!(%error, "could not configure history at startup"),
+    }
     let mut auth = AuthContext::new(&tokens, browser.browser.as_ref(), &control, keys.signer);
     auth.control_token_expires_at = control.bootstrap_expiry()?;
     if auth.control_token.is_some() {

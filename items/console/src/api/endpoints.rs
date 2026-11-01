@@ -417,12 +417,13 @@ pub fn explain(subject: &str, tenant: &str, action: &str) -> Request {
 }
 
 /// Explains the decision for `requirements`, optionally for one of the
-/// subject's sessions.
+/// subject's sessions, or as of `at` (RFC 3339) when history is enabled.
 #[must_use]
 pub fn explain_decision(
     subject: &str,
     tenant: &str,
     session: &str,
+    at: &str,
     requirements: &Value,
 ) -> Request {
     let mut body = json!({"requirements": requirements});
@@ -431,6 +432,9 @@ pub fn explain_decision(
     }
     if !session.trim().is_empty() {
         body["session"] = json!(session.trim());
+    }
+    if !at.trim().is_empty() {
+        body["at"] = json!(at.trim());
     }
     Request::control(
         Method::Post,
@@ -559,6 +563,15 @@ mod tests {
             scoped.body.unwrap()["scope"],
             json!({"kind": "project", "id": "p1"})
         );
+    }
+
+    #[test]
+    fn decisions_are_explained_as_of_a_time_only_when_given() {
+        let requirements = json!({"tenant": ["document:read"]});
+        let now = explain_decision("s1", "t1", "", " ", &requirements);
+        assert_eq!(now.body.unwrap().get("at"), None);
+        let then = explain_decision("s1", "t1", "", " 2026-11-01T12:00:00Z ", &requirements);
+        assert_eq!(then.body.unwrap()["at"], "2026-11-01T12:00:00Z");
     }
 
     #[test]

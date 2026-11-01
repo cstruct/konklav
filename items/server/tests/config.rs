@@ -98,7 +98,32 @@ fn environment_overrides_the_config_file() {
         chrono::Duration::hours(168),
         "default applies"
     );
+    assert_eq!(feed.history_retention(), None, "history is off by default");
     assert_eq!(mfa.mfa, None);
+}
+
+// r[verify history.config]
+#[test]
+fn history_is_off_unless_enabled() {
+    let files = Files::new("history");
+    let secrets = files.write("s.styx", SECRETS);
+    for (section, retention) in [
+        ("history {retention_days 14}", None),
+        ("history {enabled true}", Some(90)),
+        ("history {enabled true, retention_days 14}", Some(14)),
+    ] {
+        let (_, _, _, _, _, _, feed, _) = load(
+            &files.write("c.styx", &format!("{CONFIG}{section}\n")),
+            &secrets,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            feed.history_retention(),
+            retention.map(chrono::Duration::days),
+            "{section}"
+        );
+    }
 }
 
 // r[verify platform.config.secrets-separate]
