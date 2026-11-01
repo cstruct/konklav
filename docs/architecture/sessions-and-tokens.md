@@ -97,6 +97,10 @@ interpreting them.
 A flag is set only by:
 
 - catalog rules attached to a credential kind or login endpoint
+- the credential itself: restrictive flags set on it with
+  `PUT /v1/credentials/{id}/session-flags` (or by import or bootstrap) go
+  into every session started with it, so a relying system can keep, say,
+  email-link sessions to a personal tenant whatever the client asks for
 - an explicit login request parameter that the catalog permits
 - a step-up flow that the catalog permits (for example, a hardware-key
   proof sets `device_bound`)

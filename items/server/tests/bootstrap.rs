@@ -145,6 +145,7 @@ async fn the_nested_example_applies_once_and_then_skips() {
 
 // r[verify bootstrap.ids]
 // r[verify bootstrap.formats]
+// r[verify session.flags.credential]
 #[tokio::test(flavor = "multi_thread")]
 async fn the_flat_example_derives_ids_from_external_ones() {
     let app = TestApp::new().await;
@@ -165,6 +166,11 @@ async fn the_flat_example_derives_ids_from_external_ones() {
         .control(Method::GET, &format!("/v1/subjects/{disabled}"), None)
         .await;
     assert_eq!(detail.body["state"], "disabled");
+    assert_eq!(
+        detail.body["credentials"][0]["session_flags"],
+        serde_json::json!(["passwordless"]),
+        "an email link carries its session flags"
+    );
     let child = uuid::Uuid::new_v5(&namespace, b"tenant:org-2");
     let tenant = app
         .control(Method::GET, &format!("/v1/tenants/{child}"), None)

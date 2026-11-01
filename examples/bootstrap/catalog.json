@@ -4,5 +4,6 @@
   "facts": [
     {"key": "member_type", "target": "membership", "type": "string", "portable": true},
     {"key": "seats", "target": "tenant", "type": "integer"}
-  ]
+  ],
+  "session_flags": [{"name": "passwordless", "kind": "restrictive", "requestable": false}]
 }

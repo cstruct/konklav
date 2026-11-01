@@ -26,7 +26,7 @@ use subtle::ConstantTimeEq;
 
 use crate::capabilities::Operator;
 use crate::error::{ApiError, ApiJson, ErrorCode};
-use crate::{AppState, capabilities};
+use crate::{AppState, capabilities, subject_api};
 
 pub fn routes(state: &AppState) -> Router<AppState> {
     let subjects = Router::new()
@@ -38,6 +38,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .route("/credentials/{id}/revoke", post(revoke_credential))
         .route("/credentials/{id}/replace", post(replace_password))
         .route("/credentials/{id}/break-glass", put(set_break_glass))
+        .route("/credentials/{id}/session-flags", put(set_session_flags))
         .route(
             "/credentials/{id}/slots/{slot}/rotate",
             post(rotate_secret_slot),
@@ -363,6 +364,7 @@ struct CredentialView {
     revoked_at: Option<DateTime<Utc>>,
     revoked_reason: Option<String>,
     break_glass: bool,
+    session_flags: Vec<String>,
 }
 
 impl From<Credential> for CredentialView {
@@ -401,6 +403,7 @@ impl From<Credential> for CredentialView {
             revoked_at: credential.revoked_at,
             revoked_reason: credential.revoked_reason,
             break_glass: credential.break_glass,
+            session_flags: credential.session_flags,
         }
     }
 }
@@ -960,6 +963,32 @@ fn workload_credential(
         mfa_factors_required: 0,
         replaces: None,
     })
+}
+
+#[derive(Deserialize)]
+struct SessionFlags {
+    session_flags: Vec<String>,
+}
+
+/// `PUT /v1/credentials/{id}/session-flags`: sets the restrictive session
+/// flags every session started with the credential carries.
+async fn set_session_flags(
+    State(state): State<AppState>,
+    Extension(operator): Extension<Operator>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<SessionFlags>,
+) -> Result<Json<CredentialView>, ApiError> {
+    let id: CredentialId = parse_id(&id, "credential id")?;
+    let mut conn = state.pool.get().await?;
+    let credential = credentials::get(&mut conn, id)
+        .await
+        .map_err(|_| ApiError::not_found("credential"))?;
+    operator
+        .may_change(&mut conn, credential.subject_id)
+        .await?;
+    subject_api::check_credential_flags(&mut conn, &body.session_flags).await?;
+    credentials::set_session_flags(&mut conn, id, &body.session_flags).await?;
+    Ok(Json(credentials::get(&mut conn, id).await?.into()))
 }
 
 #[derive(Deserialize)]

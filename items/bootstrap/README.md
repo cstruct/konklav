@@ -57,7 +57,7 @@ subjects ({email ops@example.com, password_hash "$argon2id$…", global_roles (k
   - the shorthands `email` (with `password_hash`, `password` or `email_link true`) and `phone`
   - `credentials`, `factors` and `global_roles`
 - **Members also take** `membership` (its id), `facts`, `roles` and `scoped_roles`.
-- **Credentials** have a `kind`: `password`, `secret_key` (slots `a` and `b`), `email_link`, `phone_otp` or `federated` (with `provider` and `provider_subject`).
+- **Credentials** have a `kind`: `password`, `secret_key` (slots `a` and `b`), `email_link`, `phone_otp` or `federated` (with `provider` and `provider_subject`). `session_flags` lists restrictive catalog flags every session started with the credential carries.
 - **Factors** are `kind totp` with `seed_base32`, or `kind email_code` with `email`.
 - **Templates and roles** take `metadata`, an object stored as the control plane's `metadata`. Styx scalars are text, so its values become JSON strings, and sequences and objects become arrays and objects.
 - **Unknown keys** are errors.
@@ -70,7 +70,7 @@ Every table has a header row. Rows name other records by id. An empty cell is an
 |---|---|---|
 | `tenants.csv` | `id` | `parent` (an id or `root`), `templates`, `fact.*` |
 | `subjects.csv` | `id` | `kind`, `state` |
-| `credentials.csv` | `id`, `subject`, `kind` | `identifier`, `password_hash`, `password`, `mfa_factors_required`, `provider`, `provider_subject`, `a_hash`, `a_created_at`, `a_expires_at`, `b_hash`, `b_created_at`, `b_expires_at` |
+| `credentials.csv` | `id`, `subject`, `kind` | `identifier`, `password_hash`, `password`, `mfa_factors_required`, `session_flags`, `provider`, `provider_subject`, `a_hash`, `a_created_at`, `a_expires_at`, `b_hash`, `b_created_at`, `b_expires_at` |
 | `mfa_factors.csv` | `id`, `subject`, `kind` | `seed_base32`, `email`, `active` |
 | `memberships.csv` | `id`, `subject`, `tenant` | `fact.*` |
 | `assignments.csv` | `role` | `membership` or `subject` (a global role), `scope_kind`, `scope_id` |

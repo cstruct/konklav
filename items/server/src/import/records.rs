@@ -15,6 +15,7 @@ use serde::Deserialize;
 
 use super::Outcome;
 use crate::error::ApiError;
+use crate::subject_api;
 
 #[derive(Deserialize)]
 pub(crate) struct SubjectRecord {
@@ -71,6 +72,9 @@ pub(crate) struct CredentialRecord {
     pub(crate) identifier: String,
     #[serde(default)]
     pub(crate) mfa_factors_required: i16,
+    /// Restrictive session flags every session started with it carries.
+    #[serde(default)]
+    pub(crate) session_flags: Vec<String>,
     #[serde(flatten)]
     pub(crate) material: CredentialMaterial,
 }
@@ -114,6 +118,10 @@ pub(crate) async fn credential(
         },
     )
     .await?;
+    if inserted && !record.session_flags.is_empty() {
+        subject_api::check_credential_flags(conn, &record.session_flags).await?;
+        credentials::set_session_flags(conn, record.id, &record.session_flags).await?;
+    }
     // r[impl import.credentials.secret-key-rotation]
     if !inserted && matches!(data, CredentialData::SecretKey(_)) {
         let existing = credentials::get(conn, record.id).await?;

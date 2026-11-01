@@ -24,6 +24,7 @@ fn columns(table: &str) -> (&'static [&'static str], &'static [&'static str], bo
                 "password_hash",
                 "password",
                 "mfa_factors_required",
+                "session_flags",
                 "provider",
                 "provider_subject",
                 "a_hash",
@@ -471,6 +472,7 @@ fn credential(row: &mut Row<'_>) -> Option<Credential> {
         subject,
         identifier,
         mfa_factors_required,
+        session_flags: row.list("session_flags"),
         material,
     })
 }

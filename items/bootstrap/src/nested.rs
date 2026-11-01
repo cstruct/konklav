@@ -102,6 +102,7 @@ struct CredentialDoc {
     password_hash: Option<String>,
     password: Option<String>,
     mfa_factors_required: Option<i16>,
+    session_flags: Option<Vec<String>>,
     provider: Option<String>,
     provider_subject: Option<String>,
     a: Option<SlotDoc>,
@@ -560,13 +561,14 @@ impl Reader<'_> {
             },
             at: at.clone(),
         });
-        for (at, id, identifier, material, mfa_factors_required) in credentials {
+        for (at, id, identifier, material, mfa_factors_required, session_flags) in credentials {
             self.set.credentials.push(Located {
                 value: Credential {
                     id,
                     subject: key.clone(),
                     identifier,
                     mfa_factors_required,
+                    session_flags,
                     material,
                 },
                 at,
@@ -602,6 +604,7 @@ impl Reader<'_> {
             Option<String>,
             CredentialMaterial,
             i16,
+            Vec<String>,
         )>,
     > {
         let mut credentials = Vec::new();
@@ -624,7 +627,14 @@ impl Reader<'_> {
                 }
             };
             if let Some(material) = material {
-                credentials.push((at.clone(), None, Some(email.clone()), material, mfa));
+                credentials.push((
+                    at.clone(),
+                    None,
+                    Some(email.clone()),
+                    material,
+                    mfa,
+                    Vec::new(),
+                ));
             }
         } else if doc.password_hash.is_some() || doc.password.is_some() || doc.email_link.is_some()
         {
@@ -638,6 +648,7 @@ impl Reader<'_> {
                 Some(phone.clone()),
                 CredentialMaterial::PhoneOtp,
                 mfa,
+                Vec::new(),
             ));
         }
         Some(credentials)
@@ -684,6 +695,7 @@ impl Reader<'_> {
         Option<String>,
         CredentialMaterial,
         i16,
+        Vec<String>,
     )> {
         let material = match doc.kind.as_str() {
             "password" => match (doc.password_hash, doc.password) {
@@ -751,6 +763,7 @@ impl Reader<'_> {
             if federated { None } else { doc.identifier },
             material,
             doc.mfa_factors_required.unwrap_or(0),
+            doc.session_flags.unwrap_or_default(),
         ))
     }
 }
