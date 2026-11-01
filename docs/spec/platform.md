@@ -263,6 +263,12 @@ A bootstrap set MAY contain the action catalog, templates, tenants,
 subjects, credentials (federated ones included), MFA factors, memberships,
 membership and global role assignments, and sessions.
 
+r[bootstrap.metadata]
+Templates and roles in a bootstrap set MAY carry metadata, a JSON object.
+It MUST be stored as the control plane stores a template's or role's
+metadata, and it is part of the record's content when a run compares the
+record with a stored one.
+
 r[bootstrap.ids]
 Every record's identifier MUST be resolved the same way in both formats:
 - an identifier that is a UUID MUST be used as given

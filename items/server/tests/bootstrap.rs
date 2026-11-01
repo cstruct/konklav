@@ -206,6 +206,52 @@ async fn a_dry_run_reports_and_writes_nothing() {
     assert_eq!(count(&app, "subject").await, subjects);
 }
 
+// r[verify bootstrap.metadata]
+#[tokio::test(flavor = "multi_thread")]
+async fn template_and_role_metadata_is_stored_and_compared() {
+    let app = TestApp::new().await;
+    let seed = [examples().join("nested/seed.styx")];
+    apply(&app, &seed, Options::default()).await;
+    let template = app.control(Method::GET, "/v1/templates/reader", None).await;
+    assert_eq!(
+        template.body["metadata"],
+        serde_json::json!({"label": "Reader", "shown_to": ["members", "admins"]}),
+        "{:?}",
+        template.body
+    );
+    let tenant = konklav_bootstrap::derive(
+        uuid::Uuid::parse_str(NAMESPACE).unwrap(),
+        konklav_bootstrap::Kind::Tenant,
+        "acme",
+    );
+    let role = app
+        .control(
+            Method::GET,
+            &format!("/v1/tenants/{tenant}/roles/editor"),
+            None,
+        )
+        .await;
+    assert_eq!(
+        role.body["metadata"],
+        serde_json::json!({"label": "Editor"}),
+        "{:?}",
+        role.body
+    );
+
+    let changed = edited(
+        "nested",
+        "metadata",
+        &[(
+            "seed.styx",
+            "metadata {label Editor}",
+            "metadata {label Author}",
+        )],
+    );
+    let report = apply(&app, &[changed], Options::default()).await;
+    assert!(!report.committed);
+    assert_eq!(report.conflicts.len(), 1, "{report}");
+}
+
 // r[verify bootstrap.atomic]
 // r[verify bootstrap.idempotent]
 #[tokio::test(flavor = "multi_thread")]

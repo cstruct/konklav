@@ -55,6 +55,7 @@ struct PolicyDoc {
 struct TemplateDoc {
     key: String,
     description: Option<String>,
+    metadata: Option<BTreeMap<String, facet_value::Value>>,
     policies: Option<Vec<PolicyDoc>>,
 }
 
@@ -64,6 +65,7 @@ struct RoleDoc {
     key: String,
     template: Option<String>,
     priority: Option<i32>,
+    metadata: Option<BTreeMap<String, facet_value::Value>>,
     policies: Option<Vec<PolicyDoc>>,
 }
 
@@ -297,10 +299,12 @@ impl Reader<'_> {
             let at = self.at(&template);
             let doc = template.value;
             let policies = self.policies(&at, doc.policies);
+            let metadata = self.metadata(&at, doc.metadata);
             self.set.templates.push(Located {
                 value: Template {
                     key: doc.key,
                     description: doc.description.unwrap_or_default(),
+                    metadata,
                     policies,
                 },
                 at,
@@ -344,16 +348,38 @@ impl Reader<'_> {
         let at = self.at(&role);
         let doc = role.value;
         let policies = self.policies(&at, doc.policies);
+        let metadata = self.metadata(&at, doc.metadata);
         self.set.roles.push(Located {
             value: Role {
                 tenant,
                 key: doc.key,
                 template: doc.template,
                 priority: doc.priority.unwrap_or(0),
+                metadata,
                 policies,
             },
             at,
         });
+    }
+
+    // r[impl bootstrap.metadata]
+    /// Metadata as the JSON object the control plane stores. Styx scalars
+    /// are text, so they become strings.
+    fn metadata(
+        &mut self,
+        at: &Location,
+        metadata: Option<BTreeMap<String, facet_value::Value>>,
+    ) -> serde_json::Value {
+        let mut out = serde_json::Map::new();
+        for (key, value) in metadata.unwrap_or_default() {
+            match json(&value) {
+                Some(value) => {
+                    out.insert(key, value);
+                }
+                None => self.problem(at, format!("metadata `{key}` has a value JSON can't hold")),
+            }
+        }
+        serde_json::Value::Object(out)
     }
 
     fn facts(
@@ -727,4 +753,38 @@ impl Reader<'_> {
             doc.mfa_factors_required.unwrap_or(0),
         ))
     }
+}
+
+/// `value` as JSON, or `None` for what JSON can't hold, such as bytes.
+fn json(value: &facet_value::Value) -> Option<serde_json::Value> {
+    if value.is_null() {
+        return Some(serde_json::Value::Null);
+    }
+    if let Some(flag) = value.as_bool() {
+        return Some(flag.into());
+    }
+    if let Some(text) = value.as_string() {
+        return Some(text.as_str().into());
+    }
+    if let Some(number) = value.as_number() {
+        return match number.to_i64() {
+            Some(whole) => Some(whole.into()),
+            None => serde_json::Number::from_f64(number.to_f64()?).map(serde_json::Value::Number),
+        };
+    }
+    if let Some(items) = value.as_array() {
+        return items
+            .iter()
+            .map(json)
+            .collect::<Option<Vec<_>>>()
+            .map(serde_json::Value::Array);
+    }
+    if let Some(object) = value.as_object() {
+        return object
+            .iter()
+            .map(|(key, item)| Some((key.as_str().to_owned(), json(item)?)))
+            .collect::<Option<serde_json::Map<_, _>>>()
+            .map(serde_json::Value::Object);
+    }
+    None
 }

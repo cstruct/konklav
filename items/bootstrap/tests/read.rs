@@ -24,13 +24,23 @@ const NAMESPACE: &str = "3f1c9a52-6a1e-4d0b-9a0e-6c1d8f0b2e11";
 
 // r[verify bootstrap.formats]
 // r[verify bootstrap.contents]
+// r[verify bootstrap.metadata]
 #[test]
 fn the_nested_example_reads_into_records_with_natural_keys() {
     let set = read(&[examples().join("nested/seed.styx")]).unwrap();
     assert_eq!(set.id_namespace.unwrap().value.to_string(), NAMESPACE);
     assert!(set.catalog.is_some());
     assert_eq!(set.templates.len(), 1);
+    assert_eq!(
+        set.templates[0].value.metadata,
+        serde_json::json!({"label": "Reader", "shown_to": ["members", "admins"]})
+    );
     assert_eq!(set.roles.len(), 2, "a global role and a tenant role");
+    assert_eq!(set.roles[0].value.metadata, serde_json::json!({}));
+    assert_eq!(
+        set.roles[1].value.metadata,
+        serde_json::json!({"label": "Editor"})
+    );
     let tenants: Vec<_> = set.tenants.iter().map(|t| &t.value).collect();
     assert_eq!(tenants[0].id, Id::External("acme".into()));
     assert_eq!(tenants[0].parent, TenantRef::Root);
@@ -43,7 +53,7 @@ fn the_nested_example_reads_into_records_with_natural_keys() {
     let ada = SubjectRef::Identifier("ada@acme.example".into());
     assert_eq!(set.subjects.len(), 3);
     assert_eq!(set.subjects[0].value.key, ada);
-    assert_eq!(set.subjects[0].at.line, 22, "where the member opens");
+    assert_eq!(set.subjects[0].at.line, 23, "where the member opens");
     assert!(matches!(
         set.credentials[0].value.material,
         CredentialMaterial::PasswordHash(_)
