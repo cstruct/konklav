@@ -7,6 +7,7 @@ catalog_file "../catalog.json"
 templates ({
     key reader
     description "Reads projects"
+    metadata {label Reader, shown_to (members admins)}
     policies ({action project:read})
 })
 
@@ -16,7 +17,7 @@ tenants ({
     key acme
     facts {seats 25}
     templates (reader)
-    roles ({key editor, policies ({action document:write, scope_bound true})})
+    roles ({key editor, metadata {label Editor}, policies ({action document:write, scope_bound true})})
     children ({key acme-north})
     members (
         {

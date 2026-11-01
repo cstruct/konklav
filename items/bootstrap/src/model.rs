@@ -173,6 +173,9 @@ pub struct Policy {
 pub struct Template {
     pub key: String,
     pub description: String,
+    /// A JSON object stored with the template, as the control plane's
+    /// `metadata`.
+    pub metadata: serde_json::Value,
     pub policies: Vec<Policy>,
 }
 
@@ -182,6 +185,9 @@ pub struct Role {
     pub key: String,
     pub template: Option<String>,
     pub priority: i32,
+    /// A JSON object stored with the role, as the control plane's
+    /// `metadata`.
+    pub metadata: serde_json::Value,
     pub policies: Vec<Policy>,
 }
 

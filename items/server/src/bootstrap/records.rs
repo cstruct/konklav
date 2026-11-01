@@ -140,6 +140,7 @@ pub(super) async fn catalog(
     })
 }
 
+// r[impl bootstrap.metadata]
 pub(super) async fn template(
     conn: &mut Connection,
     template: &Located<konklav_bootstrap::Template>,
@@ -148,12 +149,14 @@ pub(super) async fn template(
     let policies = policies(&wanted.policies);
     match templates::get(conn, &wanted.key).await {
         Ok(existing)
-            if existing.description == wanted.description && existing.policies == policies =>
+            if existing.description == wanted.description
+                && existing.metadata == wanted.metadata
+                && existing.policies == policies =>
         {
             Ok(Outcome::Skipped)
         }
         Ok(_) => Err(conflict(format!(
-            "template `{}` exists with other policies or description",
+            "template `{}` exists with another description, metadata or policies",
             wanted.key
         ))),
         Err(StoreError::NotFound) => {
@@ -161,7 +164,7 @@ pub(super) async fn template(
                 conn,
                 &wanted.key,
                 &wanted.description,
-                &serde_json::json!({}),
+                &wanted.metadata,
                 &policies,
             )
             .await?;
@@ -194,6 +197,7 @@ pub(super) async fn tenant(
     }
 }
 
+// r[impl bootstrap.metadata]
 pub(super) async fn role(
     conn: &mut Connection,
     context: &Context<'_>,
@@ -206,6 +210,7 @@ pub(super) async fn role(
         Ok(existing)
             if existing.template == wanted.template
                 && existing.priority == wanted.priority
+                && existing.metadata == wanted.metadata
                 && existing.policies == policies =>
         {
             Ok(Outcome::Skipped)
@@ -221,7 +226,7 @@ pub(super) async fn role(
             let definition = RoleDefinition {
                 template: wanted.template.clone(),
                 priority: wanted.priority,
-                metadata: serde_json::json!({}),
+                metadata: wanted.metadata.clone(),
                 policies,
             };
             roles::put(conn, tenant, &wanted.key, &definition).await?;

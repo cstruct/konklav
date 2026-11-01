@@ -31,7 +31,7 @@ Out of scope: anything that needs the database, such as finding natural keys, co
 id_namespace 3f1c9a52-6a1e-4d0b-9a0e-6c1d8f0b2e11   // needed for external ids and tenant keys
 catalog_file "catalog.json"                         // relative to this file
 
-templates ({key reader, policies ({action project:read})})
+templates ({key reader, metadata {label Reader}, policies ({action project:read})})
 global_roles ({key support, policies ({action konklav:subject:impersonate})})
 
 tenants ({
@@ -59,6 +59,7 @@ subjects ({email ops@example.com, password_hash "$argon2id$…", global_roles (k
 - **Members also take** `membership` (its id), `facts`, `roles` and `scoped_roles`.
 - **Credentials** have a `kind`: `password`, `secret_key` (slots `a` and `b`), `email_link`, `phone_otp` or `federated` (with `provider` and `provider_subject`).
 - **Factors** are `kind totp` with `seed_base32`, or `kind email_code` with `email`.
+- **Templates and roles** take `metadata`, an object stored as the control plane's `metadata`. Styx scalars are text, so its values become JSON strings, and sequences and objects become arrays and objects.
 - **Unknown keys** are errors.
 
 ### Flat (CSV)
