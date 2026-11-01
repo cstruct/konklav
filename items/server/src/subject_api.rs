@@ -232,6 +232,25 @@ pub(crate) async fn check_requested_flags(
     Ok(())
 }
 
+/// Credential flags must be restrictive catalog flags: they narrow what a
+/// session may do and never widen it.
+// r[impl session.flags.credential]
+pub(crate) async fn check_credential_flags(
+    conn: &mut Connection,
+    flags: &[String],
+) -> Result<(), ApiError> {
+    if flags.is_empty() {
+        return Ok(());
+    }
+    let restrictive = catalog::load(conn).await?.restrictive_flags();
+    match flags.iter().find(|flag| !restrictive.contains(*flag)) {
+        Some(flag) => Err(ApiError::invalid_request(format!(
+            "session flag `{flag}` is not a restrictive catalog flag"
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// Starts a session after a successful first factor and issues its first
 /// tokens.
 /// A new session's refresh token and the change-feed cursor of its event.
@@ -239,6 +258,17 @@ pub(crate) struct Started {
     pub session: Session,
     pub refresh: RefreshToken,
     pub cursor: Cursor,
+}
+
+/// The requested flags followed by the credential's own, each once.
+fn session_flags(requested: &[String], credential: &[String]) -> Vec<String> {
+    let mut flags = requested.to_vec();
+    for flag in credential {
+        if !flags.contains(flag) {
+            flags.push(flag.clone());
+        }
+    }
+    flags
 }
 
 /// Starts a session for `credential`, at most `lifetime` long.
@@ -271,7 +301,8 @@ pub(crate) async fn create_session(
         },
         amr,
         auth_time: now,
-        flags: flags.to_vec(),
+        // r[impl session.flags.credential]
+        flags: session_flags(flags, &credential.session_flags),
         impersonator_subject_id: None,
         parent_session_id: None,
         refresh_hash: refresh.hash(),

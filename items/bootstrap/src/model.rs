@@ -252,6 +252,8 @@ pub struct Credential {
     /// The login identifier; federated credentials derive theirs.
     pub identifier: Option<String>,
     pub mfa_factors_required: i16,
+    /// Restrictive session flags every session started with it carries.
+    pub session_flags: Vec<String>,
     pub material: CredentialMaterial,
 }
 

@@ -187,6 +187,10 @@ according to catalog or credential configuration, or by an explicit login
 request that the catalog allows. Only restrictive flags may be requestable
 at login. Relying systems MUST NOT add flags to an existing session.
 
+r[session.flags.credential]
+A credential MAY carry restrictive session flags. Every session started
+with it MUST carry them, together with any the login request asked for.
+
 r[session.flags.restrictive]
 A decision for a session carrying a restrictive flag MUST deny unless the
 operation explicitly admits that flag.

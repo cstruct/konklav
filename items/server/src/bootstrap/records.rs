@@ -25,6 +25,7 @@ use diesel_async::AsyncConnection;
 use super::{Context, catalog as catalogs};
 use crate::error::{ApiError, ErrorCode};
 use crate::import::{self, Outcome};
+use crate::subject_api;
 
 fn conflict(message: impl Into<String>) -> ApiError {
     ApiError::new(ErrorCode::Conflict, message)
@@ -359,6 +360,7 @@ fn same_credential(
     existing.subject_id == subject
         && existing.identifier == credentials::normalize_identifier(identifier)
         && existing.mfa_factors_required == wanted.mfa_factors_required
+        && existing.session_flags == wanted.session_flags
         && same_data
 }
 
@@ -424,6 +426,10 @@ pub(super) async fn credential(
             },
         )
         .await?;
+        if !wanted.session_flags.is_empty() {
+            subject_api::check_credential_flags(conn, &wanted.session_flags).await?;
+            credentials::set_session_flags(conn, id, &wanted.session_flags).await?;
+        }
         Ok(Outcome::Created)
     })
     .await

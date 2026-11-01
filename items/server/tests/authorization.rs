@@ -37,6 +37,7 @@ fn catalog() -> Value {
 
 struct World {
     app: TestApp,
+    subject: String,
     tenant: String,
     membership: String,
     email: String,
@@ -93,6 +94,7 @@ async fn world() -> World {
     let service = app.service_token().await;
     World {
         app,
+        subject: subject.clone(),
         tenant,
         membership,
         email,
@@ -332,6 +334,65 @@ async fn requested_restrictive_flags_restrict_the_session() {
             login.code(),
             "INVALID_REQUEST",
             "{flag} must not be requestable"
+        );
+    }
+}
+
+// r[verify session.flags.credential]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_credentials_flags_restrict_every_session_started_with_it() {
+    let world = world().await;
+    let identifier = format!("{}@flagged.example", uuid::Uuid::now_v7().simple());
+    let created = world
+        .app
+        .control(
+            Method::POST,
+            &format!("/v1/subjects/{}/credentials", world.subject),
+            Some(json!({"kind": "password", "identifier": identifier, "password": PASSWORD})),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+    let credential = created.body["credential"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let path = format!("/v1/credentials/{credential}/session-flags");
+    let set = world
+        .app
+        .control(
+            Method::PUT,
+            &path,
+            Some(json!({"session_flags": ["personal_only"]})),
+        )
+        .await;
+    assert_eq!(set.status, StatusCode::OK, "{:?}", set.body);
+    assert_eq!(set.body["session_flags"], json!(["personal_only"]));
+
+    let login = world
+        .app
+        .post(
+            "/v1/login/password",
+            json!({"identifier": identifier, "password": PASSWORD}),
+        )
+        .await;
+    assert_eq!(login.status, StatusCode::OK, "{:?}", login.body);
+    let token = login.body["access_token"].as_str().unwrap();
+    assert_eq!(world.app.verify(token).await.sfl, vec!["personal_only"]);
+    let other = tenant_token(&world, &[]).await;
+    assert!(
+        world.app.verify(&other).await.sfl.is_empty(),
+        "the person's other credentials are unaffected"
+    );
+
+    for flag in ["device_bound", "unknown"] {
+        let refused = world
+            .app
+            .control(Method::PUT, &path, Some(json!({"session_flags": [flag]})))
+            .await;
+        assert_eq!(
+            refused.code(),
+            "INVALID_REQUEST",
+            "{flag} must not be settable"
         );
     }
 }

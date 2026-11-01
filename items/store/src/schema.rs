@@ -98,6 +98,7 @@ diesel::table! {
         revoked_at -> Nullable<Timestamptz>,
         revoked_reason -> Nullable<Text>,
         break_glass -> Bool,
+        session_flags -> Array<Text>,
     }
 }
 

@@ -219,6 +219,8 @@ pub struct Credential {
     pub revoked_reason: Option<String>,
     /// A local operator credential for when every upstream is unavailable.
     pub break_glass: bool,
+    /// Restrictive session flags every session started with it carries.
+    pub session_flags: Vec<String>,
 }
 
 impl Credential {
@@ -247,6 +249,7 @@ struct Row {
     revoked_at: Option<DateTime<Utc>>,
     revoked_reason: Option<String>,
     break_glass: bool,
+    session_flags: Vec<String>,
 }
 
 impl TryFrom<Row> for Credential {
@@ -264,6 +267,7 @@ impl TryFrom<Row> for Credential {
             revoked_at: row.revoked_at,
             revoked_reason: row.revoked_reason,
             break_glass: row.break_glass,
+            session_flags: row.session_flags,
         })
     }
 }
@@ -449,6 +453,24 @@ pub async fn insert_if_absent(
         .await
         .map_err(StoreError::from_constraint)?;
     Ok(inserted > 0)
+}
+
+/// Sets the restrictive session flags every session started with the
+/// credential carries.
+// r[impl session.flags.credential]
+pub async fn set_session_flags(
+    conn: &mut AsyncPgConnection,
+    id: CredentialId,
+    flags: &[String],
+) -> StoreResult<()> {
+    let updated = diesel::update(credential::table.find(id.as_uuid()))
+        .set(credential::session_flags.eq(flags))
+        .execute(conn)
+        .await?;
+    if updated == 0 {
+        return Err(StoreError::NotFound);
+    }
+    Ok(())
 }
 
 /// Marks a credential as a break-glass credential, or not.
