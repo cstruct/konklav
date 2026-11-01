@@ -12,6 +12,7 @@ Library crate for Konklav authorization without I/O. It compiles role assignment
   - A deny only cancels allows at its own level.
   - Higher levels subsume lower ones.
 - `evaluate`: decides `Requirements` (token kinds, actions per level and scope, restrictive and assertive session flags, step-up) to `Allow`, `Deny { reason }` or `StepUp { requirement }`.
+  - Requirements at registered scopes are decided from `RegisteredScopes`, the records the caller resolved: in the scope's own tenant, from grants tenant-wide, at the scope or at any one of its containing scopes; from another tenant, only through shares of those. Unknown or removed scopes deny with `unknown_scope`.
 
 The server compiles; relying systems evaluate locally (M4) using the same `evaluate`, so local and central decisions agree.
 

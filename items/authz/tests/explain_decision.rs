@@ -7,7 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use konklav_authz::{
     Assignment, Catalog, Check, Decision, DecisionExplanation, Effect, ExplainInput, Level, Policy,
-    Reason, Requirements, Scope, ScopeRequirement, SessionContext, Share, StepUp, explain_decision,
+    Reason, RegisteredScopes, Requirements, Scope, ScopeRequirement, SessionContext, Share, StepUp,
+    explain_decision,
 };
 use konklav_core::{SessionId, ShareId, SubjectId, TenantId};
 use konklav_token::{AccessClaims, TokenKind};
@@ -69,6 +70,7 @@ fn explain(assignments: &[Assignment], requirements: &Requirements) -> DecisionE
             shares: &[],
             offered: &[],
             requirements,
+            registered: &RegisteredScopes::default(),
             tenant: Some(TenantId::new_v7()),
             session: None,
             now: NOW,
@@ -230,6 +232,7 @@ fn session_checks_explain_authentication() {
             shares: &[],
             offered: &[],
             requirements: &requirements,
+            registered: &RegisteredScopes::default(),
             tenant: Some(tenant),
             session: Some(SessionContext {
                 claims: &claims,
@@ -291,6 +294,7 @@ fn shares_explain_what_they_do_and_dont_grant() {
                 shares,
                 offered,
                 requirements: &requirements,
+                registered: &RegisteredScopes::default(),
                 tenant: Some(tenant),
                 session: None,
                 now: NOW,
@@ -427,6 +431,7 @@ fn explanations_agree_with_decisions() {
                     shares: &shares,
                     offered: &[],
                     requirements,
+                    registered: &RegisteredScopes::default(),
                     tenant: Some(tenant),
                     session: Some(SessionContext {
                         claims: &claims,

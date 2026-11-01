@@ -30,6 +30,14 @@ pub struct Config {
     /// invalidation becomes a rate-limited sweep.
     // r[impl relying.cache.wildcard-sweep]
     pub sweep_batch: usize,
+    /// The most registered scope records kept; the least recently used go
+    /// first.
+    // r[impl relying.cache.registered]
+    pub registered_capacity: usize,
+    /// How long a registered scope Konklav doesn't know is remembered as
+    /// unknown.
+    // r[impl relying.cache.registered-unknown]
+    pub unknown_scope_ttl_ms: u64,
 }
 
 impl Default for Config {
@@ -45,6 +53,8 @@ impl Default for Config {
             missed_heartbeats: 3,
             jwks_min_refresh_ms: 30 * 1000,
             sweep_batch: 50,
+            registered_capacity: 100_000,
+            unknown_scope_ttl_ms: 5 * 1000,
         }
     }
 }

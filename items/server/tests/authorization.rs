@@ -551,6 +551,7 @@ async fn local_evaluation_matches_the_check_api() {
             &claims,
             &restrictive,
             &entitlements,
+            &konklav_authz::RegisteredScopes::default(),
             chrono::Utc::now().timestamp(),
         );
         let mut central = check(&world, &token, requirements.clone()).await;

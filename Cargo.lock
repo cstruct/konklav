@@ -2672,6 +2672,7 @@ dependencies = [
  "konklav-store",
  "konklav-test-support",
  "konklav-token",
+ "percent-encoding",
  "reqwest 0.13.5",
  "serde",
  "serde_json",

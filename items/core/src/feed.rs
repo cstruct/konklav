@@ -47,6 +47,24 @@ pub struct SigningKeysChanged {
     pub kids: Vec<String>,
 }
 
+/// One registered scope in a `scope.changed` event.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangedScope {
+    pub kind: String,
+    pub id: String,
+    pub tenant: TenantId,
+    /// `active` or `removed`.
+    pub state: String,
+}
+
+/// `scope.changed`: the registered scopes one transaction recorded,
+/// changed or removed.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopeChanged {
+    #[serde(default)]
+    pub scopes: Vec<ChangedScope>,
+}
+
 /// A parsed feed event. Unknown kinds are kept as `Other`, so consumers
 /// tolerate kinds added later.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,6 +72,7 @@ pub enum FeedPayload {
     SessionChanged(SessionChanged),
     EntitlementsChanged(EntitlementsChanged),
     SigningKeysChanged(SigningKeysChanged),
+    ScopeChanged(ScopeChanged),
     Reset,
     Other,
 }
@@ -72,6 +91,7 @@ impl FeedEvent {
             "signing_keys.changed" => {
                 FeedPayload::SigningKeysChanged(serde_json::from_value(payload)?)
             }
+            "scope.changed" => FeedPayload::ScopeChanged(serde_json::from_value(payload)?),
             RESET => FeedPayload::Reset,
             _ => FeedPayload::Other,
         })

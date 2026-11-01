@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use konklav_authz::{
     Assignment, Catalog, Decision, DenyReason, Effect, Entitlements, Group, Level, Obligation,
-    Policy, Requirements, Scope, ScopeRequirement, Share, compile, evaluate, shared,
+    Policy, RegisteredScopes, Requirements, Scope, ScopeRequirement, Share, compile, evaluate,
+    shared,
 };
 use konklav_core::{SessionId, ShareId, SubjectId, TenantId};
 use konklav_token::{AccessClaims, TokenKind};
@@ -157,7 +158,14 @@ fn shared_scopes_are_decided_through_shares_with_obligations() {
     let the_share = share(owner, None, &["document:read"]);
     entitlements.shared = shared(&catalog(), &entitlements, std::slice::from_ref(&the_share));
     let decide = |requirements: &Requirements| {
-        evaluate(requirements, &claims, &BTreeSet::new(), &entitlements, NOW)
+        evaluate(
+            requirements,
+            &claims,
+            &BTreeSet::new(),
+            &entitlements,
+            &RegisteredScopes::default(),
+            NOW,
+        )
     };
 
     assert_eq!(
@@ -233,7 +241,14 @@ fn shares_grant_only_while_valid() {
             shared: shared(&catalog(), &base, &[the_share]),
             ..base.clone()
         };
-        let decision = evaluate(&requirements, &claims, &BTreeSet::new(), &entitlements, NOW);
+        let decision = evaluate(
+            &requirements,
+            &claims,
+            &BTreeSet::new(),
+            &entitlements,
+            &RegisteredScopes::default(),
+            NOW,
+        );
         assert_eq!(
             matches!(decision, Decision::Allow { .. }),
             allowed,

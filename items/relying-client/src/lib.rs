@@ -19,7 +19,7 @@ use futures_util::StreamExt;
 use konklav_authz::{Decision, EntitlementSet, Requirements};
 use konklav_core::Cursor;
 use konklav_core::feed::{FeedEvent, SessionChanged};
-use konklav_relying::{Config, Key, Need, Outcome, Relying};
+use konklav_relying::{Config, Key, Need, Outcome, Relying, ScopeRecord};
 use konklav_token::JwkSet;
 use serde::Deserialize;
 use tokio::sync::Notify;
@@ -45,6 +45,11 @@ pub enum Error {
     Status { status: u16, body: String },
     #[error("could not reach a decision")]
     Exhausted,
+}
+
+/// `value` as one percent-encoded URL path segment: scope ids are opaque.
+fn path_segment(value: &str) -> String {
+    percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC).to_string()
 }
 
 /// The current time in Unix milliseconds.
@@ -232,6 +237,20 @@ impl RelyingClient {
                     .json()
                     .await?;
                 self.core().on_entitlements(set, now());
+            }
+            Need::RegisteredScope { kind, id } => {
+                let path = format!(
+                    "/v1/registered-scopes/{}/{}",
+                    path_segment(kind),
+                    path_segment(id)
+                );
+                let response = self.get(&path).await?;
+                if response.status() == reqwest::StatusCode::NOT_FOUND {
+                    self.core().on_registered_scope_unknown(kind, id, now());
+                } else {
+                    let record: ScopeRecord = checked(response).await?.json().await?;
+                    self.core().on_registered_scope(record, now());
+                }
             }
             Need::Check => {}
         }

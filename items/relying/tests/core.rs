@@ -96,6 +96,7 @@ impl Fixture {
                 ..Entitlements::default()
             },
             restrictive_flags: BTreeSet::new(),
+            registered_kinds: BTreeSet::new(),
         }
     }
 
@@ -407,6 +408,7 @@ fn wildcard_invalidations_sweep_in_batches() {
             revision: Cursor::new(1),
             entitlements: Entitlements::default(),
             restrictive_flags: BTreeSet::new(),
+            registered_kinds: BTreeSet::new(),
         };
         core.on_entitlements(set, T0);
     }
@@ -559,4 +561,227 @@ fn shared_scopes_are_decided_locally_like_the_check_api() {
         panic!("decided from the cache");
     };
     assert!(matches!(decision, Decision::Deny { .. }), "{decision:?}");
+}
+
+/// Reading `document/{id}`, a registered scope.
+fn reading_document(id: &str) -> Requirements {
+    Requirements {
+        scopes: vec![konklav_authz::ScopeRequirement {
+            tenant: None,
+            kind: "document".into(),
+            id: id.into(),
+            actions: BTreeSet::from(["document:read".to_owned()]),
+        }],
+        ..Requirements::default()
+    }
+}
+
+fn document_need(id: &str) -> Need {
+    Need::RegisteredScope {
+        kind: "document".into(),
+        id: id.into(),
+    }
+}
+
+impl Fixture {
+    /// Warm caches where `document` is a registered kind and the subject
+    /// reads documents at project p-1.
+    fn warm_documents(&mut self, now: u64) {
+        self.warm_documents_at(1, now);
+    }
+
+    fn warm_documents_at(&mut self, revision: i64, now: u64) {
+        self.core.on_session(self.session_state(1, false));
+        let mut set = self.set(&[], revision);
+        set.registered_kinds = BTreeSet::from(["document".to_owned()]);
+        set.entitlements.scoped = BTreeMap::from([(
+            konklav_authz::Scope {
+                kind: "project".into(),
+                id: "p-1".into(),
+            },
+            BTreeSet::from(["document:read".to_owned()]),
+        )]);
+        self.core.on_entitlements(set, now);
+    }
+
+    fn record(&self, id: &str, project: &str, state: &str) -> konklav_relying::ScopeRecord {
+        serde_json::from_value(json!({
+            "kind": "document",
+            "id": id,
+            "tenant": self.tenant,
+            "containers": [{"kind": "project", "id": project}],
+            "state": state,
+            "created_at": "2026-11-01T00:00:00Z",
+        }))
+        .unwrap()
+    }
+
+    fn decide_document(&mut self, id: &str, now: u64) -> Outcome {
+        let token = self.token(1, now);
+        self.core.decide(&token, &reading_document(id), None, now)
+    }
+}
+
+// r[verify relying.cache.registered]
+#[test]
+fn registered_scopes_are_fetched_when_first_needed() {
+    let mut f = Fixture::new();
+    f.warm_documents(T0);
+    assert_eq!(
+        needs(&f.decide_document("d-1", T0)),
+        vec![document_need("d-1")]
+    );
+    f.core
+        .on_registered_scope(f.record("d-1", "p-1", "active"), T0);
+    assert_eq!(f.decide_document("d-1", T0), allowed());
+
+    f.core
+        .on_registered_scope(f.record("d-2", "p-2", "active"), T0);
+    assert!(matches!(
+        f.decide_document("d-2", T0),
+        Outcome::Decided {
+            decision: Decision::Deny {
+                reason: DenyReason::MissingActions { .. }
+            }
+        }
+    ));
+    f.core
+        .on_registered_scope(f.record("d-3", "p-1", "removed"), T0);
+    assert!(matches!(
+        f.decide_document("d-3", T0),
+        Outcome::Decided {
+            decision: Decision::Deny {
+                reason: DenyReason::UnknownScope { .. }
+            }
+        }
+    ));
+}
+
+// r[verify relying.cache.registered-unknown]
+#[test]
+fn unknown_scopes_are_remembered_briefly() {
+    let mut f = Fixture::new();
+    f.warm_documents(T0);
+    f.core.on_registered_scope_unknown("document", "d-9", T0);
+    let unknown = Outcome::Decided {
+        decision: Decision::Deny {
+            reason: DenyReason::UnknownScope {
+                kind: "document".into(),
+                id: "d-9".into(),
+            },
+        },
+    };
+    assert_eq!(f.decide_document("d-9", T0 + 4_000), unknown);
+    assert_eq!(
+        needs(&f.decide_document("d-9", T0 + 5_000)),
+        vec![document_need("d-9")],
+        "asked again once the window is over"
+    );
+
+    f.core
+        .on_registered_scope_unknown("document", "d-9", T0 + 5_000);
+    f.event(
+        2,
+        "scope.changed",
+        json!({"scopes": [{"kind": "document", "id": "d-9", "tenant": f.tenant, "state": "active"}]}),
+        T0 + 5_100,
+    );
+    assert_eq!(
+        needs(&f.decide_document("d-9", T0 + 5_100)),
+        vec![document_need("d-9")],
+        "an event naming it drops the entry at once"
+    );
+}
+
+// r[verify relying.cache.registered-debounce]
+// r[verify relying.feed.reset]
+#[test]
+fn moves_take_effect_within_the_debounce_window() {
+    let mut f = Fixture::new();
+    f.warm_documents(T0);
+    f.core
+        .on_registered_scope(f.record("d-1", "p-1", "active"), T0);
+    f.event(
+        2,
+        "scope.changed",
+        json!({"scopes": [{"kind": "document", "id": "d-1", "tenant": f.tenant, "state": "active"}]}),
+        T0 + 100,
+    );
+    assert_eq!(f.decide_document("d-1", T0 + 599), allowed());
+    assert_eq!(
+        needs(&f.decide_document("d-1", T0 + 600)),
+        vec![document_need("d-1")]
+    );
+    let work = f.core.poll_work(T0 + 600);
+    assert!(work.fetch.contains(&document_need("d-1")), "{work:?}");
+    f.core
+        .on_registered_scope(f.record("d-1", "p-2", "active"), T0 + 650);
+    assert!(matches!(
+        f.decide_document("d-1", T0 + 650),
+        Outcome::Decided {
+            decision: Decision::Deny { .. }
+        }
+    ));
+
+    f.event(3, "reset", json!({}), T0 + 700);
+    f.warm_documents_at(3, T0 + 700);
+    assert!(
+        needs(&f.decide_document("d-1", T0 + 1_200)).contains(&document_need("d-1")),
+        "a reset makes records stale too"
+    );
+}
+
+#[test]
+fn a_fetch_asked_for_before_an_event_stays_stale() {
+    let mut f = Fixture::new();
+    f.warm_documents(T0);
+    f.event(2, "entitlements.changed", json!({"subjects": []}), T0);
+    assert_eq!(
+        needs(&f.decide_document("d-1", T0)),
+        vec![document_need("d-1")]
+    );
+    // The event arrives while the fetch is under way.
+    f.core
+        .on_registered_scope(f.record("d-1", "p-1", "active"), T0);
+    f.event(
+        3,
+        "scope.changed",
+        json!({"scopes": [{"kind": "document", "id": "d-1", "tenant": f.tenant, "state": "removed"}]}),
+        T0,
+    );
+    f.core
+        .on_registered_scope(f.record("d-1", "p-1", "active"), T0 + 1);
+    assert!(
+        !f.core.await_cursor(Cursor::new(3)),
+        "the record may predate the event"
+    );
+}
+
+#[test]
+fn the_registered_cache_is_bounded() {
+    let mut f = Fixture::new();
+    f.core = Relying::new(Config {
+        registered_capacity: 2,
+        ..config()
+    });
+    f.core.on_feed_connected(T0);
+    f.core.on_jwks(
+        JwkSet {
+            keys: vec![Jwk::from_verifying_key(&f.signer.verifying_key())],
+        },
+        T0,
+    );
+    f.warm_documents(T0);
+    for (i, id) in ["d-1", "d-2", "d-3"].iter().enumerate() {
+        let now = T0 + i as u64;
+        f.decide_document(id, now);
+        f.core
+            .on_registered_scope(f.record(id, "p-1", "active"), now);
+    }
+    assert_eq!(
+        needs(&f.decide_document("d-1", T0 + 10)),
+        vec![document_need("d-1")],
+        "the least recently used record went first"
+    );
+    assert_eq!(f.decide_document("d-3", T0 + 10), allowed());
 }

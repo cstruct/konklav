@@ -14,6 +14,7 @@ The change feed MUST include at least these event kinds:
 - `entitlements.changed`
 - `tenant.changed`
 - `share.changed`
+- `scope.changed`
 - `signing_keys.changed`
 - `delivery.requested`
 

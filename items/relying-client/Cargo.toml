@@ -13,6 +13,7 @@ konklav-core.workspace = true
 konklav-relying.workspace = true
 konklav-token.workspace = true
 futures-util.workspace = true
+percent-encoding.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

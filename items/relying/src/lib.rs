@@ -20,5 +20,5 @@
 mod cache;
 mod config;
 
-pub use cache::{Key, Need, Outcome, Relying, RequestDescriptor, Verification, Work};
+pub use cache::{Key, Need, Outcome, Relying, RequestDescriptor, ScopeRecord, Verification, Work};
 pub use config::Config;

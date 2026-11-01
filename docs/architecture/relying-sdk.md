@@ -15,6 +15,7 @@ The core is a state machine. Its inputs are:
 - `now(t)`
 - `jwks(doc)`
 - `entitlements(key, set | error)`
+- `registered_scope(record | unknown | error)`
 - `event(e)`
 - `feed_connected()` and `feed_lost()`
 - `check_result(id, decision)`
@@ -22,7 +23,7 @@ The core is a state machine. Its inputs are:
 Its outputs are queries:
 
 - `decide(token, requirements, now) -> Decision | NeedsCheck(request)`
-- `poll_work(now) -> [Fetch(key) | RefreshJwks | Reconnect]` together with
+- `poll_work(now) -> [Fetch(key) | FetchScope(kind, id) | RefreshJwks | Reconnect]` together with
   `next_wakeup`
 - `await_cursor(c) -> Ready | Pending`
 
