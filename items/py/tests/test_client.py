@@ -37,7 +37,7 @@ def test_falls_back_to_check_then_decides_locally_and_follows_the_feed() -> None
         fake = FakeKonklav(keys, subject, tenant, session)
         client = client_for(fake)
         token = keys.token(subject=subject, session=session, tenant=tenant)
-        requirements = {"tenant": ["workspace:read"]}
+        requirements = {"tenant": ["project:read"]}
 
         # Before the feed is up, the check API answers.
         assert await client.decide(token, requirements) == {"decision": "allow"}
@@ -56,7 +56,7 @@ def test_falls_back_to_check_then_decides_locally_and_follows_the_feed() -> None
             cursor = fake.push("entitlements.changed", {"subjects": [subject]})
             assert await client.await_cursor(cursor)
             decision = await client.decide(token, requirements)
-            assert decision["reason"] == {"missing_actions": {"actions": ["workspace:read"]}}
+            assert decision["reason"] == {"missing_actions": {"actions": ["project:read"]}}
 
             # So does a revocation, without any debounce.
             fake.session_revoked = True
@@ -103,7 +103,7 @@ def test_verifies_tokens_and_reads_entitlements() -> None:
             stranger = Keys().token(subject=subject, session=session, tenant=tenant)
             assert await client.verify(stranger) is None
             entitlements = await client.entitlements(subject, tenant)
-            assert entitlements["tenant"] == ["workspace:read"]
+            assert entitlements["tenant"] == ["project:read"]
         finally:
             await client.stop()
 

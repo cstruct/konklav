@@ -17,7 +17,7 @@ client = RelyingClient(
     audience="api",
 )
 await client.start()
-decision = await client.decide(token, {"tenant": ["workspace:read"]})
+decision = await client.decide(token, {"tenant": ["project:read"]})
 if decision["decision"] != "allow":
     ...
 ```

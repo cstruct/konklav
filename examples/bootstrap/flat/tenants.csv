@@ -1,3 +1,3 @@
 id,parent,templates,fact.seats
-org-1,root,clinician,10
-org-2,org-1,clinician,
+org-1,root,reader,10
+org-2,org-1,reader,

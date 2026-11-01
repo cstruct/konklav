@@ -16,9 +16,9 @@ use serde_json::json;
 fn document() -> CatalogDocument {
     CatalogDocument {
         actions: [
-            "workspace:read",
-            "workspace:write",
-            "patient:read",
+            "project:read",
+            "document:write",
+            "document:read",
             "me",
             "sys:user:list",
         ]
@@ -34,7 +34,7 @@ fn document() -> CatalogDocument {
             definition: Group::AllExceptPrefixes(vec!["sys:".into()]),
         }],
         scope_kinds: vec![ScopeKindEntry {
-            name: "workspace".into(),
+            name: "project".into(),
             description: String::new(),
         }],
         ..CatalogDocument::default()
@@ -212,13 +212,13 @@ async fn catalog_entries_in_use_cannot_be_removed() {
         "reader",
         "",
         &json!({}),
-        &[allow("workspace:read", false)],
+        &[allow("project:read", false)],
     )
     .await
     .unwrap();
 
     let mut without_read = document();
-    without_read.actions.retain(|a| a.name != "workspace:read");
+    without_read.actions.retain(|a| a.name != "project:read");
     assert!(matches!(
         catalog::replace(&mut conn, &without_read).await,
         Err(StoreError::Conflict(_))
@@ -255,19 +255,19 @@ async fn compile_input_covers_active_global_and_tenant_assignments() {
 
     templates::put(
         &mut conn,
-        "clinician",
+        "reader",
         "",
         &json!({}),
-        &[allow("workspace:read", false), allow("patient:read", true)],
+        &[allow("project:read", false), allow("document:read", true)],
     )
     .await
     .unwrap();
-    let clinician = roles::put(
+    let reader = roles::put(
         &mut conn,
         tenant,
-        "clinician",
+        "reader",
         &RoleDefinition {
-            template: Some("clinician".into()),
+            template: Some("reader".into()),
             ..RoleDefinition::default()
         },
     )
@@ -284,15 +284,15 @@ async fn compile_input_covers_active_global_and_tenant_assignments() {
     )
     .await
     .unwrap();
-    let w1 = Scope {
-        kind: "workspace".into(),
-        id: "w1".into(),
+    let p1 = Scope {
+        kind: "project".into(),
+        id: "p1".into(),
     };
     roles::assign(
         &mut conn,
-        clinician.id,
+        reader.id,
         AssignmentTarget::Membership(membership),
-        Some(&w1),
+        Some(&p1),
     )
     .await
     .unwrap();
@@ -311,13 +311,10 @@ async fn compile_input_covers_active_global_and_tenant_assignments() {
     assert_eq!(input.revision, events::head(&mut conn).await.unwrap());
     let compiled = compile(&input.catalog, &input.assignments);
     assert_eq!(compiled.global, BTreeSet::from(["me".to_owned()]));
+    assert_eq!(compiled.tenant, BTreeSet::from(["project:read".to_owned()]));
     assert_eq!(
-        compiled.tenant,
-        BTreeSet::from(["workspace:read".to_owned()])
-    );
-    assert_eq!(
-        compiled.scoped.get(&w1),
-        Some(&BTreeSet::from(["patient:read".to_owned()]))
+        compiled.scoped.get(&p1),
+        Some(&BTreeSet::from(["document:read".to_owned()]))
     );
 
     // Without a tenant only global roles count.

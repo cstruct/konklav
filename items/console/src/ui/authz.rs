@@ -84,7 +84,7 @@ fn Catalog() -> impl IntoView {
 const TEMPLATE_EXAMPLE: &str = r#"{
   "description": "",
   "metadata": {},
-  "policies": [{"action": "workspace:read", "effect": "allow", "scope_bound": false}]
+  "policies": [{"action": "project:read", "effect": "allow", "scope_bound": false}]
 }"#;
 
 #[component]
@@ -142,7 +142,7 @@ fn Templates() -> impl IntoView {
         })}
         <form class="card" on:submit=save>
             <p class="muted">"Saving a key that exists replaces that template."</p>
-            <Field label="Key" value=key placeholder="clinician"/>
+            <Field label="Key" value=key placeholder="reader"/>
             <JsonField label="Template" value=body rows=8/>
             <Problem error/>
             <button type="submit">"Save template"</button>
@@ -154,7 +154,7 @@ const ROLE_EXAMPLE: &str = r#"{
   "template": null,
   "priority": 0,
   "metadata": {},
-  "policies": [{"action": "workspace:read", "effect": "allow", "scope_bound": false}]
+  "policies": [{"action": "project:read", "effect": "allow", "scope_bound": false}]
 }"#;
 
 /// `action (effect)` for each policy.
@@ -473,7 +473,7 @@ pub fn Explain(subject: Signal<String>) -> impl IntoView {
         </form>
         {loaded(entitlements, |entitlements: Entitlements| view! { <EntitlementView entitlements/> })}
         <form class="filters" on:submit=explain>
-            <Field label="Action" value=action placeholder="workspace:read"/>
+            <Field label="Action" value=action placeholder="project:read"/>
             <button type="submit">"Explain"</button>
         </form>
         {loaded(explanation, |explanation: Option<Explanation>| explanation.map(|explanation| view! { <ExplanationView explanation/> }))}
@@ -545,12 +545,12 @@ mod tests {
     #[test]
     fn policies_summarise_as_actions_with_denies_marked() {
         let policies = json!([
-            {"action": "workspace:read", "effect": "allow"},
-            {"action": "workspace:delete", "effect": "deny"},
+            {"action": "project:read", "effect": "allow"},
+            {"action": "document:delete", "effect": "deny"},
         ]);
         assert_eq!(
             policy_summary(&policies),
-            "workspace:read, deny workspace:delete"
+            "project:read, deny document:delete"
         );
         assert_eq!(policy_summary(&json!(null)), "");
     }
@@ -566,10 +566,10 @@ mod tests {
         assignment.target.kind = "membership".into();
         assert_eq!(scope_label(&assignment), "tenant-wide");
         assignment.scope = Some(crate::api::types::Scope {
-            kind: "workspace".into(),
-            id: "w1".into(),
+            kind: "project".into(),
+            id: "p1".into(),
         });
-        assert_eq!(scope_label(&assignment), "workspace/w1");
+        assert_eq!(scope_label(&assignment), "project/p1");
     }
 
     #[test]

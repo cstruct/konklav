@@ -145,7 +145,7 @@ async fn world() -> World {
         .control(
             Method::PUT,
             "/v1/catalog",
-            json!({"actions": [{"name": "workspace:read"}], "scope_kinds": [{"name": "workspace"}]}),
+            json!({"actions": [{"name": "project:read"}], "scope_kinds": [{"name": "project"}]}),
         )
         .await;
     let tenant = uuid::Uuid::now_v7();
@@ -156,7 +156,7 @@ async fn world() -> World {
         .control(
             Method::PUT,
             &format!("/v1/tenants/{tenant}/roles/reader"),
-            json!({"policies": [{"action": "workspace:read", "effect": "allow"}]}),
+            json!({"policies": [{"action": "project:read", "effect": "allow"}]}),
         )
         .await;
 
@@ -251,7 +251,7 @@ async fn world() -> World {
 
 fn reading() -> Requirements {
     Requirements {
-        tenant: BTreeSet::from(["workspace:read".to_owned()]),
+        tenant: BTreeSet::from(["project:read".to_owned()]),
         ..Requirements::default()
     }
 }
@@ -281,7 +281,7 @@ async fn decides_before_and_after_the_feed_connects() {
         Decision::Allow
     );
     let more = Requirements {
-        tenant: BTreeSet::from(["workspace:write".to_owned()]),
+        tenant: BTreeSet::from(["document:write".to_owned()]),
         ..Requirements::default()
     };
     assert!(matches!(

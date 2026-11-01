@@ -263,13 +263,13 @@ async fn every_problem_with_the_records_is_reported() {
             ),
             (
                 "assignments.csv",
-                "m-4712,,clinician,,",
+                "m-4712,,reader,,",
                 "m-4712,,nonexistent,,",
             ),
             (
                 "tenants.csv",
-                "org-1,root,clinician,10",
-                "org-1,root,clinician,ten",
+                "org-1,root,reader,10",
+                "org-1,root,reader,ten",
             ),
         ],
     );

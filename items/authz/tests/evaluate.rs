@@ -44,10 +44,10 @@ fn entitlements() -> Entitlements {
         tenant: set(&["role:list"]),
         scoped: BTreeMap::from([(
             Scope {
-                kind: "workspace".into(),
-                id: "w1".into(),
+                kind: "project".into(),
+                id: "p1".into(),
             },
-            set(&["patient:read"]),
+            set(&["document:read"]),
         )]),
     }
 }
@@ -69,14 +69,14 @@ fn denied(reason: DenyReason) -> Decision {
 fn checks_actions_at_each_level() {
     let token = tenant_token();
     let scope = |actions: &[&str]| ScopeRequirement {
-        kind: "workspace".into(),
-        id: "w1".into(),
+        kind: "project".into(),
+        id: "p1".into(),
         actions: set(actions),
     };
     let allowed = Requirements {
         global: set(&["me"]),
         tenant: set(&["role:list", "me"]),
-        scopes: vec![scope(&["patient:read", "role:list", "me"])],
+        scopes: vec![scope(&["document:read", "role:list", "me"])],
         ..Default::default()
     };
     assert_eq!(decide(&allowed, &token), Decision::Allow);
@@ -92,7 +92,7 @@ fn checks_actions_at_each_level() {
         })
     );
     let scoped_action_tenant_wide = Requirements {
-        tenant: set(&["patient:read"]),
+        tenant: set(&["document:read"]),
         ..Default::default()
     };
     assert!(matches!(
@@ -101,9 +101,9 @@ fn checks_actions_at_each_level() {
     ));
     let other_scope = Requirements {
         scopes: vec![ScopeRequirement {
-            kind: "workspace".into(),
-            id: "w2".into(),
-            actions: set(&["patient:read"]),
+            kind: "project".into(),
+            id: "p2".into(),
+            actions: set(&["document:read"]),
         }],
         ..Default::default()
     };

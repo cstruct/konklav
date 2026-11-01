@@ -89,7 +89,7 @@ Terms are introduced in dependency order: each definition only uses terms define
   - Every catalog change produces a new `revision` (see Change feed).
 
 - `action`
-  - A named permission that can be granted, such as `workspace:read` or `report:export`.
+  - A named permission that can be granted, such as `document:read` or `report:export`.
   - Action names are colon-delimited hierarchical names.
   - The `konklav:` namespace is reserved for `control-plane capabilities` (see Authorization) and cannot be authored.
   - Konklav never interprets what an action means. It only records who holds it, and where.
@@ -101,11 +101,11 @@ Terms are introduced in dependency order: each definition only uses terms define
   - Example: `tenant:all` expanding to every tenant-level action.
 
 - `scope kind`
-  - A catalog-declared type of resource inside a tenant, such as `workspace`, `project`, or `clinic`.
+  - A catalog-declared type of resource inside a tenant, such as `project`, `folder`, or `site`.
 
 - `scope`
   - A specific resource inside a tenant, written as a `(scope kind, scope id)` pair.
-  - Example: `(workspace, 0193a2f1-…)`.
+  - Example: `(project, 0193a2f1-…)`.
   - Konklav treats scope ids as opaque. It doesn't know whether the resource exists or what it contains, so a relying system resolves its own resources into scopes before asking for a decision.
 
 - `fact`
@@ -246,7 +246,7 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `template`
   - A reusable blueprint of policies that roles can be derived from.
   - Templates cannot be assigned to anyone directly.
-  - Example: a `clinician` template that every new tenant gets a role from.
+  - Example: a `reader` template that every new tenant gets a role from.
 
 - `role`
   - A named, assignable set of policies that belongs to exactly one tenant.
@@ -475,7 +475,7 @@ Terms are introduced in dependency order: each definition only uses terms define
 - Prefer `subject` over `user` unless the text is specifically about a human person or tenant-member experience.
 - Prefer `tenant member`, `operator`, or `service principal` when one of those is the precise actor.
 - Prefer `relying system` over vague phrases like `using system` or `target system`.
-- Specs and architecture notes MUST NOT name a specific relying system. Use generic scope kinds such as `workspace`, `project`, or `clinic` in examples.
+- Specs and architecture notes MUST NOT name a specific relying system. Use generic scope kinds such as `project`, `folder`, or `site`, and actions such as `document:read`, in examples. Avoid names that suggest a particular kind of relying system.
 - Say `access token` or `refresh token` rather than bare `token` in normative text.
 - Say `role assignment` when talking about granting access, and `role` only for the definition.
 - Say `entitlement set` for compiled results, and avoid `permissions` for them, since that word blurs actions, policies, and entitlements.

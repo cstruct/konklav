@@ -31,20 +31,20 @@ Out of scope: anything that needs the database, such as finding natural keys, co
 id_namespace 3f1c9a52-6a1e-4d0b-9a0e-6c1d8f0b2e11   // needed for external ids and tenant keys
 catalog_file "catalog.json"                         // relative to this file
 
-templates ({key clinician, policies ({action workspace:read})})
+templates ({key reader, policies ({action project:read})})
 global_roles ({key support, policies ({action konklav:subject:impersonate})})
 
 tenants ({
     key acme                        // or `id`; a top-level tenant may name a `parent`
     facts {seats 25}
-    templates (clinician)           // roles to derive when the tenant is created
-    roles ({key editor, policies ({action workspace:write, scope_bound true})})
+    templates (reader)           // roles to derive when the tenant is created
+    roles ({key editor, policies ({action document:write, scope_bound true})})
     children ({key acme-north})
     members ({
         email ada@acme.example      // with password_hash, password or email_link true
         password_hash "$argon2id$…"
-        roles (clinician)
-        scoped_roles ({role editor, scope_kind workspace, scope_id w-1})
+        roles (reader)
+        scoped_roles ({role editor, scope_kind project, scope_id p-1})
         facts {member_type professional}
     })
 })

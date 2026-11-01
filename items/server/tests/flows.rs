@@ -532,7 +532,7 @@ async fn invites_create_accounts_with_memberships() {
     app.control(
         Method::PUT,
         "/v1/catalog",
-        Some(json!({"actions": [{"name": "workspace:read"}]})),
+        Some(json!({"actions": [{"name": "project:read"}]})),
     )
     .await;
     let tenant = uuid::Uuid::now_v7();
@@ -545,7 +545,7 @@ async fn invites_create_accounts_with_memberships() {
     app.control(
         Method::PUT,
         &format!("/v1/tenants/{tenant}/roles/reader"),
-        Some(json!({"policies": [{"action": "workspace:read", "effect": "allow"}]})),
+        Some(json!({"policies": [{"action": "project:read", "effect": "allow"}]})),
     )
     .await;
     let invite = app
@@ -595,7 +595,7 @@ async fn invites_create_accounts_with_memberships() {
             None,
         )
         .await;
-    assert_eq!(entitlements.body["tenant"], json!(["workspace:read"]));
+    assert_eq!(entitlements.body["tenant"], json!(["project:read"]));
     assert_eq!(
         app.login("new@example.com", "my new password").await.status,
         StatusCode::OK

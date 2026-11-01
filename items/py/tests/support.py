@@ -66,7 +66,7 @@ class FakeKonklav:
         self.subject = subject
         self.tenant = tenant
         self.session = session
-        self.actions = ["workspace:read"]
+        self.actions = ["project:read"]
         self.revision = 1
         self.session_version = 1
         self.session_revoked = False

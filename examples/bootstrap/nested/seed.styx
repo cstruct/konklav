@@ -5,9 +5,9 @@ id_namespace 3f1c9a52-6a1e-4d0b-9a0e-6c1d8f0b2e11
 catalog_file "../catalog.json"
 
 templates ({
-    key clinician
-    description "Reads workspaces"
-    policies ({action workspace:read})
+    key reader
+    description "Reads projects"
+    policies ({action project:read})
 })
 
 global_roles ({key support, policies ({action konklav:subject:impersonate})})
@@ -15,21 +15,21 @@ global_roles ({key support, policies ({action konklav:subject:impersonate})})
 tenants ({
     key acme
     facts {seats 25}
-    templates (clinician)
-    roles ({key editor, policies ({action workspace:write, scope_bound true})})
+    templates (reader)
+    roles ({key editor, policies ({action document:write, scope_bound true})})
     children ({key acme-north})
     members (
         {
             email ada@acme.example
             password_hash "$argon2id$v=19$m=65536,t=3,p=4$8+FttqUgBxV0WJVJEoSFig$sTbjdRtZ6f7ZyvBNPA+oh9ju0QJs7jIKIFEyit//6T0"
-            roles (clinician)
-            scoped_roles ({role editor, scope_kind workspace, scope_id w-1})
+            roles (reader)
+            scoped_roles ({role editor, scope_kind project, scope_id p-1})
             facts {member_type professional}
         }
         {
             email bo@acme.example
             email_link true
-            roles (clinician)
+            roles (reader)
         }
     )
 })

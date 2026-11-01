@@ -99,10 +99,10 @@ impl Fixture {
         }
     }
 
-    /// Warms the caches: a version-1 session and `workspace:read`.
+    /// Warms the caches: a version-1 session and `project:read`.
     fn warm(&mut self, now: u64) {
         self.core.on_session(self.session_state(1, false));
-        let set = self.set(&["workspace:read"], 1);
+        let set = self.set(&["project:read"], 1);
         self.core.on_entitlements(set, now);
     }
 
@@ -123,7 +123,7 @@ impl Fixture {
 
 fn reading() -> Requirements {
     Requirements {
-        tenant: BTreeSet::from(["workspace:read".to_owned()]),
+        tenant: BTreeSet::from(["project:read".to_owned()]),
         ..Requirements::default()
     }
 }
@@ -258,7 +258,7 @@ fn invalidated_entries_are_usable_only_within_the_debounce_window() {
 
     // A set compiled before the invalidation doesn't clear it.
     f.core
-        .on_entitlements(f.set(&["workspace:read"], 19), T0 + 650);
+        .on_entitlements(f.set(&["project:read"], 19), T0 + 650);
     assert_eq!(
         needs(&f.decide(1, T0 + 651)),
         vec![Need::Entitlements { key: f.key() }]
@@ -269,7 +269,7 @@ fn invalidated_entries_are_usable_only_within_the_debounce_window() {
         Outcome::Decided {
             decision: Decision::Deny {
                 reason: DenyReason::MissingActions {
-                    actions: BTreeSet::from(["workspace:read".to_owned()])
+                    actions: BTreeSet::from(["project:read".to_owned()])
                 }
             }
         }
@@ -388,8 +388,7 @@ fn awaiting_a_cursor_forces_a_synchronous_refresh() {
         vec![Need::Entitlements { key: f.key() }],
         "due at once"
     );
-    f.core
-        .on_entitlements(f.set(&["workspace:read"], 50), T0 + 3);
+    f.core.on_entitlements(f.set(&["project:read"], 50), T0 + 3);
     assert!(f.core.await_cursor(Cursor::new(50)));
 }
 
@@ -495,7 +494,7 @@ fn serves_cached_entitlement_sets() {
     );
     f.warm(T0);
     let set = f.core.entitlements(f.key(), T0).unwrap();
-    assert!(set.entitlements.tenant.contains("workspace:read"));
+    assert!(set.entitlements.tenant.contains("project:read"));
     f.core.on_feed_lost();
     assert_eq!(f.core.entitlements(f.key(), T0), Err(vec![Need::Check]));
 }

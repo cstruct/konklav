@@ -529,12 +529,12 @@ mod tests {
 
     #[test]
     fn membership_assignments_are_scoped_only_with_kind_and_id() {
-        let tenant_wide = assign_membership_role("m1", "editor", "workspace", "");
+        let tenant_wide = assign_membership_role("m1", "editor", "project", "");
         assert_eq!(tenant_wide.body.unwrap()["scope"], Value::Null);
-        let scoped = assign_membership_role("m1", "editor", "workspace", "w1");
+        let scoped = assign_membership_role("m1", "editor", "project", "p1");
         assert_eq!(
             scoped.body.unwrap()["scope"],
-            json!({"kind": "workspace", "id": "w1"})
+            json!({"kind": "project", "id": "p1"})
         );
     }
 

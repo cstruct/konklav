@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn unrelated_actions_grant_nothing() {
-        let grants = Grants::held(["konklav:import".to_owned(), "workspace:read".to_owned()]);
+        let grants = Grants::held(["konklav:import".to_owned(), "project:read".to_owned()]);
         assert!(Capability::ALL.iter().all(|c| !grants.allows(*c)));
     }
 }

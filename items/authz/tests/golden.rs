@@ -10,9 +10,9 @@ use konklav_authz::{
 
 fn catalog() -> Catalog {
     let actions = [
-        "workspace:read",
-        "workspace:write",
-        "patient:read",
+        "project:read",
+        "document:write",
+        "document:read",
         "role:list",
         "me",
         "sys:tenant:create",
@@ -51,9 +51,9 @@ fn scoped(mut policy: Policy) -> Policy {
     policy
 }
 
-fn workspace(id: &str) -> Scope {
+fn project(id: &str) -> Scope {
     Scope {
-        kind: "workspace".into(),
+        kind: "project".into(),
         id: id.into(),
     }
 }
@@ -82,12 +82,12 @@ fn at_equal_priority_deny_wins() {
             role(
                 Level::Global,
                 0,
-                vec![allow("workspace:read"), allow("workspace:write")],
+                vec![allow("project:read"), allow("document:write")],
             ),
-            role(Level::Global, 0, vec![deny("workspace:write")]),
+            role(Level::Global, 0, vec![deny("document:write")]),
         ],
     );
-    assert_eq!(compiled.global, set(&["workspace:read"]));
+    assert_eq!(compiled.global, set(&["project:read"]));
 }
 
 #[test]
@@ -95,11 +95,11 @@ fn a_higher_priority_allow_beats_a_lower_priority_deny() {
     let compiled = compile(
         &catalog(),
         &[
-            role(Level::Tenant, 1, vec![deny("workspace:write")]),
-            role(Level::Tenant, 10, vec![allow("workspace:write")]),
+            role(Level::Tenant, 1, vec![deny("document:write")]),
+            role(Level::Tenant, 10, vec![allow("document:write")]),
         ],
     );
-    assert_eq!(compiled.tenant, set(&["workspace:write"]));
+    assert_eq!(compiled.tenant, set(&["document:write"]));
 }
 
 #[test]
@@ -107,35 +107,35 @@ fn a_higher_priority_deny_beats_a_lower_priority_allow() {
     let compiled = compile(
         &catalog(),
         &[
-            role(Level::Tenant, 10, vec![deny("workspace:write")]),
+            role(Level::Tenant, 10, vec![deny("document:write")]),
             role(
                 Level::Tenant,
                 1,
-                vec![allow("workspace:write"), allow("workspace:read")],
+                vec![allow("document:write"), allow("project:read")],
             ),
         ],
     );
-    assert_eq!(compiled.tenant, set(&["workspace:read"]));
+    assert_eq!(compiled.tenant, set(&["project:read"]));
 }
 
 // r[verify authz.compile.allows-only]
 // r[verify authz.compile.deny-level]
 #[test]
 fn denies_only_cancel_allows_at_their_own_level() {
-    let w1 = workspace("w1");
+    let p1 = project("p1");
     let compiled = compile(
         &catalog(),
         &[
-            role(Level::Global, 0, vec![deny("workspace:read")]),
+            role(Level::Global, 0, vec![deny("project:read")]),
             role(
                 Level::Tenant,
                 5,
-                vec![allow("workspace:read"), deny("workspace:write")],
+                vec![allow("project:read"), deny("document:write")],
             ),
             role(
-                Level::Scope(w1.clone()),
+                Level::Scope(p1.clone()),
                 1,
-                vec![scoped(allow("workspace:write"))],
+                vec![scoped(allow("document:write"))],
             ),
         ],
     );
@@ -146,12 +146,12 @@ fn denies_only_cancel_allows_at_their_own_level() {
     );
     assert_eq!(
         compiled.tenant,
-        set(&["workspace:read"]),
+        set(&["project:read"]),
         "a global deny doesn't reach the tenant level"
     );
     assert_eq!(
-        compiled.scoped.get(&w1),
-        Some(&set(&["workspace:write"])),
+        compiled.scoped.get(&p1),
+        Some(&set(&["document:write"])),
         "a tenant-wide deny doesn't reach a scope"
     );
 }
@@ -159,48 +159,48 @@ fn denies_only_cancel_allows_at_their_own_level() {
 // r[verify authz.policy.scope-bound]
 #[test]
 fn only_scope_bound_policies_stay_at_the_scope() {
-    let w1 = workspace("w1");
+    let p1 = project("p1");
     let compiled = compile(
         &catalog(),
         &[role(
-            Level::Scope(w1.clone()),
+            Level::Scope(p1.clone()),
             0,
-            vec![scoped(allow("patient:read")), allow("role:list")],
+            vec![scoped(allow("document:read")), allow("role:list")],
         )],
     );
     assert_eq!(compiled.tenant, set(&["role:list"]));
-    assert_eq!(compiled.scoped.get(&w1), Some(&set(&["patient:read"])));
+    assert_eq!(compiled.scoped.get(&p1), Some(&set(&["document:read"])));
 }
 
 #[test]
 fn scope_bound_policies_of_tenant_wide_assignments_apply_tenant_wide() {
     let compiled = compile(
         &catalog(),
-        &[role(Level::Tenant, 0, vec![scoped(allow("patient:read"))])],
+        &[role(Level::Tenant, 0, vec![scoped(allow("document:read"))])],
     );
-    assert_eq!(compiled.tenant, set(&["patient:read"]));
+    assert_eq!(compiled.tenant, set(&["document:read"]));
 }
 
 // r[verify authz.compile.subsumption]
 #[test]
 fn higher_levels_subsume_lower_ones() {
-    let w1 = workspace("w1");
+    let p1 = project("p1");
     let compiled = compile(
         &catalog(),
         &[
             role(Level::Global, 0, vec![allow("me")]),
-            role(Level::Tenant, 0, vec![allow("me"), allow("workspace:read")]),
+            role(Level::Tenant, 0, vec![allow("me"), allow("project:read")]),
             role(
-                Level::Scope(w1.clone()),
+                Level::Scope(p1.clone()),
                 0,
-                vec![scoped(allow("workspace:read")), scoped(allow("me"))],
+                vec![scoped(allow("project:read")), scoped(allow("me"))],
             ),
         ],
     );
     assert_eq!(compiled.global, set(&["me"]));
-    assert_eq!(compiled.tenant, set(&["workspace:read"]));
+    assert_eq!(compiled.tenant, set(&["project:read"]));
     assert!(
-        !compiled.scoped.contains_key(&w1),
+        !compiled.scoped.contains_key(&p1),
         "nothing left at the scope"
     );
 }
@@ -212,12 +212,12 @@ fn role_policies_replace_template_policies_for_the_same_action() {
         label: String::new(),
         level: Level::Tenant,
         priority: 0,
-        template_policies: vec![allow("workspace:read"), allow("workspace:write")],
-        role_policies: vec![deny("workspace:write")],
+        template_policies: vec![allow("project:read"), allow("document:write")],
+        role_policies: vec![deny("document:write")],
     };
     assert_eq!(
         compile(&catalog(), &[assignment]).tenant,
-        set(&["workspace:read"])
+        set(&["project:read"])
     );
 }
 
@@ -230,11 +230,11 @@ fn overrides_match_the_unexpanded_name() {
         level: Level::Tenant,
         priority: 0,
         template_policies: vec![allow("tenant:all")],
-        role_policies: vec![deny("patient:read")],
+        role_policies: vec![deny("document:read")],
     };
     let tenant = compile(&catalog(), &[assignment]).tenant;
-    assert!(tenant.contains("workspace:read"));
-    assert!(!tenant.contains("patient:read"));
+    assert!(tenant.contains("project:read"));
+    assert!(!tenant.contains("document:read"));
 }
 
 // r[verify authz.catalog.groups]
@@ -263,7 +263,7 @@ fn groups_expand_to_their_members_and_their_own_name() {
         &catalog(),
         &[role(Level::Tenant, 0, vec![allow("tenant:all")])],
     );
-    assert!(tenant_only.tenant.contains("workspace:write"));
+    assert!(tenant_only.tenant.contains("document:write"));
     assert!(tenant_only.tenant.contains("tenant:all"));
     assert!(!tenant_only.tenant.iter().any(|a| a.starts_with("sys:")));
 }
@@ -278,13 +278,13 @@ fn entitlements_round_trip_through_json() {
     let compiled = compile(
         &catalog(),
         &[role(
-            Level::Scope(workspace("w1")),
+            Level::Scope(project("p1")),
             0,
-            vec![scoped(allow("patient:read"))],
+            vec![scoped(allow("document:read"))],
         )],
     );
     let json = serde_json_like(&compiled);
-    assert!(json.contains("\"kind\":\"workspace\""), "{json}");
+    assert!(json.contains("\"kind\":\"project\""), "{json}");
 }
 
 fn serde_json_like(entitlements: &Entitlements) -> String {
@@ -295,23 +295,23 @@ fn serde_json_like(entitlements: &Entitlements) -> String {
 #[test]
 fn explanations_name_every_contributing_policy() {
     use konklav_authz::explain;
-    let w1 = workspace("w1");
+    let p1 = project("p1");
     let assignments = [
         role(Level::Tenant, 1, vec![allow("tenant:all")]),
-        role(Level::Tenant, 5, vec![deny("patient:read")]),
-        role(Level::Scope(w1), 0, vec![scoped(allow("patient:read"))]),
+        role(Level::Tenant, 5, vec![deny("document:read")]),
+        role(Level::Scope(p1), 0, vec![scoped(allow("document:read"))]),
     ];
-    let explanation = explain(&catalog(), &assignments, "patient:read");
+    let explanation = explain(&catalog(), &assignments, "document:read");
     assert_eq!(explanation.contributions.len(), 3);
     assert_eq!(
         explanation.contributions[0].policy, "tenant:all",
         "named as written"
     );
     assert_eq!(explanation.contributions[1].effect, Effect::Deny);
-    assert_eq!(explanation.contributions[2].level, "workspace/w1");
+    assert_eq!(explanation.contributions[2].level, "project/p1");
     assert_eq!(
         explanation.granted_at,
-        vec!["workspace/w1"],
+        vec!["project/p1"],
         "the tenant-wide deny wins tenant-wide only"
     );
 }

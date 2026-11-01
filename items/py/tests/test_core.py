@@ -26,7 +26,7 @@ def warm_core(keys: Keys, subject: str, tenant: str, session: str) -> Core:
                 "tenant_id": tenant,
                 "revision": 1,
                 "global": [],
-                "tenant": ["workspace:read"],
+                "tenant": ["project:read"],
                 "scoped": [],
                 "restrictive_flags": ["personal_only"],
             }
@@ -45,13 +45,13 @@ def test_decides_locally_and_applies_revocations_immediately() -> None:
     subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
     core = warm_core(keys, subject, tenant, session)
     token = keys.token(subject=subject, session=session, tenant=tenant)
-    assert decide(core, token, {"tenant": ["workspace:read"]}) == {"outcome": "decided", "decision": {"decision": "allow"}}
-    missing = decide(core, token, {"tenant": ["workspace:write"]})
-    assert missing["decision"]["reason"] == {"missing_actions": {"actions": ["workspace:write"]}}
+    assert decide(core, token, {"tenant": ["project:read"]}) == {"outcome": "decided", "decision": {"decision": "allow"}}
+    missing = decide(core, token, {"tenant": ["document:write"]})
+    assert missing["decision"]["reason"] == {"missing_actions": {"actions": ["document:write"]}}
 
     revoked = {"session": session, "subject": subject, "version": 2, "revoked": True, "expires_at": int(time.time()) + 3600}
     core.on_feed_event(json.dumps({"cursor": 5, "kind": "session.changed", "payload": revoked}), now())
-    assert decide(core, token, {"tenant": ["workspace:read"]})["decision"] == {"decision": "deny", "reason": "invalid_token"}
+    assert decide(core, token, {"tenant": ["project:read"]})["decision"] == {"decision": "deny", "reason": "invalid_token"}
     assert core.feed_cursor() == 5
 
 
@@ -60,9 +60,9 @@ def test_restrictive_flags_need_admitting() -> None:
     subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
     core = warm_core(keys, subject, tenant, session)
     token = keys.token(subject=subject, session=session, tenant=tenant, flags=["personal_only"])
-    denied = decide(core, token, {"tenant": ["workspace:read"]})
+    denied = decide(core, token, {"tenant": ["project:read"]})
     assert denied["decision"]["reason"] == {"restricted_session": {"flag": "personal_only"}}
-    admitted = decide(core, token, {"tenant": ["workspace:read"], "admit_flags": ["personal_only"]})
+    admitted = decide(core, token, {"tenant": ["project:read"], "admit_flags": ["personal_only"]})
     assert admitted["decision"] == {"decision": "allow"}
 
 

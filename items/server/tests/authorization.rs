@@ -12,9 +12,9 @@ const PASSWORD: &str = "correct horse battery";
 fn catalog() -> Value {
     json!({
         "actions": [
-            {"name": "workspace:read"},
-            {"name": "workspace:write"},
-            {"name": "patient:read"},
+            {"name": "project:read"},
+            {"name": "document:write"},
+            {"name": "document:read"},
             {"name": "me"},
             {"name": "sys:user:list"}
         ],
@@ -22,11 +22,11 @@ fn catalog() -> Value {
             {"name": "tenant:all", "all_except_prefixes": ["sys:"]},
             {"name": "sys:all", "all_except_prefixes": []}
         ],
-        "scope_kinds": [{"name": "workspace"}],
+        "scope_kinds": [{"name": "project"}],
         "facts": [
             {"key": "tenant_type", "target": "tenant", "type": "string", "portable": true},
             {"key": "billing_id", "target": "tenant", "type": "string"},
-            {"key": "patient_id", "target": "membership", "type": "string", "portable": true}
+            {"key": "member_number", "target": "membership", "type": "string", "portable": true}
         ],
         "session_flags": [
             {"name": "personal_only", "kind": "restrictive", "requestable": true},
@@ -43,8 +43,8 @@ struct World {
     service: String,
 }
 
-/// A catalog, a `clinician` template, a tenant with a role from it, and a
-/// human member holding that role at workspace `w1`.
+/// A catalog, a `reader` template, a tenant with a role from it, and a
+/// human member holding that role at project `p1`.
 async fn world() -> World {
     let app = TestApp::new().await;
     let reply = app
@@ -53,10 +53,10 @@ async fn world() -> World {
     assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
     app.control(
         Method::PUT,
-        "/v1/templates/clinician",
+        "/v1/templates/reader",
         Some(json!({"policies": [
-            {"action": "workspace:read", "effect": "allow"},
-            {"action": "patient:read", "effect": "allow", "scope_bound": true}
+            {"action": "project:read", "effect": "allow"},
+            {"action": "document:read", "effect": "allow", "scope_bound": true}
         ]})),
     )
     .await;
@@ -65,7 +65,7 @@ async fn world() -> World {
         .control(
             Method::PUT,
             &format!("/v1/tenants/{tenant}"),
-            Some(json!({"facts": {"tenant_type": "client", "billing_id": "b-1"}, "templates": ["clinician"]})),
+            Some(json!({"facts": {"tenant_type": "client", "billing_id": "b-1"}, "templates": ["reader"]})),
         )
         .await;
     assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
@@ -78,7 +78,7 @@ async fn world() -> World {
         .control(
             Method::PUT,
             &format!("/v1/memberships/{membership}"),
-            Some(json!({"subject": subject, "tenant": tenant, "facts": {"patient_id": "p-9"}})),
+            Some(json!({"subject": subject, "tenant": tenant, "facts": {"member_number": "m-9"}})),
         )
         .await;
     assert_eq!(reply.status, StatusCode::CREATED, "{:?}", reply.body);
@@ -86,7 +86,7 @@ async fn world() -> World {
         .control(
             Method::POST,
             &format!("/v1/memberships/{membership}/assignments"),
-            Some(json!({"role": "clinician", "scope": {"kind": "workspace", "id": "w1"}})),
+            Some(json!({"role": "reader", "scope": {"kind": "project", "id": "p1"}})),
         )
         .await;
     assert_eq!(reply.status, StatusCode::CREATED, "{:?}", reply.body);
@@ -168,7 +168,7 @@ async fn selecting_a_tenant_issues_a_tenant_token_with_portable_facts() {
     assert_eq!(claims.tid.unwrap().to_string(), world.tenant);
     assert_eq!(claims.mid.unwrap().to_string(), world.membership);
     assert_eq!(claims.fct.get("tenant_type"), Some(&json!("client")));
-    assert_eq!(claims.fct.get("patient_id"), Some(&json!("p-9")));
+    assert_eq!(claims.fct.get("member_number"), Some(&json!("m-9")));
     assert!(
         !claims.fct.contains_key("billing_id"),
         "non-portable facts stay out of tokens"
@@ -232,10 +232,10 @@ async fn relying_systems_read_entitlement_sets() {
         .send(Method::GET, &uri, &[("authorization", &auth)], None)
         .await;
     assert_eq!(set.status, StatusCode::OK, "{:?}", set.body);
-    assert_eq!(set.body["tenant"], json!(["workspace:read"]));
+    assert_eq!(set.body["tenant"], json!(["project:read"]));
     assert_eq!(
         set.body["scoped"],
-        json!([{"kind": "workspace", "id": "w1", "actions": ["patient:read"]}])
+        json!([{"kind": "project", "id": "p1", "actions": ["document:read"]}])
     );
     assert_eq!(set.body["restrictive_flags"], json!(["personal_only"]));
     assert!(set.body["revision"].is_i64());
@@ -253,17 +253,17 @@ async fn relying_systems_read_entitlement_sets() {
 async fn the_check_api_decides_from_current_state() {
     let world = world().await;
     let token = tenant_token(&world, &[]).await;
-    let at_w1 = json!({"scopes": [{"kind": "workspace", "id": "w1", "actions": ["patient:read", "workspace:read"]}]});
+    let at_p1 = json!({"scopes": [{"kind": "project", "id": "p1", "actions": ["document:read", "project:read"]}]});
     assert_eq!(
-        check(&world, &token, at_w1.clone()).await["decision"],
+        check(&world, &token, at_p1.clone()).await["decision"],
         "allow"
     );
-    let at_w2 = json!({"scopes": [{"kind": "workspace", "id": "w2", "actions": ["patient:read"]}]});
-    let denied = check(&world, &token, at_w2).await;
+    let at_p2 = json!({"scopes": [{"kind": "project", "id": "p2", "actions": ["document:read"]}]});
+    let denied = check(&world, &token, at_p2).await;
     assert_eq!(denied["decision"], "deny");
     assert_eq!(
         denied["reason"],
-        json!({"missing_actions": {"actions": ["patient:read"]}})
+        json!({"missing_actions": {"actions": ["document:read"]}})
     );
 
     // Removing the assignment is visible to the very next check.
@@ -289,7 +289,7 @@ async fn the_check_api_decides_from_current_state() {
         .await;
     assert_eq!(removed.body["deleted"], true);
     assert!(removed.body["cursor"].is_i64());
-    assert_eq!(check(&world, &token, at_w1).await["decision"], "deny");
+    assert_eq!(check(&world, &token, at_p1).await["decision"], "deny");
 
     let garbage = check(&world, "not.a.token", json!({})).await;
     assert_eq!(
@@ -308,13 +308,13 @@ async fn requested_restrictive_flags_restrict_the_session() {
         world.app.verify(&restricted).await.sfl,
         vec!["personal_only"]
     );
-    let requirements = json!({"tenant": ["workspace:read"]});
+    let requirements = json!({"tenant": ["project:read"]});
     let denied = check(&world, &restricted, requirements.clone()).await;
     assert_eq!(
         denied["reason"],
         json!({"restricted_session": {"flag": "personal_only"}})
     );
-    let admitted = json!({"tenant": ["workspace:read"], "admit_flags": ["personal_only"]});
+    let admitted = json!({"tenant": ["project:read"], "admit_flags": ["personal_only"]});
     assert_eq!(
         check(&world, &restricted, admitted).await["decision"],
         "allow"
@@ -456,7 +456,7 @@ async fn global_roles_grant_in_every_tenant() {
         .control(
             Method::POST,
             &format!("/v1/subjects/{subject}/global-assignments"),
-            Some(json!({"role": "clinician"})),
+            Some(json!({"role": "reader"})),
         )
         .await;
     assert_eq!(
@@ -509,7 +509,7 @@ async fn catalog_documents_are_validated() {
     assert_eq!(
         reply.code(),
         "CONFLICT",
-        "workspace:read is used by a template"
+        "project:read is used by a template"
     );
 }
 
@@ -536,9 +536,9 @@ async fn local_evaluation_matches_the_check_api() {
         serde_json::from_value(set["restrictive_flags"].clone()).unwrap();
 
     let cases = [
-        json!({"tenant": ["workspace:read"]}),
-        json!({"tenant": ["workspace:read"], "admit_flags": ["personal_only"]}),
-        json!({"scopes": [{"kind": "workspace", "id": "w1", "actions": ["patient:read"]}], "admit_flags": ["personal_only"]}),
+        json!({"tenant": ["project:read"]}),
+        json!({"tenant": ["project:read"], "admit_flags": ["personal_only"]}),
+        json!({"scopes": [{"kind": "project", "id": "p1", "actions": ["document:read"]}], "admit_flags": ["personal_only"]}),
         json!({"global": ["me"], "admit_flags": ["personal_only"]}),
         json!({"require_flags": ["device_bound"], "admit_flags": ["personal_only"]}),
         json!({"step_up": {"min_methods": 2}, "admit_flags": ["personal_only"]}),

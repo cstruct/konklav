@@ -215,7 +215,7 @@ async fn explains_entitlements() {
     app.control(
         Method::PUT,
         "/v1/catalog",
-        Some(json!({"actions": [{"name": "workspace:read"}]})),
+        Some(json!({"actions": [{"name": "project:read"}]})),
     )
     .await;
     let tenant = uuid::Uuid::now_v7();
@@ -228,7 +228,7 @@ async fn explains_entitlements() {
     app.control(
         Method::PUT,
         &format!("/v1/tenants/{tenant}/roles/reader"),
-        Some(json!({"policies": [{"action": "workspace:read", "effect": "allow"}]})),
+        Some(json!({"policies": [{"action": "project:read", "effect": "allow"}]})),
     )
     .await;
     let ada = app.human("ada@example.com", PASSWORD).await;
@@ -248,7 +248,7 @@ async fn explains_entitlements() {
     let explained = app
         .control(
             Method::GET,
-            &format!("/v1/subjects/{ada}/explain?tenant={tenant}&action=workspace:read"),
+            &format!("/v1/subjects/{ada}/explain?tenant={tenant}&action=project:read"),
             None,
         )
         .await;
