@@ -46,6 +46,8 @@ pub struct ScopeKindEntry {
 pub enum FactTarget {
     Tenant,
     Membership,
+    /// A share's attributes.
+    Share,
 }
 
 impl FactTarget {
@@ -54,6 +56,7 @@ impl FactTarget {
         match self {
             Self::Tenant => "tenant",
             Self::Membership => "membership",
+            Self::Share => "share",
         }
     }
 }
@@ -65,6 +68,9 @@ pub enum FactType {
     Integer,
     Boolean,
     StringList,
+    /// `{"from": "YYYY-MM-DD", "until": "YYYY-MM-DD"}`, `from` not after
+    /// `until`.
+    DateRange,
 }
 
 impl FactType {
@@ -74,6 +80,7 @@ impl FactType {
             Self::Integer => "integer",
             Self::Boolean => "boolean",
             Self::StringList => "string_list",
+            Self::DateRange => "date_range",
         }
     }
 
@@ -82,6 +89,7 @@ impl FactType {
             "integer" => Self::Integer,
             "boolean" => Self::Boolean,
             "string_list" => Self::StringList,
+            "date_range" => Self::DateRange,
             _ => Self::String,
         }
     }
@@ -97,6 +105,18 @@ impl FactType {
             Self::StringList => value
                 .as_array()
                 .is_some_and(|items| items.iter().all(serde_json::Value::is_string)),
+            Self::DateRange => {
+                let date = |key: &str| {
+                    value
+                        .get(key)?
+                        .as_str()
+                        .and_then(|day| chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").ok())
+                };
+                value.as_object().is_some_and(|range| range.len() == 2)
+                    && date("from")
+                        .zip(date("until"))
+                        .is_some_and(|(from, until)| from <= until)
+            }
         }
     }
 }
@@ -242,6 +262,12 @@ impl CatalogDocument {
             if !fact_keys.insert(&fact.key) {
                 return Err(format!("fact `{}` is declared more than once", fact.key));
             }
+            if fact.target == FactTarget::Share && fact.portable {
+                return Err(format!(
+                    "share fact `{}` can't be portable: shares never reach tokens",
+                    fact.key
+                ));
+            }
         }
         for flag in &self.session_flags {
             if flag.requestable && flag.kind != FlagKind::Restrictive {
@@ -323,10 +349,10 @@ pub async fn load(conn: &mut AsyncPgConnection) -> StoreResult<CatalogDocument> 
         .map(
             |(key, target, value_type, portable, description)| FactEntry {
                 key,
-                target: if target == "membership" {
-                    FactTarget::Membership
-                } else {
-                    FactTarget::Tenant
+                target: match target.as_str() {
+                    "membership" => FactTarget::Membership,
+                    "share" => FactTarget::Share,
+                    _ => FactTarget::Tenant,
                 },
                 value_type: FactType::parse(&value_type),
                 portable,

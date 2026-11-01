@@ -22,6 +22,7 @@ mod pool;
 pub mod roles;
 pub mod schema;
 pub mod sessions;
+pub mod shares;
 pub mod signing_keys;
 pub mod subjects;
 pub mod sweep;

@@ -10,6 +10,11 @@ use crate::{Entitlements, Scope};
 // r[impl authz.resource-context.external]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScopeRequirement {
+    /// The tenant that owns the scope, when it isn't the token's: then only
+    /// shares of the scope with the token's tenant satisfy it.
+    // r[impl authz.share.requirements]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<konklav_core::TenantId>,
     pub kind: String,
     pub id: String,
     pub actions: BTreeSet<String>,
@@ -82,10 +87,27 @@ pub enum DenyReason {
     },
 }
 
+/// A share's attributes, for the relying system to apply to an allowed
+/// operation: Konklav doesn't interpret them.
+// r[impl authz.share.attributes]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Obligation {
+    pub share: konklav_core::ShareId,
+    /// The owner tenant of the shared scope.
+    pub tenant: konklav_core::TenantId,
+    pub kind: String,
+    pub id: String,
+    pub attributes: serde_json::Map<String, serde_json::Value>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "decision", rename_all = "snake_case")]
 pub enum Decision {
-    Allow,
+    Allow {
+        /// One per share the decision relied on.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        obligations: Vec<Obligation>,
+    },
     Deny {
         reason: DenyReason,
     },
@@ -93,6 +115,16 @@ pub enum Decision {
     StepUp {
         requirement: StepUp,
     },
+}
+
+impl Decision {
+    /// An allow without obligations.
+    #[must_use]
+    pub fn allow() -> Self {
+        Self::Allow {
+            obligations: Vec::new(),
+        }
+    }
 }
 
 /// Evaluates `requirements` for a verified token whose session is known to
@@ -167,7 +199,20 @@ pub fn evaluate(
             .filter(|a| !tenant.contains(a.as_str()))
             .cloned(),
     );
+    let mut obligations = Vec::new();
     for required in &requirements.scopes {
+        if let Some(owner) = required.tenant.filter(|owner| Some(*owner) != claims.tid) {
+            let (granted, relied) = shared_actions(entitlements, owner, required, now);
+            missing.extend(
+                required
+                    .actions
+                    .iter()
+                    .filter(|a| !granted.contains(a.as_str()))
+                    .cloned(),
+            );
+            obligations.extend(relied);
+            continue;
+        }
         let scope = Scope {
             kind: required.kind.clone(),
             id: required.id.clone(),
@@ -182,12 +227,42 @@ pub fn evaluate(
         );
     }
     if missing.is_empty() {
-        Decision::Allow
+        Decision::Allow { obligations }
     } else {
         Decision::Deny {
             reason: DenyReason::MissingActions { actions: missing },
         }
     }
+}
+
+/// The actions shares of `owner`'s scope grant at `now`, and an obligation
+/// for each share that grants a required action.
+fn shared_actions<'a>(
+    entitlements: &'a Entitlements,
+    owner: konklav_core::TenantId,
+    required: &ScopeRequirement,
+    now: i64,
+) -> (BTreeSet<&'a str>, Vec<Obligation>) {
+    let mut granted = BTreeSet::new();
+    let mut obligations = Vec::new();
+    for shared in entitlements.shared.iter().filter(|shared| {
+        shared.owner_tenant == owner
+            && shared.kind == required.kind
+            && shared.id == required.id
+            && shared.valid_at(now)
+    }) {
+        granted.extend(shared.actions.iter().map(String::as_str));
+        if shared.actions.iter().any(|a| required.actions.contains(a)) {
+            obligations.push(Obligation {
+                share: shared.share,
+                tenant: owner,
+                kind: shared.kind.clone(),
+                id: shared.id.clone(),
+                attributes: shared.attributes.clone(),
+            });
+        }
+    }
+    (granted, obligations)
 }
 
 fn step_up_satisfied(step_up: &StepUp, claims: &AccessClaims, now: i64) -> bool {

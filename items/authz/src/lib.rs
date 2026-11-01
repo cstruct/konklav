@@ -10,8 +10,11 @@ mod compile;
 mod evaluate;
 mod model;
 
-pub use compile::{Contribution, Explanation, compile, explain};
-pub use evaluate::{Decision, DenyReason, Requirements, ScopeRequirement, StepUp, evaluate};
+pub use compile::{Contribution, Explanation, compile, explain, shared};
+pub use evaluate::{
+    Decision, DenyReason, Obligation, Requirements, ScopeRequirement, StepUp, evaluate,
+};
 pub use model::{
-    Assignment, Catalog, Effect, EntitlementSet, Entitlements, Group, Level, Policy, Scope,
+    Assignment, Catalog, Effect, EntitlementSet, Entitlements, Group, Level, Policy, Scope, Share,
+    Shared,
 };

@@ -68,7 +68,8 @@ fn merge_section<T: Clone + PartialEq>(
 }
 
 /// Facts as the catalog types them: integers and booleans parsed from
-/// text, and string lists from `|`-separated text or a list. Undeclared
+/// text, string lists from `|`-separated text or a list, and date ranges
+/// from `from..until`. Undeclared
 /// facts stay text, for fact validation to report.
 pub(super) fn typed_facts(
     catalog: &CatalogDocument,
@@ -102,6 +103,12 @@ pub(super) fn typed_facts(
                 "true" => serde_json::json!(true),
                 "false" => serde_json::json!(false),
                 _ => return Err(format!("fact `{key}` must be true or false, not `{text}`")),
+            },
+            (Some(FactType::DateRange), FactValue::Text(text)) => match text.split_once("..") {
+                Some((from, until)) => {
+                    serde_json::json!({"from": from.trim(), "until": until.trim()})
+                }
+                None => return Err(format!("fact `{key}` must be `from..until`, not `{text}`")),
             },
             (_, FactValue::Text(text)) => serde_json::json!(text),
         };

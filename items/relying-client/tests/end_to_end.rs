@@ -273,12 +273,12 @@ async fn decides_before_and_after_the_feed_connects() {
     // Possibly before the feed is up: answered through the check API.
     assert_eq!(
         world.client.decide(&world.token, &reading()).await.unwrap(),
-        Decision::Allow
+        Decision::allow()
     );
     until_trusted(&world.client).await;
     assert_eq!(
         world.client.decide(&world.token, &reading()).await.unwrap(),
-        Decision::Allow
+        Decision::allow()
     );
     let more = Requirements {
         tenant: BTreeSet::from(["document:write".to_owned()]),
@@ -298,7 +298,7 @@ async fn revoked_sessions_are_denied_through_the_feed() {
     until_trusted(&world.client).await;
     assert_eq!(
         world.client.decide(&world.token, &reading()).await.unwrap(),
-        Decision::Allow
+        Decision::allow()
     );
     let revoked = world
         .server
@@ -329,7 +329,7 @@ async fn writes_are_readable_after_awaiting_their_cursor() {
     until_trusted(&world.client).await;
     assert_eq!(
         world.client.decide(&world.token, &reading()).await.unwrap(),
-        Decision::Allow
+        Decision::allow()
     );
     let detail = world
         .server

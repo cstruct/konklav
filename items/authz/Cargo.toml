@@ -11,6 +11,7 @@ publish.workspace = true
 konklav-core.workspace = true
 konklav-token.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 konklav-core = { workspace = true, features = ["generate"] }

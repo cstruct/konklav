@@ -259,6 +259,34 @@ diesel::table! {
 }
 
 diesel::table! {
+    share (id) {
+        id -> Uuid,
+        owner_tenant_id -> Uuid,
+        scope_kind -> Text,
+        scope_id -> Text,
+        recipient_tenant_id -> Uuid,
+        recipient_scope_kind -> Nullable<Text>,
+        recipient_scope_id -> Nullable<Text>,
+        attributes -> Jsonb,
+        valid_from -> Nullable<Timestamptz>,
+        valid_until -> Nullable<Timestamptz>,
+        state -> Text,
+        accepted_at -> Nullable<Timestamptz>,
+        revoked_at -> Nullable<Timestamptz>,
+        revoked_by -> Nullable<Text>,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    share_action (share_id, action) {
+        share_id -> Uuid,
+        action -> Text,
+    }
+}
+
+diesel::table! {
     signing_key (kid) {
         kid -> Text,
         algorithm -> Text,
@@ -337,6 +365,8 @@ diesel::joinable!(session -> membership (membership_id));
 diesel::joinable!(session -> oidc_client (oidc_client_id));
 diesel::joinable!(session -> tenant (tenant_id));
 diesel::joinable!(session_previous_refresh -> session (session_id));
+diesel::joinable!(share_action -> catalog_action (action));
+diesel::joinable!(share_action -> share (share_id));
 diesel::joinable!(template_policy -> catalog_action (action));
 diesel::joinable!(template_policy -> template (template_id));
 
@@ -362,6 +392,8 @@ diesel::allow_tables_to_appear_in_same_query!(
     role_policy,
     session,
     session_previous_refresh,
+    share,
+    share_action,
     signing_key,
     subject,
     template,

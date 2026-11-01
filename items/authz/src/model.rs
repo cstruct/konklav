@@ -100,6 +100,53 @@ pub struct Assignment {
     pub role_policies: Vec<Policy>,
 }
 
+/// An accepted share of another tenant's scope with the tenant an
+/// entitlement set is compiled for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Share {
+    pub id: konklav_core::ShareId,
+    pub owner_tenant: konklav_core::TenantId,
+    /// The owner's scope.
+    pub scope: Scope,
+    /// The recipient tenant's scope the share is for; tenant-wide when
+    /// `None`.
+    pub recipient_scope: Option<Scope>,
+    /// Actions or action groups.
+    pub actions: BTreeSet<String>,
+    pub attributes: serde_json::Map<String, serde_json::Value>,
+    /// Unix seconds.
+    pub valid_from: Option<i64>,
+    pub valid_until: Option<i64>,
+}
+
+/// What a share grants one subject: the share's actions that the subject
+/// holds at the recipient.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Shared {
+    pub share: konklav_core::ShareId,
+    pub owner_tenant: konklav_core::TenantId,
+    pub kind: String,
+    pub id: String,
+    pub actions: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub attributes: serde_json::Map<String, serde_json::Value>,
+    /// Unix seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_from: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<i64>,
+}
+
+impl Shared {
+    /// Whether the share is in force at `now` (Unix seconds).
+    // r[impl authz.share.validity]
+    #[must_use]
+    pub fn valid_at(&self, now: i64) -> bool {
+        self.valid_from.is_none_or(|from| now >= from)
+            && self.valid_until.is_none_or(|until| now < until)
+    }
+}
+
 /// Effective allows for one subject in one tenant. Denies are already
 /// resolved, and an action granted at a higher level is not repeated below.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,6 +155,9 @@ pub struct Entitlements {
     pub tenant: BTreeSet<String>,
     #[serde(with = "scoped_entries")]
     pub scoped: BTreeMap<Scope, BTreeSet<String>>,
+    /// Other tenants' scopes shared with this tenant.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shared: Vec<Shared>,
 }
 
 impl Entitlements {

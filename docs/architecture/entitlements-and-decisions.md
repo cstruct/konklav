@@ -8,6 +8,7 @@ EntitlementSet {
   global:  Set<Action>,                  // from global assignments
   tenant:  Set<Action>,                  // tenant-wide in `tenant`
   scoped:  Map<(ScopeKind, ScopeId), Set<Action>>,
+  shared:  List<Shared>,                 // other tenants' scopes, see Shares
 }
 ```
 
@@ -50,6 +51,59 @@ Decided details:
 - Groups expand the same way at every level. The reference model expanded
   only `sys:all` for global roles. Global roles never used `tenant:all`
   there, so importers should flag that case rather than reproduce it.
+
+## Shares
+
+A share makes one tenant's scope available to another tenant:
+
+```json
+PUT /v1/shares/{id}
+{
+  "owner": "<tenant>",
+  "scope": {"kind": "project", "id": "p-17"},
+  "recipient": "<tenant>",
+  "recipient_scope": {"kind": "project", "id": "q-3"},
+  "actions": ["document:read"],
+  "attributes": {"data_range": {"from": "2026-01-01", "until": "2026-06-30"}},
+  "valid_from": "2026-11-01T00:00:00Z",
+  "valid_until": "2027-01-01T00:00:00Z"
+}
+```
+
+- **Lifecycle:** a share is `offered` by `PUT`, takes effect once `POST
+  /v1/shares/{id}/accept` accepts it, and ends for good with `POST
+  /v1/shares/{id}/revoke` and `{"by": "owner" | "recipient"}`.
+  - Changing the terms offers it again, so the recipient agrees to every
+    change.
+  - Konklav has no tenant administrators of its own, so the relying system
+    makes these calls for each side's administrators.
+- **The recipient:** a whole tenant, or one of its scopes when
+  `recipient_scope` is given.
+- **What a member gets:** at the shared scope, the share's actions (groups
+  expanded) that the member holds at the recipient: tenant-wide, or at the
+  recipient scope.
+  - So the recipient's own roles decide who uses a share.
+  - Shares don't chain.
+- **Compilation:** each accepted share from an active owner tenant becomes a
+  `shared` entry in the member's set for the recipient tenant:
+  - the share id, owner tenant, kind and id
+  - the granted actions
+  - the attributes
+  - the validity period, in Unix seconds
+- **Requirements:** a requirement names the owner, as
+  `{"tenant": "<owner>", "kind": "project", "id": "p-17", "actions": [...]}`.
+  - When the owner isn't the token's tenant, only shared entries valid at
+    the decision's time satisfy it.
+  - An allow carries one obligation per share it relied on, with the
+    share's attributes.
+- **Attributes:** these are catalog facts with target `share`.
+  - Konklav validates them, including the `date_range` type, but never
+    interprets them. Narrowing a query to the shared date range is the
+    relying system's job.
+  - The validity period is different: it says when the share works, and the
+    evaluator enforces it, so no timed events are needed.
+- **Events:** share writes emit `share.changed`, and `entitlements.changed`
+  for the whole recipient tenant.
 
 ## Decision path in the relying SDK
 

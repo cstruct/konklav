@@ -122,7 +122,8 @@ A scoped assignment MUST use a scope kind declared in the catalog.
 r[authz.compile.entitlements]
 Konklav MUST compile assignments, roles, templates, policies and action
 groups into an entitlement set per (subject, tenant), containing global
-actions, tenant-wide actions, and actions per scope.
+actions, tenant-wide actions, actions per scope, and the actions shared
+with the tenant (see Sharing).
 
 r[authz.compile.precedence]
 When several policies match the same action at the same level, the one from
@@ -152,6 +153,52 @@ no entitlements.
 
 r[authz.compile.revision]
 Every entitlement set MUST carry the revision it was compiled at.
+
+## Sharing
+
+r[authz.share.shape]
+A share MUST name its owner tenant, one of the owner's scopes, a recipient
+tenant other than the owner, optionally a scope of the recipient tenant,
+the actions or action groups it allows, its attributes, and an optional
+validity period. The shared scope's id MUST be opaque to Konklav, like any
+scope id. Control-plane capabilities MUST NOT be shared.
+
+r[authz.share.acceptance]
+A share MUST be offered first and take effect only once it has been
+accepted for the recipient tenant. Changing the terms of a share MUST offer
+it again. Either side MUST be able to revoke a share, and a revoked share
+MUST NOT be accepted or changed again.
+
+r[authz.share.unique]
+At most one offered or accepted share MUST exist per owner scope and
+recipient (tenant and recipient scope).
+
+r[authz.share.ceiling]
+A member of the recipient tenant MUST receive, at the shared scope, only the
+actions the share allows that the member holds at the recipient: tenant-wide
+when the share names no recipient scope, or at the recipient scope. Shares
+MUST NOT chain into further shares, and an inactive owner tenant's shares
+MUST grant nothing.
+
+r[authz.share.validity]
+A share MUST grant nothing before its `valid_from` or after its
+`valid_until`, decided against the time of each decision.
+
+r[authz.share.attributes]
+Share attributes MUST be declared in the catalog as facts with target
+`share` and validated when a share is written. Konklav MUST NOT interpret
+them: an allow decision that relied on a share MUST return the share's
+attributes as an obligation.
+
+r[authz.share.requirements]
+A scope requirement MUST be able to name the scope's owner tenant. When that
+is another tenant than the token's, only accepted shares of that scope MUST
+satisfy it.
+
+r[authz.share.events]
+Offering, accepting, changing or revoking a share MUST emit a
+`share.changed` event naming the share, both tenants and its state, and an
+`entitlements.changed` event for the recipient tenant.
 
 ## Invalidation
 

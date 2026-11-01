@@ -125,17 +125,18 @@ Relying systems MAY write membership facts through the control plane.
 ## Facts
 
 r[fact.typed]
-Facts MUST be typed (string, integer, boolean or string list) according to
-their catalog declaration. Writing a fact that is undeclared or of the wrong
+Facts MUST be typed (string, integer, boolean, string list or date range)
+according to their catalog declaration. A date range is an object with
+`from` and `until` dates (`YYYY-MM-DD`), `from` not after `until`. Writing a fact that is undeclared or of the wrong
 type MUST fail.
 
 r[fact.unique-keys]
-A fact key MUST be declared for at most one target (tenant or membership),
-so that tokens can carry tenant and membership facts side by side.
+A fact key MUST be declared for at most one target (tenant, membership or
+share), so that tokens can carry tenant and membership facts side by side.
 
 r[fact.portability]
 Every fact key MUST be declared portable or non-portable. Only portable
-facts may appear in tokens.
+facts may appear in tokens, and share facts MUST NOT be portable.
 
 r[fact.bounded]
 Konklav MUST enforce a configured size limit on the portable facts that a

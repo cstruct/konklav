@@ -130,7 +130,7 @@ fn reading() -> Requirements {
 
 fn allowed() -> Outcome {
     Outcome::Decided {
-        decision: Decision::Allow,
+        decision: Decision::allow(),
     }
 }
 
@@ -497,4 +497,66 @@ fn serves_cached_entitlement_sets() {
     assert!(set.entitlements.tenant.contains("project:read"));
     f.core.on_feed_lost();
     assert_eq!(f.core.entitlements(f.key(), T0), Err(vec![Need::Check]));
+}
+
+// r[verify authz.share.requirements]
+// r[verify authz.share.validity]
+#[test]
+fn shared_scopes_are_decided_locally_like_the_check_api() {
+    let mut f = Fixture::new();
+    f.core.on_session(f.session_state(1, false));
+    let owner = TenantId::new_v7();
+    let share = konklav_core::ShareId::new_v7();
+    let until = i64::try_from(T0 / 1000).unwrap() + 60;
+    // As the relying surface serves it.
+    let set: EntitlementSet = serde_json::from_value(json!({
+        "subject_id": f.subject,
+        "tenant_id": f.tenant,
+        "revision": 1,
+        "global": [],
+        "tenant": ["document:read"],
+        "scoped": [],
+        "shared": [{
+            "share": share,
+            "owner_tenant": owner,
+            "kind": "project",
+            "id": "p-17",
+            "actions": ["document:read"],
+            "attributes": {"data_range": {"from": "2026-01-01", "until": "2026-06-30"}},
+            "valid_until": until
+        }],
+        "restrictive_flags": []
+    }))
+    .unwrap();
+    f.core.on_entitlements(set, T0);
+    let requirements: Requirements = serde_json::from_value(json!({"scopes": [
+        {"tenant": owner, "kind": "project", "id": "p-17", "actions": ["document:read"]}
+    ]}))
+    .unwrap();
+
+    let token = f.token(1, T0);
+    let Outcome::Decided { decision } = f.core.decide(&token, &requirements, None, T0) else {
+        panic!("decided from the cache");
+    };
+    assert_eq!(
+        serde_json::to_value(decision).unwrap(),
+        json!({"decision": "allow", "obligations": [{
+            "share": share,
+            "tenant": owner,
+            "kind": "project",
+            "id": "p-17",
+            "attributes": {"data_range": {"from": "2026-01-01", "until": "2026-06-30"}}
+        }]})
+    );
+
+    // A minute later the share has run out; the feed kept beating.
+    let later = T0 + 61_000;
+    for beat in (10_000..=60_000).step_by(10_000) {
+        f.core.on_feed_activity(T0 + beat);
+    }
+    let token = f.token(1, later);
+    let Outcome::Decided { decision } = f.core.decide(&token, &requirements, None, later) else {
+        panic!("decided from the cache");
+    };
+    assert!(matches!(decision, Decision::Deny { .. }), "{decision:?}");
 }

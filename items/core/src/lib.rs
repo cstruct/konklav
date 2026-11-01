@@ -8,4 +8,4 @@ pub mod feed;
 mod id;
 
 pub use cursor::Cursor;
-pub use id::{CredentialId, MembershipId, SessionId, SubjectId, TenantId};
+pub use id::{CredentialId, MembershipId, SessionId, ShareId, SubjectId, TenantId};

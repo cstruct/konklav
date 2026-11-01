@@ -13,6 +13,7 @@ The change feed MUST include at least these event kinds:
 - `session.changed`
 - `entitlements.changed`
 - `tenant.changed`
+- `share.changed`
 - `signing_keys.changed`
 - `delivery.requested`
 

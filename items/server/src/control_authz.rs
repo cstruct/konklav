@@ -7,7 +7,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use diesel_async::AsyncConnection;
-use konklav_authz::{Policy, Scope, compile};
+use konklav_authz::{Policy, Scope};
 use konklav_core::{MembershipId, SubjectId, TenantId};
 use konklav_store::catalog::{self, CatalogDocument, FactTarget};
 use konklav_store::memberships::{self, Membership};
@@ -624,7 +624,7 @@ async fn subject_entitlements(
     let tenant = query.tenant.as_deref().map(tenant_ref).transpose()?;
     let mut conn = state.pool.get().await?;
     let input = compile_input::load(&mut conn, id, tenant).await?;
-    Ok(Json(compile(&input.catalog, &input.assignments)))
+    Ok(Json(input.compile()))
 }
 
 #[derive(Deserialize)]

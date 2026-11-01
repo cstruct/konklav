@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{Assignment, Catalog, Effect, Entitlements, Level, Scope};
+use crate::{Assignment, Catalog, Effect, Entitlements, Level, Scope, Share, Shared};
 
 /// Where a policy lands once its assignment and scope binding are known.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -96,6 +96,37 @@ pub fn compile(catalog: &Catalog, assignments: &[Assignment]) -> Entitlements {
     }
     entitlements.scoped.retain(|_, actions| !actions.is_empty());
     entitlements
+}
+
+/// What `shares` grant on top of compiled `entitlements`: for each share,
+/// its actions (groups expanded) that the subject holds at the recipient,
+/// tenant-wide or at the share's recipient scope. Shares granting nothing
+/// are left out.
+// r[impl authz.share.ceiling]
+#[must_use]
+pub fn shared(catalog: &Catalog, entitlements: &Entitlements, shares: &[Share]) -> Vec<Shared> {
+    shares
+        .iter()
+        .filter_map(|share| {
+            let held = entitlements.actions_at(share.recipient_scope.as_ref());
+            let actions: BTreeSet<String> = share
+                .actions
+                .iter()
+                .flat_map(|action| catalog.expand(action))
+                .filter(|action| held.contains(action.as_str()))
+                .collect();
+            (!actions.is_empty()).then(|| Shared {
+                share: share.id,
+                owner_tenant: share.owner_tenant,
+                kind: share.scope.kind.clone(),
+                id: share.scope.id.clone(),
+                actions,
+                attributes: share.attributes.clone(),
+                valid_from: share.valid_from,
+                valid_until: share.valid_until,
+            })
+        })
+        .collect()
 }
 
 /// Higher priority wins; at equal priority, deny wins.

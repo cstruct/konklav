@@ -6,7 +6,7 @@ use axum::http::HeaderMap;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
-use konklav_authz::{Decision, EntitlementSet, Requirements, compile, evaluate};
+use konklav_authz::{Decision, EntitlementSet, Requirements, evaluate};
 use konklav_core::{Cursor, SubjectId, TenantId};
 use konklav_store::subjects::{self, SubjectKind};
 use konklav_store::{Connection, compile_input, tenants};
@@ -51,7 +51,7 @@ async fn compile_for(
         subject_id: subject,
         tenant_id: tenant,
         revision: input.revision,
-        entitlements: compile(&input.catalog, &input.assignments),
+        entitlements: input.compile(),
         restrictive_flags: input.document.restrictive_flags(),
     })
 }

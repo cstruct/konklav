@@ -81,6 +81,12 @@ define_id!(
     CredentialId
 );
 
+define_id!(
+    /// Identifies a share of one tenant's scope with another tenant.
+    /// Callers supply it when offering the share.
+    ShareId
+);
+
 #[cfg(all(test, feature = "generate"))]
 mod tests {
     use super::*;

@@ -30,6 +30,7 @@ mod passkeys_api;
 pub mod peering;
 mod relying_api;
 pub mod serve;
+mod shares_api;
 mod subject_api;
 pub mod surface;
 pub mod sweeper;

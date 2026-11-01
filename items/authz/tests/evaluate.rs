@@ -49,6 +49,7 @@ fn entitlements() -> Entitlements {
             },
             set(&["document:read"]),
         )]),
+        shared: Vec::new(),
     }
 }
 
@@ -69,6 +70,7 @@ fn denied(reason: DenyReason) -> Decision {
 fn checks_actions_at_each_level() {
     let token = tenant_token();
     let scope = |actions: &[&str]| ScopeRequirement {
+        tenant: None,
         kind: "project".into(),
         id: "p1".into(),
         actions: set(actions),
@@ -79,7 +81,7 @@ fn checks_actions_at_each_level() {
         scopes: vec![scope(&["document:read", "role:list", "me"])],
         ..Default::default()
     };
-    assert_eq!(decide(&allowed, &token), Decision::Allow);
+    assert_eq!(decide(&allowed, &token), Decision::allow());
 
     let tenant_action_globally = Requirements {
         global: set(&["role:list"]),
@@ -101,6 +103,7 @@ fn checks_actions_at_each_level() {
     ));
     let other_scope = Requirements {
         scopes: vec![ScopeRequirement {
+            tenant: None,
             kind: "project".into(),
             id: "p2".into(),
             actions: set(&["document:read"]),
@@ -128,7 +131,7 @@ fn accepts_only_tenant_tokens_unless_told_otherwise() {
         token_kinds: Some(BTreeSet::from([TokenKind::Identity, TokenKind::Tenant])),
         ..global_only
     };
-    assert_eq!(decide(&identity_ok, &identity), Decision::Allow);
+    assert_eq!(decide(&identity_ok, &identity), Decision::allow());
 
     let needs_tenant = Requirements {
         token_kinds: Some(BTreeSet::from([TokenKind::Identity])),
@@ -156,10 +159,10 @@ fn restrictive_flags_deny_unless_admitted() {
         admit_flags: set(&["personal_only"]),
         ..Default::default()
     };
-    assert_eq!(decide(&admitting, &restricted), Decision::Allow);
+    assert_eq!(decide(&admitting, &restricted), Decision::allow());
     // Flags the catalog doesn't declare restrictive never restrict.
     let assertive = claims(TokenKind::Tenant, &["device_bound"], &["pwd"], 0);
-    assert_eq!(decide(&plain, &assertive), Decision::Allow);
+    assert_eq!(decide(&plain, &assertive), Decision::allow());
 }
 
 // r[verify session.flags.assertive]
@@ -176,7 +179,7 @@ fn assertive_flags_must_be_present_when_required() {
         })
     );
     let bound = claims(TokenKind::Tenant, &["device_bound"], &["pwd"], 0);
-    assert_eq!(decide(&requiring, &bound), Decision::Allow);
+    assert_eq!(decide(&requiring, &bound), Decision::allow());
 }
 
 // r[verify authn.step-up.demand]
@@ -201,7 +204,7 @@ fn unmet_step_up_is_a_demand_not_a_denial() {
             &requiring,
             &claims(TokenKind::Tenant, &[], &["pwd", "otp"], 0)
         ),
-        Decision::Allow
+        Decision::allow()
     );
 
     let only_otp_counts = StepUp {
@@ -227,7 +230,7 @@ fn unmet_step_up_is_a_demand_not_a_denial() {
     };
     assert_eq!(
         decide(&recent, &claims(TokenKind::Tenant, &[], &["pwd"], 299)),
-        Decision::Allow
+        Decision::allow()
     );
     assert!(matches!(
         decide(&recent, &claims(TokenKind::Tenant, &[], &["pwd"], 301)),

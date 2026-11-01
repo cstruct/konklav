@@ -8,7 +8,7 @@ use konklav_core::{Cursor, SubjectId, TenantId};
 
 use crate::catalog::{self, CatalogDocument};
 use crate::schema::{membership, role, role_assignment, subject, tenant};
-use crate::{StoreError, StoreResult, events, roles, templates};
+use crate::{StoreError, StoreResult, events, roles, shares, templates};
 
 /// (role id, priority, template id, via a membership, scope kind, scope id,
 /// role key, assignment id)
@@ -29,8 +29,95 @@ pub struct CompileInput {
     pub catalog: Catalog,
     pub document: CatalogDocument,
     pub assignments: Vec<Assignment>,
+    /// Accepted shares with the tenant, when the subject is an active
+    /// member of it.
+    pub shares: Vec<konklav_authz::Share>,
     /// The newest event cursor in the snapshot the input was read from.
     pub revision: Cursor,
+}
+
+impl CompileInput {
+    /// The compiled entitlements, with what shares with the tenant grant.
+    #[must_use]
+    pub fn compile(&self) -> konklav_authz::Entitlements {
+        let mut entitlements = konklav_authz::compile(&self.catalog, &self.assignments);
+        entitlements.shared = konklav_authz::shared(&self.catalog, &entitlements, &self.shares);
+        entitlements
+    }
+}
+
+/// The subject's global assignments and, when `tenant_id` is given, its
+/// active membership's assignments in that active tenant.
+async fn assignment_rows(
+    conn: &mut AsyncPgConnection,
+    subject_id: SubjectId,
+    tenant_id: Option<TenantId>,
+) -> StoreResult<Vec<AssignmentRow>> {
+    let mut rows: Vec<AssignmentRow> = role_assignment::table
+        .inner_join(role::table)
+        .filter(role_assignment::subject_id.eq(subject_id.as_uuid()))
+        .select((
+            role::id,
+            role::priority,
+            role::template_id,
+            diesel::dsl::sql::<diesel::sql_types::Bool>("false"),
+            role_assignment::scope_kind,
+            role_assignment::scope_id,
+            role::key,
+            role_assignment::id,
+        ))
+        .load(conn)
+        .await?;
+    if let Some(tenant_id) = tenant_id {
+        let membership_rows = role_assignment::table
+            .inner_join(role::table)
+            .inner_join(membership::table.inner_join(tenant::table))
+            .filter(membership::subject_id.eq(subject_id.as_uuid()))
+            .filter(membership::tenant_id.eq(tenant_id.as_uuid()))
+            .filter(membership::state.eq("active"))
+            .filter(tenant::state.eq("active"))
+            .select((
+                role::id,
+                role::priority,
+                role::template_id,
+                diesel::dsl::sql::<diesel::sql_types::Bool>("true"),
+                role_assignment::scope_kind,
+                role_assignment::scope_id,
+                role::key,
+                role_assignment::id,
+            ))
+            .load::<AssignmentRow>(conn)
+            .await?;
+        rows.extend(membership_rows);
+    }
+    Ok(rows)
+}
+
+/// The accepted shares with `tenant`, when `subject` is an active member
+/// of it; none otherwise.
+async fn shares_for_member(
+    conn: &mut AsyncPgConnection,
+    subject_id: SubjectId,
+    tenant_id: Option<TenantId>,
+) -> StoreResult<Vec<konklav_authz::Share>> {
+    let Some(tenant_id) = tenant_id else {
+        return Ok(Vec::new());
+    };
+    let member = membership::table
+        .inner_join(tenant::table)
+        .filter(membership::subject_id.eq(subject_id.as_uuid()))
+        .filter(membership::tenant_id.eq(tenant_id.as_uuid()))
+        .filter(membership::state.eq("active"))
+        .filter(tenant::state.eq("active"))
+        .count()
+        .get_result::<i64>(conn)
+        .await?
+        > 0;
+    if member {
+        shares::accepted_for(conn, tenant_id).await
+    } else {
+        Ok(Vec::new())
+    }
 }
 
 /// Loads the active assignments of `subject`: its global assignments and,
@@ -66,47 +153,13 @@ pub async fn load(
                     catalog,
                     document,
                     assignments: Vec::new(),
+                    shares: Vec::new(),
                     revision,
                 });
             }
 
-            let mut rows: Vec<AssignmentRow> = role_assignment::table
-                .inner_join(role::table)
-                .filter(role_assignment::subject_id.eq(subject_id.as_uuid()))
-                .select((
-                    role::id,
-                    role::priority,
-                    role::template_id,
-                    diesel::dsl::sql::<diesel::sql_types::Bool>("false"),
-                    role_assignment::scope_kind,
-                    role_assignment::scope_id,
-                    role::key,
-                    role_assignment::id,
-                ))
-                .load(conn)
-                .await?;
-            if let Some(tenant_id) = tenant_id {
-                let membership_rows = role_assignment::table
-                    .inner_join(role::table)
-                    .inner_join(membership::table.inner_join(tenant::table))
-                    .filter(membership::subject_id.eq(subject_id.as_uuid()))
-                    .filter(membership::tenant_id.eq(tenant_id.as_uuid()))
-                    .filter(membership::state.eq("active"))
-                    .filter(tenant::state.eq("active"))
-                    .select((
-                        role::id,
-                        role::priority,
-                        role::template_id,
-                        diesel::dsl::sql::<diesel::sql_types::Bool>("true"),
-                        role_assignment::scope_kind,
-                        role_assignment::scope_id,
-                        role::key,
-                        role_assignment::id,
-                    ))
-                    .load::<AssignmentRow>(conn)
-                    .await?;
-                rows.extend(membership_rows);
-            }
+            let rows = assignment_rows(conn, subject_id, tenant_id).await?;
+            let shares = shares_for_member(conn, subject_id, tenant_id).await?;
 
             let role_ids: Vec<uuid::Uuid> = rows.iter().map(|row| row.0).collect();
             let template_ids: Vec<uuid::Uuid> = rows.iter().filter_map(|row| row.2).collect();
@@ -143,6 +196,7 @@ pub async fn load(
                 catalog,
                 document,
                 assignments,
+                shares,
                 revision,
             })
         })

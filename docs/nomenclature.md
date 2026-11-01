@@ -109,7 +109,7 @@ Terms are introduced in dependency order: each definition only uses terms define
   - Konklav treats scope ids as opaque. It doesn't know whether the resource exists or what it contains, so a relying system resolves its own resources into scopes before asking for a decision.
 
 - `fact`
-  - A typed key/value pair attached to a tenant, membership, or session, whose key is declared in the action catalog.
+  - A typed key/value pair attached to a tenant, membership, session, or share, whose key is declared in the action catalog.
   - Example: a membership fact `member_type=professional`, or a tenant fact `tenant_type=personal`.
   - Facts describe a subject's situation. They are not permissions.
 
@@ -300,6 +300,20 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `decision`
   - The outcome of evaluating requirements against an access token, its session, and an entitlement set: `allow`, `deny`, or a step-up demand.
 
+- `share`
+  - One tenant's scope made available to another tenant, with the actions the other tenant may use there.
+  - The `owner tenant` holds the scope. The `recipient tenant` receives it, either tenant-wide or at one of its own scopes, such as a project.
+  - A share is `offered` first, and only takes effect once it is `accepted` on the recipient's behalf. Either side can `revoke` it, and a revoked share is final.
+  - A member of the recipient tenant gets only the actions the share allows that they already hold at the recipient, so the recipient's own roles decide who uses it.
+  - A share can be valid for a period only, and doesn't chain: a recipient can't share it on.
+
+- `share attribute`
+  - A fact attached to a share, declared in the catalog with target `share`, such as the `date_range` of the data shared.
+  - Konklav validates attributes but doesn't interpret them. It returns them with allow decisions as obligations.
+
+- `obligation`
+  - A condition an allow decision carries for the relying system to apply, such as narrowing a query to a share's date range.
+
 ## Change feed
 
 - `event`
@@ -308,6 +322,7 @@ Terms are introduced in dependency order: each definition only uses terms define
     - `session.changed`
     - `entitlements.changed`
     - `tenant.changed`
+    - `share.changed`
     - `signing_keys.changed`
     - `delivery.requested`
 
