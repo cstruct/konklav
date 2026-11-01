@@ -12,6 +12,7 @@ pub mod client_assertions;
 pub mod compile_input;
 pub mod credentials;
 pub mod events;
+pub mod history;
 pub mod login_attempts;
 pub mod memberships;
 pub mod mfa;

@@ -504,7 +504,7 @@ fn decision_requirements(kind: &str, id: &str, owner: &str, actions: &str) -> Va
 }
 
 /// Why the subject would be allowed or denied actions, optionally for one
-/// of its sessions.
+/// of its sessions, or as of a past time when history is enabled.
 #[component]
 fn ExplainDecision(subject: Signal<String>, tenant: Signal<String>) -> impl IntoView {
     let console = use_console();
@@ -513,14 +513,16 @@ fn ExplainDecision(subject: Signal<String>, tenant: Signal<String>) -> impl Into
     let id = RwSignal::new(String::new());
     let owner = RwSignal::new(String::new());
     let session = RwSignal::new(String::new());
-    let asked = RwSignal::new(None::<(String, String, Value)>);
+    let at = RwSignal::new(String::new());
+    let asked = RwSignal::new(None::<(String, String, String, Value)>);
     let explanation = LocalResource::new(move || async move {
         match asked.get() {
-            Some((tenant, session, requirements)) => console
+            Some((tenant, session, at, requirements)) => console
                 .call::<DecisionExplanation>(endpoints::explain_decision(
                     &subject.get(),
                     &tenant,
                     &session,
+                    &at,
                     &requirements,
                 ))
                 .await
@@ -533,6 +535,7 @@ fn ExplainDecision(subject: Signal<String>, tenant: Signal<String>) -> impl Into
         asked.set(Some((
             tenant.get_untracked(),
             session.get_untracked(),
+            at.get_untracked(),
             decision_requirements(
                 &kind.get_untracked(),
                 &id.get_untracked(),
@@ -548,6 +551,7 @@ fn ExplainDecision(subject: Signal<String>, tenant: Signal<String>) -> impl Into
             <Field label="Scope id" value=id placeholder="tenant-wide if blank"/>
             <Field label="Owner tenant" value=owner placeholder="this tenant if blank"/>
             <Field label="Session" value=session placeholder="no authentication checks if blank"/>
+            <Field label="As of" value=at placeholder="now if blank, or 2026-11-01T12:00:00Z"/>
             <button type="submit">"Explain decision"</button>
         </form>
         {loaded(explanation, |explanation: Option<DecisionExplanation>| explanation.map(|explanation| view! { <DecisionView explanation/> }))}

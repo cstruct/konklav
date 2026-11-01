@@ -322,6 +322,13 @@ outcome: whether the subject, its membership and the tenant are active, and
 with a session, whether the session is current, and the token kind, session
 flag and step-up checks.
 
+r[authz.explain.at]
+With history enabled, the control plane MUST be able to explain a decision
+for a subject, a tenant and requirements as of a past time, reading the
+state current then and judging share validity at that time. It MUST refuse
+a time outside the history horizon or in the future, and a session together
+with a time, since history doesn't keep sessions.
+
 r[authz.explain.agreement]
 A decision explanation MUST agree with the decision the check API reaches
 for the same state: it allows exactly when every check passes and every

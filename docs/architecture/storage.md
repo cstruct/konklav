@@ -71,7 +71,39 @@ Materializing compiled entitlements into tables is a later optimization if
 compile cost turns out to matter. The pure compiler makes that a storage
 decision, not a semantic one.
 
+## History
+
+History is optional (`history.enabled`). While it is on, an `after` row
+trigger on each tracked table (subjects, tenants, memberships, the catalog,
+templates, roles, policies, assignments, shares, registered scopes) ends the row's current
+version in `row_version` and records the new one. Versions are stored
+generically: the table, the primary key and the row as `jsonb`, with the
+period they were current. Adding a tracked table is a row in
+`history_table` and a trigger, not a new history table.
+
+- Versions are timed by the transaction that wrote them, never earlier than
+  the version they replace, and a version replaced within its own
+  transaction is dropped, since no one else saw it.
+- `history_configure` enables history by copying every tracked row as its
+  current version, so history starts then. It takes an advisory lock
+  exclusively, and the triggers take it shared, so no write slips between
+  the copy and the switch. Disabling truncates `row_version`.
+- The server applies its configuration at startup and stores the enable
+  time and retention in `history_setting`, so every instance and the
+  sweeper agree on the history horizon.
+- Reading the past: `history_shadow(at)` creates, for the rest of a
+  repeatable-read transaction, a temporary table named like each tracked
+  table, holding the versions current at `at`. Temporary tables come first
+  in Postgres' search path, so the ordinary repositories and compile-input
+  loader read the past unchanged, and a past explanation runs exactly the
+  code a current one does. It copies every tracked table, which suits
+  occasional operator questions but not hot paths.
+- A migration that adds a non-null column to a tracked table must add the
+  column to that table's versions in `row_version.data` too, or older
+  versions no longer decode.
+
 ## Retention
 
-The outbox, revoked sessions, used challenges and superseded credentials
-are pruned by a background job according to configured retention periods.
+The outbox, revoked sessions, used challenges, superseded credentials and
+row versions that stopped being current are pruned by a background job
+according to configured retention periods.

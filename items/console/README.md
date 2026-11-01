@@ -26,8 +26,9 @@ token.
   - tenants (create, facts, state, children) and memberships (create,
     facts, end, role assignments)
   - roles per tenant (the root tenant's are global, and built-in
-    `konklav.` roles are shown read-only), templates, the catalog, and
-    entitlement explanations
+    `konklav.` roles are shown read-only), templates, the catalog,
+    entitlement explanations, and decision explanations, as of a past
+    time when history is enabled
   - sessions, revoked one at a time or by filter
   - invites
   - OIDC clients: register or replace, issue a new secret, disable

@@ -23,6 +23,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - expired client- and bearer-assertion `jti`s
   - sessions `retention.sessions_days` (default 30) after they ended
   - events older than `feed.retention_hours`
+  - row versions `history.retention_days` (default 90) after they stopped being current, when history is enabled
 
   It also erases the challenge material from stored `delivery.requested` events once their challenge has expired.
 - Telemetry (`telemetry.rs`), configured under `telemetry`:
@@ -77,6 +78,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - global assignments
   - invites (`POST /v1/invites`)
   - an operator view of a subject's entitlements, with explanations (`/v1/subjects/{id}/explain`)
+  - decision explanations (`POST /v1/subjects/{id}/explain-decision`), now or, with `history.enabled`, as of a past time (`at`, RFC 3339) within the history horizon
   - listings of subjects (by kind or login identifier), tenants (by parent) and a tenant's memberships
 
   Each area requires a `konklav:` capability, held through a global role (`konklav:control:all` covers everything). Two built-in global roles ship with every instance and can be assigned but not changed: `konklav.admin` (`konklav:control:all`) and `konklav.delivery` (`konklav:delivery:read`). Role keys starting with `konklav.` are reserved for them. An optional bootstrap token from the secrets file is also accepted. Use it to create the first operator (a human subject with a password credential and the `konklav.admin` global role), then remove it.
@@ -88,6 +90,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
 - Configuration: the contexts in `src/config.rs`:
   - `listen`, `database`, `log`
   - `tokens`: issuer, audience, lifetimes and signing-key PEM files
+  - `history`: `enabled` (default off) and `retention_days` (default 90). Applied at startup, so every instance on a database must agree; turning it off discards what was recorded
   - `browser`: allowed origins, cookie security, and the `passkeys` section (relying party ID and name, origins)
   - `control`: the bootstrap token (secret) The development config is in `config/dev.styx` and `config/dev.secrets.styx`.
 - HTTP: health endpoints at the root; versioned endpoints under `/v1`. Each surface's routes are in `src/surface.rs`.
@@ -151,6 +154,7 @@ mise run test
   - the runnable examples in `examples/`, against this build's binary (`tests/examples.rs`)
   - telemetry: spans, metrics and logs exported to a fake OTLP collector, trace propagation in and out, and nothing identifying in what's exported (`tests/telemetry.rs`)
   - retention: what the sweeper deletes and keeps, and its lock (`tests/retention.rs`)
+  - history: decisions explained as of a past time, the history horizon, disabling, and sweeping old row versions (`tests/history.rs`)
   - the bootstrap command, applying both example sets, re-runs, dry runs, conflicts and located problems (`tests/bootstrap.rs`)
 - Indirect coverage: none yet.
 

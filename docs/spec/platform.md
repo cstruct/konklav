@@ -116,6 +116,35 @@ Claims passed from an identity provider MUST be erased from a session once
 it has been revoked or has expired, without waiting for the session itself
 to be deleted.
 
+r[retention.history]
+A row version MUST be deleted once history's configured retention has
+passed since it stopped being current. A current row version MUST NOT be
+deleted, however old.
+
+## History
+
+r[history.config]
+History MUST be off unless configuration enables it, and its retention
+MUST be configurable.
+
+r[history.record]
+While history is enabled, every write to a subject, tenant, membership, the
+action catalog, a template, role, policy, role assignment, share or
+registered scope MUST keep the row version it replaces, including when the
+row is deleted, in the same transaction as the write. Enabling history MUST
+record every such row as it is then, and history MUST NOT claim to know
+anything earlier.
+
+r[history.disabled]
+While history is disabled, nothing MUST be recorded, and disabling it MUST
+discard the row versions recorded so far, since they could no longer be
+trusted.
+
+r[history.as-of]
+Reading the state as of a time within the history horizon MUST return
+exactly the row versions that were current then, and MUST NOT change the
+current state.
+
 ## Telemetry
 
 Konklav exports telemetry over OTLP to any collector or backend that

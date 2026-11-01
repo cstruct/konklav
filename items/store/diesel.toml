@@ -1,6 +1,9 @@
 [print_schema]
 file = "src/schema.rs"
 custom_type_derives = ["diesel::query_builder::QueryId", "Clone"]
+# History's tables are only read and written by SQL functions and raw
+# queries, and `regclass` has no Diesel type.
+filter = { except_tables = ["^history_setting$", "^history_table$", "^row_version$"] }
 
 [migrations_directory]
 dir = "migrations"

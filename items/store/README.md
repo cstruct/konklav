@@ -18,10 +18,12 @@ Library crate that owns Konklav's Postgres database: schema, forward-only migrat
   - `tenants` (the root is the nil UUID) and `memberships`
   - `catalog`: one document of actions, groups, scope kinds, facts and session flags
   - `templates`, `roles`, and role assignments (membership or global)
-  - `compile_input`: everything the compiler needs for one subject and tenant, read in one repeatable-read snapshot
+  - `compile_input`: everything the compiler needs for one subject and tenant, read in one repeatable-read snapshot (`load`), or inside a caller's transaction (`read`)
+  - `history`: enabling and disabling history, how far back it reaches, and `shadow`, which makes the rest of a transaction read tracked tables as of a past time
   - `registered_scopes`: registered scopes' tenants and containing scopes, recorded and removed in all-or-nothing batches of up to 1000. A scope's tenant never changes, and removed scopes are kept so it can't change by recording one again.
 - Triggers append `entitlements.changed` and `tenant.changed` for every write to memberships, assignments, subject state, the catalog, templates, roles and tenants.
 - Statement triggers append one `scope.changed` per transaction that writes registered scopes: the first statement writes the event and later ones add their scopes to it, so a batch is one event.
+- While history is enabled, triggers record a row version for every write to those tables, to shares and to registered scopes (`row_version`).
 
 ## Public interface
 

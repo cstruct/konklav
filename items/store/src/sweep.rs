@@ -176,6 +176,27 @@ pub async fn identity_claims(
     .await?)
 }
 
+/// Deletes versions of rows that stopped being current more than history's
+/// retention before `now`. Current versions stay, however old.
+// r[impl retention.history]
+pub async fn history(
+    conn: &mut AsyncPgConnection,
+    now: DateTime<Utc>,
+    batch: i64,
+) -> StoreResult<usize> {
+    Ok(diesel::sql_query(
+        "delete from row_version where id in (
+             select id from row_version
+             where valid_until < $1 - (select retention from history_setting)
+             limit $2
+         )",
+    )
+    .bind::<Timestamptz, _>(now)
+    .bind::<BigInt, _>(batch)
+    .execute(conn)
+    .await?)
+}
+
 /// Erases the challenge material from stored delivery requests whose
 /// challenge expired before `now`.
 // r[impl retention.delivery-material]
