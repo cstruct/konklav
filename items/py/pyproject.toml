@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "konklav-relying"
-version = "0.1.0"
+version = "1.0.0"
 description = "Decide Konklav authorization locally: token verification, cached entitlements and the change feed"
 license = "MIT"
 requires-python = ">=3.12"

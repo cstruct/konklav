@@ -2560,7 +2560,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-authn"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -2577,7 +2577,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-authz"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "konklav-core",
  "konklav-token",
@@ -2587,7 +2587,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-bootstrap"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "csv",
  "facet",
@@ -2600,7 +2600,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-console"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "base64 0.23.1",
  "futures-util",
@@ -2618,7 +2618,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2627,7 +2627,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-examples"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aws-lc-rs",
  "axum",
@@ -2647,7 +2647,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-relying"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ed25519-dalek 3.0.0",
  "konklav-authz",
@@ -2659,7 +2659,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-relying-client"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "ed25519-dalek 3.0.0",
@@ -2683,7 +2683,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-server"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aws-lc-rs",
  "axum",
@@ -2740,7 +2740,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-store"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "diesel",
@@ -2759,7 +2759,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-test-support"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "diesel",
  "diesel-async",
@@ -2770,7 +2770,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-token"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek 3.0.0",
