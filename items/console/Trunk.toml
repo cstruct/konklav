@@ -7,7 +7,7 @@ target = "index.html"
 dist = "../../target/console/dist"
 
 [watch]
-watch = ["src", "index.html", "style.css", "Cargo.toml"]
+watch = ["src", "index.html", "style.css", "favicon.svg", "Cargo.toml"]
 
 [serve]
 addresses = ["127.0.0.1"]
