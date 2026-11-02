@@ -35,7 +35,7 @@ pub struct CreateTenant {
     pub templates: Vec<String>,
 }
 
-fn empty_object() -> serde_json::Value {
+pub(crate) fn empty_object() -> serde_json::Value {
     serde_json::json!({})
 }
 

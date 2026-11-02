@@ -1,9 +1,11 @@
 //! Every transport type reads back what it writes.
 
 use konklav_api::{
-    AssignmentTarget, CreateCredential, CreatedCredential, ErrorCode, ErrorResponse,
-    MembershipDetail, RevokeSessions, RevokedKey, RevokedSessions, RotatedSlot, SessionPage,
-    SigningKey, SubjectDetail, SubjectPage, TenantPage, Written,
+    AssignRole, AssignmentTarget, CatalogDocument, CreateCredential, CreatedCredential,
+    DecisionExplanation, Deleted, Entitlements, ErrorCode, ErrorResponse, ExplainDecision,
+    Explanation, MembershipDetail, PutRole, PutTemplate, Reason, RevokeSessions, RevokedKey,
+    RevokedSessions, Role, RotatedSlot, SessionPage, SigningKey, SubjectDetail, SubjectPage,
+    Template, TenantPage, Written,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -251,4 +253,197 @@ fn signing_keys_round_trip() {
         "revoked_at": null,
     }]));
     round_trips::<RevokedKey>(&json!({"kid": "k1", "revoked": true}));
+}
+
+/// The catalog of the server's authorization tests, as `GET /v1/catalog`
+/// returns it: with every default written out.
+fn catalog() -> Value {
+    json!({
+        "actions": [
+            {"name": "project:read", "description": ""},
+            {"name": "document:read", "description": "Read documents"},
+        ],
+        "groups": [
+            {"name": "tenant:all", "description": "", "all_except_prefixes": ["sys:"]},
+            {"name": "readers", "description": "", "actions": ["document:read", "project:read"]},
+        ],
+        "scope_kinds": [
+            {"name": "project", "description": ""},
+            {"name": "document", "description": "", "registered": true},
+        ],
+        "facts": [
+            {"key": "tenant_type", "target": "tenant", "type": "string", "portable": true, "description": ""},
+            {"key": "period", "target": "membership", "type": "date_range", "portable": false, "description": ""},
+        ],
+        "session_flags": [
+            {"name": "personal_only", "kind": "restrictive", "requestable": true, "description": ""},
+            {"name": "device_bound", "kind": "assertive", "requestable": false, "description": ""},
+        ],
+    })
+}
+
+#[test]
+fn catalogs_round_trip_with_flattened_groups() {
+    round_trips::<CatalogDocument>(&catalog());
+    let mut written = catalog();
+    written["cursor"] = json!(3);
+    round_trips::<Written<CatalogDocument>>(&written);
+    let sparse: CatalogDocument = serde_json::from_value(json!({
+        "actions": [{"name": "project:read"}],
+        "groups": [{"name": "sys:all", "all_except_prefixes": []}],
+    }))
+    .unwrap();
+    assert!(sparse.scope_kinds.is_empty() && sparse.actions[0].description.is_empty());
+}
+
+fn policies() -> Value {
+    json!([
+        {"action": "project:read", "effect": "allow", "scope_bound": false},
+        {"action": "document:read", "effect": "deny", "scope_bound": true},
+    ])
+}
+
+#[test]
+fn roles_and_templates_round_trip_with_their_policies() {
+    round_trips::<Written<Role>>(&json!({
+        "id": "0195e0a0-0000-7000-8000-000000000009",
+        "tenant_id": "0195e0a0-0000-7000-8000-000000000001",
+        "key": "editor",
+        "template": "reader",
+        "priority": 5,
+        "metadata": {"label": "Editor"},
+        "policies": policies(),
+        "builtin": false,
+        "created_at": "2026-11-02T10:00:00Z",
+        "updated_at": "2026-11-02T10:00:00Z",
+        "cursor": 4,
+    }));
+    round_trips::<Template>(&json!({
+        "id": "0195e0a0-0000-7000-8000-00000000000a",
+        "key": "reader",
+        "description": "Reads",
+        "metadata": {},
+        "policies": policies(),
+        "created_at": "2026-11-02T10:00:00Z",
+        "updated_at": "2026-11-02T10:00:00Z",
+    }));
+    round_trips::<PutRole>(&json!({
+        "template": null,
+        "priority": 0,
+        "metadata": {},
+        "policies": policies(),
+    }));
+    let sparse: PutRole = serde_json::from_value(json!({"template": "reader"})).unwrap();
+    assert_eq!(sparse.metadata, json!({}));
+    let sparse: PutTemplate = serde_json::from_value(json!({"policies": [
+        {"action": "document:read", "effect": "allow"},
+    ]}))
+    .unwrap();
+    assert!(!sparse.policies[0].scope_bound && sparse.metadata == json!({}));
+    round_trips::<Written<Deleted>>(&json!({"deleted": true, "cursor": 5}));
+}
+
+#[test]
+fn assignments_round_trip_with_optional_scopes() {
+    round_trips::<AssignRole>(&json!({"role": "editor", "scope": {"kind": "project", "id": "p1"}}));
+    round_trips::<AssignRole>(&json!({"role": "admin", "scope": null}));
+}
+
+#[test]
+fn entitlements_round_trip_with_scopes_as_a_list() {
+    round_trips::<Entitlements>(&json!({
+        "global": [],
+        "tenant": ["project:read"],
+        "scoped": [{"kind": "project", "id": "p1", "actions": ["document:read"]}],
+        "shared": [{
+            "share": "0195e0a0-0000-7000-8000-00000000000b",
+            "owner_tenant": "0195e0a0-0000-7000-8000-00000000000c",
+            "kind": "project",
+            "id": "q-3",
+            "actions": ["document:read"],
+            "attributes": {"watermark": true},
+            "valid_until": 1_800_000_000,
+        }],
+    }));
+    round_trips::<Entitlements>(&json!({"global": [], "tenant": [], "scoped": []}));
+}
+
+fn contribution(effect: &str, priority: i32) -> Value {
+    json!({
+        "assignment": "editor (0195e0a0-0000-7000-8000-000000000005)",
+        "level": "project/p1",
+        "policy": "document:*",
+        "effect": effect,
+        "priority": priority,
+        "from_template": false,
+    })
+}
+
+#[test]
+fn explanations_round_trip() {
+    round_trips::<Explanation>(&json!({
+        "action": "document:write",
+        "contributions": [contribution("allow", 0)],
+        "granted_at": ["project/p1"],
+    }));
+    round_trips::<ExplainDecision>(&json!({
+        "tenant": "root",
+        "session": null,
+        "requirements": {
+            "token_kinds": ["identity", "tenant"],
+            "scopes": [{"kind": "project", "id": "p1", "actions": ["document:write"]}],
+            "step_up": {"min_methods": 2},
+        },
+        "at": "2026-11-02T10:00:00Z",
+    }));
+    let sparse: ExplainDecision = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(sparse, ExplainDecision::default());
+}
+
+#[test]
+fn decision_explanations_round_trip_with_tagged_decisions_and_reasons() {
+    round_trips::<DecisionExplanation>(&json!({
+        "decision": {"decision": "deny", "reason": {"missing_actions": {"actions": ["document:write"]}}},
+        "allowed": false,
+        "checks": [
+            {"check": "subject_active", "passed": true, "message": "The subject is active."},
+        ],
+        "actions": [{
+            "action": "document:write",
+            "level": "project/p1",
+            "granted": false,
+            "message": "Denied: …",
+            "reason": {
+                "kind": "denied",
+                "by": contribution("deny", 5),
+                "overrides": [contribution("allow", 0)],
+            },
+            "contributions": [contribution("deny", 5), contribution("allow", 0)],
+        }],
+    }));
+    round_trips::<DecisionExplanation>(&json!({
+        "decision": {"decision": "step_up", "requirement": {"max_age_seconds": 300}},
+        "allowed": false,
+        "checks": [],
+        "actions": [],
+    }));
+    round_trips::<DecisionExplanation>(&json!({
+        "decision": {"decision": "deny", "reason": "no_tenant"},
+        "allowed": false,
+        "checks": [],
+        "actions": [],
+    }));
+    let share = "0195e0a0-0000-7000-8000-00000000000b";
+    round_trips::<Reason>(&json!({
+        "kind": "allowed_by_share",
+        "share": share,
+        "recipient": "tenant",
+        "held": {"kind": "allowed", "by": contribution("allow", 0), "ineffective": []},
+    }));
+    round_trips::<Reason>(&json!({
+        "kind": "share_not_valid",
+        "share": share,
+        "valid_from": null,
+        "valid_until": 1_800_000_000,
+    }));
 }

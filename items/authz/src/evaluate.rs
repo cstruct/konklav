@@ -10,6 +10,7 @@ use crate::{Entitlements, RegisteredScopes, Registration, Scope};
 /// it names alone.
 // r[impl authz.resource-context.external]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ScopeRequirement {
     /// The tenant that owns the scope, when it isn't the token's: then only
     /// shares of the scope with the token's tenant satisfy it.
@@ -23,6 +24,7 @@ pub struct ScopeRequirement {
 
 /// Stronger or fresher authentication an operation needs.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct StepUp {
     /// At least this many distinct authentication methods.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -44,6 +46,7 @@ impl StepUp {
 /// What an operation demands of the caller.
 // r[impl relying.decision.requirements]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Requirements {
     /// Accepted token kinds; `tenant` only when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -68,6 +71,7 @@ pub struct Requirements {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum DenyReason {
     /// The token doesn't verify, or its session has ended or moved on.
@@ -98,16 +102,19 @@ pub enum DenyReason {
 /// operation: Konklav doesn't interpret them.
 // r[impl authz.share.attributes]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Obligation {
     pub share: konklav_core::ShareId,
     /// The owner tenant of the shared scope.
     pub tenant: konklav_core::TenantId,
     pub kind: String,
     pub id: String,
+    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
     pub attributes: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "decision", rename_all = "snake_case")]
 pub enum Decision {
     Allow {

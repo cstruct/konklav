@@ -10,6 +10,113 @@
     "version": "1.3.0"
   },
   "paths": {
+    "/v1/assignments/{id}": {
+      "delete": {
+        "tags": [
+          "assignments"
+        ],
+        "operationId": "unassign",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Deleted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/catalog": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "operationId": "get_catalog",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogDocument"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "`PUT /v1/catalog`: replaces the whole catalog.",
+        "operationId": "put_catalog",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CatalogDocument"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_CatalogDocument"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/credentials/{id}/break-glass": {
       "put": {
         "tags": [
@@ -367,6 +474,57 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Written_Membership"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memberships/{id}/assignments": {
+      "post": {
+        "tags": [
+          "assignments"
+        ],
+        "summary": "`POST /v1/memberships/{id}/assignments`",
+        "operationId": "assign_membership_role",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/MembershipId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignRole"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Assigned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_RoleAssignment"
                 }
               }
             }
@@ -994,6 +1152,373 @@
         }
       }
     },
+    "/v1/subjects/{id}/entitlements": {
+      "get": {
+        "tags": [
+          "entitlements"
+        ],
+        "summary": "`GET /v1/subjects/{id}/entitlements?tenant=`: what a subject is\nentitled to, for operators.",
+        "operationId": "subject_entitlements",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectId"
+            }
+          },
+          {
+            "name": "tenant",
+            "in": "query",
+            "description": "The tenant (a UUID or `root`); global entitlements only when absent.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Entitlements"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/subjects/{id}/explain": {
+      "get": {
+        "tags": [
+          "explain"
+        ],
+        "summary": "`GET /v1/subjects/{id}/explain?tenant=&action=`: which assignments and\npolicies bear on an action, and where it ends up granted.",
+        "operationId": "explain_entitlement",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectId"
+            }
+          },
+          {
+            "name": "tenant",
+            "in": "query",
+            "description": "The tenant (a UUID or `root`); global roles only when absent.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "The action to explain.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Explanation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/subjects/{id}/explain-decision": {
+      "post": {
+        "tags": [
+          "explain"
+        ],
+        "summary": "`POST /v1/subjects/{id}/explain-decision`",
+        "operationId": "explain_decision",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExplainDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionExplanation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/subjects/{id}/global-assignments": {
+      "get": {
+        "tags": [
+          "assignments"
+        ],
+        "operationId": "list_global_assignments",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RoleAssignment"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "assignments"
+        ],
+        "summary": "`POST /v1/subjects/{id}/global-assignments`",
+        "operationId": "assign_global_role",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignRole"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Assigned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_RoleAssignment"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/templates": {
+      "get": {
+        "tags": [
+          "templates"
+        ],
+        "operationId": "list_templates",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Template"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/templates/{key}": {
+      "get": {
+        "tags": [
+          "templates"
+        ],
+        "operationId": "get_template",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Template"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "`PUT /v1/templates/{key}`: creates or replaces a template.",
+        "operationId": "put_template",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutTemplate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Template"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tenants": {
       "get": {
         "tags": [
@@ -1254,6 +1779,200 @@
         }
       }
     },
+    "/v1/tenants/{id}/roles": {
+      "get": {
+        "tags": [
+          "roles"
+        ],
+        "operationId": "list_roles",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The tenant: a UUID or `root`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Role"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{id}/roles/{key}": {
+      "get": {
+        "tags": [
+          "roles"
+        ],
+        "operationId": "get_role",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The tenant: a UUID or `root`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Role"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "roles"
+        ],
+        "summary": "`PUT /v1/tenants/{tenant}/roles/{key}`: creates or replaces a role.\nRoles of the root tenant are global roles.",
+        "operationId": "put_role",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The tenant: a UUID or `root`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutRole"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Role"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "roles"
+        ],
+        "operationId": "delete_role",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The tenant: a UUID or `root`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Deleted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tenants/{id}/state": {
       "put": {
         "tags": [
@@ -1308,6 +2027,93 @@
   },
   "components": {
     "schemas": {
+      "ActionEntry": {
+        "type": "object",
+        "description": "A declared action.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ActionExplanation": {
+        "type": "object",
+        "description": "Why one required action at one level is granted or not.",
+        "required": [
+          "action",
+          "level",
+          "granted",
+          "message",
+          "reason",
+          "contributions"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "contributions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Contribution"
+            },
+            "description": "Every policy that bears on the action, wherever it lands."
+          },
+          "granted": {
+            "type": "boolean"
+          },
+          "level": {
+            "type": "string",
+            "description": "`global`, `tenant`, or `<scope kind>/<scope id>`."
+          },
+          "message": {
+            "type": "string"
+          },
+          "owner_tenant": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TenantId",
+                "description": "The tenant owning the scope, when it is another tenant's."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "$ref": "#/components/schemas/Reason"
+          }
+        }
+      },
+      "AssignRole": {
+        "type": "object",
+        "description": "A role to assign.",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "description": "The role's key in the membership's tenant (or in root for global\nassignments)."
+          },
+          "scope": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Scope",
+                "description": "Where in the tenant the role applies; tenant-wide when absent.\nGlobal assignments have none."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "AssignmentTarget": {
         "oneOf": [
           {
@@ -1364,6 +2170,63 @@
           }
         }
       },
+      "CatalogDocument": {
+        "type": "object",
+        "description": "The whole action catalog.",
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionEntry"
+            }
+          },
+          "facts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactEntry"
+            }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupEntry"
+            }
+          },
+          "scope_kinds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScopeKindEntry"
+            }
+          },
+          "session_flags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionFlagEntry"
+            }
+          }
+        }
+      },
+      "Check": {
+        "type": "object",
+        "description": "One check a decision makes besides the required actions.",
+        "required": [
+          "check",
+          "passed",
+          "message"
+        ],
+        "properties": {
+          "check": {
+            "type": "string",
+            "description": "Such as `subject_active`, `token_kind` or `step_up`."
+          },
+          "message": {
+            "type": "string"
+          },
+          "passed": {
+            "type": "boolean"
+          }
+        }
+      },
       "ClientKind": {
         "type": "string",
         "description": "Whether the session's refresh token travels in a cookie or in bodies.",
@@ -1371,6 +2234,41 @@
           "browser",
           "native"
         ]
+      },
+      "Contribution": {
+        "type": "object",
+        "description": "One policy that bears on an action, and where it lands.",
+        "required": [
+          "assignment",
+          "level",
+          "policy",
+          "effect",
+          "priority",
+          "from_template"
+        ],
+        "properties": {
+          "assignment": {
+            "type": "string"
+          },
+          "effect": {
+            "$ref": "#/components/schemas/Effect"
+          },
+          "from_template": {
+            "type": "boolean"
+          },
+          "level": {
+            "type": "string",
+            "description": "`global`, `tenant`, or `<scope kind>/<scope id>`."
+          },
+          "policy": {
+            "type": "string",
+            "description": "The policy's action or group, as written."
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
       },
       "CreateCredential": {
         "oneOf": [
@@ -1730,6 +2628,279 @@
         "format": "int64",
         "description": "The position of an event in the change feed.\n\nCursors increase strictly with every event but may have gaps, so they are\nonly meaningful for ordering and resuming, never for counting."
       },
+      "Decision": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "decision"
+            ],
+            "properties": {
+              "decision": {
+                "type": "string",
+                "enum": [
+                  "allow"
+                ]
+              },
+              "obligations": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Obligation"
+                },
+                "description": "One per share the decision relied on."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "decision"
+            ],
+            "properties": {
+              "decision": {
+                "type": "string",
+                "enum": [
+                  "deny"
+                ]
+              },
+              "reason": {
+                "$ref": "#/components/schemas/DenyReason"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The caller may succeed after re-authenticating as described.",
+            "required": [
+              "requirement",
+              "decision"
+            ],
+            "properties": {
+              "decision": {
+                "type": "string",
+                "enum": [
+                  "step_up"
+                ]
+              },
+              "requirement": {
+                "$ref": "#/components/schemas/StepUp"
+              }
+            }
+          }
+        ]
+      },
+      "DecisionExplanation": {
+        "type": "object",
+        "description": "Why a decision allows or denies.",
+        "required": [
+          "allowed",
+          "checks",
+          "actions"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionExplanation"
+            }
+          },
+          "allowed": {
+            "type": "boolean",
+            "description": "Whether every check passes and every required action is granted."
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Check"
+            }
+          },
+          "decision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Decision",
+                "description": "The decision the check API would reach, when explaining for a\nsession."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Deleted": {
+        "type": "object",
+        "description": "The result of a delete.",
+        "required": [
+          "deleted"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "boolean",
+            "description": "Whether this call deleted it; `false` when there was nothing to\ndelete."
+          }
+        }
+      },
+      "DenyReason": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "The token doesn't verify, or its session has ended or moved on.",
+            "enum": [
+              "invalid_token"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "token_kind"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "The session carries a restrictive flag the operation doesn't admit.",
+            "required": [
+              "restricted_session"
+            ],
+            "properties": {
+              "restricted_session": {
+                "type": "object",
+                "description": "The session carries a restrictive flag the operation doesn't admit.",
+                "required": [
+                  "flag"
+                ],
+                "properties": {
+                  "flag": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The session lacks an assertive flag the operation requires.",
+            "required": [
+              "missing_flag"
+            ],
+            "properties": {
+              "missing_flag": {
+                "type": "object",
+                "description": "The session lacks an assertive flag the operation requires.",
+                "required": [
+                  "flag"
+                ],
+                "properties": {
+                  "flag": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "string",
+            "description": "Tenant or scope requirements, but the token targets no tenant.",
+            "enum": [
+              "no_tenant"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "A required registered scope was never recorded, has been removed,\nor isn't in the tenant the requirement names.",
+            "required": [
+              "unknown_scope"
+            ],
+            "properties": {
+              "unknown_scope": {
+                "type": "object",
+                "description": "A required registered scope was never recorded, has been removed,\nor isn't in the tenant the requirement names.",
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "missing_actions"
+            ],
+            "properties": {
+              "missing_actions": {
+                "type": "object",
+                "required": [
+                  "actions"
+                ],
+                "properties": {
+                  "actions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "uniqueItems": true
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "Effect": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "deny"
+        ]
+      },
+      "Entitlements": {
+        "type": "object",
+        "description": "Effective allows for one subject in one tenant. Denies are already\nresolved, and an action granted at a higher level is not repeated below.",
+        "required": [
+          "global",
+          "tenant",
+          "scoped"
+        ],
+        "properties": {
+          "global": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "scoped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScopedActions"
+            },
+            "description": "Actions granted at one scope each, as a list."
+          },
+          "shared": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Shared"
+            },
+            "description": "Other tenants' scopes shared with this tenant."
+          },
+          "tenant": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          }
+        }
+      },
       "ErrorBody": {
         "type": "object",
         "required": [
@@ -1778,6 +2949,183 @@
             "$ref": "#/components/schemas/ErrorBody"
           }
         }
+      },
+      "ExplainDecision": {
+        "type": "object",
+        "description": "A decision to explain.",
+        "properties": {
+          "at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The time to explain the decision as of, as RFC 3339; now when\nabsent. Needs history, and can't be combined with a session."
+          },
+          "requirements": {
+            "$ref": "#/components/schemas/Requirements"
+          },
+          "session": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SessionId",
+                "description": "One of the subject's sessions, to check authentication as its tokens\nwould be checked."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tenant": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The tenant to decide in; the session's when absent."
+          }
+        }
+      },
+      "Explanation": {
+        "type": "object",
+        "description": "Why a subject has (or lacks) an action.",
+        "required": [
+          "action",
+          "contributions",
+          "granted_at"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "contributions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Contribution"
+            }
+          },
+          "granted_at": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The levels where the action ends up granted."
+          }
+        }
+      },
+      "FactEntry": {
+        "type": "object",
+        "description": "A declared fact key.",
+        "required": [
+          "key",
+          "target",
+          "type"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "portable": {
+            "type": "boolean",
+            "description": "Whether the fact may be copied into tokens."
+          },
+          "target": {
+            "$ref": "#/components/schemas/FactTarget"
+          },
+          "type": {
+            "$ref": "#/components/schemas/FactType"
+          }
+        }
+      },
+      "FactTarget": {
+        "type": "string",
+        "description": "What a fact is attached to.",
+        "enum": [
+          "tenant",
+          "membership",
+          "share"
+        ]
+      },
+      "FactType": {
+        "type": "string",
+        "description": "The type of a fact's value.",
+        "enum": [
+          "string",
+          "integer",
+          "boolean",
+          "string_list",
+          "date_range"
+        ]
+      },
+      "FlagKind": {
+        "type": "string",
+        "description": "A restrictive flag denies the session everywhere except operations that\nadmit it; an assertive flag is a statement operations can require.",
+        "enum": [
+          "restrictive",
+          "assertive"
+        ]
+      },
+      "Group": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Exactly these actions.",
+            "required": [
+              "actions"
+            ],
+            "properties": {
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Exactly these actions.",
+                "uniqueItems": true
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Every catalog name (actions and groups) not starting with one of\nthese prefixes.",
+            "required": [
+              "all_except_prefixes"
+            ],
+            "properties": {
+              "all_except_prefixes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Every catalog name (actions and groups) not starting with one of\nthese prefixes."
+              }
+            }
+          }
+        ],
+        "description": "How an action group expands."
+      },
+      "GroupEntry": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Group"
+          },
+          {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "A declared action group and how it expands."
       },
       "Membership": {
         "type": "object",
@@ -1857,6 +3205,35 @@
           "ended"
         ]
       },
+      "Obligation": {
+        "type": "object",
+        "description": "A share's attributes, for the relying system to apply to an allowed\noperation: Konklav doesn't interpret them.",
+        "required": [
+          "share",
+          "tenant",
+          "kind",
+          "id",
+          "attributes"
+        ],
+        "properties": {
+          "attributes": {
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "share": {
+            "$ref": "#/components/schemas/ShareId"
+          },
+          "tenant": {
+            "$ref": "#/components/schemas/TenantId",
+            "description": "The owner tenant of the shared scope."
+          }
+        }
+      },
       "Passkey": {
         "type": "object",
         "required": [
@@ -1874,6 +3251,307 @@
             "format": "date-time"
           }
         }
+      },
+      "Policy": {
+        "type": "object",
+        "description": "One rule of a role or template.",
+        "required": [
+          "action",
+          "effect"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "An action or action group."
+          },
+          "effect": {
+            "$ref": "#/components/schemas/Effect"
+          },
+          "scope_bound": {
+            "type": "boolean",
+            "description": "Applies only at the assignment's scope; otherwise tenant-wide."
+          }
+        }
+      },
+      "PutRole": {
+        "type": "object",
+        "description": "What a role should look like.",
+        "properties": {
+          "metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav."
+          },
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Policy"
+            }
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Between policies for the same action at the same level, the higher\npriority wins; at equal priority, a deny wins."
+          },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The key of a template to derive from."
+          }
+        }
+      },
+      "PutTemplate": {
+        "type": "object",
+        "description": "What a template should look like.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav."
+          },
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Policy"
+            }
+          }
+        }
+      },
+      "Reason": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A policy allows it at a level that counts, and wins there.",
+            "required": [
+              "by",
+              "ineffective",
+              "kind"
+            ],
+            "properties": {
+              "by": {
+                "$ref": "#/components/schemas/Contribution"
+              },
+              "ineffective": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Contribution"
+                },
+                "description": "Denies that don't cancel it: outranked where it wins, or at other\nlevels."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "allowed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "No level that counts grants it, and a deny wins at one of them.",
+            "required": [
+              "by",
+              "overrides",
+              "kind"
+            ],
+            "properties": {
+              "by": {
+                "$ref": "#/components/schemas/Contribution"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "denied"
+                ]
+              },
+              "overrides": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Contribution"
+                },
+                "description": "The allows at the deny's level that it overrides."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "No level that counts grants it, but these scopes do.",
+            "required": [
+              "granted_at",
+              "kind"
+            ],
+            "properties": {
+              "granted_at": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "not_here"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "No policy grants it anywhere.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "no_rule"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The other tenant's scope isn't shared with this tenant.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "no_share"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "share",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "share_not_accepted"
+                ]
+              },
+              "share": {
+                "$ref": "#/components/schemas/ShareId"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "share",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "share_not_valid"
+                ]
+              },
+              "share": {
+                "$ref": "#/components/schemas/ShareId"
+              },
+              "valid_from": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64"
+              },
+              "valid_until": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The share doesn't allow the action.",
+            "required": [
+              "share",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "not_shared"
+                ]
+              },
+              "share": {
+                "$ref": "#/components/schemas/ShareId"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The share allows it, but the subject doesn't hold it at the\nrecipient.",
+            "required": [
+              "share",
+              "recipient",
+              "held",
+              "kind"
+            ],
+            "properties": {
+              "held": {
+                "$ref": "#/components/schemas/Reason"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "not_held_at_recipient"
+                ]
+              },
+              "recipient": {
+                "type": "string"
+              },
+              "share": {
+                "$ref": "#/components/schemas/ShareId"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "share",
+              "recipient",
+              "held",
+              "kind"
+            ],
+            "properties": {
+              "held": {
+                "$ref": "#/components/schemas/Reason"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "allowed_by_share"
+                ]
+              },
+              "recipient": {
+                "type": "string"
+              },
+              "share": {
+                "$ref": "#/components/schemas/ShareId"
+              }
+            }
+          }
+        ],
+        "description": "Why a required action is granted or not."
       },
       "ReplacePassword": {
         "type": "object",
@@ -1912,6 +3590,65 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "Requirements": {
+        "type": "object",
+        "description": "What an operation demands of the caller.",
+        "properties": {
+          "admit_flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Restrictive session flags this operation tolerates.",
+            "uniqueItems": true
+          },
+          "global": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Actions required globally (independent of any tenant).",
+            "uniqueItems": true
+          },
+          "require_flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Assertive session flags this operation needs.",
+            "uniqueItems": true
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScopeRequirement"
+            },
+            "description": "Actions required at scopes of the token's tenant."
+          },
+          "step_up": {
+            "$ref": "#/components/schemas/StepUp"
+          },
+          "tenant": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Actions required tenant-wide in the token's tenant.",
+            "uniqueItems": true
+          },
+          "token_kinds": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/TokenKind"
+            },
+            "description": "Accepted token kinds; `tenant` only when absent.",
+            "uniqueItems": true
           }
         }
       },
@@ -1985,6 +3722,67 @@
             "items": {
               "$ref": "#/components/schemas/SessionId"
             }
+          }
+        }
+      },
+      "Role": {
+        "type": "object",
+        "description": "A role: tenant-local, or global when the root tenant owns it.",
+        "required": [
+          "id",
+          "tenant_id",
+          "key",
+          "priority",
+          "metadata",
+          "policies",
+          "builtin",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "builtin": {
+            "type": "boolean",
+            "description": "Defined by Konklav, under a reserved key; it can't be written."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav."
+          },
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Policy"
+            },
+            "description": "The role's own policies, which override its template's."
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The key of the template the role derives from."
+          },
+          "tenant_id": {
+            "$ref": "#/components/schemas/TenantId"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -2072,6 +3870,84 @@
           "id"
         ],
         "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        }
+      },
+      "ScopeKindEntry": {
+        "type": "object",
+        "description": "A declared scope kind.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "registered": {
+            "type": "boolean",
+            "description": "Scopes of this kind are registered scopes: requirements at them are\ndecided from Konklav's record of each scope."
+          }
+        }
+      },
+      "ScopeRequirement": {
+        "type": "object",
+        "description": "Actions required at one scope. The relying system resolves its own\nresources into scopes before asking, except registered scopes, which\nit names alone.",
+        "required": [
+          "kind",
+          "id",
+          "actions"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "tenant": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TenantId",
+                "description": "The tenant that owns the scope, when it isn't the token's: then only\nshares of the scope with the token's tenant satisfy it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ScopedActions": {
+        "type": "object",
+        "description": "The actions granted at one scope.",
+        "required": [
+          "kind",
+          "id",
+          "actions"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
           "id": {
             "type": "string"
           },
@@ -2351,6 +4227,29 @@
           }
         }
       },
+      "SessionFlagEntry": {
+        "type": "object",
+        "description": "A declared session flag.",
+        "required": [
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FlagKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "requestable": {
+            "type": "boolean",
+            "description": "Restrictive flags only: whether a login request may ask for it."
+          }
+        }
+      },
       "SessionFlags": {
         "type": "object",
         "required": [
@@ -2415,6 +4314,61 @@
           }
         }
       },
+      "ShareId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Identifies a share of one tenant's scope with another tenant.\nCallers supply it when offering the share."
+      },
+      "Shared": {
+        "type": "object",
+        "description": "What a share grants one subject: the share's actions that the subject\nholds at the recipient.",
+        "required": [
+          "share",
+          "owner_tenant",
+          "kind",
+          "id",
+          "actions"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "attributes": {
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "owner_tenant": {
+            "$ref": "#/components/schemas/TenantId"
+          },
+          "share": {
+            "$ref": "#/components/schemas/ShareId"
+          },
+          "valid_from": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Unix seconds."
+          },
+          "valid_until": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
       "SigningKey": {
         "type": "object",
         "description": "A key Konklav signs tokens with, without its key material.",
@@ -2454,6 +4408,39 @@
               "null"
             ],
             "format": "date-time"
+          }
+        }
+      },
+      "StepUp": {
+        "type": "object",
+        "description": "Stronger or fresher authentication an operation needs.",
+        "properties": {
+          "allowed_methods": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Methods that count towards `min_methods`; any method when absent.",
+            "uniqueItems": true
+          },
+          "max_age_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The last authentication must be at most this old."
+          },
+          "min_methods": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "At least this many distinct authentication methods.",
+            "minimum": 0
           }
         }
       },
@@ -2547,6 +4534,49 @@
           "disabled"
         ]
       },
+      "Template": {
+        "type": "object",
+        "description": "A reusable role blueprint, which can't be assigned.",
+        "required": [
+          "id",
+          "key",
+          "description",
+          "metadata",
+          "policies",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav."
+          },
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Policy"
+            }
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "Tenant": {
         "type": "object",
         "required": [
@@ -2622,6 +4652,73 @@
           "suspended",
           "deleted"
         ]
+      },
+      "TokenKind": {
+        "type": "string",
+        "description": "What an access token may be used for.",
+        "enum": [
+          "partial",
+          "identity",
+          "tenant",
+          "reset_password",
+          "invite"
+        ]
+      },
+      "Written_CatalogDocument": {
+        "allOf": [
+          {
+            "type": "object",
+            "description": "The whole action catalog.",
+            "properties": {
+              "actions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ActionEntry"
+                }
+              },
+              "facts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FactEntry"
+                }
+              },
+              "groups": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/GroupEntry"
+                }
+              },
+              "scope_kinds": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ScopeKindEntry"
+                }
+              },
+              "session_flags": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SessionFlagEntry"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
       },
       "Written_Credential": {
         "allOf": [
@@ -2712,6 +4809,39 @@
               },
               "subject_id": {
                 "$ref": "#/components/schemas/SubjectId"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
+      },
+      "Written_Deleted": {
+        "allOf": [
+          {
+            "type": "object",
+            "description": "The result of a delete.",
+            "required": [
+              "deleted"
+            ],
+            "properties": {
+              "deleted": {
+                "type": "boolean",
+                "description": "Whether this call deleted it; `false` when there was nothing to\ndelete."
               }
             }
           },
@@ -2831,6 +4961,150 @@
         ],
         "description": "A write's result and the cursor of the last event it produced, if any."
       },
+      "Written_Role": {
+        "allOf": [
+          {
+            "type": "object",
+            "description": "A role: tenant-local, or global when the root tenant owns it.",
+            "required": [
+              "id",
+              "tenant_id",
+              "key",
+              "priority",
+              "metadata",
+              "policies",
+              "builtin",
+              "created_at",
+              "updated_at"
+            ],
+            "properties": {
+              "builtin": {
+                "type": "boolean",
+                "description": "Defined by Konklav, under a reserved key; it can't be written."
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "key": {
+                "type": "string"
+              },
+              "metadata": {
+                "type": "object",
+                "description": "An object, opaque to Konklav."
+              },
+              "policies": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Policy"
+                },
+                "description": "The role's own policies, which override its template's."
+              },
+              "priority": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "template": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The key of the template the role derives from."
+              },
+              "tenant_id": {
+                "$ref": "#/components/schemas/TenantId"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
+      },
+      "Written_RoleAssignment": {
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "role_id",
+              "target",
+              "created_at"
+            ],
+            "properties": {
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "managed_by": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The identity provider whose claim mapping created it, if any."
+              },
+              "role_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "scope": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Scope"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "target": {
+                "$ref": "#/components/schemas/AssignmentTarget"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
+      },
       "Written_Subject": {
         "allOf": [
           {
@@ -2854,6 +5128,69 @@
               },
               "state": {
                 "$ref": "#/components/schemas/SubjectState"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
+      },
+      "Written_Template": {
+        "allOf": [
+          {
+            "type": "object",
+            "description": "A reusable role blueprint, which can't be assigned.",
+            "required": [
+              "id",
+              "key",
+              "description",
+              "metadata",
+              "policies",
+              "created_at",
+              "updated_at"
+            ],
+            "properties": {
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "description": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "key": {
+                "type": "string"
+              },
+              "metadata": {
+                "type": "object",
+                "description": "An object, opaque to Konklav."
+              },
+              "policies": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Policy"
+                }
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
               }
             }
           },

@@ -4,23 +4,21 @@
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use diesel_async::AsyncConnection;
 use konklav_api::{
-    self as api, CreateMembership, CreateTenant, MembershipDetail, MembershipQuery, SetTenantState,
-    TenantPage, TenantQuery,
+    self as api, AssignRole, CatalogDocument, CreateMembership, CreateTenant, Deleted,
+    EntitlementQuery, Entitlements, ExplainQuery, Explanation, MembershipDetail, MembershipQuery,
+    PutRole, PutTemplate, SetTenantState, TenantPage, TenantQuery,
 };
-use konklav_authz::{Policy, Scope};
 use konklav_core::{MembershipId, SubjectId, TenantId};
-use konklav_store::catalog::{self, CatalogDocument, FactTarget};
+use konklav_store::catalog::{self, FactTarget};
 use konklav_store::memberships;
-use konklav_store::roles::{self, Role, RoleAssignment, RoleDefinition};
+use konklav_store::roles;
 use konklav_store::sessions::{self, SessionFilter};
-use konklav_store::templates::{self, Template};
+use konklav_store::templates;
 use konklav_store::tenants::{self, TenantState};
 use konklav_store::{StoreError, compile_input, events};
-use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -44,31 +42,29 @@ pub(crate) fn tenancy() -> OpenApiRouter<AppState> {
         .routes(routes!(end_membership))
 }
 
+/// The catalog, templates, roles, role assignments and entitlements,
+/// described like [`tenancy`].
+pub(crate) fn authz() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(get_catalog, put_catalog))
+        .routes(routes!(list_roles))
+        .routes(routes!(put_role, get_role, delete_role))
+        .routes(routes!(assign_membership_role))
+        .routes(routes!(assign_global_role, list_global_assignments))
+        .routes(routes!(subject_entitlements))
+        .routes(routes!(explain_entitlement))
+        .routes(routes!(unassign))
+        .routes(routes!(list_templates))
+        .routes(routes!(put_template, get_template))
+}
+
 pub fn routes(state: &AppState) -> Router<AppState> {
     let (tenancy, _) = tenancy()
         .route_layer(guard(state, capabilities::TENANTS))
         .split_for_parts();
-    let authz = Router::new()
-        .route("/catalog", get(get_catalog).put(put_catalog))
-        .route("/tenants/{id}/roles", get(list_roles))
-        .route(
-            "/tenants/{id}/roles/{key}",
-            put(put_role).get(get_role).delete(delete_role),
-        )
-        .route(
-            "/memberships/{id}/assignments",
-            post(assign_membership_role),
-        )
-        .route(
-            "/subjects/{id}/global-assignments",
-            post(assign_global_role).get(list_global_assignments),
-        )
-        .route("/subjects/{id}/entitlements", get(subject_entitlements))
-        .route("/subjects/{id}/explain", get(explain_entitlement))
-        .route("/assignments/{id}", delete(unassign))
-        .route("/templates", get(list_templates))
-        .route("/templates/{key}", put(put_template).get(get_template))
-        .route_layer(guard(state, capabilities::AUTHZ));
+    let (authz, _) = authz()
+        .route_layer(guard(state, capabilities::AUTHZ))
+        .split_for_parts();
     tenancy.merge(authz)
 }
 
@@ -79,16 +75,22 @@ fn tenant_ref(value: &str) -> Result<TenantId, ApiError> {
 
 // --- Catalog ----------------------------------------------------------------
 
+#[utoipa::path(get, path = "/catalog", tag = "catalog",
+    responses((status = 200, body = CatalogDocument)))]
 async fn get_catalog(State(state): State<AppState>) -> Result<Json<CatalogDocument>, ApiError> {
     let mut conn = state.pool.get().await?;
-    Ok(Json(catalog::load(&mut conn).await?))
+    Ok(Json(transport::catalog(catalog::load(&mut conn).await?)))
 }
 
 /// `PUT /v1/catalog`: replaces the whole catalog.
+#[utoipa::path(put, path = "/catalog", tag = "catalog",
+    request_body = CatalogDocument,
+    responses((status = 200, body = Written<CatalogDocument>)))]
 async fn put_catalog(
     State(state): State<AppState>,
     ApiJson(document): ApiJson<CatalogDocument>,
 ) -> Result<Json<Written<CatalogDocument>>, ApiError> {
+    let document = transport::store_catalog(document);
     let mut conn = state.pool.get().await?;
     let cursor = conn
         .transaction::<_, ApiError, _>(async |conn| {
@@ -97,16 +99,12 @@ async fn put_catalog(
         })
         .await?;
     Ok(Json(Written {
-        value: catalog::load(&mut conn).await?,
+        value: transport::catalog(catalog::load(&mut conn).await?),
         cursor,
     }))
 }
 
 // --- Tenants ----------------------------------------------------------------
-
-fn empty_object() -> serde_json::Value {
-    serde_json::json!({})
-}
 
 /// `PUT /v1/tenants/{id}`: idempotent on the id.
 #[utoipa::path(put, path = "/tenants/{id}", tag = "tenants",
@@ -346,40 +344,45 @@ async fn end_membership(
 
 // --- Templates and roles ----------------------------------------------------
 
-#[derive(Deserialize)]
-struct TemplateBody {
-    #[serde(default)]
-    description: String,
-    #[serde(default = "empty_object")]
-    metadata: serde_json::Value,
-    #[serde(default)]
-    policies: Vec<Policy>,
-}
-
-async fn list_templates(State(state): State<AppState>) -> Result<Json<Vec<Template>>, ApiError> {
-    let mut conn = state.pool.get().await?;
-    Ok(Json(templates::list(&mut conn).await?))
-}
-
-async fn get_template(
+#[utoipa::path(get, path = "/templates", tag = "templates",
+    responses((status = 200, body = Vec<api::Template>)))]
+async fn list_templates(
     State(state): State<AppState>,
-    Path(key): Path<String>,
-) -> Result<Json<Template>, ApiError> {
+) -> Result<Json<Vec<api::Template>>, ApiError> {
     let mut conn = state.pool.get().await?;
     Ok(Json(
-        templates::get(&mut conn, &key)
-            .await
-            .map_err(not_found_as("template"))?,
+        templates::list(&mut conn)
+            .await?
+            .into_iter()
+            .map(transport::template)
+            .collect(),
     ))
 }
 
+#[utoipa::path(get, path = "/templates/{key}", tag = "templates", params(("key" = String, Path)),
+    responses((status = 200, body = api::Template)))]
+async fn get_template(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+) -> Result<Json<api::Template>, ApiError> {
+    let mut conn = state.pool.get().await?;
+    Ok(Json(transport::template(
+        templates::get(&mut conn, &key)
+            .await
+            .map_err(not_found_as("template"))?,
+    )))
+}
+
 /// `PUT /v1/templates/{key}`: creates or replaces a template.
+#[utoipa::path(put, path = "/templates/{key}", tag = "templates", params(("key" = String, Path)),
+    request_body = PutTemplate,
+    responses((status = 200, body = Written<api::Template>)))]
 async fn put_template(
     State(state): State<AppState>,
     Extension(operator): Extension<Operator>,
     Path(key): Path<String>,
-    ApiJson(body): ApiJson<TemplateBody>,
-) -> Result<Json<Written<Template>>, ApiError> {
+    ApiJson(body): ApiJson<PutTemplate>,
+) -> Result<Json<Written<api::Template>>, ApiError> {
     let mut conn = state.pool.get().await?;
     let (template, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
@@ -403,59 +406,59 @@ async fn put_template(
         })
         .await?;
     Ok(Json(Written {
-        value: template,
+        value: transport::template(template),
         cursor,
     }))
 }
 
-#[derive(Deserialize)]
-struct RoleBody {
-    template: Option<String>,
-    #[serde(default)]
-    priority: i32,
-    #[serde(default = "empty_object")]
-    metadata: serde_json::Value,
-    #[serde(default)]
-    policies: Vec<Policy>,
-}
-
+#[utoipa::path(get, path = "/tenants/{id}/roles", tag = "roles",
+    params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
+    responses((status = 200, body = Vec<api::Role>)))]
 async fn list_roles(
     State(state): State<AppState>,
     Path(tenant): Path<String>,
-) -> Result<Json<Vec<Role>>, ApiError> {
-    let tenant = tenant_ref(&tenant)?;
-    let mut conn = state.pool.get().await?;
-    Ok(Json(roles::list(&mut conn, tenant).await?))
-}
-
-async fn get_role(
-    State(state): State<AppState>,
-    Path((tenant, key)): Path<(String, String)>,
-) -> Result<Json<Role>, ApiError> {
+) -> Result<Json<Vec<api::Role>>, ApiError> {
     let tenant = tenant_ref(&tenant)?;
     let mut conn = state.pool.get().await?;
     Ok(Json(
+        roles::list(&mut conn, tenant)
+            .await?
+            .into_iter()
+            .map(transport::role)
+            .collect(),
+    ))
+}
+
+#[utoipa::path(get, path = "/tenants/{id}/roles/{key}", tag = "roles",
+    params(("id" = String, Path, description = "The tenant: a UUID or `root`"), ("key" = String, Path)),
+    responses((status = 200, body = api::Role)))]
+async fn get_role(
+    State(state): State<AppState>,
+    Path((tenant, key)): Path<(String, String)>,
+) -> Result<Json<api::Role>, ApiError> {
+    let tenant = tenant_ref(&tenant)?;
+    let mut conn = state.pool.get().await?;
+    Ok(Json(transport::role(
         roles::get(&mut conn, tenant, &key)
             .await
             .map_err(not_found_as("role"))?,
-    ))
+    )))
 }
 
 /// `PUT /v1/tenants/{tenant}/roles/{key}`: creates or replaces a role.
 /// Roles of the root tenant are global roles.
+#[utoipa::path(put, path = "/tenants/{id}/roles/{key}", tag = "roles",
+    params(("id" = String, Path, description = "The tenant: a UUID or `root`"), ("key" = String, Path)),
+    request_body = PutRole,
+    responses((status = 200, body = Written<api::Role>)))]
 async fn put_role(
     State(state): State<AppState>,
     Extension(operator): Extension<Operator>,
     Path((tenant, key)): Path<(String, String)>,
-    ApiJson(body): ApiJson<RoleBody>,
-) -> Result<Json<Written<Role>>, ApiError> {
+    ApiJson(body): ApiJson<PutRole>,
+) -> Result<Json<Written<api::Role>>, ApiError> {
     let tenant = tenant_ref(&tenant)?;
-    let definition = RoleDefinition {
-        template: body.template,
-        priority: body.priority,
-        metadata: body.metadata,
-        policies: body.policies,
-    };
+    let definition = transport::role_definition(body);
     let mut conn = state.pool.get().await?;
     let (role, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
@@ -483,16 +486,14 @@ async fn put_role(
         })
         .await?;
     Ok(Json(Written {
-        value: role,
+        value: transport::role(role),
         cursor,
     }))
 }
 
-#[derive(Serialize)]
-struct Deleted {
-    deleted: bool,
-}
-
+#[utoipa::path(delete, path = "/tenants/{id}/roles/{key}", tag = "roles",
+    params(("id" = String, Path, description = "The tenant: a UUID or `root`"), ("key" = String, Path)),
+    responses((status = 200, body = Written<Deleted>)))]
 async fn delete_role(
     State(state): State<AppState>,
     Extension(operator): Extension<Operator>,
@@ -519,20 +520,16 @@ async fn delete_role(
 
 // --- Assignments ------------------------------------------------------------
 
-#[derive(Deserialize)]
-struct AssignRole {
-    /// The role's key in the membership's tenant (or in root for global
-    /// assignments).
-    role: String,
-    scope: Option<Scope>,
-}
-
 /// `POST /v1/memberships/{id}/assignments`
+#[utoipa::path(post, path = "/memberships/{id}/assignments", tag = "assignments",
+    params(("id" = MembershipId, Path)),
+    request_body = AssignRole,
+    responses((status = 201, description = "Assigned", body = Written<api::RoleAssignment>)))]
 async fn assign_membership_role(
     State(state): State<AppState>,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<AssignRole>,
-) -> Result<(StatusCode, Json<Written<RoleAssignment>>), ApiError> {
+) -> Result<(StatusCode, Json<Written<api::RoleAssignment>>), ApiError> {
     let id: MembershipId = parse_id(&id, "membership id")?;
     let mut conn = state.pool.get().await?;
     let (assignment, cursor) = conn
@@ -545,7 +542,7 @@ async fn assign_membership_role(
     Ok((
         StatusCode::CREATED,
         Json(Written {
-            value: assignment,
+            value: transport::role_assignment(assignment),
             cursor,
         }),
     ))
@@ -553,12 +550,16 @@ async fn assign_membership_role(
 
 /// `POST /v1/subjects/{id}/global-assignments`
 // r[impl authz.assignment.capabilities]
+#[utoipa::path(post, path = "/subjects/{id}/global-assignments", tag = "assignments",
+    params(("id" = SubjectId, Path)),
+    request_body = AssignRole,
+    responses((status = 201, description = "Assigned", body = Written<api::RoleAssignment>)))]
 async fn assign_global_role(
     State(state): State<AppState>,
     Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<AssignRole>,
-) -> Result<(StatusCode, Json<Written<RoleAssignment>>), ApiError> {
+) -> Result<(StatusCode, Json<Written<api::RoleAssignment>>), ApiError> {
     let id: SubjectId = parse_id(&id, "subject id")?;
     if body.scope.is_some() {
         return Err(ApiError::invalid_request(
@@ -581,21 +582,33 @@ async fn assign_global_role(
     Ok((
         StatusCode::CREATED,
         Json(Written {
-            value: assignment,
+            value: transport::role_assignment(assignment),
             cursor,
         }),
     ))
 }
 
+#[utoipa::path(get, path = "/subjects/{id}/global-assignments", tag = "assignments",
+    params(("id" = SubjectId, Path)),
+    responses((status = 200, body = Vec<api::RoleAssignment>)))]
 async fn list_global_assignments(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<Vec<RoleAssignment>>, ApiError> {
+) -> Result<Json<Vec<api::RoleAssignment>>, ApiError> {
     let id: SubjectId = parse_id(&id, "subject id")?;
     let mut conn = state.pool.get().await?;
-    Ok(Json(roles::global_assignments_of(&mut conn, id).await?))
+    Ok(Json(
+        roles::global_assignments_of(&mut conn, id)
+            .await?
+            .into_iter()
+            .map(transport::role_assignment)
+            .collect(),
+    ))
 }
 
+#[utoipa::path(delete, path = "/assignments/{id}", tag = "assignments",
+    params(("id" = uuid::Uuid, Path)),
+    responses((status = 200, body = Written<Deleted>)))]
 async fn unassign(
     State(state): State<AppState>,
     Extension(operator): Extension<Operator>,
@@ -620,18 +633,16 @@ async fn unassign(
     }))
 }
 
-#[derive(Deserialize)]
-struct EntitlementQuery {
-    tenant: Option<String>,
-}
-
 /// `GET /v1/subjects/{id}/entitlements?tenant=`: what a subject is
 /// entitled to, for operators.
+#[utoipa::path(get, path = "/subjects/{id}/entitlements", tag = "entitlements",
+    params(("id" = SubjectId, Path), EntitlementQuery),
+    responses((status = 200, body = Entitlements)))]
 async fn subject_entitlements(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(query): Query<EntitlementQuery>,
-) -> Result<Json<konklav_authz::Entitlements>, ApiError> {
+) -> Result<Json<Entitlements>, ApiError> {
     let id: SubjectId = parse_id(&id, "subject id")?;
     let tenant = query.tenant.as_deref().map(tenant_ref).transpose()?;
     let mut conn = state.pool.get().await?;
@@ -676,19 +687,16 @@ async fn list_memberships(
     ))
 }
 
-#[derive(Deserialize)]
-struct ExplainQuery {
-    tenant: Option<String>,
-    action: String,
-}
-
 /// `GET /v1/subjects/{id}/explain?tenant=&action=`: which assignments and
 /// policies bear on an action, and where it ends up granted.
+#[utoipa::path(get, path = "/subjects/{id}/explain", tag = "explain",
+    params(("id" = SubjectId, Path), ExplainQuery),
+    responses((status = 200, body = Explanation)))]
 async fn explain_entitlement(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(query): Query<ExplainQuery>,
-) -> Result<Json<konklav_authz::Explanation>, ApiError> {
+) -> Result<Json<Explanation>, ApiError> {
     let id: SubjectId = parse_id(&id, "subject id")?;
     let tenant = query.tenant.as_deref().map(tenant_ref).transpose()?;
     let mut conn = state.pool.get().await?;

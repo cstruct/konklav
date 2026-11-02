@@ -56,10 +56,7 @@ pub(crate) fn role_assignment(assignment: RoleAssignment) -> api::RoleAssignment
             AssignmentTarget::Membership(id) => api::AssignmentTarget::Membership(id),
             AssignmentTarget::Subject(id) => api::AssignmentTarget::Subject(id),
         },
-        scope: assignment.scope.map(|scope| api::Scope {
-            kind: scope.kind,
-            id: scope.id,
-        }),
+        scope: assignment.scope,
         managed_by: assignment.managed_by,
         created_at: assignment.created_at,
     }

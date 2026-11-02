@@ -20,6 +20,7 @@ use crate::{
 
 /// One policy that bears on an action, and where it lands.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Contribution {
     pub assignment: String,
     /// `global`, `tenant`, or `<scope kind>/<scope id>`.
@@ -53,6 +54,7 @@ impl Contribution {
 
 /// Why a subject has (or lacks) an action.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Explanation {
     pub action: String,
     pub contributions: Vec<Contribution>,
@@ -122,6 +124,7 @@ pub fn explain(catalog: &Catalog, assignments: &[Assignment], action: &str) -> E
 
 /// One check a decision makes besides the required actions.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Check {
     /// Such as `subject_active`, `token_kind` or `step_up`.
     pub check: String,
@@ -142,6 +145,7 @@ impl Check {
 
 /// Why a required action is granted or not.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Reason {
     /// A policy allows it at a level that counts, and wins there.
@@ -182,11 +186,13 @@ pub enum Reason {
     NotHeldAtRecipient {
         share: ShareId,
         recipient: String,
+        #[cfg_attr(feature = "openapi", schema(no_recursion))]
         held: Box<Reason>,
     },
     AllowedByShare {
         share: ShareId,
         recipient: String,
+        #[cfg_attr(feature = "openapi", schema(no_recursion))]
         held: Box<Reason>,
     },
 }
@@ -276,6 +282,7 @@ fn capitalized(text: &str) -> String {
 
 /// Why one required action at one level is granted or not.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ActionExplanation {
     pub action: String,
     /// `global`, `tenant`, or `<scope kind>/<scope id>`.
@@ -292,6 +299,7 @@ pub struct ActionExplanation {
 
 /// Why a decision allows or denies.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DecisionExplanation {
     /// The decision the check API would reach, when explaining for a
     /// session.

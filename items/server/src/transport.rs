@@ -1,12 +1,16 @@
 //! Conversions from storage models to `konklav-api`'s transport types, at
 //! the boundary of the control-plane surface.
 
+mod authz;
+mod catalog;
 mod credentials;
 mod keys;
 mod sessions;
 mod subjects;
 mod tenancy;
 
+pub(crate) use authz::*;
+pub(crate) use catalog::*;
 pub(crate) use credentials::*;
 pub(crate) use keys::*;
 pub(crate) use sessions::*;

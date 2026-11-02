@@ -8,6 +8,7 @@ Library crate for Konklav access tokens: the claims, compact EdDSA (Ed25519) JWS
 - `Signer`: signs claims with one Ed25519 key, and sets `kid` in the header.
 - `verify`: checks algorithm, signature, issuer, audience, expiry and issue time.
 - `kid_for`, `Jwk`, `JwkSet`: key ids and JWKS documents.
+- With the optional `openapi` feature, `TokenKind` describes itself as an OpenAPI schema, for the control plane's API document.
 
 It performs no I/O and reads no clock: callers pass the current time. That lets the relying core (M4) reuse it unchanged.
 

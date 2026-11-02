@@ -1,13 +1,7 @@
 use chrono::{DateTime, Utc};
+use konklav_authz::Scope;
 use konklav_core::{MembershipId, SubjectId};
 use serde::{Deserialize, Serialize};
-
-/// A resource inside a tenant. Konklav treats the id as opaque.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct Scope {
-    pub kind: String,
-    pub id: String,
-}
 
 /// Who a role is assigned to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -28,4 +22,22 @@ pub struct RoleAssignment {
     /// The identity provider whose claim mapping created it, if any.
     pub managed_by: Option<String>,
     pub created_at: DateTime<Utc>,
+}
+
+/// A role to assign.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct AssignRole {
+    /// The role's key in the membership's tenant (or in root for global
+    /// assignments).
+    pub role: String,
+    /// Where in the tenant the role applies; tenant-wide when absent.
+    /// Global assignments have none.
+    pub scope: Option<Scope>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct EntitlementQuery {
+    /// The tenant (a UUID or `root`); global entitlements only when absent.
+    pub tenant: Option<String>,
 }

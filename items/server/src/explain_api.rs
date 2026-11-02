@@ -5,47 +5,36 @@
 use std::collections::BTreeMap;
 
 use axum::extract::{Path, State};
-use axum::routing::post;
 use axum::{Json, Router};
 use chrono::{DateTime, SecondsFormat, Utc};
-use konklav_authz::{
-    Check, DecisionExplanation, ExplainInput, Requirements, SessionContext, explain_decision,
-};
-use konklav_core::{SessionId, SubjectId, TenantId};
+use konklav_api::ExplainDecision;
+use konklav_authz::{Check, DecisionExplanation, ExplainInput, Requirements, SessionContext};
+use konklav_core::{SubjectId, TenantId};
 use konklav_store::compile_input::{self, CompileInput};
 use konklav_store::sessions::{self, Stage};
 use konklav_store::subjects::{self, SubjectState};
 use konklav_store::tenants::{self, TenantState};
 use konklav_store::{Connection, history, memberships, registered_scopes, shares};
 use konklav_token::{AccessClaims, TokenKind};
-use serde::Deserialize;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::control_api::{guard, parse_id};
 use crate::error::{ApiError, ApiJson};
 use crate::import::not_found_as;
 use crate::{AppState, capabilities};
 
-pub fn routes(state: &AppState) -> Router<AppState> {
-    Router::new()
-        .route("/subjects/{id}/explain-decision", post(explain))
-        .route_layer(guard(state, capabilities::AUTHZ))
+/// Explaining decisions, with the `OpenAPI` description taken from the
+/// handler's `#[utoipa::path]`.
+pub(crate) fn explain() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(explain_decision))
 }
 
-#[derive(Deserialize)]
-struct ExplainBody {
-    /// The tenant to decide in; the session's when absent.
-    #[serde(default)]
-    tenant: Option<String>,
-    /// One of the subject's sessions, to check authentication as its tokens
-    /// would be checked.
-    #[serde(default)]
-    session: Option<SessionId>,
-    #[serde(default)]
-    requirements: Requirements,
-    /// The time to explain the decision as of, as RFC 3339; now when
-    /// absent. Needs history, and can't be combined with a session.
-    #[serde(default)]
-    at: Option<DateTime<Utc>>,
+pub fn routes(state: &AppState) -> Router<AppState> {
+    let (router, _) = explain()
+        .route_layer(guard(state, capabilities::AUTHZ))
+        .split_for_parts();
+    router
 }
 
 /// Claims as an access token for `session` would carry them.
@@ -185,10 +174,14 @@ async fn check_reach(
 /// `POST /v1/subjects/{id}/explain-decision`
 // r[impl authz.explain.decision]
 // r[impl authz.explain.checks]
-async fn explain(
+#[utoipa::path(post, path = "/subjects/{id}/explain-decision", tag = "explain",
+    params(("id" = SubjectId, Path)),
+    request_body = ExplainDecision,
+    responses((status = 200, body = DecisionExplanation)))]
+async fn explain_decision(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    ApiJson(body): ApiJson<ExplainBody>,
+    ApiJson(body): ApiJson<ExplainDecision>,
 ) -> Result<Json<DecisionExplanation>, ApiError> {
     let subject: SubjectId = parse_id(&id, "subject id")?;
     let mut tenant = body
@@ -267,7 +260,7 @@ async fn explain(
             restrictive_flags: &restrictive_flags,
             current: session.is_active_at(now),
         });
-    Ok(Json(explain_decision(
+    Ok(Json(konklav_authz::explain_decision(
         &ExplainInput {
             catalog: &input.catalog,
             assignments: &input.assignments,

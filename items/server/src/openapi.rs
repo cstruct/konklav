@@ -1,14 +1,14 @@
 //! The `OpenAPI` document for the control-plane surface.
 //!
-//! Spike: only tenants, memberships, subjects, credentials, sessions and
-//! signing keys are described so far.
+//! Spike: only tenants, memberships, subjects, credentials, sessions,
+//! signing keys and authorization are described so far.
 
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::openapi::{ContentBuilder, Ref, ResponseBuilder};
 use utoipa::{Modify, OpenApi};
 use utoipa_axum::router::OpenApiRouter;
 
-use crate::{control_api, control_authz};
+use crate::{control_api, control_authz, explain_api};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -70,6 +70,8 @@ pub fn control_plane() -> String {
         .nest("/v1", control_api::subjects())
         .nest("/v1", control_api::sessions())
         .nest("/v1", control_api::signing_keys())
+        .nest("/v1", control_authz::authz())
+        .nest("/v1", explain_api::explain())
         .into_openapi();
     ControlPlane.modify(&mut openapi);
     openapi.to_pretty_json().expect("the document serializes")
