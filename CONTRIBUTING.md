@@ -105,15 +105,16 @@ and that the Python wheels and sdist build and pass the binding's tests
 
 Every release has one version, shared by the server, the console, the
 Docker image and the Python package (`konklav-relying` on PyPI), and is
-made from one `v<version>` tag:
+made from one `v<version>` tag. On an up-to-date `main` with a clean working
+tree, run `mise run release:bump <version>`. It refuses to run with
+uncommitted changes, then:
 
-1. On a branch, run `mise run release:bump <version>`. It sets `version`
-   under `[workspace.package]` in `Cargo.toml` and in `items/py/Cargo.toml`
-   (which maturin also uses for the Python package), and refreshes the
-   lockfiles. Merge it to `main` as "Release <version>".
-2. Tag that commit on `main` with an annotated tag and push it:
-   `git tag -a v<version> -m "Konklav <version>"`, then
-   `git push origin v<version>`.
+1. Sets `version` under `[workspace.package]` in `Cargo.toml` and in
+   `items/py/Cargo.toml` (which maturin also uses for the Python package),
+   and refreshes the lockfiles.
+2. Commits that as "Release <version>" and pushes it.
+3. Tags the commit `v<version>` with an annotated tag ("Konklav <version>")
+   and pushes the tag.
 
 The release workflow then:
 
