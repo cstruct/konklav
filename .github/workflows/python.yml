@@ -126,6 +126,26 @@ jobs:
           maturin-version: ${{ env.MATURIN_VERSION }}
           args: --out dist
 
+      # PyPI rejects an sdist whose metadata names a license file it doesn't
+      # contain, and only once the wheels before it have been uploaded.
+      - name: Check the sdist's license files
+        working-directory: items/py
+        run: |
+          python3 - dist/*.tar.gz <<'PY'
+          import email.parser
+          import sys
+          import tarfile
+
+          with tarfile.open(sys.argv[1]) as sdist:
+              names = set(sdist.getnames())
+              info = next(n for n in names if n.count("/") == 1 and n.endswith("/PKG-INFO"))
+              root = info.rsplit("/", 1)[0]
+              metadata = email.parser.BytesParser().parse(sdist.extractfile(info))
+          missing = [f for f in metadata.get_all("License-File", []) if f"{root}/{f}" not in names]
+          if missing:
+              raise SystemExit(f"The sdist's metadata names license files it doesn't contain: {missing}")
+          PY
+
       # Rust, to build from the sdist as pip does on platforms without a wheel.
       - name: Install Rust and uv
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
