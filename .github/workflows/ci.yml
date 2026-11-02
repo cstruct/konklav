@@ -58,3 +58,10 @@ jobs:
       - name: Stop Postgres
         if: always()
         run: mise run db:down
+
+      # Builds the crates published to crates.io from their packaged sources,
+      # as the release would, each against the others' packages.
+      - name: Package the published crates
+        run: |
+          mapfile -t names < <(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.publish == null) | .name')
+          cargo package --locked "${names[@]/#/-p}"

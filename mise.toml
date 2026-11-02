@@ -88,6 +88,8 @@ for manifest in Cargo.toml items/py/Cargo.toml; do
   test "$(grep -c '^version = ' "$manifest")" = 1
   perl -pi -e "s/^version = \\"[^\\"]*\\"/version = \\"$version\\"/" "$manifest"
 done
+# The published crates' requirements on each other.
+perl -pi -e "s/^(konklav-[a-z-]+ = \\{ version = \\")=[^\\"]*/\\1=$version/" Cargo.toml
 cargo update -q --workspace
 cargo update -q --workspace --manifest-path items/py/Cargo.toml
 git commit -q -am "Release $version"
