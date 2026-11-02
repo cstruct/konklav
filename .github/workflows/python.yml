@@ -1,0 +1,148 @@
+name: Python
+
+# Builds the Python relying binding's wheels and sdist, and runs its tests
+# against each one installed. Pull requests and runs started by hand only
+# build and test; the release workflow calls this and publishes the result
+# to PyPI.
+on:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # As pinned in mise.toml and items/py/uv.lock.
+  RUST_TOOLCHAIN: '1.99.0'
+  MATURIN_VERSION: 'v1.15.0'
+  # Python 3.12 on Alpine with uv, as pinned in mise.toml, to test the
+  # musllinux wheels.
+  ALPINE_IMAGE: ghcr.io/astral-sh/uv:0.8.24-python3.12-alpine@sha256:9a778527c5dc38555461cbdbc0179d23ff2c8399724fc0298520a2921456dca0
+
+jobs:
+  # abi3, so one wheel per platform covers every Python from 3.12 on.
+  wheels:
+    name: Wheel (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each Linux wheel on a native runner, in a manylinux_2_28 container,
+          # so it runs with glibc 2.28 and later, or a musllinux_1_2 one, for
+          # musl 1.2 and later, such as on Alpine.
+          - name: manylinux-x86_64
+            os: ubuntu-24.04
+            target: x86_64
+            manylinux: '2_28'
+          - name: manylinux-aarch64
+            os: ubuntu-24.04-arm
+            target: aarch64
+            manylinux: '2_28'
+          - name: musllinux-x86_64
+            os: ubuntu-24.04
+            target: x86_64
+            manylinux: musllinux_1_2
+            musl: true
+          - name: musllinux-aarch64
+            os: ubuntu-24.04-arm
+            target: aarch64
+            manylinux: musllinux_1_2
+            musl: true
+          - name: macos-aarch64
+            os: macos-15
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          working-directory: items/py
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          rust-toolchain: ${{ env.RUST_TOOLCHAIN }}
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          args: --release --locked --out dist
+
+      - name: Install uv
+        if: ${{ !matrix.musl }}
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install_args: uv
+
+      # On the oldest Python the wheel supports, with the locked test
+      # dependencies and the wheel in place of the project.
+      - name: Test the wheel
+        if: ${{ !matrix.musl }}
+        working-directory: items/py
+        run: |
+          uv sync --locked --no-install-project --python 3.12
+          uv pip install --python .venv --no-deps dist/*.whl
+          uv run --no-sync --python 3.12 pytest -q tests
+
+      # The same on Alpine, with the environment outside the checkout.
+      - name: Test the wheel on Alpine
+        if: ${{ matrix.musl }}
+        working-directory: items/py
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src -e UV_PROJECT_ENVIRONMENT=/tmp/venv "$ALPINE_IMAGE" sh -euc '
+            uv sync --locked --no-install-project --python 3.12
+            uv pip install --python /tmp/venv --no-deps dist/*.whl
+            uv run --no-sync --python 3.12 pytest -q -p no:cacheprovider tests
+          '
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-${{ matrix.name }}
+          path: items/py/dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
+
+  sdist:
+    name: Source distribution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          working-directory: items/py
+          command: sdist
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          args: --out dist
+
+      # Rust, to build from the sdist as pip does on platforms without a wheel.
+      - name: Install Rust and uv
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install_args: rust uv
+
+      - name: Test a build from the sdist
+        working-directory: items/py
+        run: |
+          uv sync --locked --no-install-project --python 3.12
+          uv pip install --python .venv --no-deps dist/*.tar.gz
+          uv run --no-sync --python 3.12 pytest -q tests
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-sdist
+          path: items/py/dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7

@@ -238,7 +238,6 @@ wheels = [
 
 [[package]]
 name = "konklav-relying"
-version = "1.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
