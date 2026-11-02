@@ -7,6 +7,10 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+# OpenAPI schemas for the models the control plane returns.
+openapi = ["dep:utoipa", "konklav-core/openapi", "konklav-authz/openapi"]
+
 [dependencies]
 chrono.workspace = true
 konklav-authz.workspace = true
@@ -19,6 +23,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+utoipa = { workspace = true, optional = true }
 uuid = { workspace = true, features = ["v7"] }
 
 [lints]

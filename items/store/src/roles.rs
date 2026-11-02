@@ -311,6 +311,7 @@ pub async fn delete(
 /// Who a role is assigned to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", content = "id")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum AssignmentTarget {
     /// A tenant role, for a membership in the role's tenant.
     Membership(MembershipId),
@@ -319,6 +320,7 @@ pub enum AssignmentTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RoleAssignment {
     pub id: uuid::Uuid,
     pub role_id: uuid::Uuid,

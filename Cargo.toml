@@ -97,6 +97,8 @@ opentelemetry-otlp = { version = "0.33.1", default-features = false, features = 
 opentelemetry-proto = { version = "0.33.1", features = ["gen-tonic-messages", "logs", "metrics", "trace"] }
 opentelemetry_sdk = { version = "0.33.1", features = ["logs", "metrics", "trace"] }
 prost = "0.14.4"
+utoipa = { version = "6.0.0", features = ["chrono", "uuid"] }
+utoipa-axum = "0.3.0"
 uuid = { version = "1.28.0", features = ["serde"] }
 
 [workspace.lints.rust]

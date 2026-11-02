@@ -25,6 +25,7 @@ pub mod keys;
 pub mod oidc;
 mod oidc_api;
 mod oidc_clients_api;
+pub mod openapi;
 pub mod pacing;
 pub mod passkeys;
 mod passkeys_api;

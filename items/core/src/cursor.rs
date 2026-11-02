@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 /// only meaningful for ordering and resuming, never for counting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema), schema(value_type = i64))]
 pub struct Cursor(i64);
 
 impl Cursor {

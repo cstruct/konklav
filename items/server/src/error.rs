@@ -17,7 +17,7 @@ use serde::de::DeserializeOwned;
 /// Stable, machine-readable error codes. Never rename a variant: add a new
 /// one instead.
 // r[impl platform.error.typed-codes]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ErrorCode {
     NotFound,
@@ -99,12 +99,14 @@ impl ApiError {
     }
 }
 
-#[derive(Serialize)]
-struct Envelope<'a> {
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = ErrorResponse)]
+pub(crate) struct Envelope<'a> {
     error: Body<'a>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = ErrorBody)]
 struct Body<'a> {
     code: ErrorCode,
     message: &'a str,

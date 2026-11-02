@@ -8,11 +8,16 @@ rust-version.workspace = true
 publish = true
 repository.workspace = true
 
+[features]
+# OpenAPI schemas for the model types, for the server's API document.
+openapi = ["dep:utoipa", "konklav-core/openapi"]
+
 [dependencies]
 konklav-core.workspace = true
 konklav-token.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
 konklav-core = { workspace = true, features = ["generate"] }

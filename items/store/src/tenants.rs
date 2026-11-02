@@ -27,6 +27,7 @@ pub fn parse_reference(value: &str) -> Option<TenantId> {
 // r[impl tenant.lifecycle.states]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum TenantState {
     Active,
     Suspended,
@@ -53,10 +54,12 @@ impl TenantState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Tenant {
     pub id: TenantId,
     pub parent_id: Option<TenantId>,
     pub state: TenantState,
+    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
     pub facts: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

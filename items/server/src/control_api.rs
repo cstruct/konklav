@@ -150,7 +150,7 @@ pub(crate) fn parse_id<T: std::str::FromStr>(value: &str, what: &str) -> Result<
 
 /// A write's result and the cursor of the last event it produced, if any.
 // r[impl platform.idempotency.write-cursor]
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub(crate) struct Written<T> {
     #[serde(flatten)]
     pub(crate) value: T,

@@ -17,6 +17,8 @@ use konklav_store::templates::{self, Template};
 use konklav_store::tenants::{self, Tenant, TenantState};
 use konklav_store::{StoreError, compile_input, events};
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::capabilities::Operator;
 use crate::control_api::{Written, guard, parse_id};
@@ -24,20 +26,24 @@ use crate::error::{ApiError, ApiJson};
 use crate::import::{self, not_found_as, validate_facts};
 use crate::{AppState, capabilities};
 
+/// Tenants and memberships, with the `OpenAPI` description of each route
+/// taken from its handler's `#[utoipa::path]`.
+pub(crate) fn tenancy() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list_tenants))
+        .routes(routes!(create_tenant, get_tenant))
+        .routes(routes!(set_tenant_facts))
+        .routes(routes!(set_tenant_state))
+        .routes(routes!(list_memberships))
+        .routes(routes!(create_membership, get_membership))
+        .routes(routes!(set_membership_facts))
+        .routes(routes!(end_membership))
+}
+
 pub fn routes(state: &AppState) -> Router<AppState> {
-    let tenancy = Router::new()
-        .route("/tenants", get(list_tenants))
-        .route("/tenants/{id}", put(create_tenant).get(get_tenant))
-        .route("/tenants/{id}/facts", put(set_tenant_facts))
-        .route("/tenants/{id}/state", put(set_tenant_state))
-        .route("/tenants/{id}/memberships", get(list_memberships))
-        .route(
-            "/memberships/{id}",
-            put(create_membership).get(get_membership),
-        )
-        .route("/memberships/{id}/facts", put(set_membership_facts))
-        .route("/memberships/{id}/end", post(end_membership))
-        .route_layer(guard(state, capabilities::TENANTS));
+    let (tenancy, _) = tenancy()
+        .route_layer(guard(state, capabilities::TENANTS))
+        .split_for_parts();
     let authz = Router::new()
         .route("/catalog", get(get_catalog).put(put_catalog))
         .route("/tenants/{id}/roles", get(list_roles))
@@ -94,11 +100,12 @@ async fn put_catalog(
 
 // --- Tenants ----------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct CreateTenant {
     /// The parent tenant (a UUID or `root`); `root` when absent.
     parent: Option<String>,
     #[serde(default = "empty_object")]
+    #[schema(value_type = Object)]
     facts: serde_json::Value,
     /// Templates to instantiate roles from, atomically with the tenant.
     #[serde(default)]
@@ -110,6 +117,13 @@ fn empty_object() -> serde_json::Value {
 }
 
 /// `PUT /v1/tenants/{id}`: idempotent on the id.
+#[utoipa::path(put, path = "/tenants/{id}", tag = "tenants",
+    params(("id" = TenantId, Path, description = "Chosen by the caller")),
+    request_body = CreateTenant,
+    responses(
+        (status = 201, description = "Created", body = Written<Tenant>),
+        (status = 200, description = "Already existed with the same content", body = Written<Tenant>),
+    ))]
 async fn create_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -143,6 +157,8 @@ async fn create_tenant(
         .into_response())
 }
 
+#[utoipa::path(get, path = "/tenants/{id}", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
+    responses((status = 200, body = Tenant)))]
 async fn get_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -156,6 +172,9 @@ async fn get_tenant(
     ))
 }
 
+#[utoipa::path(put, path = "/tenants/{id}/facts", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
+    request_body(content = Object, description = "The tenant's new facts"),
+    responses((status = 200, body = Written<Tenant>)))]
 async fn set_tenant_facts(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -178,7 +197,7 @@ async fn set_tenant_facts(
     }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct SetTenantState {
     state: TenantState,
 }
@@ -186,6 +205,9 @@ struct SetTenantState {
 /// `PUT /v1/tenants/{id}/state`: leaving `active` ends every session
 /// targeting the tenant.
 // r[impl tenant.lifecycle.suspend-revokes]
+#[utoipa::path(put, path = "/tenants/{id}/state", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
+    request_body = SetTenantState,
+    responses((status = 200, body = Written<Tenant>)))]
 async fn set_tenant_state(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -216,15 +238,24 @@ async fn set_tenant_state(
 
 // --- Memberships ------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct CreateMembership {
     subject: SubjectId,
+    /// The tenant (a UUID or `root`).
     tenant: String,
     #[serde(default = "empty_object")]
+    #[schema(value_type = Object)]
     facts: serde_json::Value,
 }
 
 /// `PUT /v1/memberships/{id}`: idempotent on the id.
+#[utoipa::path(put, path = "/memberships/{id}", tag = "memberships",
+    params(("id" = MembershipId, Path, description = "Chosen by the caller")),
+    request_body = CreateMembership,
+    responses(
+        (status = 201, description = "Created", body = Written<Membership>),
+        (status = 200, description = "Already existed with the same content", body = Written<Membership>),
+    ))]
 async fn create_membership(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -259,13 +290,15 @@ async fn create_membership(
         .into_response())
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct MembershipDetail {
     #[serde(flatten)]
     membership: Membership,
     assignments: Vec<RoleAssignment>,
 }
 
+#[utoipa::path(get, path = "/memberships/{id}", tag = "memberships", params(("id" = MembershipId, Path)),
+    responses((status = 200, body = MembershipDetail)))]
 async fn get_membership(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -282,6 +315,9 @@ async fn get_membership(
     }))
 }
 
+#[utoipa::path(put, path = "/memberships/{id}/facts", tag = "memberships", params(("id" = MembershipId, Path)),
+    request_body(content = Object, description = "The membership's new facts"),
+    responses((status = 200, body = Written<Membership>)))]
 async fn set_membership_facts(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -306,6 +342,8 @@ async fn set_membership_facts(
 
 /// `POST /v1/memberships/{id}/end`: ends the membership and the sessions
 /// targeting it.
+#[utoipa::path(post, path = "/memberships/{id}/end", tag = "memberships", params(("id" = MembershipId, Path)),
+    responses((status = 200, body = Written<Membership>)))]
 async fn end_membership(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -627,20 +665,23 @@ async fn subject_entitlements(
     Ok(Json(input.compile()))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 struct TenantQuery {
     parent: Option<String>,
     before: Option<TenantId>,
     limit: Option<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct TenantPage {
     tenants: Vec<Tenant>,
     next: Option<TenantId>,
 }
 
 /// `GET /v1/tenants?parent=&before=&limit=`
+#[utoipa::path(get, path = "/tenants", tag = "tenants", params(TenantQuery),
+    responses((status = 200, body = TenantPage)))]
 async fn list_tenants(
     State(state): State<AppState>,
     Query(query): Query<TenantQuery>,
@@ -655,13 +696,17 @@ async fn list_tenants(
     Ok(Json(TenantPage { tenants, next }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 struct MembershipQuery {
     #[serde(default)]
     active: bool,
 }
 
 /// `GET /v1/tenants/{id}/memberships?active=`
+#[utoipa::path(get, path = "/tenants/{id}/memberships", tag = "memberships",
+    params(("id" = String, Path, description = "The tenant: a UUID or `root`"), MembershipQuery),
+    responses((status = 200, body = Vec<Membership>)))]
 async fn list_memberships(
     State(state): State<AppState>,
     Path(id): Path<String>,

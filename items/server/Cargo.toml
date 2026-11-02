@@ -17,7 +17,7 @@ konklav-authn.workspace = true
 konklav-authz.workspace = true
 konklav-bootstrap.workspace = true
 konklav-core = { workspace = true, features = ["generate"] }
-konklav-store.workspace = true
+konklav-store = { workspace = true, features = ["openapi"] }
 konklav-token.workspace = true
 diesel.workspace = true
 diesel-async.workspace = true
@@ -48,6 +48,8 @@ opentelemetry_sdk.workspace = true
 tracing.workspace = true
 tracing-opentelemetry.workspace = true
 tracing-subscriber.workspace = true
+utoipa.workspace = true
+utoipa-axum.workspace = true
 uuid = { workspace = true, features = ["v4", "v5", "v7"] }
 webauthn-rs.workspace = true
 webauthn-rs-proto.workspace = true
