@@ -1,11 +1,15 @@
 //! Every transport type reads back what it writes.
 
 use konklav_api::{
-    AssignRole, AssignmentTarget, CatalogDocument, CreateCredential, CreatedCredential,
-    DecisionExplanation, Deleted, Entitlements, ErrorCode, ErrorResponse, ExplainDecision,
-    Explanation, MembershipDetail, PutRole, PutTemplate, Reason, RevokeSessions, RevokedKey,
-    RevokedSessions, Role, RotatedSlot, SessionPage, SigningKey, SubjectDetail, SubjectPage,
-    Template, TenantPage, Written,
+    AssignRole, AssignmentTarget, CatalogDocument, CreateCredential, CreateInvite,
+    CreatedCredential, CreatedInvite, DecisionExplanation, Deleted, Entitlements, ErrorCode,
+    ErrorResponse, ExplainDecision, Explanation, IdTokenAlgorithm, ImportCredentials,
+    ImportFactors, ImportSessions, ImportSubjects, Imported, ImportedCredentialMaterial,
+    MembershipDetail, OidcClient, OidcClientDefinition, OidcClientSecret, PutRole, PutTemplate,
+    Reason, RecordRegisteredScope, RegisteredScope, RegisteredScopeBatch, RegisteredScopeChanges,
+    RevokeSessions, RevokeShare, RevokedKey, RevokedSessions, Role, RotatedSlot, SessionPage,
+    Share, ShareList, ShareTerms, SigningKey, SubjectDetail, SubjectPage, Template, TenantPage,
+    Written,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -446,4 +450,211 @@ fn decision_explanations_round_trip_with_tagged_decisions_and_reasons() {
         "valid_from": null,
         "valid_until": 1_800_000_000,
     }));
+}
+
+fn reads<T: DeserializeOwned>(value: Value) -> T {
+    serde_json::from_value(value).expect("deserializes")
+}
+
+fn share_terms() -> Value {
+    json!({
+        "owner": "0195e0a0-0000-7000-8000-000000000001",
+        "scope": {"kind": "project", "id": "p-17"},
+        "recipient": "0195e0a0-0000-7000-8000-000000000002",
+        "recipient_scope": null,
+        "actions": ["document:read"],
+        "attributes": {"data_range": {"from": "2026-01-01", "until": "2026-06-30"}},
+        "valid_from": null,
+        "valid_until": "2027-01-01T00:00:00Z",
+    })
+}
+
+fn share(state: &str) -> Value {
+    let mut share = share_terms();
+    let fields = json!({
+        "id": "0195e0a0-0000-7000-8000-00000000000b",
+        "state": state,
+        "accepted_at": "2026-11-02T11:00:00Z",
+        "revoked_at": "2026-11-02T12:00:00Z",
+        "revoked_by": "recipient",
+        "created_at": "2026-11-02T10:00:00Z",
+        "updated_at": "2026-11-02T12:00:00Z",
+    });
+    share
+        .as_object_mut()
+        .unwrap()
+        .extend(fields.as_object().unwrap().clone());
+    share
+}
+
+#[test]
+fn shares_round_trip_with_flattened_terms() {
+    round_trips::<ShareTerms>(&share_terms());
+    let minimal: ShareTerms = reads(json!({
+        "owner": "0195e0a0-0000-7000-8000-000000000001",
+        "scope": {"kind": "project", "id": "p-17"},
+        "recipient": "0195e0a0-0000-7000-8000-000000000002",
+        "actions": ["document:read"],
+    }));
+    assert_eq!(minimal.attributes, serde_json::Map::new());
+    assert_eq!(minimal.recipient_scope, None);
+    let mut written = share("revoked");
+    written["cursor"] = json!(7);
+    round_trips::<Written<Share>>(&written);
+    round_trips::<ShareList>(&json!({"shares": [share("offered"), share("accepted")]}));
+    round_trips::<RevokeShare>(&json!({"by": "owner"}));
+}
+
+fn registered_scope(state: &str) -> Value {
+    json!({
+        "kind": "document",
+        "id": "d-1",
+        "tenant": "0195e0a0-0000-7000-8000-000000000001",
+        "containers": [{"kind": "project", "id": "p-1"}],
+        "state": state,
+        "created_at": "2026-11-02T10:00:00Z",
+        "updated_at": "2026-11-02T10:00:00Z",
+    })
+}
+
+#[test]
+fn registered_scopes_round_trip_with_tagged_changes() {
+    let tenant = "0195e0a0-0000-7000-8000-000000000001";
+    round_trips::<RecordRegisteredScope>(&json!({
+        "tenant": tenant,
+        "containers": [{"kind": "project", "id": "p-1"}],
+    }));
+    let bare: RecordRegisteredScope = reads(json!({"tenant": tenant}));
+    assert_eq!(bare.containers, Vec::new());
+    round_trips::<RegisteredScopeChanges>(&json!({"changes": [
+        {"op": "record", "kind": "document", "id": "d-1", "tenant": tenant,
+         "containers": [{"kind": "project", "id": "p-1"}]},
+        {"op": "remove", "kind": "document", "id": "d-2"},
+    ]}));
+    round_trips::<Written<RegisteredScope>>(&registered_scope("active"));
+    round_trips::<RegisteredScopeBatch>(&json!({
+        "scopes": [registered_scope("active"), null, registered_scope("removed")],
+        "cursor": 12,
+    }));
+    round_trips::<RegisteredScopeBatch>(&json!({"scopes": []}));
+}
+
+#[test]
+fn invites_round_trip() {
+    round_trips::<CreateInvite>(&json!({
+        "email": "ada@example.com",
+        "tenant": "root",
+        "roles": ["member"],
+        "facts": {"department": "ops"},
+        "membership": "0195e0a0-0000-7000-8000-000000000003",
+        "expires_in_hours": 24,
+    }));
+    let minimal: CreateInvite = reads(json!({"email": "ada@example.com"}));
+    assert_eq!((minimal.expires_in_hours, minimal.facts), (72, json!({})));
+    round_trips::<CreatedInvite>(&json!({
+        "invite_id": "0195e0a0-0000-7000-8000-00000000000c",
+        "expires_at": "2026-11-05T10:00:00Z",
+        "cursor": null,
+    }));
+}
+
+fn client_definition() -> Value {
+    json!({
+        "kind": "confidential",
+        "redirect_uris": ["https://console.example.com/callback"],
+        "scopes": ["openid", "email", "phone", "groups", "tenant", "profile"],
+        "audience": "console",
+        "visible_groups": ["ops-*"],
+        "login_url": null,
+        "id_token_alg": "RS256",
+        "refresh": true,
+        "service_subject": "0195e0a0-0000-7000-8000-000000000004",
+        "jwks": {"keys": []},
+        "post_logout_redirect_uris": [],
+        "backchannel_logout_uri": "https://console.example.com/logout",
+        "require_pkce": false,
+    })
+}
+
+#[test]
+fn oidc_clients_round_trip_with_flattened_definitions() {
+    round_trips::<OidcClientDefinition>(&client_definition());
+    let minimal: OidcClientDefinition = reads(json!({
+        "kind": "public",
+        "redirect_uris": ["https://spa.example.com/callback"],
+        "audience": "spa",
+    }));
+    assert_eq!(minimal.scopes, ["openid"]);
+    assert_eq!(minimal.id_token_alg, IdTokenAlgorithm::Es256);
+    assert!(minimal.refresh && minimal.require_pkce);
+    let mut client = client_definition();
+    let fields = json!({
+        "id": "console",
+        "has_secret": true,
+        "disabled_at": null,
+        "created_at": "2026-11-02T10:00:00Z",
+        "updated_at": "2026-11-02T10:00:00Z",
+    });
+    client
+        .as_object_mut()
+        .unwrap()
+        .extend(fields.as_object().unwrap().clone());
+    round_trips::<OidcClient>(&client);
+    round_trips::<Vec<OidcClient>>(&json!([client]));
+    round_trips::<OidcClientSecret>(&json!({"client_secret": "s3cr3t"}));
+}
+
+#[test]
+fn imports_round_trip_with_tagged_material() {
+    let subject = "0195e0a0-0000-7000-8000-000000000001";
+    let credential = "0195e0a0-0000-7000-8000-000000000002";
+    round_trips::<ImportSubjects>(&json!({"subjects": [
+        {"id": subject, "kind": "service", "state": "active"},
+        {"id": "0195e0a0-0000-7000-8000-000000000003", "kind": "human", "state": "disabled"},
+    ]}));
+    let slot = json!({"hash": "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA",
+                      "created_at": "2026-01-01T00:00:00Z", "expires_at": null});
+    round_trips::<ImportCredentials>(&json!({"credentials": [
+        {"id": credential, "subject": subject, "identifier": credential,
+         "mfa_factors_required": 0, "session_flags": [], "kind": "secret_key", "a": slot, "b": slot},
+        {"id": "0195e0a0-0000-7000-8000-000000000004", "subject": subject,
+         "identifier": "legacy@example.com", "mfa_factors_required": 1,
+         "session_flags": ["personal_only"], "kind": "password",
+         "password_hash": "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA"},
+        {"id": "0195e0a0-0000-7000-8000-000000000005", "subject": subject,
+         "identifier": "+46700000000", "mfa_factors_required": 0, "session_flags": [],
+         "kind": "phone_otp"},
+    ]}));
+    let from_a_test: ImportCredentials = reads(json!({"credentials": [{
+        "id": credential, "subject": subject, "identifier": "x@y",
+        "kind": "password", "password_hash": "plaintext",
+    }]}));
+    assert!(matches!(
+        from_a_test.credentials[0].material,
+        ImportedCredentialMaterial::Password { .. }
+    ));
+    round_trips::<ImportFactors>(&json!({"factors": [
+        {"id": "0195e0a0-0000-7000-8000-000000000006", "subject": subject, "active": true,
+         "kind": "totp", "seed_base32": "JBSWY3DPEHPK3PXP"},
+        {"id": "0195e0a0-0000-7000-8000-000000000007", "subject": subject, "active": false,
+         "kind": "email_code", "email": "legacy@example.com"},
+    ]}));
+    round_trips::<ImportSessions>(&json!({"sessions": [{
+        "id": "0195e0a0-0000-7000-8000-000000000008",
+        "subject": subject,
+        "credential": credential,
+        "tenant": null,
+        "membership": null,
+        "stage": "identity",
+        "client_kind": "browser",
+        "amr": ["pwd"],
+        "flags": [],
+        "impersonator": null,
+        "auth_time": "2026-11-02T10:00:00Z",
+        "version": 3,
+        "refresh_hash": "00".repeat(32),
+        "expires_at": "2026-12-02T10:00:00Z",
+        "revoked_at": null,
+    }]}));
+    round_trips::<Imported>(&json!({"imported": 2, "skipped": 1, "updated": 0}));
 }

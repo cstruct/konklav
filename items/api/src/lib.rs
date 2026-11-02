@@ -14,9 +14,14 @@ mod catalog;
 mod credentials;
 mod error;
 mod explain;
+mod import;
+mod invites;
 mod keys;
+mod oidc_clients;
+mod registered_scopes;
 mod roles;
 mod sessions;
+mod shares;
 mod subjects;
 mod templates;
 mod tenancy;
@@ -34,17 +39,31 @@ pub use credentials::{
 };
 pub use error::{ErrorBody, ErrorCode, ErrorResponse};
 pub use explain::{ExplainDecision, ExplainQuery};
+pub use import::{
+    ImportCredentials, ImportFactors, ImportSessions, ImportSubjects, Imported, ImportedCredential,
+    ImportedCredentialMaterial, ImportedFactor, ImportedFactorMaterial, ImportedSecretSlot,
+    ImportedSession, ImportedSubject,
+};
+pub use invites::{CreateInvite, CreatedInvite};
 pub use keys::{RevokedKey, SigningKey};
 pub use konklav_authz::{
     ActionExplanation, Check, Contribution, Decision, DecisionExplanation, DenyReason, Effect,
     Entitlements, Explanation, Group, Obligation, Policy, Reason, Requirements, Scope,
     ScopeRequirement, Shared, StepUp,
 };
+pub use oidc_clients::{
+    IdTokenAlgorithm, OidcClient, OidcClientDefinition, OidcClientKind, OidcClientSecret,
+};
+pub use registered_scopes::{
+    RecordRegisteredScope, RegisteredScope, RegisteredScopeBatch, RegisteredScopeChange,
+    RegisteredScopeChanges, RegisteredScopeState,
+};
 pub use roles::{Deleted, PutRole, Role};
 pub use sessions::{
     ClientKind, RequestedClaims, RevokeSessions, RevokedSessions, Session, SessionFilter,
     SessionPage, SessionQuery, SessionStage,
 };
+pub use shares::{RevokeShare, Share, ShareList, ShareQuery, ShareSide, ShareState, ShareTerms};
 pub use subjects::{
     CreateSubject, Subject, SubjectDetail, SubjectKind, SubjectPage, SubjectQuery, SubjectState,
 };

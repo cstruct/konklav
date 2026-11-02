@@ -1,10 +1,10 @@
 //! The control-plane surface for tenancy and authorization: the catalog,
 //! tenants, memberships, templates, roles and role assignments.
 
+use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::{Json, Router};
 use diesel_async::AsyncConnection;
 use konklav_api::{
     self as api, AssignRole, CatalogDocument, CreateMembership, CreateTenant, Deleted,
@@ -23,7 +23,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::capabilities::Operator;
-use crate::control_api::{Written, guard, parse_id};
+use crate::control_api::{Written, parse_id};
 use crate::error::{ApiError, ApiJson};
 use crate::import::{self, not_found_as, validate_facts};
 use crate::{AppState, capabilities, transport};
@@ -56,16 +56,6 @@ pub(crate) fn authz() -> OpenApiRouter<AppState> {
         .routes(routes!(unassign))
         .routes(routes!(list_templates))
         .routes(routes!(put_template, get_template))
-}
-
-pub fn routes(state: &AppState) -> Router<AppState> {
-    let (tenancy, _) = tenancy()
-        .route_layer(guard(state, capabilities::TENANTS))
-        .split_for_parts();
-    let (authz, _) = authz()
-        .route_layer(guard(state, capabilities::AUTHZ))
-        .split_for_parts();
-    tenancy.merge(authz)
 }
 
 fn tenant_ref(value: &str) -> Result<TenantId, ApiError> {

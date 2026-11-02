@@ -6,62 +6,54 @@
 //! Tenants, memberships, the catalog, templates, roles and assignments are
 //! imported through the ordinary (idempotent) control-plane endpoints.
 
+use axum::Json;
 use axum::extract::State;
-use axum::routing::post;
-use axum::{Json, Router};
 use diesel_async::AsyncConnection;
-use serde::{Deserialize, Serialize};
+use konklav_api::{ImportCredentials, ImportFactors, ImportSessions, ImportSubjects, Imported};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
-use crate::control_api::guard;
 use crate::error::{ApiError, ApiJson};
-use crate::import::{self, CredentialRecord, FactorRecord, Outcome, SessionRecord, SubjectRecord};
-use crate::{AppState, capabilities};
+use crate::import::{self, Outcome};
+use crate::{AppState, transport};
 
-pub fn routes(state: &AppState) -> Router<AppState> {
-    Router::new()
-        .route("/import/subjects", post(import_subjects))
-        .route("/import/credentials", post(import_credentials))
-        .route("/import/mfa-factors", post(import_factors))
-        .route("/import/sessions", post(import_sessions))
-        .route_layer(guard(state, capabilities::IMPORT))
+/// The import routes, with the `OpenAPI` description of each taken from
+/// its handler's `#[utoipa::path]`.
+pub(crate) fn import() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(import_subjects))
+        .routes(routes!(import_credentials))
+        .routes(routes!(import_factors))
+        .routes(routes!(import_sessions))
 }
 
-// The field names are the API's.
-#[allow(clippy::struct_field_names)]
-#[derive(Serialize, Default)]
-struct Imported {
-    imported: usize,
-    skipped: usize,
-    /// Existing secret keys whose slots were replaced.
-    updated: usize,
-}
-
-impl Imported {
-    fn count(&mut self, outcome: Outcome) {
-        match outcome {
-            Outcome::Created => self.imported += 1,
-            Outcome::Skipped => self.skipped += 1,
-            Outcome::Updated => self.updated += 1,
-        }
+fn count(result: &mut Imported, outcome: Outcome) {
+    match outcome {
+        Outcome::Created => result.imported += 1,
+        Outcome::Skipped => result.skipped += 1,
+        Outcome::Updated => result.updated += 1,
     }
 }
 
-#[derive(Deserialize)]
-struct Subjects {
-    subjects: Vec<SubjectRecord>,
-}
-
 /// `POST /v1/import/subjects`
+#[utoipa::path(post, path = "/import/subjects", tag = "import",
+    request_body = ImportSubjects,
+    responses((status = 200, body = Imported)))]
 async fn import_subjects(
     State(state): State<AppState>,
-    ApiJson(body): ApiJson<Subjects>,
+    ApiJson(body): ApiJson<ImportSubjects>,
 ) -> Result<Json<Imported>, ApiError> {
+    let records: Vec<_> = body
+        .subjects
+        .iter()
+        .map(transport::subject_record)
+        .collect();
     let mut conn = state.pool.get().await?;
     let result = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let mut result = Imported::default();
-            for record in &body.subjects {
-                result.count(import::subject(conn, record).await?);
+            for record in &records {
+                count(&mut result, import::subject(conn, record).await?);
             }
             Ok(result)
         })
@@ -69,23 +61,24 @@ async fn import_subjects(
     Ok(Json(result))
 }
 
-#[derive(Deserialize)]
-struct Credentials {
-    credentials: Vec<CredentialRecord>,
-}
-
 /// `POST /v1/import/credentials`
+#[utoipa::path(post, path = "/import/credentials", tag = "import",
+    request_body = ImportCredentials,
+    responses((status = 200, body = Imported)))]
 async fn import_credentials(
     State(state): State<AppState>,
-    ApiJson(body): ApiJson<Credentials>,
+    ApiJson(body): ApiJson<ImportCredentials>,
 ) -> Result<Json<Imported>, ApiError> {
     let mut conn = state.pool.get().await?;
-    let records = body.credentials;
+    let records = body
+        .credentials
+        .into_iter()
+        .map(transport::credential_record);
     let result = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let mut result = Imported::default();
             for record in records {
-                result.count(import::credential(conn, record).await?);
+                count(&mut result, import::credential(conn, record).await?);
             }
             Ok(result)
         })
@@ -93,19 +86,17 @@ async fn import_credentials(
     Ok(Json(result))
 }
 
-#[derive(Deserialize)]
-struct Factors {
-    factors: Vec<FactorRecord>,
-}
-
 /// `POST /v1/import/mfa-factors`: TOTP seeds arrive in plaintext over the
 /// control plane and are encrypted before the transaction opens.
+#[utoipa::path(post, path = "/import/mfa-factors", tag = "import",
+    request_body = ImportFactors,
+    responses((status = 200, body = Imported)))]
 async fn import_factors(
     State(state): State<AppState>,
-    ApiJson(body): ApiJson<Factors>,
+    ApiJson(body): ApiJson<ImportFactors>,
 ) -> Result<Json<Imported>, ApiError> {
     let mut prepared = Vec::with_capacity(body.factors.len());
-    for record in body.factors {
+    for record in body.factors.into_iter().map(transport::factor_record) {
         let data = import::seal_factor(&state.auth.secrets, record.id, record.material)?;
         prepared.push((record.id, record.subject, data, record.active));
     }
@@ -114,7 +105,10 @@ async fn import_factors(
         .transaction::<_, ApiError, _>(async |conn| {
             let mut result = Imported::default();
             for (id, subject, data, active) in &prepared {
-                result.count(import::factor(conn, *id, *subject, data, *active).await?);
+                count(
+                    &mut result,
+                    import::factor(conn, *id, *subject, data, *active).await?,
+                );
             }
             Ok(result)
         })
@@ -122,23 +116,21 @@ async fn import_factors(
     Ok(Json(result))
 }
 
-#[derive(Deserialize)]
-struct Sessions {
-    sessions: Vec<SessionRecord>,
-}
-
 /// `POST /v1/import/sessions`
+#[utoipa::path(post, path = "/import/sessions", tag = "import",
+    request_body = ImportSessions,
+    responses((status = 200, body = Imported)))]
 async fn import_sessions(
     State(state): State<AppState>,
-    ApiJson(body): ApiJson<Sessions>,
+    ApiJson(body): ApiJson<ImportSessions>,
 ) -> Result<Json<Imported>, ApiError> {
     let mut conn = state.pool.get().await?;
-    let records = body.sessions;
+    let records = body.sessions.into_iter().map(transport::session_record);
     let result = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let mut result = Imported::default();
             for record in records {
-                result.count(import::session(conn, record).await?);
+                count(&mut result, import::session(conn, record).await?);
             }
             Ok(result)
         })

@@ -66,17 +66,43 @@ pub(crate) fn signing_keys() -> OpenApiRouter<AppState> {
         .routes(routes!(revoke_signing_key))
 }
 
+/// Every control-plane route group with the capability that guards it. The
+/// control surface and its API document are both built from this list, so a
+/// route can't be served without being documented.
+// r[impl item.api.document]
+pub(crate) fn groups() -> [(OpenApiRouter<AppState>, &'static str); 11] {
+    use crate::{
+        control_authz, explain_api, import_api, invites, oidc_clients_api, registered_scopes_api,
+        shares_api,
+    };
+    [
+        (control_authz::tenancy(), capabilities::TENANTS),
+        (subjects(), capabilities::SUBJECTS),
+        (sessions(), capabilities::SESSIONS),
+        (signing_keys(), capabilities::KEYS),
+        (control_authz::authz(), capabilities::AUTHZ),
+        (explain_api::explain(), capabilities::AUTHZ),
+        (shares_api::shares(), capabilities::AUTHZ),
+        (
+            registered_scopes_api::registered_scopes(),
+            capabilities::SCOPES_REGISTER,
+        ),
+        (invites::invites(), capabilities::INVITES),
+        (oidc_clients_api::oidc_clients(), capabilities::CLIENTS),
+        (import_api::import(), capabilities::IMPORT),
+    ]
+}
+
+/// The control surface's `/v1` routes, each group behind its guard.
 pub fn routes(state: &AppState) -> Router<AppState> {
-    let (subjects, _) = subjects()
-        .route_layer(guard(state, capabilities::SUBJECTS))
-        .split_for_parts();
-    let (sessions, _) = sessions()
-        .route_layer(guard(state, capabilities::SESSIONS))
-        .split_for_parts();
-    let (keys, _) = signing_keys()
-        .route_layer(guard(state, capabilities::KEYS))
-        .split_for_parts();
-    subjects.merge(sessions).merge(keys)
+    groups()
+        .into_iter()
+        .fold(Router::new(), |all, (group, capability)| {
+            let (router, _) = group
+                .route_layer(guard(state, capability))
+                .split_for_parts();
+            all.merge(router)
+        })
 }
 
 /// Guards control-plane routes: the bootstrap token (when configured), or an

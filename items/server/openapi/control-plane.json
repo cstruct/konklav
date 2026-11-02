@@ -392,6 +392,207 @@
         }
       }
     },
+    "/v1/import/credentials": {
+      "post": {
+        "tags": [
+          "import"
+        ],
+        "summary": "`POST /v1/import/credentials`",
+        "operationId": "import_credentials",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportCredentials"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Imported"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/import/mfa-factors": {
+      "post": {
+        "tags": [
+          "import"
+        ],
+        "summary": "`POST /v1/import/mfa-factors`: TOTP seeds arrive in plaintext over the\ncontrol plane and are encrypted before the transaction opens.",
+        "operationId": "import_factors",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportFactors"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Imported"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/import/sessions": {
+      "post": {
+        "tags": [
+          "import"
+        ],
+        "summary": "`POST /v1/import/sessions`",
+        "operationId": "import_sessions",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportSessions"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Imported"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/import/subjects": {
+      "post": {
+        "tags": [
+          "import"
+        ],
+        "summary": "`POST /v1/import/subjects`",
+        "operationId": "import_subjects",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportSubjects"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Imported"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/invites": {
+      "post": {
+        "tags": [
+          "invites"
+        ],
+        "summary": "`POST /v1/invites`: the token is only delivered (as `delivery.requested`),\nnever returned.",
+        "operationId": "create_invite",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateInvite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created; the token is delivered to the address, never returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedInvite"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/memberships/{id}": {
       "get": {
         "tags": [
@@ -632,6 +833,355 @@
         }
       }
     },
+    "/v1/oidc/clients": {
+      "get": {
+        "tags": [
+          "oidc-clients"
+        ],
+        "operationId": "list_oidc_clients",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OidcClient"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/oidc/clients/{id}": {
+      "get": {
+        "tags": [
+          "oidc-clients"
+        ],
+        "operationId": "get_oidc_client",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The client id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcClient"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "oidc-clients"
+        ],
+        "summary": "`PUT /v1/oidc/clients/{id}`: registers or replaces a client, enabling it\nagain if it was disabled.",
+        "operationId": "put_oidc_client",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The client id, chosen by the caller",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OidcClientDefinition"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcClient"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "oidc-clients"
+        ],
+        "summary": "`DELETE /v1/oidc/clients/{id}`: disables the client and revokes its\nsessions. The registration stays, as history.",
+        "operationId": "disable_oidc_client",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The client id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Disabled; the registration stays",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcClient"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/oidc/clients/{id}/secret": {
+      "post": {
+        "tags": [
+          "oidc-clients"
+        ],
+        "summary": "`POST /v1/oidc/clients/{id}/secret`: a new secret for a confidential\nclient, shown only once. The previous secret stops working.",
+        "operationId": "new_oidc_client_secret",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The client id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new secret, shown only once",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcClientSecret"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/registered-scopes": {
+      "post": {
+        "tags": [
+          "registered-scopes"
+        ],
+        "summary": "`POST /v1/registered-scopes` with `{\"changes\": [...]}`: records and\nremoves up to 1000 scopes, all or nothing.",
+        "operationId": "change_registered_scopes",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisteredScopeChanges"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisteredScopeBatch"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/registered-scopes/{kind}/{id}": {
+      "put": {
+        "tags": [
+          "registered-scopes"
+        ],
+        "summary": "`PUT /v1/registered-scopes/{kind}/{id}`: records the scope in a tenant,\nor replaces its containing scopes.",
+        "operationId": "record_registered_scope",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "A registered scope kind",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordRegisteredScope"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_RegisteredScope"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "registered-scopes"
+        ],
+        "summary": "`DELETE /v1/registered-scopes/{kind}/{id}`: removes the scope. It keeps\nits tenant, so it can only be recorded again in the same one.",
+        "operationId": "remove_registered_scope",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "A registered scope kind",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_RegisteredScope"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/sessions": {
       "get": {
         "tags": [
@@ -768,6 +1318,184 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/shares/{id}": {
+      "get": {
+        "tags": [
+          "shares"
+        ],
+        "operationId": "get_share",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ShareId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Share"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "shares"
+        ],
+        "summary": "`PUT /v1/shares/{id}`: offers a share, or changes the terms of one that\nisn't revoked, which offers it again.",
+        "operationId": "offer_share",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Chosen by the caller",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ShareId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareTerms"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Share"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/shares/{id}/accept": {
+      "post": {
+        "tags": [
+          "shares"
+        ],
+        "summary": "`POST /v1/shares/{id}/accept`, for the recipient tenant.",
+        "operationId": "accept_share",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ShareId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Share"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/shares/{id}/revoke": {
+      "post": {
+        "tags": [
+          "shares"
+        ],
+        "summary": "`POST /v1/shares/{id}/revoke`, by either side.",
+        "operationId": "revoke_share",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ShareId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeShare"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Share"
                 }
               }
             }
@@ -1973,6 +2701,56 @@
         }
       }
     },
+    "/v1/tenants/{id}/shares": {
+      "get": {
+        "tags": [
+          "shares"
+        ],
+        "summary": "`GET /v1/tenants/{id}/shares?side=owner|recipient`",
+        "operationId": "list_shares",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The tenant: a UUID or `root`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "side",
+            "in": "query",
+            "description": "Only shares where the tenant is on this side; both when absent.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ShareSide"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareList"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tenants/{id}/state": {
       "put": {
         "tags": [
@@ -2441,6 +3219,52 @@
           }
         ]
       },
+      "CreateInvite": {
+        "type": "object",
+        "description": "Invites an email address, optionally into a tenant with roles.",
+        "required": [
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "expires_in_hours": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Clamped to between 1 hour and 30 days."
+          },
+          "facts": {
+            "type": "object",
+            "description": "Membership facts."
+          },
+          "membership": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MembershipId",
+                "description": "The id of the membership redemption creates, so a relying system's\nown record of the pending member keeps its id."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Role keys in that tenant to assign."
+          },
+          "tenant": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A tenant (UUID or `root`) to join on redemption."
+          }
+        }
+      },
       "CreateMembership": {
         "type": "object",
         "required": [
@@ -2513,6 +3337,34 @@
                 "type": "null"
               }
             ]
+          }
+        }
+      },
+      "CreatedInvite": {
+        "type": "object",
+        "description": "A created invite. Its token is never returned: it is only delivered to\nthe invited address, as a `delivery.requested` event.",
+        "required": [
+          "invite_id",
+          "expires_at"
+        ],
+        "properties": {
+          "cursor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Cursor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "invite_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -3127,6 +3979,419 @@
         ],
         "description": "A declared action group and how it expands."
       },
+      "IdTokenAlgorithm": {
+        "type": "string",
+        "description": "The algorithm a client's ID tokens are signed with.",
+        "enum": [
+          "ES256",
+          "EdDSA",
+          "RS256"
+        ]
+      },
+      "ImportCredentials": {
+        "type": "object",
+        "required": [
+          "credentials"
+        ],
+        "properties": {
+          "credentials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportedCredential"
+            }
+          }
+        }
+      },
+      "ImportFactors": {
+        "type": "object",
+        "required": [
+          "factors"
+        ],
+        "properties": {
+          "factors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportedFactor"
+            }
+          }
+        }
+      },
+      "ImportSessions": {
+        "type": "object",
+        "required": [
+          "sessions"
+        ],
+        "properties": {
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportedSession"
+            }
+          }
+        }
+      },
+      "ImportSubjects": {
+        "type": "object",
+        "required": [
+          "subjects"
+        ],
+        "properties": {
+          "subjects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportedSubject"
+            }
+          }
+        }
+      },
+      "Imported": {
+        "type": "object",
+        "description": "What an import did, record by record.",
+        "required": [
+          "imported",
+          "skipped",
+          "updated"
+        ],
+        "properties": {
+          "imported": {
+            "type": "integer",
+            "description": "Records created.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "description": "Records that existed already and were left alone.",
+            "minimum": 0
+          },
+          "updated": {
+            "type": "integer",
+            "description": "Existing secret keys whose slots were replaced.",
+            "minimum": 0
+          }
+        }
+      },
+      "ImportedCredential": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ImportedCredentialMaterial"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "subject",
+              "identifier"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/CredentialId"
+              },
+              "identifier": {
+                "type": "string"
+              },
+              "mfa_factors_required": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "session_flags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Restrictive session flags every session started with it carries."
+              },
+              "subject": {
+                "$ref": "#/components/schemas/SubjectId"
+              }
+            }
+          }
+        ]
+      },
+      "ImportedCredentialMaterial": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "password_hash",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "password"
+                ]
+              },
+              "password_hash": {
+                "type": "string",
+                "description": "The password's hash, an Argon2 PHC string; never the password."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Replaces the slots of an existing active secret key with the same\nid and subject.",
+            "required": [
+              "a",
+              "b",
+              "kind"
+            ],
+            "properties": {
+              "a": {
+                "$ref": "#/components/schemas/ImportedSecretSlot"
+              },
+              "b": {
+                "$ref": "#/components/schemas/ImportedSecretSlot"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "secret_key"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "email_link"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "phone_otp"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A credential's kind and its hashed material, stored as given."
+      },
+      "ImportedFactor": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ImportedFactorMaterial"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "subject"
+            ],
+            "properties": {
+              "active": {
+                "type": "boolean"
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "subject": {
+                "$ref": "#/components/schemas/SubjectId"
+              }
+            }
+          }
+        ]
+      },
+      "ImportedFactorMaterial": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "seed_base32",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "totp"
+                ]
+              },
+              "seed_base32": {
+                "type": "string",
+                "description": "The plaintext seed, base32; Konklav encrypts it on arrival."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "email",
+              "kind"
+            ],
+            "properties": {
+              "email": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "email_code"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "An MFA factor's kind and material."
+      },
+      "ImportedSecretSlot": {
+        "type": "object",
+        "description": "One slot of an imported secret key.",
+        "required": [
+          "hash",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "hash": {
+            "type": "string",
+            "description": "The slot secret's hash, an Argon2 PHC string."
+          }
+        }
+      },
+      "ImportedSession": {
+        "type": "object",
+        "description": "A live session, carried over so people stay signed in.",
+        "required": [
+          "id",
+          "subject",
+          "credential",
+          "stage",
+          "auth_time",
+          "version",
+          "refresh_hash",
+          "expires_at"
+        ],
+        "properties": {
+          "amr": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "auth_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "client_kind": {
+            "$ref": "#/components/schemas/ClientKind"
+          },
+          "credential": {
+            "$ref": "#/components/schemas/CredentialId"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Session flags, which must be declared in the catalog."
+          },
+          "id": {
+            "$ref": "#/components/schemas/SessionId"
+          },
+          "impersonator": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SubjectId",
+                "description": "The subject acting as `subject`, for impersonation sessions."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "membership": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MembershipId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "refresh_hash": {
+            "type": "string",
+            "description": "SHA-256 (hex) of the refresh token the client will present:\n`<session id>.<secret>`."
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/SessionStage"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/SubjectId"
+          },
+          "tenant": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TenantId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ImportedSubject": {
+        "type": "object",
+        "description": "A subject; an existing one keeps its kind but takes the record's state.",
+        "required": [
+          "id",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/SubjectId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SubjectKind"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SubjectState"
+          }
+        }
+      },
       "Membership": {
         "type": "object",
         "required": [
@@ -3231,6 +4496,154 @@
           "tenant": {
             "$ref": "#/components/schemas/TenantId",
             "description": "The owner tenant of the shared scope."
+          }
+        }
+      },
+      "OidcClient": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/OidcClientDefinition"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "has_secret",
+              "created_at",
+              "updated_at"
+            ],
+            "properties": {
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "disabled_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "has_secret": {
+                "type": "boolean",
+                "description": "Whether a secret has been issued."
+              },
+              "id": {
+                "type": "string"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        ],
+        "description": "A registered OIDC client, without its secret."
+      },
+      "OidcClientDefinition": {
+        "type": "object",
+        "description": "What a client registration says.",
+        "required": [
+          "kind",
+          "redirect_uris",
+          "audience"
+        ],
+        "properties": {
+          "audience": {
+            "type": "string",
+            "description": "The audience of the client's access tokens; not Konklav's own."
+          },
+          "backchannel_logout_uri": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id_token_alg": {
+            "$ref": "#/components/schemas/IdTokenAlgorithm"
+          },
+          "jwks": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Public keys for `private_key_jwt` client authentication, as a JWKS."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/OidcClientKind"
+          },
+          "login_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The client's own login page, instead of the provider's."
+          },
+          "post_logout_redirect_uris": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "redirect_uris": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Matched exactly; no fragments."
+          },
+          "refresh": {
+            "type": "boolean",
+            "description": "Whether the client may use the refresh token grant."
+          },
+          "require_pkce": {
+            "type": "boolean",
+            "description": "Whether authorization requests must use PKCE. Only a confidential\nclient may be registered without it."
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Scopes the client may request; must include `openid`."
+          },
+          "service_subject": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SubjectId",
+                "description": "The service principal the client gets tokens for with the client\ncredentials grant. Confidential clients only."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "visible_groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Global role keys that may appear in the client's `groups` claim;\na trailing `*` matches a prefix."
+          }
+        }
+      },
+      "OidcClientKind": {
+        "type": "string",
+        "enum": [
+          "confidential",
+          "public"
+        ]
+      },
+      "OidcClientSecret": {
+        "type": "object",
+        "description": "A confidential client's new secret.",
+        "required": [
+          "client_secret"
+        ],
+        "properties": {
+          "client_secret": {
+            "type": "string",
+            "description": "Shown only once; the previous secret stops working."
           }
         }
       },
@@ -3553,6 +4966,183 @@
         ],
         "description": "Why a required action is granted or not."
       },
+      "RecordRegisteredScope": {
+        "type": "object",
+        "description": "Records a scope in a tenant, or replaces its containing scopes.",
+        "required": [
+          "tenant"
+        ],
+        "properties": {
+          "containers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Scope"
+            }
+          },
+          "tenant": {
+            "$ref": "#/components/schemas/TenantId"
+          }
+        }
+      },
+      "RegisteredScope": {
+        "type": "object",
+        "description": "A relying system's object, recorded with its tenant and containing\nscopes.",
+        "required": [
+          "kind",
+          "id",
+          "tenant",
+          "containers",
+          "state",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "containers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Scope"
+            },
+            "description": "Scopes of kinds that aren't registered which the scope belongs to."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/RegisteredScopeState"
+          },
+          "tenant": {
+            "$ref": "#/components/schemas/TenantId",
+            "description": "The owner tenant. A removed scope keeps it, so it can only be\nrecorded again in the same one."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RegisteredScopeBatch": {
+        "type": "object",
+        "required": [
+          "scopes"
+        ],
+        "properties": {
+          "cursor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Cursor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/RegisteredScope"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "Each change's scope afterwards, in order; `null` for removing an\nunknown scope."
+          }
+        }
+      },
+      "RegisteredScopeChange": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Records the scope in `tenant`, or replaces its containers.",
+            "required": [
+              "kind",
+              "id",
+              "tenant",
+              "op"
+            ],
+            "properties": {
+              "containers": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Scope"
+                }
+              },
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "op": {
+                "type": "string",
+                "enum": [
+                  "record"
+                ]
+              },
+              "tenant": {
+                "$ref": "#/components/schemas/TenantId"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Removes the scope. Removing an unknown or removed scope changes\nnothing.",
+            "required": [
+              "kind",
+              "id",
+              "op"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "op": {
+                "type": "string",
+                "enum": [
+                  "remove"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "One change to a registered scope."
+      },
+      "RegisteredScopeChanges": {
+        "type": "object",
+        "description": "Up to 1000 changes, applied in order, all or nothing.",
+        "required": [
+          "changes"
+        ],
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RegisteredScopeChange"
+            }
+          }
+        }
+      },
+      "RegisteredScopeState": {
+        "type": "string",
+        "description": "Whether a registered scope is recorded, or has been removed.",
+        "enum": [
+          "active",
+          "removed"
+        ]
+      },
       "ReplacePassword": {
         "type": "object",
         "required": [
@@ -3694,6 +5284,18 @@
           }
         ],
         "description": "Revokes the sessions a filter matches; it must set at least one field."
+      },
+      "RevokeShare": {
+        "type": "object",
+        "required": [
+          "by"
+        ],
+        "properties": {
+          "by": {
+            "$ref": "#/components/schemas/ShareSide",
+            "description": "Which side revokes."
+          }
+        }
       },
       "RevokedKey": {
         "type": "object",
@@ -4314,10 +5916,158 @@
           }
         }
       },
+      "Share": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ShareTerms"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "state",
+              "created_at",
+              "updated_at"
+            ],
+            "properties": {
+              "accepted_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "id": {
+                "$ref": "#/components/schemas/ShareId"
+              },
+              "revoked_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "revoked_by": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ShareSide"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "$ref": "#/components/schemas/ShareState"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        ],
+        "description": "A share of one tenant's scope with another tenant."
+      },
       "ShareId": {
         "type": "string",
         "format": "uuid",
         "description": "Identifies a share of one tenant's scope with another tenant.\nCallers supply it when offering the share."
+      },
+      "ShareList": {
+        "type": "object",
+        "required": [
+          "shares"
+        ],
+        "properties": {
+          "shares": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Share"
+            }
+          }
+        }
+      },
+      "ShareSide": {
+        "type": "string",
+        "description": "Which side of a share: the tenant that owns the scope, or the one it is\nshared with.",
+        "enum": [
+          "owner",
+          "recipient"
+        ]
+      },
+      "ShareState": {
+        "type": "string",
+        "description": "Where a share is in its life: `offered` by the owner, `accepted` for the\nrecipient, or `revoked` by either side, which is final.",
+        "enum": [
+          "offered",
+          "accepted",
+          "revoked"
+        ]
+      },
+      "ShareTerms": {
+        "type": "object",
+        "description": "What a share offers. Changing any of it offers the share again.",
+        "required": [
+          "owner",
+          "scope",
+          "recipient",
+          "actions"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Actions or action groups. Control-plane capabilities can't be\nshared.",
+            "uniqueItems": true
+          },
+          "attributes": {
+            "type": "object",
+            "description": "Share attributes: facts declared in the catalog with target `share`."
+          },
+          "owner": {
+            "$ref": "#/components/schemas/TenantId"
+          },
+          "recipient": {
+            "$ref": "#/components/schemas/TenantId"
+          },
+          "recipient_scope": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Scope",
+                "description": "The recipient's scope the share is for; tenant-wide when absent."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope",
+            "description": "The owner's scope."
+          },
+          "valid_from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "valid_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "After `valid_from`, when both are set."
+          }
+        }
       },
       "Shared": {
         "type": "object",
@@ -4927,6 +6677,69 @@
         ],
         "description": "A write's result and the cursor of the last event it produced, if any."
       },
+      "Written_RegisteredScope": {
+        "allOf": [
+          {
+            "type": "object",
+            "description": "A relying system's object, recorded with its tenant and containing\nscopes.",
+            "required": [
+              "kind",
+              "id",
+              "tenant",
+              "containers",
+              "state",
+              "created_at",
+              "updated_at"
+            ],
+            "properties": {
+              "containers": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Scope"
+                },
+                "description": "Scopes of kinds that aren't registered which the scope belongs to."
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "state": {
+                "$ref": "#/components/schemas/RegisteredScopeState"
+              },
+              "tenant": {
+                "$ref": "#/components/schemas/TenantId",
+                "description": "The owner tenant. A removed scope keeps it, so it can only be\nrecorded again in the same one."
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
+      },
       "Written_RevokedSessions": {
         "allOf": [
           {
@@ -5086,6 +6899,83 @@
                 "$ref": "#/components/schemas/AssignmentTarget"
               }
             }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
+      },
+      "Written_Share": {
+        "allOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ShareTerms"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "id",
+                  "state",
+                  "created_at",
+                  "updated_at"
+                ],
+                "properties": {
+                  "accepted_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "id": {
+                    "$ref": "#/components/schemas/ShareId"
+                  },
+                  "revoked_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
+                  },
+                  "revoked_by": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/ShareSide"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "state": {
+                    "$ref": "#/components/schemas/ShareState"
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            ],
+            "description": "A share of one tenant's scope with another tenant."
           },
           {
             "type": "object",

@@ -4,8 +4,8 @@
 
 use std::collections::BTreeMap;
 
+use axum::Json;
 use axum::extract::{Path, State};
-use axum::{Json, Router};
 use chrono::{DateTime, SecondsFormat, Utc};
 use konklav_api::ExplainDecision;
 use konklav_authz::{Check, DecisionExplanation, ExplainInput, Requirements, SessionContext};
@@ -19,22 +19,15 @@ use konklav_token::{AccessClaims, TokenKind};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use crate::control_api::{guard, parse_id};
+use crate::AppState;
+use crate::control_api::parse_id;
 use crate::error::{ApiError, ApiJson};
 use crate::import::not_found_as;
-use crate::{AppState, capabilities};
 
 /// Explaining decisions, with the `OpenAPI` description taken from the
 /// handler's `#[utoipa::path]`.
 pub(crate) fn explain() -> OpenApiRouter<AppState> {
     OpenApiRouter::new().routes(routes!(explain_decision))
-}
-
-pub fn routes(state: &AppState) -> Router<AppState> {
-    let (router, _) = explain()
-        .route_layer(guard(state, capabilities::AUTHZ))
-        .split_for_parts();
-    router
 }
 
 /// Claims as an access token for `session` would carry them.
