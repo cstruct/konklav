@@ -105,9 +105,9 @@ and that the Python wheels and sdist build and pass the binding's tests
 
 Every release has one version, shared by the server, the console, the
 Docker image and the Python package (`konklav-relying` on PyPI), and is
-made from one `v<version>` tag. On an up-to-date `main` with a clean working
-tree, run `mise run release:bump <version>`. It refuses to run with
-uncommitted changes, then:
+made from one `v<version>` tag. On `main` with a clean working tree, run
+`mise run release:bump <version>`. It refuses to run with uncommitted
+changes or off `main`, pulls `main`, then:
 
 1. Sets `version` under `[workspace.package]` in `Cargo.toml` and in
    `items/py/Cargo.toml` (which maturin also uses for the Python package),
