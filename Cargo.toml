@@ -18,7 +18,7 @@ resolver = "3"
 exclude = ["items/py"]
 
 [workspace.package]
-version = "1.2.0"
+version = "1.3.0-rc.1"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
