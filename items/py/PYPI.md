@@ -1,0 +1,81 @@
+# konklav-relying
+
+Decide [Konklav](https://github.com/cstruct/konklav) authorization locally
+from Python.
+
+Konklav is a standalone identity and access service. This package is the
+Python SDK for relying systems: services that accept Konklav's tokens and
+need authorization decisions for them. It verifies tokens offline, caches
+entitlements and keeps them fresh from Konklav's change feed, so most
+decisions need no network round trip.
+
+## Installing
+
+```sh
+pip install konklav-relying
+```
+
+Wheels are published for Python 3.12 and later on:
+
+- Linux x86_64 and aarch64 with glibc 2.28 or later (manylinux_2_28)
+- Linux x86_64 and aarch64 with musl 1.2 or later, such as Alpine
+  (musllinux_1_2)
+- macOS on Apple silicon
+
+Elsewhere pip builds from the sdist, which needs a Rust toolchain.
+
+## Usage
+
+```python
+from konklav_relying import RelyingClient
+
+client = RelyingClient(
+    relying_url="https://konklav:8081",
+    subject_url="https://konklav:8080",
+    key_id=key_id,
+    secret=secret,
+    issuer="https://auth.example",
+    audience="api",
+)
+await client.start()
+
+decision = await client.decide(
+    token,
+    {"scopes": [{"kind": "project", "id": project_id, "actions": ["document:read"]}]},
+)
+if decision["decision"] != "allow":
+    ...
+
+await client.stop()
+```
+
+`RelyingClient` runs on asyncio with httpx:
+
+- It logs in as a service principal and follows the change feed in the
+  background, so revocations and entitlement changes take effect within
+  about a second.
+- It decides locally, and falls back to Konklav's check API whenever its
+  caches can't be trusted, for example while the feed is disconnected.
+- `KonklavError` means Konklav could not be reached or answered with an
+  error. Treat it as a deny.
+- `await_cursor` waits until a change you just made through Konklav has
+  reached the cache, for read-your-writes.
+
+The decision logic lives in a Rust core shared with Konklav's other relying
+bindings, so they can't disagree. Python does only the I/O.
+
+## Versions
+
+The package has the same version as the Konklav server it was released
+with. Pre-releases, such as `1.3.0rc1`, are installed only with
+`pip install --pre`.
+
+## Links
+
+- [Konklav](https://github.com/cstruct/konklav)
+- [This binding's README](https://github.com/cstruct/konklav/tree/main/items/py)
+- [Relying SDK design](https://github.com/cstruct/konklav/blob/main/docs/architecture/relying-sdk.md)
+- [Releases and changelog](https://github.com/cstruct/konklav/releases)
+- [Issues](https://github.com/cstruct/konklav/issues)
+
+MIT licensed.

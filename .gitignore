@@ -6,5 +6,6 @@ mise.local.toml
 config/server.signing-private-key.pem
 items/py/.venv/
 items/py/target/
+items/py/dist/
 __pycache__/
 *.so

@@ -27,6 +27,8 @@ jobs:
         with:
           persist-credentials: false
 
+      # The Python binding is its own Cargo workspace, and maturin takes the
+      # Python package's version from it, so both must match the tag.
       - name: Check tag against Cargo.toml
         id: version
         env:
@@ -38,9 +40,13 @@ jobs:
 
           with open("Cargo.toml", "rb") as manifest:
               version = tomllib.load(manifest)["workspace"]["package"]["version"]
+          with open("items/py/Cargo.toml", "rb") as manifest:
+              py_version = tomllib.load(manifest)["package"]["version"]
           tag = os.environ["TAG_NAME"]
           if tag != f"v{version}":
               raise SystemExit(f"Release tag {tag!r} must match the workspace version v{version}")
+          if py_version != version:
+              raise SystemExit(f"items/py/Cargo.toml has version {py_version}, not the workspace version {version}")
           prerelease = "-" in version.split("+", 1)[0]
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
               print(f"prerelease={str(prerelease).lower()}", file=output)
@@ -157,9 +163,41 @@ jobs:
     uses: ./.github/workflows/docker.yml
     secrets: inherit
 
+  python:
+    name: Python packages
+    needs: [validate, ci]
+    uses: ./.github/workflows/python.yml
+
+  # Only once everything else has built, since a version published to PyPI
+  # can never be uploaded again, even after deleting it.
+  pypi:
+    name: Publish to PyPI
+    needs: [validate, build, console, docker, python]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Trusted publishing: PyPI accepts this workflow in this environment by
+    # its OIDC token, so no API token is stored.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/konklav-relying/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download Python packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: python-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: dist
+
   publish:
     name: Publish GitHub release
-    needs: [validate, build, console, docker]
+    needs: [validate, build, console, docker, pypi]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -172,9 +210,16 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Download Python packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: python-*
+          path: dist
+          merge-multiple: true
+
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum -- *.tar.gz > SHA256SUMS
+        run: sha256sum -- *.tar.gz *.whl > SHA256SUMS
 
       - name: Create release with binaries
         env:
@@ -188,6 +233,6 @@ jobs:
           if [[ "$PRERELEASE" == 'true' ]]; then
             flags+=(--prerelease)
           fi
-          notes="Docker image: \`$IMAGE:${TAG_NAME#v}\`, for linux/amd64 and linux/arm64. The Linux binaries need glibc 2.35 and OpenSSL 3 or later."
+          notes="Docker image: \`$IMAGE:${TAG_NAME#v}\`, for linux/amd64 and linux/arm64. The Linux binaries need glibc 2.35 and OpenSSL 3 or later. Python package: [\`konklav-relying\`](https://pypi.org/project/konklav-relying/) on PyPI."
           gh release create "$TAG_NAME" dist/* \
             --verify-tag --generate-notes --notes "$notes" --title "$TAG_NAME" "${flags[@]}"

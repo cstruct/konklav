@@ -4,11 +4,24 @@ build-backend = "maturin"
 
 [project]
 name = "konklav-relying"
-version = "1.2.0"
+dynamic = ["version"]
 description = "Decide Konklav authorization locally: token verification, cached entitlements and the change feed"
+readme = "PYPI.md"
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = ["httpx>=0.28"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Repository = "https://github.com/cstruct/konklav"
+Documentation = "https://github.com/cstruct/konklav/tree/main/items/py"
+Changelog = "https://github.com/cstruct/konklav/releases"
+Issues = "https://github.com/cstruct/konklav/issues"
 
 [dependency-groups]
 dev = ["pytest>=8", "cryptography>=45", "maturin>=1.9,<2"]

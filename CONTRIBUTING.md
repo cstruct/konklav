@@ -97,20 +97,51 @@ To use another port, set `KONKLAV_DEV_PG_PORT`, for example in an untracked
 
 Run `mise run lint` and `mise run test` before opening one. GitHub Actions
 runs both on every push to `main` and every pull request
-(`.github/workflows/ci.yml`), and checks that the container image builds.
+(`.github/workflows/ci.yml`), and checks that the container image builds
+and that the Python wheels and sdist build and pass the binding's tests
+(`.github/workflows/python.yml`).
 
 ## Releases
 
-To release, set `version` under `[workspace.package]` in `Cargo.toml`, then
-push a matching `v<version>` tag. The release workflow:
+Every release has one version, shared by the server, the console, the
+Docker image and the Python package (`konklav-relying` on PyPI), and is
+made from one `v<version>` tag:
 
-1. Runs CI again.
+1. On a branch, run `mise run release:bump <version>`. It sets `version`
+   under `[workspace.package]` in `Cargo.toml` and in `items/py/Cargo.toml`
+   (which maturin also uses for the Python package), and refreshes the
+   lockfiles. Merge it to `main` as "Release <version>".
+2. Tag that commit on `main` with an annotated tag and push it:
+   `git tag -a v<version> -m "Konklav <version>"`, then
+   `git push origin v<version>`.
+
+The release workflow then:
+
+1. Checks the tag against both manifests and runs CI again.
 2. Builds `konklav-server` for x86_64 and aarch64 Linux and aarch64 macOS,
    and the console as a static bundle.
-3. Pushes a linux/amd64 and linux/arm64 image to Docker Hub. The repository is
+3. Builds the Python wheels (abi3, for Python 3.12 and later) for x86_64 and
+   aarch64 Linux (manylinux_2_28 and musllinux_1_2) and aarch64 macOS, and
+   an sdist, and runs the binding's tests against each, the musllinux ones
+   on Alpine.
+4. Pushes a linux/amd64 and linux/arm64 image to Docker Hub. The repository is
    the `DOCKERHUB_IMAGE` variable; the `deploy` environment holds
    `DOCKERHUB_USERNAME` and the `DOCKERHUB_TOKEN` secret.
-4. Publishes a GitHub release with the archives and `SHA256SUMS`.
+5. Once everything has built, publishes the Python packages to PyPI through
+   trusted publishing from the `pypi` environment, so no PyPI token is
+   stored.
+6. Publishes a GitHub release with the archives, the Python packages and
+   `SHA256SUMS`.
 
 A version with a pre-release part, such as `0.2.0-rc.1`, makes a
-pre-release, and its image gets only that exact tag.
+pre-release: its image gets only that exact tag, and the Python package is
+published as the PEP 440 equivalent (`0.2.0rc1`), which pip installs only
+with `--pre`.
+
+Never move or delete a pushed release tag. PyPI never accepts the same
+version twice, even after deleting it, so a broken release is fixed by
+releasing the next patch version.
+
+`mise run py:build` builds the sdist and a wheel for this machine into
+`items/py/dist` to check the packaging locally. Pull requests build and test
+every wheel and the sdist (`.github/workflows/python.yml`).
