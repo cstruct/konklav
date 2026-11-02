@@ -13,11 +13,12 @@ axum.workspace = true
 base64.workspace = true
 chrono.workspace = true
 clap.workspace = true
+konklav-api.workspace = true
 konklav-authn.workspace = true
 konklav-authz.workspace = true
 konklav-bootstrap.workspace = true
 konklav-core = { workspace = true, features = ["generate"] }
-konklav-store = { workspace = true, features = ["openapi"] }
+konklav-store.workspace = true
 konklav-token.workspace = true
 diesel.workspace = true
 diesel-async.workspace = true

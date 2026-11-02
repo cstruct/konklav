@@ -24,6 +24,8 @@ use konklav_store::{StoreError, signing_keys};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
+pub(crate) use konklav_api::Written;
+
 use crate::capabilities::Operator;
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::{AppState, capabilities, subject_api};
@@ -146,16 +148,6 @@ pub(crate) fn parse_id<T: std::str::FromStr>(value: &str, what: &str) -> Result<
     value
         .parse()
         .map_err(|_| ApiError::invalid_request(format!("{what} is not a valid identifier")))
-}
-
-/// A write's result and the cursor of the last event it produced, if any.
-// r[impl platform.idempotency.write-cursor]
-#[derive(Serialize, utoipa::ToSchema)]
-pub(crate) struct Written<T> {
-    #[serde(flatten)]
-    pub(crate) value: T,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) cursor: Option<Cursor>,
 }
 
 fn last_cursor(revoked: &[(Session, Cursor)]) -> Option<Cursor> {

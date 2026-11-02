@@ -12,7 +12,7 @@ use crate::control_authz;
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Konklav control plane"),
-    components(schemas(crate::error::Envelope)),
+    components(schemas(konklav_api::ErrorResponse)),
     security(("bearer" = [])),
 )]
 struct ControlPlaneDoc;
@@ -61,6 +61,7 @@ impl Modify for ControlPlane {
 /// # Panics
 ///
 /// Never: the document is built from types that always serialize.
+// r[impl item.api.document]
 #[must_use]
 pub fn control_plane() -> String {
     let mut openapi = OpenApiRouter::with_openapi(ControlPlaneDoc::openapi())
@@ -76,6 +77,8 @@ mod tests {
 
     /// The committed document matches the code. Rerun with
     /// `KONKLAV_UPDATE_OPENAPI=1` to rewrite it after an API change.
+    // r[verify item.api.document]
+    // r[verify item.api.schemas]
     #[test]
     fn committed_document_is_current() {
         let generated = super::control_plane() + "\n";

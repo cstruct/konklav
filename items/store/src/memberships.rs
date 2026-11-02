@@ -11,20 +11,17 @@ use crate::{StoreError, StoreResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum MembershipState {
     Active,
     Ended,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Membership {
     pub id: MembershipId,
     pub subject_id: SubjectId,
     pub tenant_id: TenantId,
     pub state: MembershipState,
-    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
     pub facts: serde_json::Value,
     /// The identity provider whose claim mapping created it, if any.
     pub managed_by: Option<String>,

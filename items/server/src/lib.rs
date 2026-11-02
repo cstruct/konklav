@@ -38,6 +38,7 @@ mod subject_api;
 pub mod surface;
 pub mod sweeper;
 pub mod telemetry;
+mod transport;
 
 use std::sync::Arc;
 

@@ -7,14 +7,18 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use diesel_async::AsyncConnection;
+use konklav_api::{
+    self as api, CreateMembership, CreateTenant, MembershipDetail, MembershipQuery, SetTenantState,
+    TenantPage, TenantQuery,
+};
 use konklav_authz::{Policy, Scope};
 use konklav_core::{MembershipId, SubjectId, TenantId};
 use konklav_store::catalog::{self, CatalogDocument, FactTarget};
-use konklav_store::memberships::{self, Membership};
+use konklav_store::memberships;
 use konklav_store::roles::{self, Role, RoleAssignment, RoleDefinition};
 use konklav_store::sessions::{self, SessionFilter};
 use konklav_store::templates::{self, Template};
-use konklav_store::tenants::{self, Tenant, TenantState};
+use konklav_store::tenants::{self, TenantState};
 use konklav_store::{StoreError, compile_input, events};
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
@@ -24,7 +28,7 @@ use crate::capabilities::Operator;
 use crate::control_api::{Written, guard, parse_id};
 use crate::error::{ApiError, ApiJson};
 use crate::import::{self, not_found_as, validate_facts};
-use crate::{AppState, capabilities};
+use crate::{AppState, capabilities, transport};
 
 /// Tenants and memberships, with the `OpenAPI` description of each route
 /// taken from its handler's `#[utoipa::path]`.
@@ -100,18 +104,6 @@ async fn put_catalog(
 
 // --- Tenants ----------------------------------------------------------------
 
-#[derive(Deserialize, utoipa::ToSchema)]
-struct CreateTenant {
-    /// The parent tenant (a UUID or `root`); `root` when absent.
-    parent: Option<String>,
-    #[serde(default = "empty_object")]
-    #[schema(value_type = Object)]
-    facts: serde_json::Value,
-    /// Templates to instantiate roles from, atomically with the tenant.
-    #[serde(default)]
-    templates: Vec<String>,
-}
-
 fn empty_object() -> serde_json::Value {
     serde_json::json!({})
 }
@@ -121,8 +113,8 @@ fn empty_object() -> serde_json::Value {
     params(("id" = TenantId, Path, description = "Chosen by the caller")),
     request_body = CreateTenant,
     responses(
-        (status = 201, description = "Created", body = Written<Tenant>),
-        (status = 200, description = "Already existed with the same content", body = Written<Tenant>),
+        (status = 201, description = "Created", body = Written<api::Tenant>),
+        (status = 200, description = "Already existed with the same content", body = Written<api::Tenant>),
     ))]
 async fn create_tenant(
     State(state): State<AppState>,
@@ -150,7 +142,7 @@ async fn create_tenant(
     Ok((
         status,
         Json(Written {
-            value: tenant,
+            value: transport::tenant(tenant),
             cursor,
         }),
     )
@@ -158,28 +150,28 @@ async fn create_tenant(
 }
 
 #[utoipa::path(get, path = "/tenants/{id}", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
-    responses((status = 200, body = Tenant)))]
+    responses((status = 200, body = api::Tenant)))]
 async fn get_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<Tenant>, ApiError> {
+) -> Result<Json<api::Tenant>, ApiError> {
     let id = tenant_ref(&id)?;
     let mut conn = state.pool.get().await?;
-    Ok(Json(
+    Ok(Json(transport::tenant(
         tenants::get(&mut conn, id)
             .await
             .map_err(not_found_as("tenant"))?,
-    ))
+    )))
 }
 
 #[utoipa::path(put, path = "/tenants/{id}/facts", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
     request_body(content = Object, description = "The tenant's new facts"),
-    responses((status = 200, body = Written<Tenant>)))]
+    responses((status = 200, body = Written<api::Tenant>)))]
 async fn set_tenant_facts(
     State(state): State<AppState>,
     Path(id): Path<String>,
     ApiJson(facts): ApiJson<serde_json::Value>,
-) -> Result<Json<Written<Tenant>>, ApiError> {
+) -> Result<Json<Written<api::Tenant>>, ApiError> {
     let id = tenant_ref(&id)?;
     let mut conn = state.pool.get().await?;
     let (tenant, cursor) = conn
@@ -192,14 +184,9 @@ async fn set_tenant_facts(
         })
         .await?;
     Ok(Json(Written {
-        value: tenant,
+        value: transport::tenant(tenant),
         cursor,
     }))
-}
-
-#[derive(Deserialize, utoipa::ToSchema)]
-struct SetTenantState {
-    state: TenantState,
 }
 
 /// `PUT /v1/tenants/{id}/state`: leaving `active` ends every session
@@ -207,20 +194,21 @@ struct SetTenantState {
 // r[impl tenant.lifecycle.suspend-revokes]
 #[utoipa::path(put, path = "/tenants/{id}/state", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
     request_body = SetTenantState,
-    responses((status = 200, body = Written<Tenant>)))]
+    responses((status = 200, body = Written<api::Tenant>)))]
 async fn set_tenant_state(
     State(state): State<AppState>,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<SetTenantState>,
-) -> Result<Json<Written<Tenant>>, ApiError> {
+) -> Result<Json<Written<api::Tenant>>, ApiError> {
     let id = tenant_ref(&id)?;
     let mut conn = state.pool.get().await?;
     let (tenant, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
-            let tenant = tenants::set_state(conn, id, body.state)
+            let new_state = transport::store_tenant_state(body.state);
+            let tenant = tenants::set_state(conn, id, new_state)
                 .await
                 .map_err(not_found_as("tenant"))?;
-            if body.state != TenantState::Active {
+            if new_state != TenantState::Active {
                 let filter = SessionFilter {
                     tenant: Some(id),
                     ..Default::default()
@@ -231,30 +219,20 @@ async fn set_tenant_state(
         })
         .await?;
     Ok(Json(Written {
-        value: tenant,
+        value: transport::tenant(tenant),
         cursor,
     }))
 }
 
 // --- Memberships ------------------------------------------------------------
 
-#[derive(Deserialize, utoipa::ToSchema)]
-struct CreateMembership {
-    subject: SubjectId,
-    /// The tenant (a UUID or `root`).
-    tenant: String,
-    #[serde(default = "empty_object")]
-    #[schema(value_type = Object)]
-    facts: serde_json::Value,
-}
-
 /// `PUT /v1/memberships/{id}`: idempotent on the id.
 #[utoipa::path(put, path = "/memberships/{id}", tag = "memberships",
     params(("id" = MembershipId, Path, description = "Chosen by the caller")),
     request_body = CreateMembership,
     responses(
-        (status = 201, description = "Created", body = Written<Membership>),
-        (status = 200, description = "Already existed with the same content", body = Written<Membership>),
+        (status = 201, description = "Created", body = Written<api::Membership>),
+        (status = 200, description = "Already existed with the same content", body = Written<api::Membership>),
     ))]
 async fn create_membership(
     State(state): State<AppState>,
@@ -283,18 +261,11 @@ async fn create_membership(
     Ok((
         status,
         Json(Written {
-            value: membership,
+            value: transport::membership(membership),
             cursor,
         }),
     )
         .into_response())
-}
-
-#[derive(Serialize, utoipa::ToSchema)]
-struct MembershipDetail {
-    #[serde(flatten)]
-    membership: Membership,
-    assignments: Vec<RoleAssignment>,
 }
 
 #[utoipa::path(get, path = "/memberships/{id}", tag = "memberships", params(("id" = MembershipId, Path)),
@@ -310,19 +281,22 @@ async fn get_membership(
         .map_err(not_found_as("membership"))?;
     let assignments = roles::assignments_of_membership(&mut conn, id).await?;
     Ok(Json(MembershipDetail {
-        membership,
-        assignments,
+        membership: transport::membership(membership),
+        assignments: assignments
+            .into_iter()
+            .map(transport::role_assignment)
+            .collect(),
     }))
 }
 
 #[utoipa::path(put, path = "/memberships/{id}/facts", tag = "memberships", params(("id" = MembershipId, Path)),
     request_body(content = Object, description = "The membership's new facts"),
-    responses((status = 200, body = Written<Membership>)))]
+    responses((status = 200, body = Written<api::Membership>)))]
 async fn set_membership_facts(
     State(state): State<AppState>,
     Path(id): Path<String>,
     ApiJson(facts): ApiJson<serde_json::Value>,
-) -> Result<Json<Written<Membership>>, ApiError> {
+) -> Result<Json<Written<api::Membership>>, ApiError> {
     let id: MembershipId = parse_id(&id, "membership id")?;
     let mut conn = state.pool.get().await?;
     let (membership, cursor) = conn
@@ -335,7 +309,7 @@ async fn set_membership_facts(
         })
         .await?;
     Ok(Json(Written {
-        value: membership,
+        value: transport::membership(membership),
         cursor,
     }))
 }
@@ -343,11 +317,11 @@ async fn set_membership_facts(
 /// `POST /v1/memberships/{id}/end`: ends the membership and the sessions
 /// targeting it.
 #[utoipa::path(post, path = "/memberships/{id}/end", tag = "memberships", params(("id" = MembershipId, Path)),
-    responses((status = 200, body = Written<Membership>)))]
+    responses((status = 200, body = Written<api::Membership>)))]
 async fn end_membership(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<Written<Membership>>, ApiError> {
+) -> Result<Json<Written<api::Membership>>, ApiError> {
     let id: MembershipId = parse_id(&id, "membership id")?;
     let mut conn = state.pool.get().await?;
     let (membership, cursor) = conn
@@ -365,7 +339,7 @@ async fn end_membership(
         })
         .await?;
     Ok(Json(Written {
-        value: membership,
+        value: transport::membership(membership),
         cursor,
     }))
 }
@@ -665,20 +639,6 @@ async fn subject_entitlements(
     Ok(Json(input.compile()))
 }
 
-#[derive(Deserialize, utoipa::IntoParams)]
-#[into_params(parameter_in = Query)]
-struct TenantQuery {
-    parent: Option<String>,
-    before: Option<TenantId>,
-    limit: Option<i64>,
-}
-
-#[derive(Serialize, utoipa::ToSchema)]
-struct TenantPage {
-    tenants: Vec<Tenant>,
-    next: Option<TenantId>,
-}
-
 /// `GET /v1/tenants?parent=&before=&limit=`
 #[utoipa::path(get, path = "/tenants", tag = "tenants", params(TenantQuery),
     responses((status = 200, body = TenantPage)))]
@@ -693,29 +653,26 @@ async fn list_tenants(
     let next = (i64::try_from(tenants.len()) == Ok(limit))
         .then(|| tenants.last().map(|t| t.id))
         .flatten();
-    Ok(Json(TenantPage { tenants, next }))
-}
-
-#[derive(Deserialize, utoipa::IntoParams)]
-#[into_params(parameter_in = Query)]
-struct MembershipQuery {
-    #[serde(default)]
-    active: bool,
+    Ok(Json(TenantPage {
+        tenants: tenants.into_iter().map(transport::tenant).collect(),
+        next,
+    }))
 }
 
 /// `GET /v1/tenants/{id}/memberships?active=`
 #[utoipa::path(get, path = "/tenants/{id}/memberships", tag = "memberships",
     params(("id" = String, Path, description = "The tenant: a UUID or `root`"), MembershipQuery),
-    responses((status = 200, body = Vec<Membership>)))]
+    responses((status = 200, body = Vec<api::Membership>)))]
 async fn list_memberships(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(query): Query<MembershipQuery>,
-) -> Result<Json<Vec<Membership>>, ApiError> {
+) -> Result<Json<Vec<api::Membership>>, ApiError> {
     let tenant = tenant_ref(&id)?;
     let mut conn = state.pool.get().await?;
+    let memberships = memberships::list_for_tenant(&mut conn, tenant, query.active).await?;
     Ok(Json(
-        memberships::list_for_tenant(&mut conn, tenant, query.active).await?,
+        memberships.into_iter().map(transport::membership).collect(),
     ))
 }
 

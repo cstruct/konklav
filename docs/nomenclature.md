@@ -26,6 +26,15 @@ Terms are introduced in dependency order: each definition only uses terms define
     - the `relying surface`, used by relying systems to fetch keys and authorization data, ask for decisions, and read events
     - the `control-plane surface`, used to administer the control plane
 
+- `transport types`
+  - The request and response types of Konklav's HTTP surfaces, defined once and shared by the server and Konklav's own clients.
+  - They are kept separate from storage models, so the shape of an API changes only on purpose.
+
+- `API document`
+  - The OpenAPI description of a surface, generated from the server's routes and transport types and committed next to the server.
+  - It describes one release: a client generated from it is supported against a server of the same version only.
+  - Only the control-plane surface has one so far.
+
 ## Tenancy
 
 - `tenant`

@@ -615,7 +615,8 @@
             "$ref": "#/components/schemas/ErrorCode"
           },
           "message": {
-            "type": "string"
+            "type": "string",
+            "description": "For humans; it may change between releases."
           }
         }
       },
@@ -642,6 +643,7 @@
       },
       "ErrorResponse": {
         "type": "object",
+        "description": "The body of every error response.",
         "required": [
           "error"
         ],
@@ -714,7 +716,8 @@
               }
             }
           }
-        ]
+        ],
+        "description": "A membership with its role assignments."
       },
       "MembershipId": {
         "type": "string",

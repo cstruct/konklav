@@ -1,0 +1,23 @@
+[package]
+name = "konklav-api"
+description = "Transport types of Konklav's HTTP surfaces, with their OpenAPI schemas"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono.workspace = true
+http.workspace = true
+konklav-core = { workspace = true, features = ["openapi"] }
+serde.workspace = true
+serde_json.workspace = true
+utoipa.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

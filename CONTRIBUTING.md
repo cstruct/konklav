@@ -28,6 +28,7 @@ with the [README](README.md).
   [`overview.md`](docs/architecture/overview.md).
 - `items/`: software items:
   - `core`: identifiers
+  - `api`: transport types of the HTTP surfaces
   - `token`: claims, JWS, JWKS
   - `authn`: hashing, refresh tokens
   - `authz`: entitlement compilation and evaluation

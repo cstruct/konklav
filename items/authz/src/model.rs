@@ -23,7 +23,6 @@ pub struct Policy {
 
 /// A resource inside a tenant. Konklav treats the id as opaque.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Scope {
     pub kind: String,
     pub id: String,

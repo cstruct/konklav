@@ -20,6 +20,7 @@ Rule naming convention: `item.<software-item>.*`.
 Planned software items (see
 [`../../architecture/overview.md`](../../architecture/overview.md)):
 
+- [`api`](api.md)
 - `core`
 - [`store`](store.md)
 - [`authz`](authz.md)
