@@ -10,6 +10,281 @@
     "version": "1.3.0"
   },
   "paths": {
+    "/v1/credentials/{id}/break-glass": {
+      "put": {
+        "tags": [
+          "credentials"
+        ],
+        "summary": "`PUT /v1/credentials/{id}/break-glass`: marks a local password or secret\nkey as a break-glass credential, whose every use appends\n`break_glass.used`.",
+        "operationId": "set_break_glass",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/CredentialId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BreakGlass"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Credential"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/credentials/{id}/replace": {
+      "post": {
+        "tags": [
+          "credentials"
+        ],
+        "summary": "`POST /v1/credentials/{id}/replace`: replaces a password with a new\ncredential that records what it replaces. Sessions established with the\nold one end.",
+        "operationId": "replace_password",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The password to replace",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/CredentialId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplacePassword"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new password credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Credential"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/credentials/{id}/revoke": {
+      "post": {
+        "tags": [
+          "credentials"
+        ],
+        "summary": "`POST /v1/credentials/{id}/revoke`: revokes the credential and ends the\nsessions established with it.",
+        "operationId": "revoke_credential",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/CredentialId"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/RevokeCredential"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Credential"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/credentials/{id}/session-flags": {
+      "put": {
+        "tags": [
+          "credentials"
+        ],
+        "summary": "`PUT /v1/credentials/{id}/session-flags`: sets the restrictive session\nflags every session started with the credential carries.",
+        "operationId": "set_session_flags",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/CredentialId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionFlags"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Credential"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/credentials/{id}/slots/{slot}/rotate": {
+      "post": {
+        "tags": [
+          "credentials"
+        ],
+        "summary": "`POST /v1/credentials/{id}/slots/{slot}/rotate`: sets a new secret for\none slot of a secret key. The other slot keeps working, so clients can\nswitch over without downtime.",
+        "operationId": "rotate_secret_slot",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/CredentialId"
+            }
+          },
+          {
+            "name": "slot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SecretSlot"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional; without it the new secret never expires",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/RotateSlot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rotated. The slot's new secret is in `secret_key`, shown only once.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RotatedSlot"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/memberships/{id}": {
       "get": {
         "tags": [
@@ -182,6 +457,526 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Written_Membership"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "`GET /v1/sessions`",
+        "operationId": "list_sessions",
+        "parameters": [
+          {
+            "name": "subject",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectId"
+            }
+          },
+          {
+            "name": "credential",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CredentialId"
+            }
+          },
+          {
+            "name": "active",
+            "in": "query",
+            "description": "Only sessions neither revoked nor expired.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SessionId"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/revoke": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "`POST /v1/sessions/revoke`",
+        "operationId": "revoke_sessions",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeSessions"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_RevokedSessions"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "operationId": "get_session",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SessionId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/signing-keys": {
+      "get": {
+        "tags": [
+          "signing-keys"
+        ],
+        "operationId": "list_signing_keys",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SigningKey"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/signing-keys/{kid}/revoke": {
+      "post": {
+        "tags": [
+          "signing-keys"
+        ],
+        "summary": "`POST /v1/signing-keys/{kid}/revoke`: break-glass revocation.",
+        "operationId": "revoke_signing_key",
+        "parameters": [
+          {
+            "name": "kid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokedKey"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/subjects": {
+      "get": {
+        "tags": [
+          "subjects"
+        ],
+        "summary": "`GET /v1/subjects?kind=&identifier=&before=&limit=`",
+        "operationId": "list_subjects",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectKind"
+            }
+          },
+          {
+            "name": "identifier",
+            "in": "query",
+            "description": "A login identifier (email address, phone number or key id).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectId"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/subjects/{id}": {
+      "get": {
+        "tags": [
+          "subjects"
+        ],
+        "operationId": "get_subject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectDetail"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "subjects"
+        ],
+        "summary": "`PUT /v1/subjects/{id}`: idempotent on the id.",
+        "operationId": "create_subject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Chosen by the caller",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSubject"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Already existed with the same kind",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Subject"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Subject"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/subjects/{id}/credentials": {
+      "post": {
+        "tags": [
+          "credentials"
+        ],
+        "summary": "`POST /v1/subjects/{id}/credentials`",
+        "operationId": "create_credential",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCredential"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created. A secret key's secrets are in `secret_keys`, shown only once.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedCredential"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/subjects/{id}/disable": {
+      "post": {
+        "tags": [
+          "subjects"
+        ],
+        "summary": "Disables the subject and ends its sessions.",
+        "operationId": "disable_subject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Subject"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/subjects/{id}/enable": {
+      "post": {
+        "tags": [
+          "subjects"
+        ],
+        "operationId": "enable_subject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Subject"
                 }
               }
             }
@@ -558,6 +1353,196 @@
         ],
         "description": "Who a role is assigned to."
       },
+      "BreakGlass": {
+        "type": "object",
+        "required": [
+          "break_glass"
+        ],
+        "properties": {
+          "break_glass": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ClientKind": {
+        "type": "string",
+        "description": "Whether the session's refresh token travels in a cookie or in bodies.",
+        "enum": [
+          "browser",
+          "native"
+        ]
+      },
+      "CreateCredential": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "With either `password` or an Argon2id `password_hash`.",
+            "required": [
+              "identifier",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CredentialId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "identifier": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "password"
+                ]
+              },
+              "mfa_factors_required": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "password": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "password_hash": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "expires_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "id": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CredentialId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "secret_key"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Log in with a magic link sent to `identifier`, an email address.",
+            "required": [
+              "identifier",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CredentialId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "identifier": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "email_link"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Log in with a code sent to `identifier`, an E.164 phone number.",
+            "required": [
+              "identifier",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CredentialId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "identifier": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "phone_otp"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A workload identity at an identity provider: tokens it issues for\n`subject` sign the service principal in with the JWT bearer grant.",
+            "required": [
+              "provider",
+              "subject",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CredentialId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "federated"
+                ]
+              },
+              "provider": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
       "CreateMembership": {
         "type": "object",
         "required": [
@@ -574,6 +1559,17 @@
           "tenant": {
             "type": "string",
             "description": "The tenant (a UUID or `root`)."
+          }
+        }
+      },
+      "CreateSubject": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/SubjectKind"
           }
         }
       },
@@ -598,6 +1594,136 @@
             "description": "Templates to instantiate roles from, atomically with the tenant."
           }
         }
+      },
+      "CreatedCredential": {
+        "type": "object",
+        "description": "A new credential, with a secret key's secrets.",
+        "required": [
+          "credential"
+        ],
+        "properties": {
+          "credential": {
+            "$ref": "#/components/schemas/Credential"
+          },
+          "secret_keys": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SecretKeys",
+                "description": "For secret keys: both slots' `<key id>.<secret>`, shown only once."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Credential": {
+        "type": "object",
+        "description": "A credential without any secret material.",
+        "required": [
+          "id",
+          "subject_id",
+          "kind",
+          "identifier",
+          "mfa_factors_required",
+          "created_at",
+          "break_glass",
+          "session_flags"
+        ],
+        "properties": {
+          "break_glass": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "$ref": "#/components/schemas/CredentialId"
+          },
+          "identifier": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CredentialKind"
+          },
+          "mfa_factors_required": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "passkey": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Passkey",
+                "description": "For passkeys."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "replaces": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CredentialId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "revoked_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "session_flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "slots": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SecretKeySlots",
+                "description": "For secret keys."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subject_id": {
+            "$ref": "#/components/schemas/SubjectId"
+          }
+        }
+      },
+      "CredentialId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Identifies a credential. For secret keys it is also the login\nidentifier."
+      },
+      "CredentialKind": {
+        "type": "string",
+        "enum": [
+          "password",
+          "secret_key",
+          "email_link",
+          "phone_otp",
+          "federated",
+          "client",
+          "public_key"
+        ]
       },
       "Cursor": {
         "type": "integer",
@@ -731,6 +1857,137 @@
           "ended"
         ]
       },
+      "Passkey": {
+        "type": "object",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "ReplacePassword": {
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CredentialId",
+                "description": "The new credential's id; generated when absent."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "password": {
+            "type": "string"
+          }
+        }
+      },
+      "RequestedClaims": {
+        "type": "object",
+        "description": "Single claims an OIDC client asked for with the `claims` request\nparameter.",
+        "properties": {
+          "id_token": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "userinfo": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "RevokeCredential": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Recorded as the revocation reason; `revoked` when absent."
+          }
+        }
+      },
+      "RevokeSessions": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionFilter"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "keep": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SessionId",
+                    "description": "A session to leave alone even if it matches."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Recorded as the revocation reason; `revoked_by_operator` when absent."
+              }
+            }
+          }
+        ],
+        "description": "Revokes the sessions a filter matches; it must set at least one field."
+      },
+      "RevokedKey": {
+        "type": "object",
+        "required": [
+          "kid",
+          "revoked"
+        ],
+        "properties": {
+          "kid": {
+            "type": "string"
+          },
+          "revoked": {
+            "type": "boolean",
+            "description": "Whether this call revoked it; `false` when it already was."
+          }
+        }
+      },
+      "RevokedSessions": {
+        "type": "object",
+        "required": [
+          "revoked"
+        ],
+        "properties": {
+          "revoked": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionId"
+            }
+          }
+        }
+      },
       "RoleAssignment": {
         "type": "object",
         "required": [
@@ -774,6 +2031,39 @@
           }
         }
       },
+      "RotateSlot": {
+        "type": "object",
+        "properties": {
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "RotatedSlot": {
+        "type": "object",
+        "description": "A secret key after one slot's rotation, with that slot's new secret.",
+        "required": [
+          "credential",
+          "slot",
+          "secret_key"
+        ],
+        "properties": {
+          "credential": {
+            "$ref": "#/components/schemas/Credential"
+          },
+          "secret_key": {
+            "type": "string",
+            "description": "The slot's new `<key id>.<secret>`, shown only once."
+          },
+          "slot": {
+            "$ref": "#/components/schemas/SecretSlot"
+          }
+        }
+      },
       "Scope": {
         "type": "object",
         "description": "A resource inside a tenant. Konklav treats the id as opaque.",
@@ -790,6 +2080,330 @@
           }
         }
       },
+      "SecretKeySlot": {
+        "type": "object",
+        "description": "One slot of a secret key, without its secret.",
+        "required": [
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "SecretKeySlots": {
+        "type": "object",
+        "description": "Both slots of a secret key.",
+        "required": [
+          "a",
+          "b"
+        ],
+        "properties": {
+          "a": {
+            "$ref": "#/components/schemas/SecretKeySlot"
+          },
+          "b": {
+            "$ref": "#/components/schemas/SecretKeySlot"
+          }
+        }
+      },
+      "SecretKeys": {
+        "type": "object",
+        "description": "Both slots' `<key id>.<secret>`.",
+        "required": [
+          "a",
+          "b"
+        ],
+        "properties": {
+          "a": {
+            "type": "string"
+          },
+          "b": {
+            "type": "string"
+          }
+        }
+      },
+      "SecretSlot": {
+        "type": "string",
+        "description": "One of the two independently rotatable slots of a secret key.",
+        "enum": [
+          "a",
+          "b"
+        ]
+      },
+      "Session": {
+        "type": "object",
+        "required": [
+          "id",
+          "subject_id",
+          "credential_id",
+          "stage",
+          "client_kind",
+          "amr",
+          "auth_time",
+          "flags",
+          "mfa_factors",
+          "oidc_scopes",
+          "oidc_claims",
+          "version",
+          "created_at",
+          "updated_at",
+          "expires_at"
+        ],
+        "properties": {
+          "amr": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "auth_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "client_kind": {
+            "$ref": "#/components/schemas/ClientKind"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "credential_id": {
+            "$ref": "#/components/schemas/CredentialId"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "$ref": "#/components/schemas/SessionId"
+          },
+          "identity_claims": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Claims passed from the identity provider the session was started\nthrough, by scope, until the session ends."
+          },
+          "impersonator_subject_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SubjectId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "membership_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MembershipId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mfa_factors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "MFA factors verified in this session."
+          },
+          "oidc_claims": {
+            "$ref": "#/components/schemas/RequestedClaims",
+            "description": "Single claims the client asked for, beyond its scopes' claims."
+          },
+          "oidc_client_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The OIDC client the session was started for, if any."
+          },
+          "oidc_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The scopes granted to that client."
+          },
+          "parent_session_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SessionId",
+                "description": "The session this one was started from (impersonation); ending the\nparent ends this one."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "revoked_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stage": {
+            "$ref": "#/components/schemas/SessionStage"
+          },
+          "subject_id": {
+            "$ref": "#/components/schemas/SubjectId"
+          },
+          "tenant_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TenantId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SessionFilter": {
+        "type": "object",
+        "description": "Which sessions to act on. Every set field must match.",
+        "properties": {
+          "credential": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CredentialId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "membership": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MembershipId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SessionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subject": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SubjectId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tenant": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TenantId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "SessionFlags": {
+        "type": "object",
+        "required": [
+          "session_flags"
+        ],
+        "properties": {
+          "session_flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "SessionId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Identifies a session."
+      },
+      "SessionPage": {
+        "type": "object",
+        "required": [
+          "sessions"
+        ],
+        "properties": {
+          "next": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SessionId",
+                "description": "Pass as `before` to get the next page."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Session"
+            }
+          }
+        }
+      },
+      "SessionStage": {
+        "type": "string",
+        "description": "How far a session has got: `partial` until MFA completes, `identity`\nwithout a tenant, `tenant` with one.",
+        "enum": [
+          "partial",
+          "identity",
+          "tenant"
+        ]
+      },
       "SetTenantState": {
         "type": "object",
         "required": [
@@ -801,10 +2415,137 @@
           }
         }
       },
+      "SigningKey": {
+        "type": "object",
+        "description": "A key Konklav signs tokens with, without its key material.",
+        "required": [
+          "kid",
+          "algorithm",
+          "published_at"
+        ],
+        "properties": {
+          "activated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "algorithm": {
+            "type": "string"
+          },
+          "kid": {
+            "type": "string"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "retired_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "Subject": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "state",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "$ref": "#/components/schemas/SubjectId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SubjectKind"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SubjectState"
+          }
+        }
+      },
+      "SubjectDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Subject"
+          },
+          {
+            "type": "object",
+            "required": [
+              "credentials"
+            ],
+            "properties": {
+              "credentials": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Credential"
+                }
+              }
+            }
+          }
+        ],
+        "description": "A subject with its credentials."
+      },
       "SubjectId": {
         "type": "string",
         "format": "uuid",
         "description": "Identifies a subject for its whole lifetime."
+      },
+      "SubjectKind": {
+        "type": "string",
+        "description": "Whether a subject is a person or software.",
+        "enum": [
+          "human",
+          "service"
+        ]
+      },
+      "SubjectPage": {
+        "type": "object",
+        "required": [
+          "subjects"
+        ],
+        "properties": {
+          "next": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SubjectId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subjects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Subject"
+            }
+          }
+        }
+      },
+      "SubjectState": {
+        "type": "string",
+        "enum": [
+          "active",
+          "disabled"
+        ]
       },
       "Tenant": {
         "type": "object",
@@ -882,6 +2623,116 @@
           "deleted"
         ]
       },
+      "Written_Credential": {
+        "allOf": [
+          {
+            "type": "object",
+            "description": "A credential without any secret material.",
+            "required": [
+              "id",
+              "subject_id",
+              "kind",
+              "identifier",
+              "mfa_factors_required",
+              "created_at",
+              "break_glass",
+              "session_flags"
+            ],
+            "properties": {
+              "break_glass": {
+                "type": "boolean"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "id": {
+                "$ref": "#/components/schemas/CredentialId"
+              },
+              "identifier": {
+                "type": "string"
+              },
+              "kind": {
+                "$ref": "#/components/schemas/CredentialKind"
+              },
+              "mfa_factors_required": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "passkey": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Passkey",
+                    "description": "For passkeys."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "replaces": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CredentialId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revoked_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "revoked_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_flags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "slots": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SecretKeySlots",
+                    "description": "For secret keys."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "subject_id": {
+                "$ref": "#/components/schemas/SubjectId"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
+      },
       "Written_Membership": {
         "allOf": [
           {
@@ -925,6 +2776,84 @@
               "updated_at": {
                 "type": "string",
                 "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
+      },
+      "Written_RevokedSessions": {
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "revoked"
+            ],
+            "properties": {
+              "revoked": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SessionId"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
+      },
+      "Written_Subject": {
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "kind",
+              "state",
+              "created_at"
+            ],
+            "properties": {
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "id": {
+                "$ref": "#/components/schemas/SubjectId"
+              },
+              "kind": {
+                "$ref": "#/components/schemas/SubjectKind"
+              },
+              "state": {
+                "$ref": "#/components/schemas/SubjectState"
               }
             }
           },

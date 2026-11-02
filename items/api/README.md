@@ -2,7 +2,7 @@
 
 Library crate for the transport types of Konklav's HTTP surfaces: the request and response bodies that the server and Konklav's own clients share, each with an OpenAPI schema.
 
-So far it covers the control-plane surface's tenant and membership routes and the error envelope every surface uses.
+So far it covers the control-plane surface's tenant, membership, subject, credential, session and signing-key routes and the error envelope every surface uses.
 
 ## Responsibilities
 
