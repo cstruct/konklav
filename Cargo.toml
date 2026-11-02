@@ -22,21 +22,25 @@ version = "1.3.0-rc.1"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
+repository = "https://github.com/cstruct/konklav"
+# Only the crates published to crates.io set `publish = true`.
 publish = false
 
 [workspace.dependencies]
+# The crates published to crates.io require each other at exactly the release
+# version, which `mise run release:bump` sets along with the workspace version.
 konklav-authn = { path = "items/authn" }
-konklav-authz = { path = "items/authz" }
+konklav-authz = { version = "=1.3.0-rc.1", path = "items/authz" }
 konklav-bootstrap = { path = "items/bootstrap" }
 konklav-console = { path = "items/console" }
-konklav-core = { path = "items/core", default-features = false }
+konklav-core = { version = "=1.3.0-rc.1", path = "items/core", default-features = false }
 konklav-examples = { path = "examples" }
-konklav-relying = { path = "items/relying" }
+konklav-relying = { version = "=1.3.0-rc.1", path = "items/relying" }
 konklav-relying-client = { path = "items/relying-client" }
 konklav-server = { path = "items/server" }
 konklav-store = { path = "items/store" }
 konklav-test-support = { path = "items/test-support" }
-konklav-token = { path = "items/token" }
+konklav-token = { version = "=1.3.0-rc.1", path = "items/token" }
 
 aes-gcm = "0.11.1"
 aws-lc-rs = "1.18.2"

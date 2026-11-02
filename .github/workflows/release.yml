@@ -29,7 +29,7 @@ jobs:
 
       # The Python binding is its own Cargo workspace, and maturin takes the
       # Python package's version from it, so both must match the tag.
-      - name: Check tag against Cargo.toml
+      - name: Check tag and dependencies against Cargo.toml
         id: version
         env:
           TAG_NAME: ${{ github.ref_name }}
@@ -47,6 +47,16 @@ jobs:
               raise SystemExit(f"Release tag {tag!r} must match the workspace version v{version}")
           if py_version != version:
               raise SystemExit(f"items/py/Cargo.toml has version {py_version}, not the workspace version {version}")
+          # The published crates require each other at exactly this version.
+          with open("Cargo.toml", "rb") as manifest:
+              dependencies = tomllib.load(manifest)["workspace"]["dependencies"]
+          stale = [
+              f"{name} = {spec['version']!r}"
+              for name, spec in dependencies.items()
+              if name.startswith("konklav-") and isinstance(spec, dict) and "version" in spec and spec["version"] != f"={version}"
+          ]
+          if stale:
+              raise SystemExit(f"Workspace dependencies on Konklav crates must require ={version}:\n" + "\n".join(stale))
           prerelease = "-" in version.split("+", 1)[0]
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
               print(f"prerelease={str(prerelease).lower()}", file=output)
@@ -197,9 +207,62 @@ jobs:
           # A re-run after a partial upload publishes the rest.
           skip-existing: true
 
+  # Like PyPI, crates.io never accepts the same version twice, so this too
+  # waits for everything else to build.
+  crates:
+    name: Publish to crates.io
+    needs: [validate, build, console, docker, python]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Named in each crate's trusted publisher on crates.io.
+    environment:
+      name: crates-io
+      url: https://crates.io/crates/konklav-relying
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install_args: rust
+
+      # A short-lived token from crates.io's trusted publishing, so no token
+      # is stored.
+      - name: Authenticate with crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+
+      # Publishes the crates with `publish = true`, in dependency order,
+      # skipping those already on crates.io at this version, so that a
+      # failed release can be rerun. A crate's first version is published by
+      # hand, as trusted publishing can only be set up for existing crates.
+      - name: Publish crates
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          version="${TAG_NAME#v}"
+          packages=()
+          while read -r name; do
+            if curl -sf "https://index.crates.io/${name:0:2}/${name:2:2}/$name" | grep -qF "\"vers\":\"$version\""; then
+              echo "$name $version is already published"
+            else
+              packages+=(-p "$name")
+            fi
+          done < <(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.publish == null) | .name')
+          if (( ${#packages[@]} == 0 )); then
+            echo "Every crate is already published"
+          else
+            cargo publish --locked "${packages[@]}"
+          fi
+
   publish:
     name: Publish GitHub release
-    needs: [validate, build, console, docker, pypi]
+    needs: [validate, build, console, docker, pypi, crates]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -235,6 +298,6 @@ jobs:
           if [[ "$PRERELEASE" == 'true' ]]; then
             flags+=(--prerelease)
           fi
-          notes="Docker image: \`$IMAGE:${TAG_NAME#v}\`, for linux/amd64 and linux/arm64. The Linux binaries need glibc 2.35 and OpenSSL 3 or later. Python package: [\`konklav-relying\`](https://pypi.org/project/konklav-relying/) on PyPI."
+          notes="Docker image: \`$IMAGE:${TAG_NAME#v}\`, for linux/amd64 and linux/arm64. The Linux binaries need glibc 2.35 and OpenSSL 3 or later. Python package: [\`konklav-relying\`](https://pypi.org/project/konklav-relying/) on PyPI. Rust crates: [\`konklav-relying\`](https://crates.io/crates/konklav-relying), [\`konklav-relying-client\`](https://crates.io/crates/konklav-relying-client) and [\`konklav-authz\`](https://crates.io/crates/konklav-authz) on crates.io."
           gh release create "$TAG_NAME" dist/* \
             --verify-tag --generate-notes --notes "$notes" --title "$TAG_NAME" "${flags[@]}"

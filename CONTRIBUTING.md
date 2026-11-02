@@ -104,21 +104,23 @@ and that the Python wheels and sdist build and pass the binding's tests
 ## Releases
 
 Every release has one version, shared by the server, the console, the
-Docker image and the Python package (`konklav-relying` on PyPI), and is
-made from one `v<version>` tag. On `main` with a clean working tree, run
+Docker image, the Python package (`konklav-relying` on PyPI) and the Rust
+crates on crates.io, and is made from one `v<version>` tag. On `main` with a clean working tree, run
 `mise run release:bump <version>`. It refuses to run with uncommitted
 changes or off `main`, pulls `main`, then:
 
 1. Sets `version` under `[workspace.package]` in `Cargo.toml` and in
    `items/py/Cargo.toml` (which maturin also uses for the Python package),
-   and refreshes the lockfiles.
+   and the published crates' exact requirements on each other under
+   `[workspace.dependencies]`, and refreshes the lockfiles.
 2. Commits that as "Release <version>" and pushes it.
 3. Tags the commit `v<version>` with an annotated tag ("Konklav <version>")
    and pushes the tag.
 
 The release workflow then:
 
-1. Checks the tag against both manifests and runs CI again.
+1. Checks the tag against both manifests and the crates' requirements on
+   each other, and runs CI again.
 2. Builds `konklav-server` for x86_64 and aarch64 Linux and aarch64 macOS,
    and the console as a static bundle.
 3. Builds the Python wheels (abi3, for Python 3.12 and later) for x86_64 and
@@ -131,7 +133,13 @@ The release workflow then:
 5. Once everything has built, publishes the Python packages to PyPI through
    trusted publishing from the `pypi` environment, so no PyPI token is
    stored.
-6. Publishes a GitHub release with the archives, the Python packages and
+6. Publishes the crates with `publish = true` to crates.io, also through
+   trusted publishing, from the `crates-io` environment. These are
+   `konklav-core`, `konklav-token`, `konklav-authz`, `konklav-relying` and
+   `konklav-relying-client`; every other crate inherits `publish = false`.
+   Crates already on crates.io at that version are skipped, so a failed
+   release can be rerun.
+7. Publishes a GitHub release with the archives, the Python packages and
    `SHA256SUMS`.
 
 A version with a pre-release part, such as `0.2.0-rc.1`, makes a
@@ -139,9 +147,19 @@ pre-release: its image gets only that exact tag, and the Python package is
 published as the PEP 440 equivalent (`0.2.0rc1`), which pip installs only
 with `--pre`.
 
-Never move or delete a pushed release tag. PyPI never accepts the same
-version twice, even after deleting it, so a broken release is fixed by
-releasing the next patch version.
+Never move or delete a pushed release tag. Neither PyPI nor crates.io
+accepts the same version twice, even after deleting or yanking it, so a
+broken release is fixed by releasing the next patch version.
+
+Trusted publishing can only be set up for a crate that already exists on
+crates.io. To publish a new crate, set `publish = true` in its manifest
+and give its entry under `[workspace.dependencies]` the exact release
+version, as the others have. Then publish its first version by hand with
+`cargo publish -p <crate>` and a crates.io token, and add a trusted
+publisher for it on crates.io (repository `cstruct/konklav`, workflow
+`release.yml`, environment `crates-io`). CI packages every published
+crate and builds it from its packaged sources, so packaging problems show
+up before a release.
 
 `mise run py:build` builds the sdist and a wheel for this machine into
 `items/py/dist` to check the packaging locally. Pull requests build and test
