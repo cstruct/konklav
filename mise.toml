@@ -83,7 +83,8 @@ depends = ["db:up"]
 dir = "items/py-control-plane"
 env = { KONKLAV_TEST_SERVER = "{{config_root}}/target/debug/test-server" }
 run = [
-    "cargo build -q -p konklav-server -p konklav-examples --bin test-server",
+    # test-server starts the konklav-server binary next to it.
+    "cargo build -q -p konklav-server --bin konklav-server -p konklav-examples --bin test-server",
     "uv sync -q --locked",
     "uv run -q pytest -q tests/integration",
 ]
@@ -104,7 +105,8 @@ depends = ["db:up"]
 dir = "examples/python"
 env = { KONKLAV_TEST_SERVER = "{{config_root}}/target/debug/test-server" }
 run = [
-    "cargo build -q -p konklav-server -p konklav-examples --bin test-server",
+    # test-server starts the konklav-server binary next to it.
+    "cargo build -q -p konklav-server --bin konklav-server -p konklav-examples --bin test-server",
     # --refresh-package rebuilds the Rust extension, as in py:test.
     "uv sync -q --locked --refresh-package konklav-relying --reinstall-package konklav-relying --reinstall-package konklav-control-plane",
     "uv run -q pytest -q tests",
