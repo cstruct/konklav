@@ -52,12 +52,18 @@ where
 {
     type Rejection = std::convert::Infallible;
 
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        Ok(Self::new(&AppState::from_ref(state), &parts.extensions))
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        std::future::ready(Ok(Self::new(&AppState::from_ref(state), &parts.extensions)))
     }
 }
 
 /// A connection from [`Db::get`].
+// Boxing the pooled one would cost an allocation per request to save a
+// few hundred bytes of stack.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Conn {
     Pooled(Object<Connection>),
     Shared(OwnedMutexGuard<Object<Connection>>),
