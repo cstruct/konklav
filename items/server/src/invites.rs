@@ -10,6 +10,8 @@ use axum::{Json, Router};
 use chrono::{Duration, Utc};
 use diesel_async::AsyncConnection;
 use konklav_api::{CreateInvite, CreatedInvite};
+
+use crate::control_api::Written;
 use konklav_authn::{PasswordCheck, generate_secret, hash_challenge_secret};
 use konklav_core::{CredentialId, MembershipId, SubjectId};
 use konklav_store::challenges::{self, NewChallenge, Purpose};
@@ -62,11 +64,11 @@ fn empty_object() -> serde_json::Value {
 /// The invite token is delivered (as `delivery.requested`) and never returned.
 #[utoipa::path(post, path = "/invites", tag = "invites",
     request_body = CreateInvite,
-    responses((status = 201, description = "Created; the token is delivered to the address, never returned", body = CreatedInvite)))]
+    responses((status = 201, description = "Created; the token is delivered to the address, never returned", body = Written<CreatedInvite>)))]
 async fn create_invite(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<CreateInvite>,
-) -> Result<(StatusCode, Json<CreatedInvite>), ApiError> {
+) -> Result<(StatusCode, Json<Written<CreatedInvite>>), ApiError> {
     if !body.email.contains('@') {
         return Err(ApiError::invalid_request("email must be an email address"));
     }
@@ -134,9 +136,11 @@ async fn create_invite(
         .await?;
     Ok((
         StatusCode::CREATED,
-        Json(CreatedInvite {
-            invite_id: id,
-            expires_at,
+        Json(Written {
+            value: CreatedInvite {
+                invite_id: id,
+                expires_at,
+            },
             cursor,
         }),
     ))

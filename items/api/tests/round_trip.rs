@@ -532,11 +532,11 @@ fn registered_scopes_round_trip_with_tagged_changes() {
         {"op": "remove", "kind": "document", "id": "d-2"},
     ]}));
     round_trips::<Written<RegisteredScope>>(&registered_scope("active"));
-    round_trips::<RegisteredScopeBatch>(&json!({
+    round_trips::<Written<RegisteredScopeBatch>>(&json!({
         "scopes": [registered_scope("active"), null, registered_scope("removed")],
         "cursor": 12,
     }));
-    round_trips::<RegisteredScopeBatch>(&json!({"scopes": []}));
+    round_trips::<Written<RegisteredScopeBatch>>(&json!({"scopes": []}));
 }
 
 #[test]
@@ -551,10 +551,10 @@ fn invites_round_trip() {
     }));
     let minimal: CreateInvite = reads(json!({"email": "ada@example.com"}));
     assert_eq!((minimal.expires_in_hours, minimal.facts), (72, json!({})));
-    round_trips::<CreatedInvite>(&json!({
+    round_trips::<Written<CreatedInvite>>(&json!({
         "invite_id": "0195e0a0-0000-7000-8000-00000000000c",
         "expires_at": "2026-11-05T10:00:00Z",
-        "cursor": null,
+        "cursor": 9,
     }));
 }
 

@@ -101,16 +101,19 @@ async fn remove(
 // r[impl authz.registered.batch]
 #[utoipa::path(post, path = "/registered-scopes", operation_id = "change_registered_scopes", tag = "registered-scopes",
     request_body = RegisteredScopeChanges,
-    responses((status = 200, body = RegisteredScopeBatch)))]
+    responses((status = 200, body = Written<RegisteredScopeBatch>)))]
 async fn batch(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<RegisteredScopeChanges>,
-) -> Result<Json<RegisteredScopeBatch>, ApiError> {
+) -> Result<Json<Written<RegisteredScopeBatch>>, ApiError> {
     let changes: Vec<Change> = body
         .changes
         .into_iter()
         .map(transport::registered_scope_change)
         .collect();
     let (scopes, cursor) = apply(&state, &changes).await?;
-    Ok(Json(RegisteredScopeBatch { scopes, cursor }))
+    Ok(Json(Written {
+        value: RegisteredScopeBatch { scopes },
+        cursor,
+    }))
 }

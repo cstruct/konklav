@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use konklav_authz::Scope;
-use konklav_core::{Cursor, TenantId};
+use konklav_core::TenantId;
 use serde::{Deserialize, Serialize};
 
 /// Whether a registered scope is recorded, or has been removed.
@@ -65,6 +65,4 @@ pub struct RegisteredScopeBatch {
     /// Each change's scope afterwards, in order; `null` for removing an
     /// unknown scope.
     pub scopes: Vec<Option<RegisteredScope>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
 }

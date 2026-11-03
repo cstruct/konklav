@@ -600,7 +600,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CreatedInvite"
+                  "$ref": "#/components/schemas/Written_CreatedInvite"
                 }
               }
             }
@@ -1104,7 +1104,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RegisteredScopeBatch"
+                  "$ref": "#/components/schemas/Written_RegisteredScopeBatch"
                 }
               }
             }
@@ -3463,20 +3463,9 @@
         "description": "A created invite. Its token is never returned: it is only delivered to\nthe invited address, as a `delivery.requested` event.",
         "required": [
           "invite_id",
-          "expires_at",
-          "cursor"
+          "expires_at"
         ],
         "properties": {
-          "cursor": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Cursor"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "expires_at": {
             "type": "string",
             "format": "date-time"
@@ -5186,16 +5175,6 @@
           "scopes"
         ],
         "properties": {
-          "cursor": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Cursor"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "scopes": {
             "type": "array",
             "items": {
@@ -6647,6 +6626,44 @@
         ],
         "description": "A write's result and the cursor of the last event it produced, if any."
       },
+      "Written_CreatedInvite": {
+        "allOf": [
+          {
+            "type": "object",
+            "description": "A created invite. Its token is never returned: it is only delivered to\nthe invited address, as a `delivery.requested` event.",
+            "required": [
+              "invite_id",
+              "expires_at"
+            ],
+            "properties": {
+              "expires_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "invite_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
+      },
       "Written_Credential": {
         "allOf": [
           {
@@ -6900,6 +6917,48 @@
               "updated_at": {
                 "type": "string",
                 "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
+      },
+      "Written_RegisteredScopeBatch": {
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "scopes"
+            ],
+            "properties": {
+              "scopes": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/RegisteredScope"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "description": "Each change's scope afterwards, in order; `null` for removing an\nunknown scope."
               }
             }
           },
