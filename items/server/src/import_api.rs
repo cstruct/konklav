@@ -13,6 +13,7 @@ use konklav_api::{ImportCredentials, ImportFactors, ImportSessions, ImportSubjec
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use crate::db::Db;
 use crate::error::{ApiError, ApiJson};
 use crate::import::{self, Outcome};
 use crate::{AppState, transport};
@@ -42,7 +43,7 @@ fn count(result: &mut Imported, outcome: Outcome) {
     request_body = ImportSubjects,
     responses((status = 200, body = Imported)))]
 async fn import_subjects(
-    State(state): State<AppState>,
+    db: Db,
     ApiJson(body): ApiJson<ImportSubjects>,
 ) -> Result<Json<Imported>, ApiError> {
     let records: Vec<_> = body
@@ -50,7 +51,7 @@ async fn import_subjects(
         .iter()
         .map(transport::subject_record)
         .collect();
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let result = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let mut result = Imported::default();
@@ -71,10 +72,10 @@ async fn import_subjects(
     request_body = ImportCredentials,
     responses((status = 200, body = Imported)))]
 async fn import_credentials(
-    State(state): State<AppState>,
+    db: Db,
     ApiJson(body): ApiJson<ImportCredentials>,
 ) -> Result<Json<Imported>, ApiError> {
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let records = body
         .credentials
         .into_iter()
@@ -100,6 +101,7 @@ async fn import_credentials(
     responses((status = 200, body = Imported)))]
 async fn import_factors(
     State(state): State<AppState>,
+    db: Db,
     ApiJson(body): ApiJson<ImportFactors>,
 ) -> Result<Json<Imported>, ApiError> {
     let mut prepared = Vec::with_capacity(body.factors.len());
@@ -107,7 +109,7 @@ async fn import_factors(
         let data = import::seal_factor(&state.auth.secrets, record.id, record.material)?;
         prepared.push((record.id, record.subject, data, record.active));
     }
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let result = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let mut result = Imported::default();
@@ -130,10 +132,10 @@ async fn import_factors(
     request_body = ImportSessions,
     responses((status = 200, body = Imported)))]
 async fn import_sessions(
-    State(state): State<AppState>,
+    db: Db,
     ApiJson(body): ApiJson<ImportSessions>,
 ) -> Result<Json<Imported>, ApiError> {
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let records = body.sessions.into_iter().map(transport::session_record);
     let result = conn
         .transaction::<_, ApiError, _>(async |conn| {

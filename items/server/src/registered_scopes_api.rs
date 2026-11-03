@@ -4,7 +4,7 @@
 //! relying surface.
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::Path;
 use diesel_async::AsyncConnection;
 use konklav_api::{
     RecordRegisteredScope, RegisteredScope, RegisteredScopeBatch, RegisteredScopeChanges,
@@ -15,6 +15,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::control_api::Written;
+use crate::db::Db;
 use crate::error::{ApiError, ApiJson};
 use crate::{AppState, transport};
 
@@ -30,10 +31,10 @@ pub(crate) fn registered_scopes() -> OpenApiRouter<AppState> {
 
 /// Applies `changes` in a transaction of its own, with the write cursor.
 async fn apply(
-    state: &AppState,
+    db: &Db,
     changes: &[Change],
 ) -> Result<(Vec<Option<RegisteredScope>>, Option<konklav_core::Cursor>), ApiError> {
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (scopes, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let scopes = registered_scopes::apply(conn, changes).await?;
@@ -55,12 +56,12 @@ async fn apply(
     request_body = RecordRegisteredScope,
     responses((status = 200, body = Written<RegisteredScope>)))]
 async fn record(
-    State(state): State<AppState>,
+    db: Db,
     Path((kind, id)): Path<(String, String)>,
     ApiJson(body): ApiJson<RecordRegisteredScope>,
 ) -> Result<Json<Written<RegisteredScope>>, ApiError> {
     let (mut scopes, cursor) = apply(
-        &state,
+        &db,
         &[Change::Record {
             kind,
             id,
@@ -84,10 +85,10 @@ async fn record(
     params(("kind" = String, Path, description = "A registered scope kind"), ("id" = String, Path)),
     responses((status = 200, body = Written<RegisteredScope>)))]
 async fn remove(
-    State(state): State<AppState>,
+    db: Db,
     Path((kind, id)): Path<(String, String)>,
 ) -> Result<Json<Written<RegisteredScope>>, ApiError> {
-    let (mut scopes, cursor) = apply(&state, &[Change::Remove { kind, id }]).await?;
+    let (mut scopes, cursor) = apply(&db, &[Change::Remove { kind, id }]).await?;
     let value = scopes
         .pop()
         .flatten()
@@ -103,7 +104,7 @@ async fn remove(
     request_body = RegisteredScopeChanges,
     responses((status = 200, body = Written<RegisteredScopeBatch>)))]
 async fn batch(
-    State(state): State<AppState>,
+    db: Db,
     ApiJson(body): ApiJson<RegisteredScopeChanges>,
 ) -> Result<Json<Written<RegisteredScopeBatch>>, ApiError> {
     let changes: Vec<Change> = body
@@ -111,7 +112,7 @@ async fn batch(
         .into_iter()
         .map(transport::registered_scope_change)
         .collect();
-    let (scopes, cursor) = apply(&state, &changes).await?;
+    let (scopes, cursor) = apply(&db, &changes).await?;
     Ok(Json(Written {
         value: RegisteredScopeBatch { scopes },
         cursor,

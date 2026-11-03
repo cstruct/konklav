@@ -2,7 +2,7 @@
 //! tenants, memberships, templates, roles and role assignments.
 
 use axum::Json;
-use axum::extract::{Extension, Path, Query, State};
+use axum::extract::{Extension, Path, Query};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use diesel_async::AsyncConnection;
@@ -24,6 +24,7 @@ use utoipa_axum::routes;
 
 use crate::capabilities::Operator;
 use crate::control_api::{Written, created_status, parse_id};
+use crate::db::Db;
 use crate::error::{ApiError, ApiJson};
 use crate::import::{self, not_found_as, validate_facts};
 use crate::{AppState, capabilities, transport};
@@ -68,8 +69,8 @@ fn tenant_ref(value: &str) -> Result<TenantId, ApiError> {
 /// Gets the action catalog.
 #[utoipa::path(get, path = "/catalog", tag = "catalog",
     responses((status = 200, body = CatalogDocument)))]
-async fn get_catalog(State(state): State<AppState>) -> Result<Json<CatalogDocument>, ApiError> {
-    let mut conn = state.pool.get().await?;
+async fn get_catalog(db: Db) -> Result<Json<CatalogDocument>, ApiError> {
+    let mut conn = db.get().await?;
     Ok(Json(transport::catalog(catalog::load(&mut conn).await?)))
 }
 
@@ -80,11 +81,11 @@ async fn get_catalog(State(state): State<AppState>) -> Result<Json<CatalogDocume
     request_body = CatalogDocument,
     responses((status = 200, body = Written<CatalogDocument>)))]
 async fn put_catalog(
-    State(state): State<AppState>,
+    db: Db,
     ApiJson(document): ApiJson<CatalogDocument>,
 ) -> Result<Json<Written<CatalogDocument>>, ApiError> {
     let document = transport::store_catalog(document);
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let cursor = conn
         .transaction::<_, ApiError, _>(async |conn| {
             import::replace_catalog(conn, &document).await?;
@@ -111,7 +112,7 @@ async fn put_catalog(
         (status = 200, description = "Already existed with the same content", body = Written<api::Tenant>),
     ))]
 async fn create_tenant(
-    State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<CreateTenant>,
 ) -> Result<Response, ApiError> {
@@ -120,7 +121,7 @@ async fn create_tenant(
         .parent
         .as_deref()
         .map_or(Ok(tenants::ROOT), tenant_ref)?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (tenant, created, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let (tenant, created) =
@@ -142,12 +143,9 @@ async fn create_tenant(
 /// Gets a tenant.
 #[utoipa::path(get, path = "/tenants/{id}", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
     responses((status = 200, body = api::Tenant)))]
-async fn get_tenant(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<api::Tenant>, ApiError> {
+async fn get_tenant(db: Db, Path(id): Path<String>) -> Result<Json<api::Tenant>, ApiError> {
     let id = tenant_ref(&id)?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     Ok(Json(transport::tenant(
         tenants::get(&mut conn, id)
             .await
@@ -160,12 +158,12 @@ async fn get_tenant(
     request_body(content = Object, description = "The tenant's new facts"),
     responses((status = 200, body = Written<api::Tenant>)))]
 async fn set_tenant_facts(
-    State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
     ApiJson(facts): ApiJson<serde_json::Value>,
 ) -> Result<Json<Written<api::Tenant>>, ApiError> {
     let id = tenant_ref(&id)?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (tenant, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             validate_facts(conn, FactTarget::Tenant, &facts).await?;
@@ -189,12 +187,12 @@ async fn set_tenant_facts(
     request_body = SetTenantState,
     responses((status = 200, body = Written<api::Tenant>)))]
 async fn set_tenant_state(
-    State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<SetTenantState>,
 ) -> Result<Json<Written<api::Tenant>>, ApiError> {
     let id = tenant_ref(&id)?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (tenant, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let new_state = transport::store_tenant_state(body.state);
@@ -231,13 +229,13 @@ async fn set_tenant_state(
         (status = 200, description = "Already existed with the same content", body = Written<api::Membership>),
     ))]
 async fn create_membership(
-    State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<CreateMembership>,
 ) -> Result<Response, ApiError> {
     let id: MembershipId = parse_id(&id, "membership id")?;
     let tenant = tenant_ref(&body.tenant)?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (membership, created, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let (membership, created) =
@@ -264,11 +262,11 @@ async fn create_membership(
 #[utoipa::path(get, path = "/memberships/{id}", tag = "memberships", params(("id" = MembershipId, Path)),
     responses((status = 200, body = MembershipDetail)))]
 async fn get_membership(
-    State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
 ) -> Result<Json<MembershipDetail>, ApiError> {
     let id: MembershipId = parse_id(&id, "membership id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let membership = memberships::get(&mut conn, id)
         .await
         .map_err(not_found_as("membership"))?;
@@ -287,12 +285,12 @@ async fn get_membership(
     request_body(content = Object, description = "The membership's new facts"),
     responses((status = 200, body = Written<api::Membership>)))]
 async fn set_membership_facts(
-    State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
     ApiJson(facts): ApiJson<serde_json::Value>,
 ) -> Result<Json<Written<api::Membership>>, ApiError> {
     let id: MembershipId = parse_id(&id, "membership id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (membership, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             validate_facts(conn, FactTarget::Membership, &facts).await?;
@@ -314,11 +312,11 @@ async fn set_membership_facts(
 #[utoipa::path(post, path = "/memberships/{id}/end", tag = "memberships", params(("id" = MembershipId, Path)),
     responses((status = 200, body = Written<api::Membership>)))]
 async fn end_membership(
-    State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
 ) -> Result<Json<Written<api::Membership>>, ApiError> {
     let id: MembershipId = parse_id(&id, "membership id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (membership, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             memberships::end(conn, id)
@@ -344,10 +342,8 @@ async fn end_membership(
 /// Lists role templates.
 #[utoipa::path(get, path = "/templates", tag = "templates",
     responses((status = 200, body = Vec<api::Template>)))]
-async fn list_templates(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<api::Template>>, ApiError> {
-    let mut conn = state.pool.get().await?;
+async fn list_templates(db: Db) -> Result<Json<Vec<api::Template>>, ApiError> {
+    let mut conn = db.get().await?;
     Ok(Json(
         templates::list(&mut conn)
             .await?
@@ -360,11 +356,8 @@ async fn list_templates(
 /// Gets a role template.
 #[utoipa::path(get, path = "/templates/{key}", tag = "templates", params(("key" = String, Path)),
     responses((status = 200, body = api::Template)))]
-async fn get_template(
-    State(state): State<AppState>,
-    Path(key): Path<String>,
-) -> Result<Json<api::Template>, ApiError> {
-    let mut conn = state.pool.get().await?;
+async fn get_template(db: Db, Path(key): Path<String>) -> Result<Json<api::Template>, ApiError> {
+    let mut conn = db.get().await?;
     Ok(Json(transport::template(
         templates::get(&mut conn, &key)
             .await
@@ -377,12 +370,12 @@ async fn get_template(
     request_body = PutTemplate,
     responses((status = 200, body = Written<api::Template>)))]
 async fn put_template(
-    State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(key): Path<String>,
     ApiJson(body): ApiJson<PutTemplate>,
 ) -> Result<Json<Written<api::Template>>, ApiError> {
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (template, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let granted = match templates::get(conn, &key).await {
@@ -414,12 +407,9 @@ async fn put_template(
 #[utoipa::path(get, path = "/tenants/{id}/roles", tag = "roles",
     params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
     responses((status = 200, body = Vec<api::Role>)))]
-async fn list_roles(
-    State(state): State<AppState>,
-    Path(tenant): Path<String>,
-) -> Result<Json<Vec<api::Role>>, ApiError> {
+async fn list_roles(db: Db, Path(tenant): Path<String>) -> Result<Json<Vec<api::Role>>, ApiError> {
     let tenant = tenant_ref(&tenant)?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     Ok(Json(
         roles::list(&mut conn, tenant)
             .await?
@@ -434,11 +424,11 @@ async fn list_roles(
     params(("id" = String, Path, description = "The tenant: a UUID or `root`"), ("key" = String, Path)),
     responses((status = 200, body = api::Role)))]
 async fn get_role(
-    State(state): State<AppState>,
+    db: Db,
     Path((tenant, key)): Path<(String, String)>,
 ) -> Result<Json<api::Role>, ApiError> {
     let tenant = tenant_ref(&tenant)?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     Ok(Json(transport::role(
         roles::get(&mut conn, tenant, &key)
             .await
@@ -454,14 +444,14 @@ async fn get_role(
     request_body = PutRole,
     responses((status = 200, body = Written<api::Role>)))]
 async fn put_role(
-    State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path((tenant, key)): Path<(String, String)>,
     ApiJson(body): ApiJson<PutRole>,
 ) -> Result<Json<Written<api::Role>>, ApiError> {
     let tenant = tenant_ref(&tenant)?;
     let definition = transport::role_definition(body);
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (role, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             tenants::get(conn, tenant)
@@ -498,12 +488,12 @@ async fn put_role(
     params(("id" = String, Path, description = "The tenant: a UUID or `root`"), ("key" = String, Path)),
     responses((status = 200, body = Written<Deleted>)))]
 async fn delete_role(
-    State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path((tenant, key)): Path<(String, String)>,
 ) -> Result<Json<Written<Deleted>>, ApiError> {
     let tenant = tenant_ref(&tenant)?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (deleted, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             if let Ok(old) = roles::get(conn, tenant, &key).await
@@ -532,12 +522,12 @@ async fn delete_role(
         (status = 200, description = "Already assigned", body = Written<api::RoleAssignment>),
     ))]
 async fn assign_membership_role(
-    State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<AssignRole>,
 ) -> Result<(StatusCode, Json<Written<api::RoleAssignment>>), ApiError> {
     let id: MembershipId = parse_id(&id, "membership id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (assignment, created, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let (assignment, created) =
@@ -569,7 +559,7 @@ async fn assign_membership_role(
         (status = 200, description = "Already assigned", body = Written<api::RoleAssignment>),
     ))]
 async fn assign_global_role(
-    State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<AssignRole>,
@@ -580,7 +570,7 @@ async fn assign_global_role(
             "global assignments have no scope",
         ));
     }
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (assignment, created, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let role = roles::get(conn, tenants::ROOT, &body.role)
@@ -612,11 +602,11 @@ async fn assign_global_role(
     params(("id" = SubjectId, Path)),
     responses((status = 200, body = Vec<api::RoleAssignment>)))]
 async fn list_global_assignments(
-    State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<api::RoleAssignment>>, ApiError> {
     let id: SubjectId = parse_id(&id, "subject id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     Ok(Json(
         roles::global_assignments_of(&mut conn, id)
             .await?
@@ -631,12 +621,12 @@ async fn list_global_assignments(
     params(("id" = uuid::Uuid, Path)),
     responses((status = 200, body = Written<Deleted>)))]
 async fn unassign(
-    State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
 ) -> Result<Json<Written<Deleted>>, ApiError> {
     let id: uuid::Uuid = parse_id(&id, "assignment id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (deleted, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             if let Ok(role) = roles::of_assignment(conn, id).await
@@ -661,13 +651,13 @@ async fn unassign(
     params(("id" = SubjectId, Path), EntitlementQuery),
     responses((status = 200, body = Entitlements)))]
 async fn subject_entitlements(
-    State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
     Query(query): Query<EntitlementQuery>,
 ) -> Result<Json<Entitlements>, ApiError> {
     let id: SubjectId = parse_id(&id, "subject id")?;
     let tenant = query.tenant.as_deref().map(tenant_ref).transpose()?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let input = compile_input::load(&mut conn, id, tenant).await?;
     Ok(Json(input.compile()))
 }
@@ -676,12 +666,12 @@ async fn subject_entitlements(
 #[utoipa::path(get, path = "/tenants", tag = "tenants", params(TenantQuery),
     responses((status = 200, body = TenantPage)))]
 async fn list_tenants(
-    State(state): State<AppState>,
+    db: Db,
     Query(query): Query<TenantQuery>,
 ) -> Result<Json<TenantPage>, ApiError> {
     let parent = query.parent.as_deref().map(tenant_ref).transpose()?;
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let tenants = tenants::list(&mut conn, parent, query.before, limit).await?;
     let next = (i64::try_from(tenants.len()) == Ok(limit))
         .then(|| tenants.last().map(|t| t.id))
@@ -697,12 +687,12 @@ async fn list_tenants(
     params(("id" = String, Path, description = "The tenant: a UUID or `root`"), MembershipQuery),
     responses((status = 200, body = Vec<api::Membership>)))]
 async fn list_memberships(
-    State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
     Query(query): Query<MembershipQuery>,
 ) -> Result<Json<Vec<api::Membership>>, ApiError> {
     let tenant = tenant_ref(&id)?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let memberships = memberships::list_for_tenant(&mut conn, tenant, query.active).await?;
     Ok(Json(
         memberships.into_iter().map(transport::membership).collect(),
@@ -717,13 +707,13 @@ async fn list_memberships(
     params(("id" = SubjectId, Path), ExplainQuery),
     responses((status = 200, body = Explanation)))]
 async fn explain_entitlement(
-    State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
     Query(query): Query<ExplainQuery>,
 ) -> Result<Json<Explanation>, ApiError> {
     let id: SubjectId = parse_id(&id, "subject id")?;
     let tenant = query.tenant.as_deref().map(tenant_ref).transpose()?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let input = compile_input::load(&mut conn, id, tenant).await?;
     Ok(Json(konklav_authz::explain(
         &input.catalog,

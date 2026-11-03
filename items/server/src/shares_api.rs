@@ -6,7 +6,7 @@
 //! The two steps record that both sides agreed.
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query};
 use diesel_async::AsyncConnection;
 use konklav_api::{RevokeShare, Share, ShareList, ShareQuery, ShareTerms};
 use konklav_core::ShareId;
@@ -17,6 +17,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::control_api::{Written, parse_id};
+use crate::db::Db;
 use crate::error::{ApiError, ApiJson};
 use crate::import::{not_found_as, validate_facts};
 use crate::{AppState, transport};
@@ -46,7 +47,7 @@ fn share_id(value: &str) -> Result<ShareId, ApiError> {
     request_body = ShareTerms,
     responses((status = 200, body = Written<Share>)))]
 async fn offer(
-    State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
     ApiJson(terms): ApiJson<ShareTerms>,
 ) -> Result<Json<Written<Share>>, ApiError> {
@@ -73,7 +74,7 @@ async fn offer(
             "valid_from must be before valid_until",
         ));
     }
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (share, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             tenants::get(conn, terms.owner)
@@ -102,12 +103,9 @@ async fn offer(
 #[utoipa::path(get, path = "/shares/{id}", tag = "shares",
     params(("id" = ShareId, Path)),
     responses((status = 200, body = Share)))]
-async fn get_share(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Share>, ApiError> {
+async fn get_share(db: Db, Path(id): Path<String>) -> Result<Json<Share>, ApiError> {
     let id = share_id(&id)?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     Ok(Json(transport::share(
         shares::get(&mut conn, id)
             .await
@@ -122,12 +120,9 @@ async fn get_share(
 #[utoipa::path(post, path = "/shares/{id}/accept", operation_id = "accept_share", tag = "shares",
     params(("id" = ShareId, Path)),
     responses((status = 200, body = Written<Share>)))]
-async fn accept(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Written<Share>>, ApiError> {
+async fn accept(db: Db, Path(id): Path<String>) -> Result<Json<Written<Share>>, ApiError> {
     let id = share_id(&id)?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (share, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let share = shares::accept(conn, id)
@@ -151,12 +146,12 @@ async fn accept(
     request_body = RevokeShare,
     responses((status = 200, body = Written<Share>)))]
 async fn revoke(
-    State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<RevokeShare>,
 ) -> Result<Json<Written<Share>>, ApiError> {
     let id = share_id(&id)?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (share, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let share = shares::revoke(conn, id, transport::store_share_side(body.by))
@@ -176,14 +171,14 @@ async fn revoke(
     params(("id" = String, Path, description = "The tenant: a UUID or `root`"), ShareQuery),
     responses((status = 200, body = ShareList)))]
 async fn list(
-    State(state): State<AppState>,
+    db: Db,
     Path(tenant): Path<String>,
     Query(query): Query<ShareQuery>,
 ) -> Result<Json<ShareList>, ApiError> {
     let tenant = tenants::parse_reference(&tenant)
         .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
     let side = query.side.map(transport::store_share_side);
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     Ok(Json(ShareList {
         shares: shares::list(&mut conn, tenant, side)
             .await?

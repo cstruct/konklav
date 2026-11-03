@@ -21,6 +21,7 @@ use utoipa_axum::routes;
 
 use crate::AppState;
 use crate::control_api::parse_id;
+use crate::db::Db;
 use crate::error::{ApiError, ApiJson};
 use crate::import::not_found_as;
 
@@ -176,6 +177,7 @@ async fn check_reach(
     responses((status = 200, body = DecisionExplanation)))]
 async fn explain_decision(
     State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<ExplainDecision>,
 ) -> Result<Json<DecisionExplanation>, ApiError> {
@@ -193,7 +195,7 @@ async fn explain_decision(
             "`at` can't be combined with a session: history doesn't keep sessions",
         ));
     }
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let now = Utc::now();
     let session = match body.session {
         Some(id) => {

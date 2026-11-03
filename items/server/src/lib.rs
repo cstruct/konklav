@@ -10,6 +10,7 @@ pub mod config;
 mod control_api;
 mod control_authz;
 mod cookies;
+mod db;
 pub mod error;
 mod explain_api;
 pub mod federation;

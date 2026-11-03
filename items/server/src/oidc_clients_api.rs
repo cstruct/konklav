@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use crate::db::Db;
 use crate::error::{ApiError, ApiJson};
 use crate::{AppState, transport};
 
@@ -26,8 +27,8 @@ pub(crate) fn oidc_clients() -> OpenApiRouter<AppState> {
 /// Lists OIDC clients.
 #[utoipa::path(get, path = "/oidc/clients", operation_id = "list_oidc_clients", tag = "oidc-clients",
     responses((status = 200, body = Vec<api::OidcClient>)))]
-async fn list(State(state): State<AppState>) -> Result<Json<Vec<api::OidcClient>>, ApiError> {
-    let mut conn = state.pool.get().await?;
+async fn list(db: Db) -> Result<Json<Vec<api::OidcClient>>, ApiError> {
+    let mut conn = db.get().await?;
     Ok(Json(
         oidc_clients::list(&mut conn)
             .await?
@@ -41,11 +42,8 @@ async fn list(State(state): State<AppState>) -> Result<Json<Vec<api::OidcClient>
 #[utoipa::path(get, path = "/oidc/clients/{id}", operation_id = "get_oidc_client", tag = "oidc-clients",
     params(("id" = String, Path, description = "The client id")),
     responses((status = 200, body = api::OidcClient)))]
-async fn get_client(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<api::OidcClient>, ApiError> {
-    let mut conn = state.pool.get().await?;
+async fn get_client(db: Db, Path(id): Path<String>) -> Result<Json<api::OidcClient>, ApiError> {
+    let mut conn = db.get().await?;
     oidc_clients::get(&mut conn, &id)
         .await
         .map(|client| Json(transport::oidc_client(client)))
@@ -61,6 +59,7 @@ async fn get_client(
     responses((status = 200, body = api::OidcClient)))]
 async fn put_client(
     State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
     ApiJson(definition): ApiJson<OidcClientDefinition>,
 ) -> Result<Json<api::OidcClient>, ApiError> {
@@ -113,7 +112,7 @@ async fn put_client(
             "only confidential clients can act as service principals",
         ));
     }
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     conn.transaction::<_, ApiError, _>(async |conn| {
         let client = oidc_clients::put(conn, &id, &definition).await?;
         bind_service_subject(conn, &client).await?;
@@ -176,11 +175,8 @@ async fn bind_service_subject(
 #[utoipa::path(delete, path = "/oidc/clients/{id}", operation_id = "disable_oidc_client", tag = "oidc-clients",
     params(("id" = String, Path, description = "The client id")),
     responses((status = 200, description = "Disabled; the registration stays", body = api::OidcClient)))]
-async fn disable_client(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<api::OidcClient>, ApiError> {
-    let mut conn = state.pool.get().await?;
+async fn disable_client(db: Db, Path(id): Path<String>) -> Result<Json<api::OidcClient>, ApiError> {
+    let mut conn = db.get().await?;
     conn.transaction::<_, ApiError, _>(async |conn| {
         oidc_clients::get(conn, &id)
             .await
@@ -201,11 +197,8 @@ async fn disable_client(
 #[utoipa::path(post, path = "/oidc/clients/{id}/secret", operation_id = "new_oidc_client_secret", tag = "oidc-clients",
     params(("id" = String, Path, description = "The client id")),
     responses((status = 200, description = "The new secret, shown only once", body = OidcClientSecret)))]
-async fn new_secret(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<OidcClientSecret>, ApiError> {
-    let mut conn = state.pool.get().await?;
+async fn new_secret(db: Db, Path(id): Path<String>) -> Result<Json<OidcClientSecret>, ApiError> {
+    let mut conn = db.get().await?;
     let client = oidc_clients::get(&mut conn, &id)
         .await
         .map_err(|_| ApiError::not_found("OIDC client"))?;

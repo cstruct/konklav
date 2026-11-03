@@ -12,6 +12,7 @@ use diesel_async::AsyncConnection;
 use konklav_api::{CreateInvite, CreatedInvite};
 
 use crate::control_api::{Written, created_status};
+use crate::db::Db;
 use konklav_authn::{PasswordCheck, generate_secret, hash_challenge_secret};
 use konklav_core::{CredentialId, MembershipId, SubjectId};
 use konklav_store::challenges::{self, NewChallenge, Purpose};
@@ -71,7 +72,7 @@ fn empty_object() -> serde_json::Value {
         (status = 200, description = "Already existed with the same content; nothing is delivered again", body = Written<CreatedInvite>),
     ))]
 async fn create_invite(
-    State(state): State<AppState>,
+    db: Db,
     ApiJson(body): ApiJson<CreateInvite>,
 ) -> Result<(StatusCode, Json<Written<CreatedInvite>>), ApiError> {
     if !body.email.contains('@') {
@@ -82,7 +83,7 @@ async fn create_invite(
             "roles and memberships need a tenant",
         ));
     }
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let id = body.id.unwrap_or_else(uuid::Uuid::now_v7);
     let secret = generate_secret();
     let expires_at = Utc::now() + Duration::hours(body.expires_in_hours.clamp(1, 24 * 30));

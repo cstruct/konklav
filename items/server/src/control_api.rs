@@ -32,6 +32,7 @@ use utoipa_axum::routes;
 pub(crate) use konklav_api::Written;
 
 use crate::capabilities::Operator;
+use crate::db::Db;
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::{AppState, capabilities, subject_api, transport};
 
@@ -131,7 +132,8 @@ fn check_operator(
 ) -> GuardFuture {
     Box::pin(async move {
         let mut request = request;
-        match authorize_operator(&state, capability, request.headers()).await {
+        let db = Db::new(&state, request.extensions());
+        match authorize_operator(&state, &db, capability, request.headers()).await {
             Ok(operator) => {
                 request.extensions_mut().insert(operator);
                 next.run(request).await
@@ -143,6 +145,7 @@ fn check_operator(
 
 async fn authorize_operator(
     state: &AppState,
+    db: &Db,
     capability: &'static str,
     headers: &axum::http::HeaderMap,
 ) -> Result<Operator, ApiError> {
@@ -167,7 +170,7 @@ async fn authorize_operator(
         tracing::info!(capability, "control plane used with the bootstrap token");
         return Ok(Operator { all: true });
     }
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (_, session) = crate::subject_api::verify_access_token(state, &mut conn, presented)
         .await
         .map_err(|_| {
@@ -216,11 +219,11 @@ fn last_cursor(revoked: &[(Session, Cursor)]) -> Option<Cursor> {
 #[utoipa::path(get, path = "/subjects", tag = "subjects", params(SubjectQuery),
     responses((status = 200, body = SubjectPage)))]
 async fn list_subjects(
-    State(state): State<AppState>,
+    db: Db,
     Query(query): Query<SubjectQuery>,
 ) -> Result<Json<SubjectPage>, ApiError> {
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let subjects = subjects::list(
         &mut conn,
         query.kind.map(transport::store_subject_kind),
@@ -250,12 +253,12 @@ async fn list_subjects(
         (status = 200, description = "Already existed with the same kind", body = api::Subject),
     ))]
 async fn create_subject(
-    State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<CreateSubject>,
 ) -> Result<Response, ApiError> {
     let id = parse_id(&id, "subject id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (subject, created) =
         subjects::create(&mut conn, id, transport::store_subject_kind(body.kind)).await?;
     let status = created_status(created);
@@ -265,12 +268,9 @@ async fn create_subject(
 /// Gets a subject.
 #[utoipa::path(get, path = "/subjects/{id}", tag = "subjects", params(("id" = SubjectId, Path)),
     responses((status = 200, body = SubjectDetail)))]
-async fn get_subject(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<SubjectDetail>, ApiError> {
+async fn get_subject(db: Db, Path(id): Path<String>) -> Result<Json<SubjectDetail>, ApiError> {
     let id = parse_id(&id, "subject id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let subject = subjects::get(&mut conn, id)
         .await
         .map_err(|_| ApiError::not_found("subject"))?;
@@ -282,13 +282,13 @@ async fn get_subject(
 }
 
 async fn set_subject_state(
-    state: &AppState,
+    db: &Db,
     operator: Operator,
     id: &str,
     target: SubjectState,
 ) -> Result<Json<Written<api::Subject>>, ApiError> {
     let id = parse_id(id, "subject id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     operator.may_change(&mut conn, id).await?;
     let revoked = conn
         .transaction::<_, ApiError, _>(async |conn| {
@@ -322,22 +322,22 @@ async fn set_subject_state(
 #[utoipa::path(post, path = "/subjects/{id}/disable", tag = "subjects", params(("id" = SubjectId, Path)),
     responses((status = 200, body = Written<api::Subject>)))]
 async fn disable_subject(
-    State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
 ) -> Result<Json<Written<api::Subject>>, ApiError> {
-    set_subject_state(&state, operator, &id, SubjectState::Disabled).await
+    set_subject_state(&db, operator, &id, SubjectState::Disabled).await
 }
 
 /// Enables a disabled subject.
 #[utoipa::path(post, path = "/subjects/{id}/enable", tag = "subjects", params(("id" = SubjectId, Path)),
     responses((status = 200, body = Written<api::Subject>)))]
 async fn enable_subject(
-    State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
 ) -> Result<Json<Written<api::Subject>>, ApiError> {
-    set_subject_state(&state, operator, &id, SubjectState::Active).await
+    set_subject_state(&db, operator, &id, SubjectState::Active).await
 }
 
 // --- Credentials ------------------------------------------------------------
@@ -411,12 +411,13 @@ async fn password_hash_for(
     ))]
 async fn create_credential(
     State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(subject_id): Path<String>,
     ApiJson(body): ApiJson<CreateCredential>,
 ) -> Result<(StatusCode, Json<CreatedCredential>), ApiError> {
     let subject_id: SubjectId = parse_id(&subject_id, "subject id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let subject = subjects::get(&mut conn, subject_id)
         .await
         .map_err(|_| ApiError::not_found("subject"))?;
@@ -671,7 +672,7 @@ fn passwordless_credential(
     request_body(content = Option<RevokeCredential>, description = "Optional"),
     responses((status = 200, body = Written<api::Credential>)))]
 async fn revoke_credential(
-    State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
     body: Option<ApiJson<RevokeCredential>>,
@@ -680,7 +681,7 @@ async fn revoke_credential(
     let reason = body
         .and_then(|ApiJson(body)| body.reason)
         .unwrap_or_else(|| "revoked".to_owned());
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     if let Ok(credential) = credentials::get(&mut conn, id).await {
         operator
             .may_change(&mut conn, credential.subject_id)
@@ -722,6 +723,7 @@ async fn revoke_credential(
     ))]
 async fn replace_password(
     State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<ReplacePassword>,
@@ -732,7 +734,7 @@ async fn replace_password(
             "passwords need at least {MIN_PASSWORD_LENGTH} characters"
         )));
     }
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     // Outside the transaction: entitlement compilation opens its own.
     if let Ok(old) = credentials::get(&mut conn, old_id).await {
         operator.may_change(&mut conn, old.subject_id).await?;
@@ -820,6 +822,7 @@ async fn replace_password(
     responses((status = 200, description = "Rotated. The slot's new secret is in `secret_key`, shown only once.", body = RotatedSlot)))]
 async fn rotate_secret_slot(
     State(state): State<AppState>,
+    db: Db,
     Path((id, slot)): Path<(String, String)>,
     body: Option<ApiJson<RotateSlot>>,
 ) -> Result<Json<RotatedSlot>, ApiError> {
@@ -831,7 +834,7 @@ async fn rotate_secret_slot(
     };
     let expires_at = body.and_then(|ApiJson(body)| body.expires_at);
     let (secret, slot_data) = new_slot(&state, expires_at).await?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let credential = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let credential = credentials::get_for_update(conn, id)
@@ -862,7 +865,7 @@ async fn rotate_secret_slot(
 #[utoipa::path(get, path = "/sessions", tag = "sessions", params(SessionQuery),
     responses((status = 200, body = SessionPage)))]
 async fn list_sessions(
-    State(state): State<AppState>,
+    db: Db,
     Query(query): Query<SessionQuery>,
 ) -> Result<Json<SessionPage>, ApiError> {
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
@@ -871,7 +874,7 @@ async fn list_sessions(
         credential: query.credential,
         ..Default::default()
     };
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let active_at = query.active.then(Utc::now);
     let sessions = sessions::list(&mut conn, &filter, active_at, query.before, limit).await?;
     let next = (i64::try_from(sessions.len()) == Ok(limit))
@@ -886,12 +889,9 @@ async fn list_sessions(
 /// Gets a session.
 #[utoipa::path(get, path = "/sessions/{id}", tag = "sessions", params(("id" = SessionId, Path)),
     responses((status = 200, body = api::Session)))]
-async fn get_session(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<api::Session>, ApiError> {
+async fn get_session(db: Db, Path(id): Path<String>) -> Result<Json<api::Session>, ApiError> {
     let id = parse_id(&id, "session id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     Ok(Json(transport::session(
         sessions::get(&mut conn, id)
             .await
@@ -904,7 +904,7 @@ async fn get_session(
     request_body = RevokeSessions,
     responses((status = 200, body = Written<RevokedSessions>)))]
 async fn revoke_sessions(
-    State(state): State<AppState>,
+    db: Db,
     ApiJson(body): ApiJson<RevokeSessions>,
 ) -> Result<Json<Written<RevokedSessions>>, ApiError> {
     let filter = transport::session_filter(&body.filter);
@@ -916,7 +916,7 @@ async fn revoke_sessions(
     let reason = body
         .reason
         .unwrap_or_else(|| "revoked_by_operator".to_owned());
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let revoked = sessions::revoke(&mut conn, &filter, body.keep, &reason).await?;
     Ok(Json(Written {
         value: RevokedSessions {
@@ -931,10 +931,8 @@ async fn revoke_sessions(
 /// Lists signing keys.
 #[utoipa::path(get, path = "/signing-keys", tag = "signing-keys",
     responses((status = 200, body = Vec<api::SigningKey>)))]
-async fn list_signing_keys(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<api::SigningKey>>, ApiError> {
-    let mut conn = state.pool.get().await?;
+async fn list_signing_keys(db: Db) -> Result<Json<Vec<api::SigningKey>>, ApiError> {
+    let mut conn = db.get().await?;
     Ok(Json(
         signing_keys::list(&mut conn)
             .await?
@@ -950,11 +948,8 @@ async fn list_signing_keys(
 #[utoipa::path(post, path = "/signing-keys/{kid}/revoke", tag = "signing-keys",
     params(("kid" = String, Path)),
     responses((status = 200, body = RevokedKey)))]
-async fn revoke_signing_key(
-    State(state): State<AppState>,
-    Path(kid): Path<String>,
-) -> Result<Json<RevokedKey>, ApiError> {
-    let mut conn = state.pool.get().await?;
+async fn revoke_signing_key(db: Db, Path(kid): Path<String>) -> Result<Json<RevokedKey>, ApiError> {
+    let mut conn = db.get().await?;
     let revoked = signing_keys::revoke(&mut conn, &kid)
         .await
         .map_err(|error| match error {
@@ -1006,13 +1001,13 @@ fn workload_credential(
     request_body = SessionFlags,
     responses((status = 200, body = api::Credential)))]
 async fn set_session_flags(
-    State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<SessionFlags>,
 ) -> Result<Json<api::Credential>, ApiError> {
     let id: CredentialId = parse_id(&id, "credential id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let credential = credentials::get(&mut conn, id)
         .await
         .map_err(|_| ApiError::not_found("credential"))?;
@@ -1035,13 +1030,13 @@ async fn set_session_flags(
     request_body = BreakGlass,
     responses((status = 200, body = api::Credential)))]
 async fn set_break_glass(
-    State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<BreakGlass>,
 ) -> Result<Json<api::Credential>, ApiError> {
     let id: CredentialId = parse_id(&id, "credential id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let credential = credentials::get(&mut conn, id)
         .await
         .map_err(|_| ApiError::not_found("credential"))?;
