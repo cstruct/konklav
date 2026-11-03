@@ -16,11 +16,11 @@ use konklav_api::{
     RevokeCredential, RevokeSessions, RevokedKey, RevokedSessions, RotateSlot, RotatedSlot,
     SecretKeys, SessionFlags, SessionPage, SessionQuery, SubjectDetail, SubjectPage, SubjectQuery,
 };
-use konklav_authn::{PasswordHasher, generate_secret};
+use konklav_authn::{PasswordCheck, PasswordHasher, generate_secret};
 use konklav_core::{CredentialId, Cursor, SessionId, SubjectId};
 use konklav_store::credentials::{
-    self, CredentialData, CredentialKind, NewCredential, PasswordData, SecretKeyData, SecretSlot,
-    SecretSlotData,
+    self, Credential, CredentialData, CredentialKind, NewCredential, PasswordData, SecretKeyData,
+    SecretSlot, SecretSlotData,
 };
 use konklav_store::sessions::{self, Session, SessionFilter};
 use konklav_store::subjects::{self, Subject, SubjectKind, SubjectState};
@@ -197,6 +197,15 @@ pub(crate) fn parse_id<T: std::str::FromStr>(value: &str, what: &str) -> Result<
         .map_err(|_| ApiError::invalid_request(format!("{what} is not a valid identifier")))
 }
 
+/// 201 for a create that created, 200 for an idempotent repeat.
+pub(crate) fn created_status(created: bool) -> StatusCode {
+    if created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    }
+}
+
 fn last_cursor(revoked: &[(Session, Cursor)]) -> Option<Cursor> {
     revoked.last().map(|(_, cursor)| *cursor)
 }
@@ -249,11 +258,7 @@ async fn create_subject(
     let mut conn = state.pool.get().await?;
     let (subject, created) =
         subjects::create(&mut conn, id, transport::store_subject_kind(body.kind)).await?;
-    let status = if created {
-        StatusCode::CREATED
-    } else {
-        StatusCode::OK
-    };
+    let status = created_status(created);
     Ok((status, Json(transport::subject(&subject))).into_response())
 }
 
@@ -392,12 +397,18 @@ async fn password_hash_for(
 
 /// Creates a credential for a subject.
 ///
-/// Generated secrets are shown only once.
+/// Generated secrets are shown only once. Idempotent on a caller-chosen `id`:
+/// repeating the request with the same content returns 200, and for a secret
+/// key generates new secrets for both slots and shows those, so the first
+/// ones stop working.
 // r[impl credential.secret-key.hashed]
 #[utoipa::path(post, path = "/subjects/{id}/credentials", tag = "credentials",
     params(("id" = SubjectId, Path)),
     request_body = CreateCredential,
-    responses((status = 201, description = "Created. A secret key's secrets are in `secret_keys`, shown only once.", body = CreatedCredential)))]
+    responses(
+        (status = 201, description = "Created. A secret key's secrets are in `secret_keys`, shown only once.", body = CreatedCredential),
+        (status = 200, description = "Already existed with the same content. A secret key's new secrets are in `secret_keys`.", body = CreatedCredential),
+    ))]
 async fn create_credential(
     State(state): State<AppState>,
     Extension(operator): Extension<Operator>,
@@ -410,6 +421,12 @@ async fn create_credential(
         .await
         .map_err(|_| ApiError::not_found("subject"))?;
     operator.may_change(&mut conn, subject_id).await?;
+    // r[impl platform.idempotency.client-ids]
+    if let Some(id) = requested_id(&body)
+        && let Ok(existing) = credentials::get(&mut conn, id).await
+    {
+        return repeat_credential(&state, &mut conn, subject_id, existing, body).await;
+    }
 
     let is_email = matches!(body, CreateCredential::EmailLink { .. });
     let (new, secret_keys) = match body {
@@ -487,6 +504,120 @@ async fn create_credential(
         Json(CreatedCredential {
             credential: transport::credential(credential),
             secret_keys,
+        }),
+    ))
+}
+
+fn requested_id(body: &CreateCredential) -> Option<CredentialId> {
+    match body {
+        CreateCredential::Password { id, .. }
+        | CreateCredential::SecretKey { id, .. }
+        | CreateCredential::EmailLink { id, .. }
+        | CreateCredential::PhoneOtp { id, .. }
+        | CreateCredential::Federated { id, .. } => *id,
+    }
+}
+
+/// Answers a repeated create of `existing`: 200 with the credential when
+/// the request matches it, with new secrets for a secret key, or a
+/// conflict.
+async fn repeat_credential(
+    state: &AppState,
+    conn: &mut konklav_store::Connection,
+    subject_id: SubjectId,
+    existing: Credential,
+    body: CreateCredential,
+) -> Result<(StatusCode, Json<CreatedCredential>), ApiError> {
+    let id = existing.id;
+    let conflict = || {
+        ApiError::new(
+            ErrorCode::Conflict,
+            format!("credential {id} already exists with other content"),
+        )
+    };
+    if existing.subject_id != subject_id || existing.replaces.is_some() {
+        return Err(conflict());
+    }
+    if !existing.is_active() {
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            format!("credential {id} was revoked"),
+        ));
+    }
+    let same = match (body, &existing.data) {
+        (
+            CreateCredential::Password {
+                identifier,
+                password,
+                password_hash,
+                mfa_factors_required,
+                ..
+            },
+            CredentialData::Password(data),
+        ) => {
+            existing.identifier == credentials::normalize_identifier(&identifier)
+                && existing.mfa_factors_required == mfa_factors_required
+                && match (password, password_hash) {
+                    (Some(password), None) => {
+                        let hash = data.hash.clone();
+                        let check = state
+                            .auth
+                            .hashing(move |hasher| hasher.verify(&password, &hash))
+                            .await?;
+                        matches!(check, PasswordCheck::Match { .. })
+                    }
+                    (None, Some(given)) => given.trim() == data.hash,
+                    _ => false,
+                }
+        }
+        (CreateCredential::EmailLink { identifier, .. }, CredentialData::EmailLink)
+        | (CreateCredential::PhoneOtp { identifier, .. }, CredentialData::PhoneOtp) => {
+            existing.identifier == credentials::normalize_identifier(&identifier)
+        }
+        (
+            CreateCredential::Federated {
+                provider,
+                subject: upstream,
+                ..
+            },
+            CredentialData::Federated(_),
+        ) => {
+            existing.identifier
+                == credentials::normalize_identifier(&credentials::federated_identifier(
+                    &provider, &upstream,
+                ))
+        }
+        (CreateCredential::SecretKey { expires_at, .. }, CredentialData::SecretKey(data)) => {
+            if data.a.expires_at != expires_at || data.b.expires_at != expires_at {
+                return Err(conflict());
+            }
+            // The first answer's secrets were shown once and aren't kept.
+            let (secret_a, a) = new_slot(state, expires_at).await?;
+            let (secret_b, b) = new_slot(state, expires_at).await?;
+            credentials::set_data(conn, id, &CredentialData::SecretKey(SecretKeyData { a, b }))
+                .await?;
+            let credential = credentials::get(conn, id).await?;
+            return Ok((
+                StatusCode::OK,
+                Json(CreatedCredential {
+                    credential: transport::credential(credential),
+                    secret_keys: Some(SecretKeys {
+                        a: format!("{id}.{secret_a}"),
+                        b: format!("{id}.{secret_b}"),
+                    }),
+                }),
+            ));
+        }
+        _ => false,
+    };
+    if !same {
+        return Err(conflict());
+    }
+    Ok((
+        StatusCode::OK,
+        Json(CreatedCredential {
+            credential: transport::credential(existing),
+            secret_keys: None,
         }),
     ))
 }
@@ -580,11 +711,15 @@ async fn revoke_credential(
 /// Replaces a password.
 ///
 /// Creates a new password credential that records the one it replaces. Sessions
-/// established with the old one end.
+/// established with the old one end. Idempotent on a caller-chosen `id`:
+/// repeating the request with the same password returns 200.
 #[utoipa::path(post, path = "/credentials/{id}/replace", tag = "credentials",
     params(("id" = CredentialId, Path, description = "The password to replace")),
     request_body = ReplacePassword,
-    responses((status = 201, description = "The new password credential", body = Written<api::Credential>)))]
+    responses(
+        (status = 201, description = "The new password credential", body = Written<api::Credential>),
+        (status = 200, description = "Already replaced by this credential with the same password", body = Written<api::Credential>),
+    ))]
 async fn replace_password(
     State(state): State<AppState>,
     Extension(operator): Extension<Operator>,
@@ -601,6 +736,37 @@ async fn replace_password(
     // Outside the transaction: entitlement compilation opens its own.
     if let Ok(old) = credentials::get(&mut conn, old_id).await {
         operator.may_change(&mut conn, old.subject_id).await?;
+    }
+    // r[impl platform.idempotency.client-ids]
+    if let Some(new_id) = body.id
+        && let Ok(existing) = credentials::get(&mut conn, new_id).await
+    {
+        let same = match &existing.data {
+            CredentialData::Password(data)
+                if existing.replaces == Some(old_id) && existing.is_active() =>
+            {
+                let (password, hash) = (body.password, data.hash.clone());
+                let check = state
+                    .auth
+                    .hashing(move |hasher| hasher.verify(&password, &hash))
+                    .await?;
+                matches!(check, PasswordCheck::Match { .. })
+            }
+            _ => false,
+        };
+        if !same {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                format!("credential {new_id} already exists with other content"),
+            ));
+        }
+        return Ok((
+            StatusCode::OK,
+            Json(Written {
+                value: transport::credential(existing),
+                cursor: None,
+            }),
+        ));
     }
     let hash = hash(&state, body.password).await?;
     let new_id = body.id.unwrap_or_else(CredentialId::new_v7);

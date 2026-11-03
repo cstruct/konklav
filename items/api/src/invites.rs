@@ -7,6 +7,10 @@ use crate::tenancy::empty_object;
 /// Invites an email address, optionally into a tenant with roles.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateInvite {
+    /// The invite's id, chosen by the caller so that repeating the request
+    /// is safe; generated when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<uuid::Uuid>,
     pub email: String,
     /// A tenant (UUID or `root`) to join on redemption.
     pub tenant: Option<String>,

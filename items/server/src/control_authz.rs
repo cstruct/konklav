@@ -23,7 +23,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::capabilities::Operator;
-use crate::control_api::{Written, parse_id};
+use crate::control_api::{Written, created_status, parse_id};
 use crate::error::{ApiError, ApiJson};
 use crate::import::{self, not_found_as, validate_facts};
 use crate::{AppState, capabilities, transport};
@@ -128,11 +128,7 @@ async fn create_tenant(
             Ok((tenant, created, events::last_in_transaction(conn).await?))
         })
         .await?;
-    let status = if created {
-        StatusCode::CREATED
-    } else {
-        StatusCode::OK
-    };
+    let status = created_status(created);
     Ok((
         status,
         Json(Written {
@@ -253,11 +249,7 @@ async fn create_membership(
             ))
         })
         .await?;
-    let status = if created {
-        StatusCode::CREATED
-    } else {
-        StatusCode::OK
-    };
+    let status = created_status(created);
     Ok((
         status,
         Json(Written {
@@ -535,7 +527,10 @@ async fn delete_role(
 #[utoipa::path(post, path = "/memberships/{id}/assignments", tag = "assignments",
     params(("id" = MembershipId, Path)),
     request_body = AssignRole,
-    responses((status = 201, description = "Assigned", body = Written<api::RoleAssignment>)))]
+    responses(
+        (status = 201, description = "Assigned", body = Written<api::RoleAssignment>),
+        (status = 200, description = "Already assigned", body = Written<api::RoleAssignment>),
+    ))]
 async fn assign_membership_role(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -543,15 +538,20 @@ async fn assign_membership_role(
 ) -> Result<(StatusCode, Json<Written<api::RoleAssignment>>), ApiError> {
     let id: MembershipId = parse_id(&id, "membership id")?;
     let mut conn = state.pool.get().await?;
-    let (assignment, cursor) = conn
+    let (assignment, created, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
-            let assignment =
-                import::assign_membership_role(conn, id, &body.role, body.scope.as_ref()).await?;
-            Ok((assignment, events::last_in_transaction(conn).await?))
+            let (assignment, created) =
+                import::assign_membership_role(conn, body.id, id, &body.role, body.scope.as_ref())
+                    .await?;
+            Ok((
+                assignment,
+                created,
+                events::last_in_transaction(conn).await?,
+            ))
         })
         .await?;
     Ok((
-        StatusCode::CREATED,
+        created_status(created),
         Json(Written {
             value: transport::role_assignment(assignment),
             cursor,
@@ -564,7 +564,10 @@ async fn assign_membership_role(
 #[utoipa::path(post, path = "/subjects/{id}/global-assignments", tag = "assignments",
     params(("id" = SubjectId, Path)),
     request_body = AssignRole,
-    responses((status = 201, description = "Assigned", body = Written<api::RoleAssignment>)))]
+    responses(
+        (status = 201, description = "Assigned", body = Written<api::RoleAssignment>),
+        (status = 200, description = "Already assigned", body = Written<api::RoleAssignment>),
+    ))]
 async fn assign_global_role(
     State(state): State<AppState>,
     Extension(operator): Extension<Operator>,
@@ -578,7 +581,7 @@ async fn assign_global_role(
         ));
     }
     let mut conn = state.pool.get().await?;
-    let (assignment, cursor) = conn
+    let (assignment, created, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let role = roles::get(conn, tenants::ROOT, &body.role)
                 .await
@@ -586,12 +589,17 @@ async fn assign_global_role(
             if capabilities::granted_by_role(conn, &role).await? {
                 operator.require_all("granting control-plane capabilities")?;
             }
-            let assignment = import::assign_global_role(conn, id, &role).await?;
-            Ok((assignment, events::last_in_transaction(conn).await?))
+            let (assignment, created) =
+                import::assign_global_role(conn, body.id, id, &role).await?;
+            Ok((
+                assignment,
+                created,
+                events::last_in_transaction(conn).await?,
+            ))
         })
         .await?;
     Ok((
-        StatusCode::CREATED,
+        created_status(created),
         Json(Written {
             value: transport::role_assignment(assignment),
             cursor,

@@ -122,8 +122,8 @@ async def test_subjects_credentials_and_sessions(konklav):
         service = new_id()
         await client.subjects.create(service, {"kind": "service"})
         key = await client.credentials.create(service, {"kind": "secret_key"})
-        rotated = await client.credentials.rotate_slot(key["credential"]["id"], "b")
-        assert (rotated["slot"], rotated["secret_key"].startswith(key["credential"]["id"])) == ("b", True)
+        rotated = await client.credentials.rotate_slot(key.value["credential"]["id"], "b")
+        assert (rotated["slot"], rotated["secret_key"].startswith(key.value["credential"]["id"])) == ("b", True)
 
         email = f"{new_id()}@example.com"
         other = await human(client, email)
@@ -272,9 +272,35 @@ async def test_a_narrow_operator_is_refused_other_areas(konklav):
         await client.subjects.create(service, {"kind": "service"})
         key = await client.credentials.create(service, {"kind": "secret_key"})
         await client.assignments.assign_global(service, {"role": "tenant-admin"})
-    key_id, secret = key["secret_keys"]["a"].split(".", 1)
+    key_id, secret = key.value["secret_keys"]["a"].split(".", 1)
     auth = SecretKey(subject_url=konklav["subject"], key_id=key_id, secret=secret)
     async with ControlPlaneClient(konklav["control"], auth=auth) as narrow:
         assert (await narrow.tenants.create(new_id(), {})).created is True
         with pytest.raises(Forbidden):
             await narrow.subjects.list()
+
+
+async def test_creates_report_repeats(konklav):
+    async with operator(konklav) as client:
+        await catalog(client)
+        id = await tenant(client)
+        await client.roles.put(id, "reader", {"policies": [{"action": "document:read", "effect": "allow"}]})
+        subject = await human(client, f"{new_id()}@example.com")
+        membership = new_id()
+        await client.memberships.create(membership, {"subject": subject, "tenant": id})
+        assignment = {"id": new_id(), "role": "reader"}
+        first = await client.assignments.assign_to_membership(membership, assignment)
+        again = await client.assignments.assign_to_membership(membership, assignment)
+        assert (first.created, again.created, again.value["id"]) == (True, False, assignment["id"])
+
+        service = new_id()
+        await client.subjects.create(service, {"kind": "service"})
+        key = {"id": new_id(), "kind": "secret_key"}
+        created = await client.credentials.create(service, key)
+        repeated = await client.credentials.create(service, key)
+        assert (created.created, repeated.created) == (True, False)
+        assert repeated.value["secret_keys"]["a"] != created.value["secret_keys"]["a"]
+
+        invite = {"id": new_id(), "email": "again@example.com"}
+        assert (await client.invites.create(invite)).created is True
+        assert (await client.invites.create(invite)).created is False

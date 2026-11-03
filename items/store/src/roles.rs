@@ -405,15 +405,43 @@ pub async fn assign_managed(
     scope: Option<&Scope>,
     managed_by: Option<&str>,
 ) -> StoreResult<RoleAssignment> {
+    let (assignment, _) = insert_assignment(conn, None, role_id, target, scope, managed_by).await?;
+    Ok(assignment)
+}
+
+/// [`assign`], as `id` when the caller chose one, returning whether the
+/// assignment was created. Repeating it with the same role, target and
+/// scope returns the existing assignment; reusing the id for another, or
+/// assigning what an assignment with another id already assigns, is a
+/// conflict.
+// r[impl platform.idempotency.client-ids]
+pub async fn assign_as(
+    conn: &mut AsyncPgConnection,
+    id: Option<uuid::Uuid>,
+    role_id: uuid::Uuid,
+    target: AssignmentTarget,
+    scope: Option<&Scope>,
+) -> StoreResult<(RoleAssignment, bool)> {
+    insert_assignment(conn, id, role_id, target, scope, None).await
+}
+
+async fn insert_assignment(
+    conn: &mut AsyncPgConnection,
+    id: Option<uuid::Uuid>,
+    role_id: uuid::Uuid,
+    target: AssignmentTarget,
+    scope: Option<&Scope>,
+    managed_by: Option<&str>,
+) -> StoreResult<(RoleAssignment, bool)> {
     let (membership, subject) = match target {
         AssignmentTarget::Membership(id) => (Some(uuid::Uuid::from(id)), None),
         AssignmentTarget::Subject(id) => (None, Some(uuid::Uuid::from(id))),
     };
     let scope_kind = scope.map(|s| s.kind.clone());
     let scope_id = scope.map(|s| s.id.clone());
-    diesel::insert_into(role_assignment::table)
+    let inserted = diesel::insert_into(role_assignment::table)
         .values((
-            role_assignment::id.eq(uuid::Uuid::now_v7()),
+            role_assignment::id.eq(id.unwrap_or_else(uuid::Uuid::now_v7)),
             role_assignment::role_id.eq(role_id),
             role_assignment::membership_id.eq(membership),
             role_assignment::subject_id.eq(subject),
@@ -422,10 +450,15 @@ pub async fn assign_managed(
             role_assignment::managed_by.eq(managed_by),
         ))
         .on_conflict_do_nothing()
-        .execute(conn)
+        .returning(assignment_columns())
+        .get_result::<AssignmentRow>(conn)
         .await
+        .optional()
         .map_err(StoreError::from_constraint)?;
-    role_assignment::table
+    if let Some(row) = inserted {
+        return Ok((to_assignment(row), true));
+    }
+    let existing = role_assignment::table
         .filter(role_assignment::role_id.eq(role_id))
         .filter(role_assignment::membership_id.is_not_distinct_from(membership))
         .filter(role_assignment::subject_id.is_not_distinct_from(subject))
@@ -434,8 +467,20 @@ pub async fn assign_managed(
         .select(assignment_columns())
         .first::<AssignmentRow>(conn)
         .await
-        .map(to_assignment)
-        .map_err(StoreError::from)
+        .optional()?
+        .map(to_assignment);
+    match (id, existing) {
+        (None, Some(existing)) => Ok((existing, false)),
+        (Some(id), Some(existing)) if existing.id == id => Ok((existing, false)),
+        (Some(_), Some(existing)) => Err(StoreError::Conflict(format!(
+            "the role is already assigned as {}",
+            existing.id
+        ))),
+        (Some(id), None) => Err(StoreError::Conflict(format!(
+            "assignment {id} already exists with another role, target or scope"
+        ))),
+        (None, None) => Err(StoreError::NotFound),
+    }
 }
 
 /// Removes an assignment. Returns whether it existed.

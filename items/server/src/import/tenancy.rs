@@ -94,22 +94,25 @@ pub(crate) async fn create_membership(
     Ok(memberships::create(conn, id, subject, tenant, facts).await?)
 }
 
-/// Assigns the role `key` of the membership's tenant to the membership.
-/// An equal existing assignment is kept.
+/// Assigns the role `key` of the membership's tenant to the membership,
+/// as `id` when given. An equal existing assignment is kept. Returns the
+/// assignment and whether it was created.
 pub(crate) async fn assign_membership_role(
     conn: &mut Connection,
+    id: Option<uuid::Uuid>,
     membership: MembershipId,
     key: &str,
     scope: Option<&Scope>,
-) -> Result<RoleAssignment, ApiError> {
+) -> Result<(RoleAssignment, bool), ApiError> {
     let found = memberships::get(conn, membership)
         .await
         .map_err(not_found_as("membership"))?;
     let role = roles::get(conn, found.tenant_id, key)
         .await
         .map_err(not_found_as("role"))?;
-    Ok(roles::assign(
+    Ok(roles::assign_as(
         conn,
+        id,
         role.id,
         AssignmentTarget::Membership(membership),
         scope,
@@ -117,15 +120,17 @@ pub(crate) async fn assign_membership_role(
     .await?)
 }
 
-/// Assigns the global role `key` to a subject. An equal existing assignment
-/// is kept.
+/// Assigns the global role `key` to a subject, as `id` when given. An equal
+/// existing assignment is kept. Returns the assignment and whether it was
+/// created.
 pub(crate) async fn assign_global_role(
     conn: &mut Connection,
+    id: Option<uuid::Uuid>,
     subject: SubjectId,
     role: &roles::Role,
-) -> Result<RoleAssignment, ApiError> {
+) -> Result<(RoleAssignment, bool), ApiError> {
     subjects::get(conn, subject)
         .await
         .map_err(not_found_as("subject"))?;
-    Ok(roles::assign(conn, role.id, AssignmentTarget::Subject(subject), None).await?)
+    Ok(roles::assign_as(conn, id, role.id, AssignmentTarget::Subject(subject), None).await?)
 }

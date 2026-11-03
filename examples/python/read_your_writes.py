@@ -73,7 +73,7 @@ async def run(konklav: Konklav) -> str:
         service = str(uuid.uuid4())
         await control.subjects.create(service, {"kind": "service"})
         key = await control.credentials.create(service, {"kind": "secret_key"})
-        key_id, secret = key["secret_keys"]["a"].split(".", 1)
+        key_id, secret = key.value["secret_keys"]["a"].split(".", 1)
 
         relying = RelyingClient(
             relying_url=konklav.relying,

@@ -31,6 +31,10 @@ pub struct RoleAssignment {
 /// A role to assign.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AssignRole {
+    /// The assignment's id, chosen by the caller so that repeating the
+    /// request is safe; generated when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<uuid::Uuid>,
     /// The role's key in the membership's tenant (or in root for global
     /// assignments).
     pub role: String,

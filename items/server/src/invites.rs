@@ -11,7 +11,7 @@ use chrono::{Duration, Utc};
 use diesel_async::AsyncConnection;
 use konklav_api::{CreateInvite, CreatedInvite};
 
-use crate::control_api::Written;
+use crate::control_api::{Written, created_status};
 use konklav_authn::{PasswordCheck, generate_secret, hash_challenge_secret};
 use konklav_core::{CredentialId, MembershipId, SubjectId};
 use konklav_store::challenges::{self, NewChallenge, Purpose};
@@ -62,9 +62,14 @@ fn empty_object() -> serde_json::Value {
 /// Invites someone to a tenant.
 ///
 /// The invite token is delivered (as `delivery.requested`) and never returned.
+/// Idempotent on a caller-chosen `id`: repeating the request with the same
+/// content returns 200 and delivers nothing again.
 #[utoipa::path(post, path = "/invites", tag = "invites",
     request_body = CreateInvite,
-    responses((status = 201, description = "Created; the token is delivered to the address, never returned", body = Written<CreatedInvite>)))]
+    responses(
+        (status = 201, description = "Created; the token is delivered to the address, never returned", body = Written<CreatedInvite>),
+        (status = 200, description = "Already existed with the same content; nothing is delivered again", body = Written<CreatedInvite>),
+    ))]
 async fn create_invite(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<CreateInvite>,
@@ -78,12 +83,35 @@ async fn create_invite(
         ));
     }
     let mut conn = state.pool.get().await?;
-    let id = uuid::Uuid::now_v7();
+    let id = body.id.unwrap_or_else(uuid::Uuid::now_v7);
     let secret = generate_secret();
     let expires_at = Utc::now() + Duration::hours(body.expires_in_hours.clamp(1, 24 * 30));
     let recipient = credentials::normalize_identifier(&body.email);
-    let cursor = conn
+    let details = serde_json::to_value(InviteDetails {
+        tenant: body.tenant.clone(),
+        roles: body.roles.clone(),
+        facts: body.facts.clone(),
+        membership: body.membership,
+    })
+    .unwrap_or_default();
+    let (expires_at, created, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
+            // r[impl platform.idempotency.client-ids]
+            if body.id.is_some()
+                && let Ok(existing) = challenges::get(conn, id).await
+            {
+                return if existing.purpose == Purpose::Invite.as_str()
+                    && existing.recipient == recipient
+                    && existing.details == details
+                {
+                    Ok((existing.expires_at, false, None))
+                } else {
+                    Err(ApiError::new(
+                        ErrorCode::Conflict,
+                        format!("invite {id} already exists with other content"),
+                    ))
+                };
+            }
             if let Some(reference) = &body.tenant {
                 let tenant = tenants::parse_reference(reference)
                     .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
@@ -96,12 +124,6 @@ async fn create_invite(
                         .map_err(|_| ApiError::not_found("role"))?;
                 }
             }
-            let details = InviteDetails {
-                tenant: body.tenant.clone(),
-                roles: body.roles.clone(),
-                facts: body.facts.clone(),
-                membership: body.membership,
-            };
             challenges::create(
                 conn,
                 NewChallenge {
@@ -113,7 +135,7 @@ async fn create_invite(
                     session_id: None,
                     recipient: recipient.clone(),
                     secret_hash: hash_challenge_secret(&id.to_string(), &secret),
-                    details: serde_json::to_value(&details).unwrap_or_default(),
+                    details: details.clone(),
                     expires_at,
                 },
             )
@@ -131,11 +153,11 @@ async fn create_invite(
                 }),
             )
             .await?;
-            Ok(events::last_in_transaction(conn).await?)
+            Ok((expires_at, true, events::last_in_transaction(conn).await?))
         })
         .await?;
     Ok((
-        StatusCode::CREATED,
+        created_status(created),
         Json(Written {
             value: CreatedInvite {
                 invite_id: id,

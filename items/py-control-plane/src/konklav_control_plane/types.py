@@ -882,6 +882,11 @@ class AssignRole(TypedDict):
     A role to assign.
     """
 
+    id: NotRequired[str | None]
+    """
+    The assignment's id, chosen by the caller so that repeating the
+    request is safe; generated when absent.
+    """
     role: str
     """
     The role's key in the membership's tenant (or in root for global
@@ -1006,6 +1011,11 @@ class CreateInvite(TypedDict):
     facts: NotRequired[dict[str, Any]]
     """
     Membership facts.
+    """
+    id: NotRequired[str | None]
+    """
+    The invite's id, chosen by the caller so that repeating the request
+    is safe; generated when absent.
     """
     membership: NotRequired[MembershipId | None]
     roles: NotRequired[list[str]]

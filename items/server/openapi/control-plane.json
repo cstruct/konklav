@@ -181,7 +181,7 @@
           "credentials"
         ],
         "summary": "Replaces a password.",
-        "description": "Creates a new password credential that records the one it replaces. Sessions\nestablished with the old one end.",
+        "description": "Creates a new password credential that records the one it replaces. Sessions\nestablished with the old one end. Idempotent on a caller-chosen `id`:\nrepeating the request with the same password returns 200.",
         "operationId": "replace_password",
         "parameters": [
           {
@@ -205,6 +205,16 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "Already replaced by this credential with the same password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Credential"
+                }
+              }
+            }
+          },
           "201": {
             "description": "The new password credential",
             "content": {
@@ -582,7 +592,7 @@
           "invites"
         ],
         "summary": "Invites someone to a tenant.",
-        "description": "The invite token is delivered (as `delivery.requested`) and never returned.",
+        "description": "The invite token is delivered (as `delivery.requested`) and never returned.\nIdempotent on a caller-chosen `id`: repeating the request with the same\ncontent returns 200 and delivers nothing again.",
         "operationId": "create_invite",
         "requestBody": {
           "content": {
@@ -595,6 +605,16 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "Already existed with the same content; nothing is delivered again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_CreatedInvite"
+                }
+              }
+            }
+          },
           "201": {
             "description": "Created; the token is delivered to the address, never returned",
             "content": {
@@ -750,6 +770,16 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "Already assigned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_RoleAssignment"
+                }
+              }
+            }
+          },
           "201": {
             "description": "Assigned",
             "content": {
@@ -1828,7 +1858,7 @@
           "credentials"
         ],
         "summary": "Creates a credential for a subject.",
-        "description": "Generated secrets are shown only once.",
+        "description": "Generated secrets are shown only once. Idempotent on a caller-chosen `id`:\nrepeating the request with the same content returns 200, and for a secret\nkey generates new secrets for both slots and shows those, so the first\nones stop working.",
         "operationId": "create_credential",
         "parameters": [
           {
@@ -1851,6 +1881,16 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "Already existed with the same content. A secret key's new secrets are in `secret_keys`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedCredential"
+                }
+              }
+            }
+          },
           "201": {
             "description": "Created. A secret key's secrets are in `secret_keys`, shown only once.",
             "content": {
@@ -2191,6 +2231,16 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "Already assigned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_RoleAssignment"
+                }
+              }
+            }
+          },
           "201": {
             "description": "Assigned",
             "content": {
@@ -2986,6 +3036,14 @@
           "role"
         ],
         "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The assignment's id, chosen by the caller so that repeating the\nrequest is safe; generated when absent."
+          },
           "role": {
             "type": "string",
             "description": "The role's key in the membership's tenant (or in root for global\nassignments)."
@@ -3355,6 +3413,14 @@
           "facts": {
             "type": "object",
             "description": "Membership facts."
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The invite's id, chosen by the caller so that repeating the request\nis safe; generated when absent."
           },
           "membership": {
             "oneOf": [

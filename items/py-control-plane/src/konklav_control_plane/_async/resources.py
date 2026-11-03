@@ -122,10 +122,11 @@ class Subjects(_Resource):
 
 class Credentials(_Resource):
     @operation("create_credential")
-    async def create(self, subject: str, body: types.CreateCredential) -> types.CreatedCredential:
-        """Generated secrets in the result are shown only this once."""
-        response = await self._client._post(path("subjects", subject, "credentials"), body)
-        return cast(types.CreatedCredential, response)
+    async def create(self, subject: str, body: types.CreateCredential) -> Written[types.CreatedCredential]:
+        """Generated secrets in the result are shown only this once. Repeating
+        a secret key's create with its `id` shows new secrets, and the first
+        ones stop working."""
+        return await self._client._write("POST", path("subjects", subject, "credentials"), json=body, create=True)
 
     @operation("revoke_credential")
     async def revoke(self, id: str, body: types.RevokeCredential | None = None) -> Written[types.Credential]:
@@ -133,7 +134,7 @@ class Credentials(_Resource):
 
     @operation("replace_password")
     async def replace_password(self, id: str, body: types.ReplacePassword) -> Written[types.Credential]:
-        return await self._client._write("POST", path("credentials", id, "replace"), json=body)
+        return await self._client._write("POST", path("credentials", id, "replace"), json=body, create=True)
 
     @operation("rotate_secret_slot")
     async def rotate_slot(
@@ -249,12 +250,12 @@ class Assignments(_Resource):
     @operation("assign_membership_role")
     async def assign_to_membership(self, membership: str, body: types.AssignRole) -> Written[types.RoleAssignment]:
         """Assigns one of the membership's tenant's roles."""
-        return await self._client._write("POST", path("memberships", membership, "assignments"), json=body)
+        return await self._client._write("POST", path("memberships", membership, "assignments"), json=body, create=True)
 
     @operation("assign_global_role")
     async def assign_global(self, subject: str, body: types.AssignRole) -> Written[types.RoleAssignment]:
         """Assigns a global role to a subject directly."""
-        return await self._client._write("POST", path("subjects", subject, "global-assignments"), json=body)
+        return await self._client._write("POST", path("subjects", subject, "global-assignments"), json=body, create=True)
 
     @operation("list_global_assignments")
     async def list_global(self, subject: str) -> builtins.list[types.RoleAssignment]:
@@ -331,7 +332,7 @@ class Invites(_Resource):
     @operation("create_invite")
     async def create(self, body: types.CreateInvite) -> Written[types.CreatedInvite]:
         """The invite's token is delivered to the address, never returned."""
-        return await self._client._write("POST", path("invites"), json=body)
+        return await self._client._write("POST", path("invites"), json=body, create=True)
 
 
 class OidcClients(_Resource):

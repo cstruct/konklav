@@ -239,10 +239,13 @@ retry at the same time.
 ## Idempotency
 
 r[platform.idempotency.client-ids]
-Control-plane create operations for tenants, subjects and memberships MUST
-accept a caller-supplied identifier and MUST be idempotent on that
-identifier: repeating an identical request succeeds, and repeating it with
-conflicting content fails with a typed conflict error.
+Every control-plane create operation MUST accept a caller-supplied
+identifier and MUST be idempotent on that identifier: repeating an
+identical request succeeds without applying it again, and repeating it
+with conflicting content fails with a typed conflict error. Where the
+first answer showed a generated secret, which Konklav keeps only hashed,
+an identical repeat MUST generate a new secret, show it, and stop
+accepting the first. A repeated invite MUST NOT be delivered again.
 
 r[platform.idempotency.write-cursor]
 Every successful state-changing response MUST include the change-feed cursor

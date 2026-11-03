@@ -139,9 +139,10 @@ The cursor MUST be usable unchanged with `konklav-relying`'s
 `RelyingClient.await_cursor`.
 
 r[item.py-control-plane.created]
-A method for an idempotent create (a `PUT` to a caller-chosen id) MUST
-report whether the server created the resource (`201`) or found it already
-there with the same content (`200`).
+A method for an idempotent create (any create taking a caller-chosen id,
+`platform.idempotency.client-ids`) MUST report whether the server created
+the resource (`201`) or found it already there with the same content
+(`200`).
 
 r[item.py-control-plane.paging]
 A method for a paged operation MUST return one page, including its `next`

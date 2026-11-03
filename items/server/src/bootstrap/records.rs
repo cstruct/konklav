@@ -574,8 +574,14 @@ pub(super) async fn assignment(
                 {
                     return Ok(Outcome::Skipped);
                 }
-                import::assign_membership_role(conn, membership, &wanted.role, scope.as_ref())
-                    .await?;
+                import::assign_membership_role(
+                    conn,
+                    None,
+                    membership,
+                    &wanted.role,
+                    scope.as_ref(),
+                )
+                .await?;
                 Ok(Outcome::Created)
             })
             .await
@@ -590,7 +596,7 @@ pub(super) async fn assignment(
                 if held.iter().any(|a| a.role_id == role.id) {
                     return Ok(Outcome::Skipped);
                 }
-                import::assign_global_role(conn, subject, &role).await?;
+                import::assign_global_role(conn, None, subject, &role).await?;
                 Ok(Outcome::Created)
             })
             .await
