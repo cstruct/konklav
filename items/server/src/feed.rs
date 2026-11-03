@@ -11,7 +11,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
 use axum::{Json, Router};
 use futures_util::Stream;
-use konklav_core::feed::{FeedEvent, RESET, SessionChanged};
+use konklav_core::feed::{FeedEvent, POSITION, RESET, SessionChanged};
 use konklav_core::{Cursor, SessionId};
 use konklav_store::{Pool, events, sessions};
 use serde::{Deserialize, Serialize};
@@ -232,14 +232,14 @@ async fn stream_events(
     let (cursor, reset) = resume_point(&mut conn, requested).await?;
     drop(conn);
 
-    let mut buffer = VecDeque::new();
-    if reset {
-        buffer.push_back(FeedEvent {
-            cursor,
-            kind: RESET.into(),
-            payload: serde_json::json!({}),
-        });
-    }
+    // Every stream starts by saying where it starts, so a consumer that
+    // connected without a cursor knows its place on a quiet feed.
+    // r[impl feed.sse.position]
+    let buffer = VecDeque::from([FeedEvent {
+        cursor,
+        kind: if reset { RESET } else { POSITION }.into(),
+        payload: serde_json::json!({}),
+    }]);
     let initial = StreamState {
         pool: state.pool.clone(),
         hub: state.feed.clone(),

@@ -15,7 +15,7 @@ The relying core: a sans-I/O library with everything a relying system needs to d
   - bounded, least recently used first (100 000 by default), with the entitlement TTL
   - scopes Konklav doesn't know are remembered for 5 s, and forgotten as soon as `scope.changed` names them
   - `scope.changed` marks a record stale with the same debounce bound as entitlement sets
-- Following the change feed's state: cursor, heartbeats, `reset`. When it lags (three missed heartbeats), the core answers `Need::Check`, so hosts ask `/v1/check`.
+- Following the change feed's state: cursor, heartbeats, `position`, `reset`. When it lags (three missed heartbeats), the core answers `Need::Check`, so hosts ask `/v1/check`.
 - Read-your-writes: `await_cursor` is ready once the feed has passed the cursor and every entry it invalidated has been refreshed.
 
 The core never makes network calls, reads clocks, spawns tasks or sleeps. Hosts pass the time (Unix ms) and the data in, and ask `decide` and `poll_work`.

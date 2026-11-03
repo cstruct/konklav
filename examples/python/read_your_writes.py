@@ -84,6 +84,12 @@ async def run(konklav: Konklav) -> str:
         )
         await relying.start()
         try:
+            # The client started after the batch, so the feed may stay quiet;
+            # it still learns where it stands when its stream opens.
+            assert setup.cursor is not None
+            reached = await relying.await_cursor(setup.cursor)
+            step(f"the relying client {'reached' if reached else 'did not reach'} the batch's cursor")
+
             token = await tenant_token(konklav, email, tenant)
             before = await relying.decide(token, REQUIREMENTS)
             step(f"before the grant, document:read is {before['decision']}")
@@ -92,7 +98,7 @@ async def run(konklav: Konklav) -> str:
             step(f"assigned the reader role; the write's cursor is {written.cursor}")
             assert written.cursor is not None
             reached = await relying.await_cursor(written.cursor)
-            step(f"the relying client {'reached' if reached else 'did not reach'} that cursor")
+            step(f"the relying client {'reached' if reached else 'did not reach'} the grant's cursor")
 
             after = await relying.decide(token, REQUIREMENTS)
             step(f"after the grant, document:read is {after['decision']}")

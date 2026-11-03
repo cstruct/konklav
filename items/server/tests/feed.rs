@@ -91,6 +91,7 @@ async fn streams_events_as_they_happen_and_resumes_by_cursor() {
     let url = format!("http://{}/v1/events?kinds=session.changed", running.relying);
 
     let mut feed = SseReader::open(&url, &service, None).await;
+    assert_eq!(feed.next().await.event, "position");
     let first = login(&app, email).await;
     let event = feed.next().await;
     assert_eq!(event.event, "session.changed");
@@ -103,8 +104,34 @@ async fn streams_events_as_they_happen_and_resumes_by_cursor() {
     // Events written while disconnected arrive after resuming.
     let second = login(&app, email).await;
     let mut feed = SseReader::open(&url, &service, Some(&resume_from)).await;
+    let position = feed.next().await;
+    assert_eq!(position.event, "position");
+    assert_eq!(position.id.as_deref(), Some(resume_from.as_str()));
     let event = feed.next().await;
     assert_eq!(event.data["payload"]["session"], second["session_id"]);
+}
+
+/// A stream opened without a cursor starts by naming the head, whatever
+/// kinds it filters for, so a consumer knows its place on a quiet feed.
+// r[verify feed.sse.position]
+#[tokio::test(flavor = "multi_thread")]
+async fn streams_start_by_naming_their_position() {
+    let app = TestApp::new().await;
+    let running = app.serve().await;
+    let service = app.service_token().await;
+    app.human("ada@example.com", PASSWORD).await;
+    login(&app, "ada@example.com").await;
+    let head = {
+        let mut conn = app.db.pool().get().await.unwrap();
+        konklav_store::events::head(&mut conn).await.unwrap()
+    };
+    assert!(head.get() > 0);
+    let url = format!("http://{}/v1/events?kinds=tenant.changed", running.relying);
+    let mut feed = SseReader::open(&url, &service, None).await;
+    let event = feed.next().await;
+    assert_eq!(event.event, "position");
+    assert_eq!(event.id, Some(head.to_string()));
+    assert_eq!(event.data["cursor"], head.get());
 }
 
 // r[verify feed.sse.kinds-filter]
@@ -115,6 +142,7 @@ async fn filters_by_kind() {
     let service = app.service_token().await;
     let url = format!("http://{}/v1/events?kinds=tenant.changed", running.relying);
     let mut feed = SseReader::open(&url, &service, None).await;
+    assert_eq!(feed.next().await.event, "position");
     app.human("ada@example.com", PASSWORD).await;
     login(&app, "ada@example.com").await; // session.changed, filtered out
     let tenant = uuid::Uuid::now_v7();

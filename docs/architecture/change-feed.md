@@ -26,6 +26,12 @@ cursor ahead of the outbox, gets a `reset` event (whose `id` is the
 watermark) and continues from there. Without a cursor, a stream starts at
 the head: new consumers don't replay history.
 
+A stream that needs no reset starts with a `position` event instead, whose
+`id` is the cursor the stream starts after (the head, or the client's
+cursor), whatever kinds it filters for. A consumer that connected without a
+cursor thus knows its place before anything else happens, and can tell that
+a write made before it connected is already behind it, even on a quiet feed.
+
 Other relying endpoints:
 
 - `GET /v1/session-states/{id}` returns a session in the `session.changed`

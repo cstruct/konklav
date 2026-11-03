@@ -45,4 +45,5 @@ async def test_a_grant_is_decided_once_its_cursor_is_reached(konklav, capsys):
     assert await read_your_writes.run(konklav) == "allow"
     output = capsys.readouterr().out
     assert "before the grant, document:read is deny" in output
-    assert "the relying client reached that cursor" in output
+    assert "the relying client reached the batch's cursor" in output
+    assert "the relying client reached the grant's cursor" in output

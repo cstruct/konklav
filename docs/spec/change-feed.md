@@ -56,6 +56,14 @@ cannot be resumed for any other reason, the server MUST send a `reset` event
 before continuing. Consumers MUST treat a reset as "every cached state may be
 stale".
 
+r[feed.sse.position]
+Every stream MUST begin with an event that carries the cursor it starts
+after, whatever kinds the consumer subscribed to: a `reset` when
+`feed.reset` applies, and a `position` event otherwise. A consumer that
+connects without a cursor thereby learns where it stands before any later
+event arrives, and by `feed.commit-order` every event at or below that
+cursor has already committed.
+
 r[feed.batch]
 Konklav MUST also serve the feed as paged JSON (`after` a cursor, limited
 page size) for consumers that cannot hold a stream open.

@@ -383,6 +383,9 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `reset`
   - A special event that tells a consumer it cannot resume exactly from its cursor, for example because the cursor is older than retention. Everything it has cached may be stale.
 
+- `position`
+  - A special event that begins a change-feed stream which needs no reset. Its cursor is where the stream starts, so a consumer knows its place in the feed even before any other event arrives.
+
 - `revision`
   - A number identifying a state of Konklav's data: the cursor of the last event that affected it.
   - Entitlement sets carry the revision they were compiled at.
