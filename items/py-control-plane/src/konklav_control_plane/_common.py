@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import random
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
+from urllib.parse import quote
 
 import httpx
 
 from .errors import KonklavError, RateLimited
 
 T = TypeVar("T")
+F = TypeVar("F", bound=Callable[..., Any])
 
 # Idempotent on the control-plane surface, so a request that may or may not
 # have taken effect can be sent again.
@@ -73,3 +76,21 @@ def delay(attempt: int, error: KonklavError) -> float:
 def base(url: str) -> str:
     """The surface's URL with any proxy prefix and without a trailing `/`."""
     return url.rstrip("/")
+
+
+# r[impl item.py-control-plane.whole-surface]
+def operation(operation_id: str) -> Callable[[F], F]:
+    """Marks a method as the client's for the API document's operation
+    `operation_id`, which the tests check every operation has."""
+
+    def mark(method: F) -> F:
+        setattr(method, "__konklav_operation__", operation_id)
+        return method
+
+    return mark
+
+
+def path(*segments: str) -> str:
+    """A path under `/v1` from literal segments and caller-given ids, which
+    are escaped so they stay one segment each."""
+    return "".join(f"/{quote(segment, safe='')}" for segment in segments)

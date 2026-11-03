@@ -196,7 +196,7 @@ jobs:
           uv sync --locked --no-install-project --python 3.12
           for dist in dist/*.whl dist/*.tar.gz; do
             uv pip install --python .venv --no-deps --reinstall "$dist"
-            uv run --no-sync --python 3.12 pytest -q tests
+            uv run --no-sync --python 3.12 pytest -q tests --ignore=tests/integration
           done
 
       - name: Upload wheel and sdist

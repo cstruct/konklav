@@ -57,7 +57,7 @@ run = "cargo build --workspace"
 
 [tasks.test]
 description = "Run every test; database tests use isolated databases on the local Postgres"
-depends = ["db:up", "py:test", "py-control-plane:test", "console:smoke"]
+depends = ["db:up", "py:test", "py-control-plane:test", "py-control-plane:integration", "console:smoke"]
 run = "cargo test --workspace"
 
 [tasks."py:test"]
@@ -71,9 +71,20 @@ dir = "items/py"
 run = ["rm -rf dist", "uv build -q --out-dir dist"]
 
 [tasks."py-control-plane:test"]
-description = "Run the Python control-plane client's tests"
+description = "Run the Python control-plane client's unit tests"
 dir = "items/py-control-plane"
-run = ["uv sync -q --locked", "uv run -q pytest -q tests"]
+run = ["uv sync -q --locked", "uv run -q pytest -q tests --ignore=tests/integration"]
+
+[tasks."py-control-plane:integration"]
+description = "Run the Python control-plane client's integration tests against servers on fresh databases"
+depends = ["db:up"]
+dir = "items/py-control-plane"
+env = { KONKLAV_TEST_SERVER = "{{config_root}}/target/debug/test-server" }
+run = [
+    "cargo build -q -p konklav-server -p konklav-examples --bin test-server",
+    "uv sync -q --locked",
+    "uv run -q pytest -q tests/integration",
+]
 
 [tasks."py-control-plane:generate"]
 description = "Regenerate the Python control-plane client's types from the API document, and its sync client and tests from the async ones"

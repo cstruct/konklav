@@ -50,6 +50,16 @@ class CreateTenant(TypedDict):
     """
 
 
+class CreatedInvite(TypedDict):
+    """
+    A created invite. Its token is never returned: it is only delivered to
+    the invited address, as a `delivery.requested` event.
+    """
+
+    expires_at: str
+    invite_id: str
+
+
 type CredentialId = str
 """
 Identifies a credential. For secret keys it is also the login
@@ -699,6 +709,16 @@ What an access token may be used for.
 """
 
 
+class WrittenCreatedInvite(TypedDict):
+    """
+    A write's result and the cursor of the last event it produced, if any.
+    """
+
+    expires_at: str
+    invite_id: str
+    cursor: NotRequired[Cursor | None]
+
+
 class WrittenCredential(TypedDict):
     """
     A write's result and the cursor of the last event it produced, if any.
@@ -1009,17 +1029,6 @@ class CreateMembership(TypedDict):
 
 class CreateSubject(TypedDict):
     kind: SubjectKind
-
-
-class CreatedInvite(TypedDict):
-    """
-    A created invite. Its token is never returned: it is only delivered to
-    the invited address, as a `delivery.requested` event.
-    """
-
-    cursor: Cursor | None
-    expires_at: str
-    invite_id: str
 
 
 class Credential(TypedDict):
@@ -1367,7 +1376,6 @@ class RegisteredScope(TypedDict):
 
 
 class RegisteredScopeBatch(TypedDict):
-    cursor: NotRequired[Cursor | None]
     scopes: list[RegisteredScope | None]
     """
     Each change's scope afterwards, in order; `null` for removing an
@@ -1633,6 +1641,19 @@ class WrittenCatalogDocument(TypedDict):
     groups: NotRequired[list[GroupEntry]]
     scope_kinds: NotRequired[list[ScopeKindEntry]]
     session_flags: NotRequired[list[SessionFlagEntry]]
+    cursor: NotRequired[Cursor | None]
+
+
+class WrittenRegisteredScopeBatch(TypedDict):
+    """
+    A write's result and the cursor of the last event it produced, if any.
+    """
+
+    scopes: list[RegisteredScope | None]
+    """
+    Each change's scope afterwards, in order; `null` for removing an
+    unknown scope.
+    """
     cursor: NotRequired[Cursor | None]
 
 

@@ -2,15 +2,23 @@
 
 Manage [Konklav](https://github.com/cstruct/konklav) from Python.
 
-Konklav is a standalone identity and access service. This package will be
+Konklav is a standalone identity and access service. This package is
 the Python client for its control plane, the API operators and automation
 use to manage tenants, subjects, credentials, roles, shares and the rest.
 
-**This release is incomplete.** It has the core client (authentication,
-errors, retries and the request and response types) but no method per
-operation yet; see the
-[plan](https://github.com/cstruct/konklav/tree/main/items/py-control-plane)
-for its status.
+```python
+from konklav_control_plane import ControlPlaneClient, SecretKey
+
+auth = SecretKey(subject_url="https://konklav:8080", key_id=key_id, secret=secret)
+async with ControlPlaneClient("https://konklav:8082", auth=auth) as client:
+    written = await client.tenants.create(tenant_id, {"facts": {}})
+```
+
+Every control-plane operation has a method, with request and response
+types generated from Konklav's API document. `konklav_control_plane.sync`
+has the same client for synchronous code. Failed requests are retried
+where that's safe, and errors raise `KonklavError` subclasses such as
+`NotFound` and `Forbidden`.
 
 To decide authorization in a relying system, use
 [`konklav-relying`](https://pypi.org/project/konklav-relying/) instead. The
