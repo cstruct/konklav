@@ -5,6 +5,7 @@
 //! can compose them inside one transaction.
 
 pub mod backchannel;
+pub mod batch_results;
 pub mod bearer_assertions;
 pub mod catalog;
 pub mod challenges;

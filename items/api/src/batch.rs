@@ -5,6 +5,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Batch {
     pub operations: Vec<BatchOperation>,
+    /// Chosen by the caller, so that repeating the batch answers what it
+    /// first answered instead of applying it again. Remembered per caller,
+    /// for committed batches only. At most 255 characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+    /// How long to remember the key, up to the server's maximum (an hour
+    /// unless configured otherwise); the server's default (ten minutes)
+    /// when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_seconds: Option<u32>,
 }
 
 /// One operation of a batch, as it would be sent on its own.

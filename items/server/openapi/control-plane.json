@@ -58,7 +58,7 @@
           "batch"
         ],
         "summary": "Applies operations in order, all or nothing.",
-        "description": "Each operation is a `PUT`, `POST` or `DELETE` with the path (without\n`/v1`) and body it takes alone, and is authorized against the caller's own\ncapabilities. On success, `results` holds what each answered; on failure\nnothing is committed and the error is the failing operation's, with its\nposition as `error.operation`.",
+        "description": "Each operation is a `PUT`, `POST` or `DELETE` with the path (without\n`/v1`) and body it takes alone, and is authorized against the caller's own\ncapabilities. On success, `results` holds what each answered; on failure\nnothing is committed and the error is the failing operation's, with its\nposition as `error.operation`. With an `idempotency_key`, repeating the\nbatch answers what it first answered, with new secrets where that answer\nshowed some.",
         "operationId": "apply_batch",
         "requestBody": {
           "content": {
@@ -72,7 +72,7 @@
         },
         "responses": {
           "200": {
-            "description": "Every operation was applied",
+            "description": "Every operation was applied, now or by the first batch with the same idempotency key",
             "content": {
               "application/json": {
                 "schema": {
@@ -3157,6 +3157,22 @@
           "operations"
         ],
         "properties": {
+          "idempotency_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Chosen by the caller, so that repeating the batch answers what it\nfirst answered instead of applying it again. Remembered per caller,\nfor committed batches only. At most 255 characters."
+          },
+          "idempotency_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How long to remember the key, up to the server's maximum (an hour\nunless configured otherwise); the server's default (ten minutes)\nwhen absent.",
+            "minimum": 0
+          },
           "operations": {
             "type": "array",
             "items": {

@@ -14,6 +14,17 @@ diesel::table! {
 }
 
 diesel::table! {
+    batch_result (caller, key) {
+        caller -> Text,
+        key -> Text,
+        request_hash -> Bytea,
+        answer -> Jsonb,
+        created_at -> Timestamptz,
+        expires_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
     bearer_assertion (issuer, jti) {
         issuer -> Text,
         jti -> Text,
@@ -388,6 +399,7 @@ diesel::joinable!(template_policy -> template (template_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     backchannel_logout,
+    batch_result,
     bearer_assertion,
     catalog_action,
     catalog_fact,

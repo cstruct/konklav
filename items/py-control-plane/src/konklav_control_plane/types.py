@@ -982,6 +982,18 @@ class Batch(TypedDict):
     Control-plane operations to apply in order, all or nothing.
     """
 
+    idempotency_key: NotRequired[str | None]
+    """
+    Chosen by the caller, so that repeating the batch answers what it
+    first answered instead of applying it again. Remembered per caller,
+    for committed batches only. At most 255 characters.
+    """
+    idempotency_seconds: NotRequired[int | None]
+    """
+    How long to remember the key, up to the server's maximum (an hour
+    unless configured otherwise); the server's default (ten minutes)
+    when absent.
+    """
     operations: list[BatchOperation]
 
 

@@ -80,9 +80,19 @@ pub async fn held_by(conn: &mut Connection, subject: SubjectId) -> Result<bool, 
 pub(crate) struct Operator {
     /// Holds `konklav:control:all`, or used the bootstrap token.
     pub(crate) all: bool,
+    /// The operator's subject; `None` for the bootstrap token.
+    pub(crate) subject: Option<SubjectId>,
 }
 
 impl Operator {
+    /// Who is calling, as batches remember their idempotency keys by.
+    pub(crate) fn caller(self) -> String {
+        self.subject.map_or_else(
+            || "bootstrap".to_owned(),
+            |subject| format!("subject:{subject}"),
+        )
+    }
+
     /// Granting or withdrawing capabilities, and changing how an operator
     /// authenticates, need `konklav:control:all`: otherwise a narrower
     /// capability would be a path to every capability.

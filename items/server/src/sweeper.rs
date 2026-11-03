@@ -34,10 +34,11 @@ pub struct Swept {
     pub identity_claims: usize,
     pub history: usize,
     pub events: usize,
+    pub batch_results: usize,
 }
 
 impl Swept {
-    fn kinds(self) -> [(&'static str, usize); 9] {
+    fn kinds(self) -> [(&'static str, usize); 10] {
         [
             ("challenge", self.challenges),
             ("login_attempt", self.login_attempts),
@@ -48,6 +49,7 @@ impl Swept {
             ("session_identity_claims", self.identity_claims),
             ("row_version", self.history),
             ("event", self.events),
+            ("batch_result", self.batch_results),
         ]
     }
 }
@@ -137,6 +139,7 @@ async fn sweep_locked(
         bearer_assertions: drain!(batch, sweep::bearer_assertions(conn, now, batch)),
         sessions: drain!(batch, sweep::sessions(conn, sessions_before, batch)),
         history: drain!(batch, sweep::history(conn, now, batch)),
+        batch_results: drain!(batch, sweep::batch_results(conn, now, batch)),
         events: drain!(batch, async {
             Ok::<_, konklav_store::StoreError>(
                 events::prune_before(conn, now - settings.events, batch).await?,

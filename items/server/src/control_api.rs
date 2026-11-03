@@ -175,7 +175,10 @@ async fn authorize_operator(
             .is_none_or(|expires| Utc::now() < expires)
     {
         tracing::info!(?capability, "control plane used with the bootstrap token");
-        return Ok(Operator { all: true });
+        return Ok(Operator {
+            all: true,
+            subject: None,
+        });
     }
     let mut conn = db.get().await?;
     let (_, session) = crate::subject_api::verify_access_token(state, &mut conn, presented)
@@ -191,11 +194,15 @@ async fn authorize_operator(
     }
     crate::subject_api::refuse_impersonation(&session)?;
     let all = capabilities::holds(&mut conn, session.subject_id, capabilities::CONTROL_ALL).await?;
+    let operator = Operator {
+        all,
+        subject: Some(session.subject_id),
+    };
     let Some(capability) = capability else {
-        return Ok(Operator { all });
+        return Ok(operator);
     };
     if all || capabilities::holds(&mut conn, session.subject_id, capability).await? {
-        Ok(Operator { all })
+        Ok(operator)
     } else {
         Err(ApiError::new(
             ErrorCode::Forbidden,

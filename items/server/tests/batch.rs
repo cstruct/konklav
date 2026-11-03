@@ -387,3 +387,207 @@ async fn bulk_endpoints_run_in_a_batch() {
         StatusCode::OK
     );
 }
+
+async fn keyed(app: &TestApp, key: &str, operations: Value) -> common::Reply {
+    app.control(
+        Method::POST,
+        "/v1/batch",
+        Some(json!({"operations": operations, "idempotency_key": key})),
+    )
+    .await
+}
+
+// r[verify platform.batch.idempotency-key]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_repeated_key_answers_the_first_batch() {
+    let app = TestApp::new().await;
+    let invite =
+        json!([{"method": "POST", "path": "/invites", "body": {"email": "new@example.com"}}]);
+    let first = keyed(&app, "k-1", invite.clone()).await;
+    assert_eq!(first.status, StatusCode::OK, "{:?}", first.body);
+    let events = count(&app, "select count(*) as count from event").await;
+    let again = keyed(&app, "k-1", invite.clone()).await;
+    assert_eq!(again.status, StatusCode::OK, "{:?}", again.body);
+    assert_eq!(again.body, first.body, "the first answer");
+    assert_eq!(
+        count(
+            &app,
+            "select count(*) as count from challenge where purpose = 'invite'"
+        )
+        .await,
+        1,
+        "one invite"
+    );
+    assert_eq!(
+        count(&app, "select count(*) as count from event").await,
+        events,
+        "nothing applied again"
+    );
+
+    let other =
+        json!([{"method": "POST", "path": "/invites", "body": {"email": "other@example.com"}}]);
+    assert_eq!(keyed(&app, "k-1", other).await.code(), "CONFLICT");
+
+    // Keys are the caller's own: another operator's same key is another batch.
+    let role = format!("ops-{}", uuid::Uuid::now_v7().simple());
+    app.control(
+        Method::PUT,
+        &format!("/v1/tenants/root/roles/{role}"),
+        Some(json!({"policies": [{"action": "konklav:invites:manage", "effect": "allow"}]})),
+    )
+    .await;
+    let operator = app.human("ops@example.com", PASSWORD).await;
+    app.control(
+        Method::POST,
+        &format!("/v1/subjects/{operator}/global-assignments"),
+        Some(json!({"role": role})),
+    )
+    .await;
+    let token = app.login("ops@example.com", PASSWORD).await.body["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let auth = format!("Bearer {token}");
+    let theirs = app
+        .send(
+            Method::POST,
+            "/v1/batch",
+            &[("authorization", &auth)],
+            Some(json!({"operations": invite, "idempotency_key": "k-1"})),
+        )
+        .await;
+    assert_eq!(theirs.status, StatusCode::OK, "{:?}", theirs.body);
+    assert_ne!(
+        theirs.body["results"][0]["body"]["invite_id"],
+        first.body["results"][0]["body"]["invite_id"]
+    );
+}
+
+// r[verify platform.batch.idempotency-key]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_batch_is_not_remembered() {
+    let app = TestApp::new().await;
+    let subject = new_id();
+    let operations = json!([
+        {"method": "PUT", "path": format!("/subjects/{subject}"), "body": {"kind": "service"}},
+        {"method": "POST", "path": format!("/subjects/{subject}/global-assignments"), "body": {"role": "auditor"}},
+    ]);
+    assert_eq!(
+        keyed(&app, "k-2", operations.clone()).await.code(),
+        "NOT_FOUND"
+    );
+    app.control(
+        Method::PUT,
+        "/v1/tenants/root/roles/auditor",
+        Some(json!({"policies": []})),
+    )
+    .await;
+    let reply = keyed(&app, "k-2", operations).await;
+    assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+}
+
+// r[verify platform.batch.idempotency-key]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_repeat_shows_new_secrets() {
+    let app = TestApp::new().await;
+    let service = new_id();
+    let operations = json!([
+        {"method": "PUT", "path": format!("/subjects/{service}"), "body": {"kind": "service"}},
+        {"method": "POST", "path": format!("/subjects/{service}/credentials"), "body": {"kind": "secret_key"}},
+    ]);
+    let first = keyed(&app, "k-3", operations.clone()).await;
+    assert_eq!(first.status, StatusCode::OK, "{:?}", first.body);
+    let again = keyed(&app, "k-3", operations).await;
+    assert_eq!(again.status, StatusCode::OK, "{:?}", again.body);
+
+    let (first, again) = (
+        &first.body["results"][1]["body"],
+        &again.body["results"][1]["body"],
+    );
+    assert_eq!(
+        again["credential"]["id"], first["credential"]["id"],
+        "the same credential"
+    );
+    let login = |presented: &Value| {
+        let (key_id, secret) = presented.as_str().unwrap().split_once('.').unwrap();
+        let body = json!({"key_id": key_id, "secret": secret});
+        let app = &app;
+        async move { app.post("/v1/login/secret-key", body).await }
+    };
+    for slot in ["a", "b"] {
+        assert_ne!(again["secret_keys"][slot], first["secret_keys"][slot]);
+        assert_eq!(
+            login(&again["secret_keys"][slot]).await.status,
+            StatusCode::OK
+        );
+        assert_eq!(
+            login(&first["secret_keys"][slot]).await.code(),
+            "INVALID_CREDENTIALS"
+        );
+    }
+    let stored = count(
+        &app,
+        "select count(*) as count from batch_result where answer::text like '%secret_keys\": {%'",
+    )
+    .await;
+    assert_eq!(stored, 0, "secrets aren't remembered");
+}
+
+// r[verify platform.batch.key-lifetime]
+// r[verify retention.batch-results]
+#[tokio::test(flavor = "multi_thread")]
+async fn keys_are_forgotten_once_their_lifetime_passes() {
+    let app = TestApp::new().await;
+    let invite =
+        json!([{"method": "POST", "path": "/invites", "body": {"email": "new@example.com"}}]);
+    for seconds in [0, 3601] {
+        let reply = app
+            .control(
+                Method::POST,
+                "/v1/batch",
+                Some(json!({"operations": invite, "idempotency_key": "k", "idempotency_seconds": seconds})),
+            )
+            .await;
+        assert_eq!(reply.code(), "INVALID_REQUEST", "{seconds}");
+    }
+    let reply = app
+        .control(
+            Method::POST,
+            "/v1/batch",
+            Some(json!({"operations": invite, "idempotency_key": "k-4", "idempotency_seconds": 3600})),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+    let lifetime = count(
+        &app,
+        "select extract(epoch from expires_at - created_at)::bigint as count from batch_result",
+    )
+    .await;
+    assert!((3599..=3600).contains(&lifetime), "{lifetime}");
+
+    let mut conn = app.db.pool().get().await.unwrap();
+    conn.batch_execute("update batch_result set expires_at = now() - interval '1 second'")
+        .await
+        .unwrap();
+    drop(conn);
+    let reply = keyed(&app, "k-4", invite.clone()).await;
+    assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+    assert_eq!(
+        count(
+            &app,
+            "select count(*) as count from challenge where purpose = 'invite'"
+        )
+        .await,
+        2,
+        "an expired key no longer stops a repeat"
+    );
+
+    let mut conn = app.db.pool().get().await.unwrap();
+    conn.batch_execute("update batch_result set expires_at = now() - interval '1 second'")
+        .await
+        .unwrap();
+    let swept = konklav_store::sweep::batch_results(&mut conn, chrono::Utc::now(), 100)
+        .await
+        .unwrap();
+    assert_eq!(swept, 1);
+}
