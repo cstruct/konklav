@@ -117,7 +117,9 @@ changes or off `main`, pulls `main`, then:
    `items/py/Cargo.toml` (which maturin also uses for the Python package)
    and in `items/py-control-plane/pyproject.toml`,
    and the published crates' exact requirements on each other under
-   `[workspace.dependencies]`, and refreshes the lockfiles.
+   `[workspace.dependencies]`, refreshes the lockfiles and regenerates the
+   API document `items/server/openapi/control-plane.json`, which records the
+   version.
 2. Commits that as "Release <version>" on a new `release/v<version>` branch,
    pushes the branch, opens a pull request for it and switches back to
    `main`.

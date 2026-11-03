@@ -146,6 +146,8 @@ cargo update -q --workspace
 cargo update -q --workspace --manifest-path items/py/Cargo.toml
 (cd items/py-control-plane && uv lock -q)
 (cd examples/python && uv lock -q)
+# The API document records the version too; its test rewrites it.
+KONKLAV_UPDATE_OPENAPI=1 cargo test -q -p konklav-server --lib openapi::tests::committed_document_is_current
 git commit -q -am "Release $version"
 git push -q -u origin "$branch"
 gh pr create --base main --head "$branch" --title "Release $version" \\
