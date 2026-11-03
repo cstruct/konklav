@@ -4,7 +4,7 @@ The Python control-plane client: a pure-Python package for managing Konklav
 through its control-plane surface.
 
 It has a method for every control-plane operation, and batches of them.
-Nothing publishes it to PyPI yet.
+Each release publishes it to PyPI.
 
 ## Responsibilities
 
@@ -63,8 +63,8 @@ pip install konklav-control-plane==<server version>
 
 Install the version of the Konklav server you call: only that version is
 supported, since the methods and types come from that server's API
-document. The package isn't on PyPI yet; until it is, install it from a
-checkout (`pip install ./items/py-control-plane`) or from the wheel that
+document. To try unreleased changes, install it from a checkout
+(`pip install ./items/py-control-plane`) or from the wheel that
 `mise run py-control-plane:build` writes to `dist/`.
 
 ### Clients
