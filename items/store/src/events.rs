@@ -8,8 +8,14 @@ use crate::schema::{event, feed_watermark};
 
 /// Appends an event and returns its cursor. Call it inside the transaction
 /// that makes the change, so the change and its event commit together.
+///
+/// The `event_cursor` trigger draws the cursor under a lock held until the
+/// transaction ends, so cursors commit in order; work after a
+/// transaction's first event holds up other event writers, so keep it
+/// short.
 // r[impl platform.storage.transactional-events]
 // r[impl feed.outbox]
+// r[impl feed.commit-order]
 pub async fn append(
     conn: &mut AsyncPgConnection,
     kind: &str,

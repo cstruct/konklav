@@ -8,6 +8,12 @@ r[feed.outbox]
 Events MUST be appended to an ordered outbox in the same transaction as the
 change they describe. Every event MUST have a strictly increasing cursor.
 
+r[feed.commit-order]
+Cursors MUST become visible in increasing order: once an event can be read,
+every event with a lower cursor that will ever commit already has, so a
+reader that resumes after the last cursor it read misses nothing, however
+transactions interleave.
+
 r[feed.kinds]
 The change feed MUST include at least these event kinds:
 - `session.changed`
