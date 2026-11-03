@@ -124,6 +124,7 @@ run = [
     "cargo fmt --manifest-path items/py/Cargo.toml --check",
     "PYO3_PYTHON=$(cd items/py && uv python find) cargo clippy --manifest-path items/py/Cargo.toml -- -D warnings",
     "cd items/py-control-plane && uv run -q --locked python tools/generate.py --check",
+    "cd items/py-control-plane && uv run -q --locked mypy",
     "actionlint",
     "tracey query validate",
 ]

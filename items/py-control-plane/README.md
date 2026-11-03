@@ -65,7 +65,8 @@ mise run py-control-plane:build      # build the sdist and wheel into dist/
 ```
 
 `mise run lint` fails when the generated files are stale, for example after
-the API document changes.
+the API document changes, and runs `mypy --strict` over the package and
+its tools.
 
 - Direct coverage:
   - both clients against an `httpx` mock of the control plane (the sync

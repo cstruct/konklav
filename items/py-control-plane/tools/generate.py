@@ -95,8 +95,8 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="fail if the committed files are stale")
     check = parser.parse_args().check
     if not check:
-        for stale in [*(PACKAGE / "_sync").glob("*.py"), *(TESTS / "_sync").glob("*.py")]:
-            stale.unlink()
+        for old in [*(PACKAGE / "_sync").glob("*.py"), *(TESTS / "_sync").glob("*.py")]:
+            old.unlink()
         generate(PACKAGE, TESTS)
         return 0
     with tempfile.TemporaryDirectory() as scratch:

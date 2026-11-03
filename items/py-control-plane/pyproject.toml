@@ -27,6 +27,16 @@ Issues = "https://github.com/cstruct/konklav/issues"
 [dependency-groups]
 dev = [
     "datamodel-code-generator==0.88.0",
+    "mypy==1.20.2",
     "pytest>=8",
     "unasync==0.6.0",
 ]
+
+[tool.mypy]
+files = ["src", "tools"]
+strict = true
+python_version = "3.12"
+
+[[tool.mypy.overrides]]
+module = "unasync"
+ignore_missing_imports = true
