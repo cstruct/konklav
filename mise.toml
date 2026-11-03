@@ -75,6 +75,11 @@ description = "Run the Python control-plane client's tests"
 dir = "items/py-control-plane"
 run = ["uv sync -q --locked", "uv run -q pytest -q tests"]
 
+[tasks."py-control-plane:generate"]
+description = "Regenerate the Python control-plane client's types from the API document, and its sync client and tests from the async ones"
+dir = "items/py-control-plane"
+run = "uv run -q --locked python tools/generate.py"
+
 [tasks."py-control-plane:build"]
 description = "Build the Python control-plane client's sdist and wheel into items/py-control-plane/dist"
 dir = "items/py-control-plane"
@@ -118,6 +123,7 @@ run = [
     "cargo clippy -q -p konklav-console --target wasm32-unknown-unknown -- -D warnings",
     "cargo fmt --manifest-path items/py/Cargo.toml --check",
     "PYO3_PYTHON=$(cd items/py && uv python find) cargo clippy --manifest-path items/py/Cargo.toml -- -D warnings",
+    "cd items/py-control-plane && uv run -q --locked python tools/generate.py --check",
     "actionlint",
     "tracey query validate",
 ]

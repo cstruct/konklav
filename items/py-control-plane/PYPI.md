@@ -6,8 +6,9 @@ Konklav is a standalone identity and access service. This package will be
 the Python client for its control plane, the API operators and automation
 use to manage tenants, subjects, credentials, roles, shares and the rest.
 
-**This release has no client yet.** It reserves the package name and
-version while the client is built; see the
+**This release is incomplete.** It has the core client (authentication,
+errors, retries and the request and response types) but no method per
+operation yet; see the
 [plan](https://github.com/cstruct/konklav/tree/main/items/py-control-plane)
 for its status.
 

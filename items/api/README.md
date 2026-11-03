@@ -46,6 +46,10 @@ cargo test -p konklav-api
   KONKLAV_UPDATE_OPENAPI=1 cargo test -p konklav-server --lib openapi
   ```
 
+  Then run `mise run py-control-plane:generate`, since the Python
+  control-plane client's types are generated from the document and
+  `mise run lint` fails while they are stale.
+
 ## Traceability and related docs
 
 - [Item spec](../../docs/spec/software-items/api.md)

@@ -25,4 +25,8 @@ Changelog = "https://github.com/cstruct/konklav/releases"
 Issues = "https://github.com/cstruct/konklav/issues"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "datamodel-code-generator==0.88.0",
+    "pytest>=8",
+    "unasync==0.6.0",
+]

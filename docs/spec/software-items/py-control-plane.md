@@ -99,8 +99,10 @@ subclasses are:
 | `RateLimited` | `RATE_LIMITED` |
 | `Unavailable` | `OVERLOADED`, `DATABASE_UNAVAILABLE`, `MIGRATIONS_PENDING`, `SIGNING_KEY_UNAVAILABLE`, `CLAIMS_HOOK_UNAVAILABLE` |
 
-A code not in this table, and a response without the error envelope, MUST
-raise `KonklavError` itself; without the envelope, `code` is `None`.
+A code not in this table, a response without the error envelope, and a
+request that got no response (a connection error or timeout) MUST raise
+`KonklavError` itself. Without the envelope `code` is `None`, and without a
+response `status` is `None` too, with the `httpx` error as the cause.
 
 r[item.py-control-plane.retry-after]
 `RateLimited` MUST expose the response's `Retry-After` header as a number
