@@ -30,7 +30,7 @@ jobs:
       # Rust with its WebAssembly target, tracey, uv, trunk, Hydra and the
       # Diesel CLI, as pinned in mise.toml.
       - name: Install tools
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
 
       # Saved at the end of the job, and not by release tag runs, see below.
       - name: Restore Cargo dependencies and build artifacts

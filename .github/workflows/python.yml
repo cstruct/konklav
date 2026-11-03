@@ -76,7 +76,7 @@ jobs:
 
       - name: Install uv
         if: ${{ !matrix.musl }}
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           install_args: uv
 
@@ -102,7 +102,7 @@ jobs:
           '
 
       - name: Upload wheel
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: python-${{ matrix.name }}
           path: items/py/dist/*.whl
@@ -148,7 +148,7 @@ jobs:
 
       # Rust, to build from the sdist as pip does on platforms without a wheel.
       - name: Install Rust and uv
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           install_args: rust uv
 
@@ -160,7 +160,7 @@ jobs:
           uv run --no-sync --python 3.12 pytest -q tests
 
       - name: Upload sdist
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: python-sdist
           path: items/py/dist/*.tar.gz
