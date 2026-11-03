@@ -106,9 +106,8 @@ and that the Python packages' wheels and sdists build and pass their tests
 ## Releases
 
 Every release has one version, shared by the server, the console, the
-Docker image, the Python packages (`konklav-relying` on PyPI, and the
-control-plane client `konklav-control-plane`, attached to the GitHub release
-but not yet on PyPI) and the Rust crates on crates.io, and is made from one
+Docker image, the Python packages (`konklav-relying` and the control-plane
+client `konklav-control-plane`, both on PyPI) and the Rust crates on crates.io, and is made from one
 `v<version>` tag. Konklav's clients are supported only against a server of
 the same version. On `main` with a clean working tree, run
 `mise run release:bump <version>`. It refuses to run with uncommitted
@@ -137,7 +136,8 @@ The release workflow then:
 4. Pushes a linux/amd64 and linux/arm64 image to Docker Hub. The repository is
    the `DOCKERHUB_IMAGE` variable; the `deploy` environment holds
    `DOCKERHUB_USERNAME` and the `DOCKERHUB_TOKEN` secret.
-5. Once everything has built, publishes `konklav-relying` to PyPI through
+5. Once everything has built, publishes `konklav-relying` and
+   `konklav-control-plane` to PyPI through
    trusted publishing from the `pypi` environment, so no PyPI token is
    stored.
 6. Publishes the crates with `publish = true` to crates.io, also through
@@ -168,11 +168,10 @@ publisher for it on crates.io (repository `cstruct/konklav`, workflow
 crate and builds it from its packaged sources, so packaging problems show
 up before a release.
 
-To publish `konklav-control-plane` to PyPI, register a pending trusted
-publisher for it on PyPI (repository `cstruct/konklav`, workflow
-`release.yml`, environment `pypi`), then delete the `if: false` on the
-"Download the control-plane client" step of the `pypi` job in
-`.github/workflows/release.yml`.
+A new PyPI project is published through a pending trusted publisher
+registered for it on PyPI (repository `cstruct/konklav`, workflow
+`release.yml`, environment `pypi`); `konklav-control-plane` was set up
+that way.
 
 `mise run py:build` builds the sdist and a wheel for this machine into
 `items/py/dist` to check the packaging locally, and `mise run
