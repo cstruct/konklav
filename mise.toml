@@ -4,6 +4,8 @@
 rust = { version = "1.99.0", components = "rustfmt,clippy,rust-analyzer,rust-src", targets = "wasm32-unknown-unknown" }
 # Lints the GitHub Actions workflows.
 "github:rhysd/actionlint" = "1.7.7"
+# Checks the dependencies for security advisories, licenses and sources, see deny.toml.
+"github:EmbarkStudios/cargo-deny" = "0.19.9"
 # Tracks the spec in docs/spec against the code, from its GitHub releases.
 "github:bearcove/tracey" = "1.4.0"
 # Diesel's CLI for migrations and schema.rs. libpq is compiled in, so no
@@ -60,6 +62,10 @@ description = "Run every test; database tests use isolated databases on the loca
 depends = ["db:up", "py:test", "console:smoke"]
 run = "cargo test --workspace"
 
+[tasks.deny]
+description = "Check the dependencies for security advisories, licenses and sources"
+run = "cargo deny --locked check"
+
 [tasks."py:test"]
 description = "Build the Python relying binding and run its tests"
 dir = "items/py"
@@ -99,7 +105,7 @@ git push origin "v$version"
 """
 
 [tasks.lint]
-description = "Check formatting, lints, spec traceability and the CI workflows"
+description = "Check formatting, lints, dependencies, spec traceability and the CI workflows"
 run = [
     "cargo fmt --all --check",
     "cargo clippy --workspace --all-targets -- -D warnings",
@@ -107,6 +113,7 @@ run = [
     "cargo clippy -q -p konklav-console --target wasm32-unknown-unknown -- -D warnings",
     "cargo fmt --manifest-path items/py/Cargo.toml --check",
     "PYO3_PYTHON=$(cd items/py && uv python find) cargo clippy --manifest-path items/py/Cargo.toml -- -D warnings",
+    "cargo deny --locked check",
     "actionlint",
     "tracey query validate",
 ]
