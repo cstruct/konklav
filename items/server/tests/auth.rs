@@ -765,3 +765,52 @@ async fn password_credentials_can_be_created_from_an_argon2id_hash() {
         "INVALID_CREDENTIALS"
     );
 }
+
+// r[verify credential.revocation-ends-sessions]
+#[tokio::test(flavor = "multi_thread")]
+async fn revoking_a_credential_ends_its_sessions() {
+    let app = TestApp::new().await;
+    let subject = app.human(EMAIL, PASSWORD).await;
+    let session = app.login(EMAIL, PASSWORD).await;
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    let credential = detail.body["credentials"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let revoked = app
+        .control(
+            Method::POST,
+            &format!("/v1/credentials/{credential}/revoke"),
+            Some(json!({"reason": "lost laptop"})),
+        )
+        .await;
+    assert_eq!(revoked.status, StatusCode::OK, "{:?}", revoked.body);
+    assert_eq!(revoked.body["id"], credential.as_str());
+    assert!(revoked.body["revoked_at"].is_string());
+    assert_eq!(revoked.body["revoked_reason"], "lost laptop");
+    assert!(revoked.body["cursor"].is_i64(), "the session ended");
+
+    assert_eq!(
+        app.login(EMAIL, PASSWORD).await.code(),
+        "INVALID_CREDENTIALS"
+    );
+    let refresh = app
+        .post(
+            "/v1/refresh",
+            json!({"refresh_token": refresh_token(&session)}),
+        )
+        .await;
+    assert_eq!(refresh.code(), "SESSION_ENDED");
+
+    let unknown = app
+        .control(
+            Method::POST,
+            &format!("/v1/credentials/{}/revoke", uuid::Uuid::now_v7()),
+            None,
+        )
+        .await;
+    assert_eq!(unknown.code(), "NOT_FOUND");
+}

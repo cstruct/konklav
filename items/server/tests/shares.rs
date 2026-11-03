@@ -474,3 +474,34 @@ async fn shares_grant_nothing_outside_their_period_or_from_inactive_owners() {
         "a suspended owner shares nothing"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shares_can_be_read_back() {
+    let world = world().await;
+    let app = &world.app;
+    let share = uuid::Uuid::now_v7().to_string();
+    let mut offered = app
+        .control(
+            Method::PUT,
+            &format!("/v1/shares/{share}"),
+            Some(terms(&world)),
+        )
+        .await
+        .body;
+    offered.as_object_mut().unwrap().remove("cursor");
+
+    let read = app
+        .control(Method::GET, &format!("/v1/shares/{share}"), None)
+        .await;
+    assert_eq!(read.status, StatusCode::OK, "{:?}", read.body);
+    assert_eq!(read.body, offered);
+
+    let unknown = app
+        .control(
+            Method::GET,
+            &format!("/v1/shares/{}", uuid::Uuid::now_v7()),
+            None,
+        )
+        .await;
+    assert_eq!(unknown.code(), "NOT_FOUND");
+}
