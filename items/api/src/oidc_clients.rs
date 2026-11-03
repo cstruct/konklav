@@ -81,6 +81,7 @@ pub struct OidcClient {
     pub definition: OidcClientDefinition,
     /// Whether a secret has been issued.
     pub has_secret: bool,
+    #[schema(required)]
     pub disabled_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

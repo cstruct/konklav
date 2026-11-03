@@ -7,8 +7,11 @@ pub struct SigningKey {
     pub kid: String,
     pub algorithm: String,
     pub published_at: DateTime<Utc>,
+    #[schema(required)]
     pub activated_at: Option<DateTime<Utc>>,
+    #[schema(required)]
     pub retired_at: Option<DateTime<Utc>>,
+    #[schema(required)]
     pub revoked_at: Option<DateTime<Utc>>,
 }
 

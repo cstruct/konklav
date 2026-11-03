@@ -40,6 +40,7 @@ pub struct RecordRegisteredScope {
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum RegisteredScopeChange {
     /// Records the scope in `tenant`, or replaces its containers.
+    #[schema(title = "RegisteredScopeChangeRecord")]
     Record {
         kind: String,
         id: String,
@@ -49,6 +50,7 @@ pub enum RegisteredScopeChange {
     },
     /// Removes the scope. Removing an unknown or removed scope changes
     /// nothing.
+    #[schema(title = "RegisteredScopeChangeRemove")]
     Remove { kind: String, id: String },
 }
 

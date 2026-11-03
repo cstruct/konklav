@@ -33,6 +33,7 @@ pub enum SecretSlot {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SecretKeySlot {
     pub created_at: DateTime<Utc>,
+    #[schema(required)]
     pub expires_at: Option<DateTime<Utc>>,
 }
 
@@ -46,6 +47,7 @@ pub struct SecretKeySlots {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Passkey {
     pub label: String,
+    #[schema(required)]
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
@@ -63,9 +65,12 @@ pub struct Credential {
     /// For passkeys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub passkey: Option<Passkey>,
+    #[schema(required)]
     pub replaces: Option<CredentialId>,
     pub created_at: DateTime<Utc>,
+    #[schema(required)]
     pub revoked_at: Option<DateTime<Utc>>,
+    #[schema(required)]
     pub revoked_reason: Option<String>,
     pub break_glass: bool,
     pub session_flags: Vec<String>,
@@ -75,6 +80,7 @@ pub struct Credential {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CreateCredential {
     /// With either `password` or an Argon2id `password_hash`.
+    #[schema(title = "CreateCredentialPassword")]
     Password {
         id: Option<CredentialId>,
         identifier: String,
@@ -83,22 +89,26 @@ pub enum CreateCredential {
         #[serde(default)]
         mfa_factors_required: i16,
     },
+    #[schema(title = "CreateCredentialSecretKey")]
     SecretKey {
         id: Option<CredentialId>,
         expires_at: Option<DateTime<Utc>>,
     },
     /// Log in with a magic link sent to `identifier`, an email address.
+    #[schema(title = "CreateCredentialEmailLink")]
     EmailLink {
         id: Option<CredentialId>,
         identifier: String,
     },
     /// Log in with a code sent to `identifier`, an E.164 phone number.
+    #[schema(title = "CreateCredentialPhoneOtp")]
     PhoneOtp {
         id: Option<CredentialId>,
         identifier: String,
     },
     /// A workload identity at an identity provider: tokens it issues for
     /// `subject` sign the service principal in with the JWT bearer grant.
+    #[schema(title = "CreateCredentialFederated")]
     Federated {
         id: Option<CredentialId>,
         provider: String,

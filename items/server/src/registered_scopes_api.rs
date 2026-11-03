@@ -47,8 +47,9 @@ async fn apply(
     Ok((scopes, cursor))
 }
 
-/// `PUT /v1/registered-scopes/{kind}/{id}`: records the scope in a tenant,
-/// or replaces its containing scopes.
+/// Records a registered scope.
+///
+/// Records the scope in a tenant, or replaces its containing scopes.
 #[utoipa::path(put, path = "/registered-scopes/{kind}/{id}", operation_id = "record_registered_scope", tag = "registered-scopes",
     params(("kind" = String, Path, description = "A registered scope kind"), ("id" = String, Path)),
     request_body = RecordRegisteredScope,
@@ -75,8 +76,10 @@ async fn record(
     Ok(Json(Written { value, cursor }))
 }
 
-/// `DELETE /v1/registered-scopes/{kind}/{id}`: removes the scope. It keeps
-/// its tenant, so it can only be recorded again in the same one.
+/// Removes a registered scope.
+///
+/// The scope keeps its tenant, so it can only be recorded again in the same
+/// one.
 #[utoipa::path(delete, path = "/registered-scopes/{kind}/{id}", operation_id = "remove_registered_scope", tag = "registered-scopes",
     params(("kind" = String, Path, description = "A registered scope kind"), ("id" = String, Path)),
     responses((status = 200, body = Written<RegisteredScope>)))]
@@ -92,8 +95,9 @@ async fn remove(
     Ok(Json(Written { value, cursor }))
 }
 
-/// `POST /v1/registered-scopes` with `{"changes": [...]}`: records and
-/// removes up to 1000 scopes, all or nothing.
+/// Records and removes registered scopes in a batch.
+///
+/// Applies up to 1000 changes, all or nothing.
 // r[impl authz.registered.batch]
 #[utoipa::path(post, path = "/registered-scopes", operation_id = "change_registered_scopes", tag = "registered-scopes",
     request_body = RegisteredScopeChanges,

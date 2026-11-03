@@ -57,8 +57,9 @@ fn empty_object() -> serde_json::Value {
     serde_json::json!({})
 }
 
-/// `POST /v1/invites`: the token is only delivered (as `delivery.requested`),
-/// never returned.
+/// Invites someone to a tenant.
+///
+/// The invite token is delivered (as `delivery.requested`) and never returned.
 #[utoipa::path(post, path = "/invites", tag = "invites",
     request_body = CreateInvite,
     responses((status = 201, description = "Created; the token is delivered to the address, never returned", body = CreatedInvite)))]

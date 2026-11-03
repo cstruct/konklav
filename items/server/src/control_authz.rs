@@ -65,6 +65,7 @@ fn tenant_ref(value: &str) -> Result<TenantId, ApiError> {
 
 // --- Catalog ----------------------------------------------------------------
 
+/// Gets the action catalog.
 #[utoipa::path(get, path = "/catalog", tag = "catalog",
     responses((status = 200, body = CatalogDocument)))]
 async fn get_catalog(State(state): State<AppState>) -> Result<Json<CatalogDocument>, ApiError> {
@@ -72,7 +73,9 @@ async fn get_catalog(State(state): State<AppState>) -> Result<Json<CatalogDocume
     Ok(Json(transport::catalog(catalog::load(&mut conn).await?)))
 }
 
-/// `PUT /v1/catalog`: replaces the whole catalog.
+/// Replaces the action catalog.
+///
+/// The whole catalog is replaced: actions and groups left out are removed.
 #[utoipa::path(put, path = "/catalog", tag = "catalog",
     request_body = CatalogDocument,
     responses((status = 200, body = Written<CatalogDocument>)))]
@@ -96,7 +99,10 @@ async fn put_catalog(
 
 // --- Tenants ----------------------------------------------------------------
 
-/// `PUT /v1/tenants/{id}`: idempotent on the id.
+/// Creates a tenant.
+///
+/// Idempotent on the caller-chosen id: repeating the request with the same
+/// content returns 200.
 #[utoipa::path(put, path = "/tenants/{id}", tag = "tenants",
     params(("id" = TenantId, Path, description = "Chosen by the caller")),
     request_body = CreateTenant,
@@ -137,6 +143,7 @@ async fn create_tenant(
         .into_response())
 }
 
+/// Gets a tenant.
 #[utoipa::path(get, path = "/tenants/{id}", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
     responses((status = 200, body = api::Tenant)))]
 async fn get_tenant(
@@ -152,6 +159,7 @@ async fn get_tenant(
     )))
 }
 
+/// Replaces a tenant's facts.
 #[utoipa::path(put, path = "/tenants/{id}/facts", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
     request_body(content = Object, description = "The tenant's new facts"),
     responses((status = 200, body = Written<api::Tenant>)))]
@@ -177,8 +185,9 @@ async fn set_tenant_facts(
     }))
 }
 
-/// `PUT /v1/tenants/{id}/state`: leaving `active` ends every session
-/// targeting the tenant.
+/// Sets a tenant's state.
+///
+/// Leaving `active` ends every session targeting the tenant.
 // r[impl tenant.lifecycle.suspend-revokes]
 #[utoipa::path(put, path = "/tenants/{id}/state", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
     request_body = SetTenantState,
@@ -214,7 +223,10 @@ async fn set_tenant_state(
 
 // --- Memberships ------------------------------------------------------------
 
-/// `PUT /v1/memberships/{id}`: idempotent on the id.
+/// Creates a membership.
+///
+/// Idempotent on the caller-chosen id: repeating the request with the same
+/// content returns 200.
 #[utoipa::path(put, path = "/memberships/{id}", tag = "memberships",
     params(("id" = MembershipId, Path, description = "Chosen by the caller")),
     request_body = CreateMembership,
@@ -256,6 +268,7 @@ async fn create_membership(
         .into_response())
 }
 
+/// Gets a membership.
 #[utoipa::path(get, path = "/memberships/{id}", tag = "memberships", params(("id" = MembershipId, Path)),
     responses((status = 200, body = MembershipDetail)))]
 async fn get_membership(
@@ -277,6 +290,7 @@ async fn get_membership(
     }))
 }
 
+/// Replaces a membership's facts.
 #[utoipa::path(put, path = "/memberships/{id}/facts", tag = "memberships", params(("id" = MembershipId, Path)),
     request_body(content = Object, description = "The membership's new facts"),
     responses((status = 200, body = Written<api::Membership>)))]
@@ -302,8 +316,9 @@ async fn set_membership_facts(
     }))
 }
 
-/// `POST /v1/memberships/{id}/end`: ends the membership and the sessions
-/// targeting it.
+/// Ends a membership.
+///
+/// Sessions targeting the membership end.
 #[utoipa::path(post, path = "/memberships/{id}/end", tag = "memberships", params(("id" = MembershipId, Path)),
     responses((status = 200, body = Written<api::Membership>)))]
 async fn end_membership(
@@ -334,6 +349,7 @@ async fn end_membership(
 
 // --- Templates and roles ----------------------------------------------------
 
+/// Lists role templates.
 #[utoipa::path(get, path = "/templates", tag = "templates",
     responses((status = 200, body = Vec<api::Template>)))]
 async fn list_templates(
@@ -349,6 +365,7 @@ async fn list_templates(
     ))
 }
 
+/// Gets a role template.
 #[utoipa::path(get, path = "/templates/{key}", tag = "templates", params(("key" = String, Path)),
     responses((status = 200, body = api::Template)))]
 async fn get_template(
@@ -363,7 +380,7 @@ async fn get_template(
     )))
 }
 
-/// `PUT /v1/templates/{key}`: creates or replaces a template.
+/// Creates or replaces a role template.
 #[utoipa::path(put, path = "/templates/{key}", tag = "templates", params(("key" = String, Path)),
     request_body = PutTemplate,
     responses((status = 200, body = Written<api::Template>)))]
@@ -401,6 +418,7 @@ async fn put_template(
     }))
 }
 
+/// Lists a tenant's roles.
 #[utoipa::path(get, path = "/tenants/{id}/roles", tag = "roles",
     params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
     responses((status = 200, body = Vec<api::Role>)))]
@@ -419,6 +437,7 @@ async fn list_roles(
     ))
 }
 
+/// Gets a role.
 #[utoipa::path(get, path = "/tenants/{id}/roles/{key}", tag = "roles",
     params(("id" = String, Path, description = "The tenant: a UUID or `root`"), ("key" = String, Path)),
     responses((status = 200, body = api::Role)))]
@@ -435,7 +454,8 @@ async fn get_role(
     )))
 }
 
-/// `PUT /v1/tenants/{tenant}/roles/{key}`: creates or replaces a role.
+/// Creates or replaces a role.
+///
 /// Roles of the root tenant are global roles.
 #[utoipa::path(put, path = "/tenants/{id}/roles/{key}", tag = "roles",
     params(("id" = String, Path, description = "The tenant: a UUID or `root`"), ("key" = String, Path)),
@@ -481,6 +501,7 @@ async fn put_role(
     }))
 }
 
+/// Deletes a role.
 #[utoipa::path(delete, path = "/tenants/{id}/roles/{key}", tag = "roles",
     params(("id" = String, Path, description = "The tenant: a UUID or `root`"), ("key" = String, Path)),
     responses((status = 200, body = Written<Deleted>)))]
@@ -510,7 +531,7 @@ async fn delete_role(
 
 // --- Assignments ------------------------------------------------------------
 
-/// `POST /v1/memberships/{id}/assignments`
+/// Assigns a tenant role to a membership.
 #[utoipa::path(post, path = "/memberships/{id}/assignments", tag = "assignments",
     params(("id" = MembershipId, Path)),
     request_body = AssignRole,
@@ -538,7 +559,7 @@ async fn assign_membership_role(
     ))
 }
 
-/// `POST /v1/subjects/{id}/global-assignments`
+/// Assigns a global role to a subject.
 // r[impl authz.assignment.capabilities]
 #[utoipa::path(post, path = "/subjects/{id}/global-assignments", tag = "assignments",
     params(("id" = SubjectId, Path)),
@@ -578,6 +599,7 @@ async fn assign_global_role(
     ))
 }
 
+/// Lists a subject's global role assignments.
 #[utoipa::path(get, path = "/subjects/{id}/global-assignments", tag = "assignments",
     params(("id" = SubjectId, Path)),
     responses((status = 200, body = Vec<api::RoleAssignment>)))]
@@ -596,6 +618,7 @@ async fn list_global_assignments(
     ))
 }
 
+/// Ends a role assignment.
 #[utoipa::path(delete, path = "/assignments/{id}", tag = "assignments",
     params(("id" = uuid::Uuid, Path)),
     responses((status = 200, body = Written<Deleted>)))]
@@ -623,8 +646,9 @@ async fn unassign(
     }))
 }
 
-/// `GET /v1/subjects/{id}/entitlements?tenant=`: what a subject is
-/// entitled to, for operators.
+/// Gets a subject's entitlements.
+///
+/// What the subject is entitled to, globally or in one tenant.
 #[utoipa::path(get, path = "/subjects/{id}/entitlements", tag = "entitlements",
     params(("id" = SubjectId, Path), EntitlementQuery),
     responses((status = 200, body = Entitlements)))]
@@ -640,7 +664,7 @@ async fn subject_entitlements(
     Ok(Json(input.compile()))
 }
 
-/// `GET /v1/tenants?parent=&before=&limit=`
+/// Lists tenants.
 #[utoipa::path(get, path = "/tenants", tag = "tenants", params(TenantQuery),
     responses((status = 200, body = TenantPage)))]
 async fn list_tenants(
@@ -660,7 +684,7 @@ async fn list_tenants(
     }))
 }
 
-/// `GET /v1/tenants/{id}/memberships?active=`
+/// Lists a tenant's memberships.
 #[utoipa::path(get, path = "/tenants/{id}/memberships", tag = "memberships",
     params(("id" = String, Path, description = "The tenant: a UUID or `root`"), MembershipQuery),
     responses((status = 200, body = Vec<api::Membership>)))]
@@ -677,8 +701,10 @@ async fn list_memberships(
     ))
 }
 
-/// `GET /v1/subjects/{id}/explain?tenant=&action=`: which assignments and
-/// policies bear on an action, and where it ends up granted.
+/// Explains why a subject holds an action or not.
+///
+/// Which assignments and policies bear on the action, and where it ends up
+/// granted.
 #[utoipa::path(get, path = "/subjects/{id}/explain", tag = "explain",
     params(("id" = SubjectId, Path), ExplainQuery),
     responses((status = 200, body = Explanation)))]

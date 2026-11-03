@@ -15,6 +15,7 @@ pub enum TenantState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Tenant {
     pub id: TenantId,
+    #[schema(required)]
     pub parent_id: Option<TenantId>,
     pub state: TenantState,
     #[schema(value_type = Object)]
@@ -55,6 +56,7 @@ pub struct TenantQuery {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct TenantPage {
     pub tenants: Vec<Tenant>,
+    #[schema(required)]
     pub next: Option<TenantId>,
 }
 
@@ -74,6 +76,7 @@ pub struct Membership {
     #[schema(value_type = Object)]
     pub facts: serde_json::Value,
     /// The identity provider whose claim mapping created it, if any.
+    #[schema(required)]
     pub managed_by: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

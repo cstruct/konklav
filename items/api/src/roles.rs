@@ -12,6 +12,7 @@ pub struct Role {
     pub tenant_id: TenantId,
     pub key: String,
     /// The key of the template the role derives from.
+    #[schema(required)]
     pub template: Option<String>,
     pub priority: i32,
     /// An object, opaque to Konklav.

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Konklav control plane",
-    "description": "The Konklav server: subject-facing, relying and control-plane HTTP surfaces",
+    "description": "Every operation's `x-konklav-capability` names the capability its caller needs. The bootstrap token and `konklav:control:all` hold them all.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -15,6 +15,7 @@
         "tags": [
           "assignments"
         ],
+        "summary": "Ends a role assignment.",
         "operationId": "unassign",
         "parameters": [
           {
@@ -47,7 +48,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       }
     },
     "/v1/catalog": {
@@ -55,6 +57,7 @@
         "tags": [
           "catalog"
         ],
+        "summary": "Gets the action catalog.",
         "operationId": "get_catalog",
         "responses": {
           "200": {
@@ -76,13 +79,15 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       },
       "put": {
         "tags": [
           "catalog"
         ],
-        "summary": "`PUT /v1/catalog`: replaces the whole catalog.",
+        "summary": "Replaces the action catalog.",
+        "description": "The whole catalog is replaced: actions and groups left out are removed.",
         "operationId": "put_catalog",
         "requestBody": {
           "content": {
@@ -114,7 +119,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       }
     },
     "/v1/credentials/{id}/break-glass": {
@@ -122,7 +128,8 @@
         "tags": [
           "credentials"
         ],
-        "summary": "`PUT /v1/credentials/{id}/break-glass`: marks a local password or secret\nkey as a break-glass credential, whose every use appends\n`break_glass.used`.",
+        "summary": "Marks a credential as break-glass.",
+        "description": "Only local passwords and secret keys can be break-glass credentials. Every\nuse of one appends `break_glass.used`.",
         "operationId": "set_break_glass",
         "parameters": [
           {
@@ -164,7 +171,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:subjects:manage"
       }
     },
     "/v1/credentials/{id}/replace": {
@@ -172,7 +180,8 @@
         "tags": [
           "credentials"
         ],
-        "summary": "`POST /v1/credentials/{id}/replace`: replaces a password with a new\ncredential that records what it replaces. Sessions established with the\nold one end.",
+        "summary": "Replaces a password.",
+        "description": "Creates a new password credential that records the one it replaces. Sessions\nestablished with the old one end.",
         "operationId": "replace_password",
         "parameters": [
           {
@@ -216,7 +225,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:subjects:manage"
       }
     },
     "/v1/credentials/{id}/revoke": {
@@ -224,7 +234,8 @@
         "tags": [
           "credentials"
         ],
-        "summary": "`POST /v1/credentials/{id}/revoke`: revokes the credential and ends the\nsessions established with it.",
+        "summary": "Revokes a credential.",
+        "description": "Sessions established with the credential end.",
         "operationId": "revoke_credential",
         "parameters": [
           {
@@ -273,7 +284,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:subjects:manage"
       }
     },
     "/v1/credentials/{id}/session-flags": {
@@ -281,7 +293,8 @@
         "tags": [
           "credentials"
         ],
-        "summary": "`PUT /v1/credentials/{id}/session-flags`: sets the restrictive session\nflags every session started with the credential carries.",
+        "summary": "Sets a credential's session flags.",
+        "description": "Every session started with the credential carries these restrictive flags.",
         "operationId": "set_session_flags",
         "parameters": [
           {
@@ -323,7 +336,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:subjects:manage"
       }
     },
     "/v1/credentials/{id}/slots/{slot}/rotate": {
@@ -331,7 +345,8 @@
         "tags": [
           "credentials"
         ],
-        "summary": "`POST /v1/credentials/{id}/slots/{slot}/rotate`: sets a new secret for\none slot of a secret key. The other slot keeps working, so clients can\nswitch over without downtime.",
+        "summary": "Rotates one slot of a secret key.",
+        "description": "Sets a new secret for the slot. The other slot keeps working, so clients can\nswitch over without downtime. The new secret is shown only once.",
         "operationId": "rotate_secret_slot",
         "parameters": [
           {
@@ -389,7 +404,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:subjects:manage"
       }
     },
     "/v1/import/credentials": {
@@ -397,7 +413,8 @@
         "tags": [
           "import"
         ],
-        "summary": "`POST /v1/import/credentials`",
+        "summary": "Imports credentials.",
+        "description": "Imports credentials from another system, with their existing hashes or\nsecrets, all or nothing.",
         "operationId": "import_credentials",
         "requestBody": {
           "content": {
@@ -429,7 +446,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:import"
       }
     },
     "/v1/import/mfa-factors": {
@@ -437,7 +455,8 @@
         "tags": [
           "import"
         ],
-        "summary": "`POST /v1/import/mfa-factors`: TOTP seeds arrive in plaintext over the\ncontrol plane and are encrypted before the transaction opens.",
+        "summary": "Imports MFA factors.",
+        "description": "TOTP seeds arrive in plaintext and are encrypted before they are stored. All\nor nothing.",
         "operationId": "import_factors",
         "requestBody": {
           "content": {
@@ -469,7 +488,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:import"
       }
     },
     "/v1/import/sessions": {
@@ -477,7 +497,8 @@
         "tags": [
           "import"
         ],
-        "summary": "`POST /v1/import/sessions`",
+        "summary": "Imports sessions.",
+        "description": "Imports sessions from another system, all or nothing.",
         "operationId": "import_sessions",
         "requestBody": {
           "content": {
@@ -509,7 +530,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:import"
       }
     },
     "/v1/import/subjects": {
@@ -517,7 +539,8 @@
         "tags": [
           "import"
         ],
-        "summary": "`POST /v1/import/subjects`",
+        "summary": "Imports subjects.",
+        "description": "Imports subjects from another system, all or nothing.",
         "operationId": "import_subjects",
         "requestBody": {
           "content": {
@@ -549,7 +572,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:import"
       }
     },
     "/v1/invites": {
@@ -557,7 +581,8 @@
         "tags": [
           "invites"
         ],
-        "summary": "`POST /v1/invites`: the token is only delivered (as `delivery.requested`),\nnever returned.",
+        "summary": "Invites someone to a tenant.",
+        "description": "The invite token is delivered (as `delivery.requested`) and never returned.",
         "operationId": "create_invite",
         "requestBody": {
           "content": {
@@ -590,7 +615,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:invites:manage"
       }
     },
     "/v1/memberships/{id}": {
@@ -598,6 +624,7 @@
         "tags": [
           "memberships"
         ],
+        "summary": "Gets a membership.",
         "operationId": "get_membership",
         "parameters": [
           {
@@ -629,13 +656,15 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
       },
       "put": {
         "tags": [
           "memberships"
         ],
-        "summary": "`PUT /v1/memberships/{id}`: idempotent on the id.",
+        "summary": "Creates a membership.",
+        "description": "Idempotent on the caller-chosen id: repeating the request with the same\ncontent returns 200.",
         "operationId": "create_membership",
         "parameters": [
           {
@@ -689,7 +718,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
       }
     },
     "/v1/memberships/{id}/assignments": {
@@ -697,7 +727,7 @@
         "tags": [
           "assignments"
         ],
-        "summary": "`POST /v1/memberships/{id}/assignments`",
+        "summary": "Assigns a tenant role to a membership.",
         "operationId": "assign_membership_role",
         "parameters": [
           {
@@ -740,7 +770,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       }
     },
     "/v1/memberships/{id}/end": {
@@ -748,7 +779,8 @@
         "tags": [
           "memberships"
         ],
-        "summary": "`POST /v1/memberships/{id}/end`: ends the membership and the sessions\ntargeting it.",
+        "summary": "Ends a membership.",
+        "description": "Sessions targeting the membership end.",
         "operationId": "end_membership",
         "parameters": [
           {
@@ -780,7 +812,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
       }
     },
     "/v1/memberships/{id}/facts": {
@@ -788,6 +821,7 @@
         "tags": [
           "memberships"
         ],
+        "summary": "Replaces a membership's facts.",
         "operationId": "set_membership_facts",
         "parameters": [
           {
@@ -830,7 +864,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
       }
     },
     "/v1/oidc/clients": {
@@ -838,6 +873,7 @@
         "tags": [
           "oidc-clients"
         ],
+        "summary": "Lists OIDC clients.",
         "operationId": "list_oidc_clients",
         "responses": {
           "200": {
@@ -862,7 +898,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:clients:manage"
       }
     },
     "/v1/oidc/clients/{id}": {
@@ -870,6 +907,7 @@
         "tags": [
           "oidc-clients"
         ],
+        "summary": "Gets an OIDC client.",
         "operationId": "get_oidc_client",
         "parameters": [
           {
@@ -902,13 +940,15 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:clients:manage"
       },
       "put": {
         "tags": [
           "oidc-clients"
         ],
-        "summary": "`PUT /v1/oidc/clients/{id}`: registers or replaces a client, enabling it\nagain if it was disabled.",
+        "summary": "Registers or replaces an OIDC client.",
+        "description": "A disabled client is enabled again.",
         "operationId": "put_oidc_client",
         "parameters": [
           {
@@ -951,13 +991,15 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:clients:manage"
       },
       "delete": {
         "tags": [
           "oidc-clients"
         ],
-        "summary": "`DELETE /v1/oidc/clients/{id}`: disables the client and revokes its\nsessions. The registration stays, as history.",
+        "summary": "Disables an OIDC client.",
+        "description": "The client's sessions are revoked. The registration stays, as history.",
         "operationId": "disable_oidc_client",
         "parameters": [
           {
@@ -991,7 +1033,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:clients:manage"
       }
     },
     "/v1/oidc/clients/{id}/secret": {
@@ -999,7 +1042,8 @@
         "tags": [
           "oidc-clients"
         ],
-        "summary": "`POST /v1/oidc/clients/{id}/secret`: a new secret for a confidential\nclient, shown only once. The previous secret stops working.",
+        "summary": "Issues a new OIDC client secret.",
+        "description": "Only for confidential clients. The secret is shown only once, and the\nprevious one stops working.",
         "operationId": "new_oidc_client_secret",
         "parameters": [
           {
@@ -1033,7 +1077,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:clients:manage"
       }
     },
     "/v1/registered-scopes": {
@@ -1041,7 +1086,8 @@
         "tags": [
           "registered-scopes"
         ],
-        "summary": "`POST /v1/registered-scopes` with `{\"changes\": [...]}`: records and\nremoves up to 1000 scopes, all or nothing.",
+        "summary": "Records and removes registered scopes in a batch.",
+        "description": "Applies up to 1000 changes, all or nothing.",
         "operationId": "change_registered_scopes",
         "requestBody": {
           "content": {
@@ -1073,7 +1119,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:scopes:register"
       }
     },
     "/v1/registered-scopes/{kind}/{id}": {
@@ -1081,7 +1128,8 @@
         "tags": [
           "registered-scopes"
         ],
-        "summary": "`PUT /v1/registered-scopes/{kind}/{id}`: records the scope in a tenant,\nor replaces its containing scopes.",
+        "summary": "Records a registered scope.",
+        "description": "Records the scope in a tenant, or replaces its containing scopes.",
         "operationId": "record_registered_scope",
         "parameters": [
           {
@@ -1132,13 +1180,15 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:scopes:register"
       },
       "delete": {
         "tags": [
           "registered-scopes"
         ],
-        "summary": "`DELETE /v1/registered-scopes/{kind}/{id}`: removes the scope. It keeps\nits tenant, so it can only be recorded again in the same one.",
+        "summary": "Removes a registered scope.",
+        "description": "The scope keeps its tenant, so it can only be recorded again in the same\none.",
         "operationId": "remove_registered_scope",
         "parameters": [
           {
@@ -1179,7 +1229,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:scopes:register"
       }
     },
     "/v1/sessions": {
@@ -1187,7 +1238,7 @@
         "tags": [
           "sessions"
         ],
-        "summary": "`GET /v1/sessions`",
+        "summary": "Lists sessions.",
         "operationId": "list_sessions",
         "parameters": [
           {
@@ -1253,7 +1304,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:sessions:manage"
       }
     },
     "/v1/sessions/revoke": {
@@ -1261,7 +1313,7 @@
         "tags": [
           "sessions"
         ],
-        "summary": "`POST /v1/sessions/revoke`",
+        "summary": "Revokes the sessions matching a filter.",
         "operationId": "revoke_sessions",
         "requestBody": {
           "content": {
@@ -1293,7 +1345,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:sessions:manage"
       }
     },
     "/v1/sessions/{id}": {
@@ -1301,6 +1354,7 @@
         "tags": [
           "sessions"
         ],
+        "summary": "Gets a session.",
         "operationId": "get_session",
         "parameters": [
           {
@@ -1332,7 +1386,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:sessions:manage"
       }
     },
     "/v1/shares/{id}": {
@@ -1340,6 +1395,7 @@
         "tags": [
           "shares"
         ],
+        "summary": "Gets a share.",
         "operationId": "get_share",
         "parameters": [
           {
@@ -1371,13 +1427,15 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       },
       "put": {
         "tags": [
           "shares"
         ],
-        "summary": "`PUT /v1/shares/{id}`: offers a share, or changes the terms of one that\nisn't revoked, which offers it again.",
+        "summary": "Offers a share or changes its terms.",
+        "description": "Changing the terms of a share that isn't revoked offers it again, so the\nrecipient must accept it again.",
         "operationId": "offer_share",
         "parameters": [
           {
@@ -1420,7 +1478,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       }
     },
     "/v1/shares/{id}/accept": {
@@ -1428,7 +1487,8 @@
         "tags": [
           "shares"
         ],
-        "summary": "`POST /v1/shares/{id}/accept`, for the recipient tenant.",
+        "summary": "Accepts a share.",
+        "description": "For the recipient tenant.",
         "operationId": "accept_share",
         "parameters": [
           {
@@ -1460,7 +1520,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       }
     },
     "/v1/shares/{id}/revoke": {
@@ -1468,7 +1529,8 @@
         "tags": [
           "shares"
         ],
-        "summary": "`POST /v1/shares/{id}/revoke`, by either side.",
+        "summary": "Revokes a share.",
+        "description": "Either side can revoke it.",
         "operationId": "revoke_share",
         "parameters": [
           {
@@ -1510,7 +1572,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       }
     },
     "/v1/signing-keys": {
@@ -1518,6 +1581,7 @@
         "tags": [
           "signing-keys"
         ],
+        "summary": "Lists signing keys.",
         "operationId": "list_signing_keys",
         "responses": {
           "200": {
@@ -1542,7 +1606,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:keys:manage"
       }
     },
     "/v1/signing-keys/{kid}/revoke": {
@@ -1550,7 +1615,8 @@
         "tags": [
           "signing-keys"
         ],
-        "summary": "`POST /v1/signing-keys/{kid}/revoke`: break-glass revocation.",
+        "summary": "Revokes a signing key.",
+        "description": "For break-glass use, when a key is compromised.",
         "operationId": "revoke_signing_key",
         "parameters": [
           {
@@ -1582,7 +1648,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:keys:manage"
       }
     },
     "/v1/subjects": {
@@ -1590,7 +1657,7 @@
         "tags": [
           "subjects"
         ],
-        "summary": "`GET /v1/subjects?kind=&identifier=&before=&limit=`",
+        "summary": "Lists subjects.",
         "operationId": "list_subjects",
         "parameters": [
           {
@@ -1648,7 +1715,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:subjects:manage"
       }
     },
     "/v1/subjects/{id}": {
@@ -1656,6 +1724,7 @@
         "tags": [
           "subjects"
         ],
+        "summary": "Gets a subject.",
         "operationId": "get_subject",
         "parameters": [
           {
@@ -1687,13 +1756,15 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:subjects:manage"
       },
       "put": {
         "tags": [
           "subjects"
         ],
-        "summary": "`PUT /v1/subjects/{id}`: idempotent on the id.",
+        "summary": "Creates a subject.",
+        "description": "Idempotent on the caller-chosen id: repeating the request with the same\ncontent returns 200.",
         "operationId": "create_subject",
         "parameters": [
           {
@@ -1747,7 +1818,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:subjects:manage"
       }
     },
     "/v1/subjects/{id}/credentials": {
@@ -1755,7 +1827,8 @@
         "tags": [
           "credentials"
         ],
-        "summary": "`POST /v1/subjects/{id}/credentials`",
+        "summary": "Creates a credential for a subject.",
+        "description": "Generated secrets are shown only once.",
         "operationId": "create_credential",
         "parameters": [
           {
@@ -1798,7 +1871,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:subjects:manage"
       }
     },
     "/v1/subjects/{id}/disable": {
@@ -1806,7 +1880,8 @@
         "tags": [
           "subjects"
         ],
-        "summary": "Disables the subject and ends its sessions.",
+        "summary": "Disables a subject.",
+        "description": "The subject's sessions end.",
         "operationId": "disable_subject",
         "parameters": [
           {
@@ -1838,7 +1913,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:subjects:manage"
       }
     },
     "/v1/subjects/{id}/enable": {
@@ -1846,6 +1922,7 @@
         "tags": [
           "subjects"
         ],
+        "summary": "Enables a disabled subject.",
         "operationId": "enable_subject",
         "parameters": [
           {
@@ -1877,7 +1954,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:subjects:manage"
       }
     },
     "/v1/subjects/{id}/entitlements": {
@@ -1885,7 +1963,8 @@
         "tags": [
           "entitlements"
         ],
-        "summary": "`GET /v1/subjects/{id}/entitlements?tenant=`: what a subject is\nentitled to, for operators.",
+        "summary": "Gets a subject's entitlements.",
+        "description": "What the subject is entitled to, globally or in one tenant.",
         "operationId": "subject_entitlements",
         "parameters": [
           {
@@ -1926,7 +2005,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       }
     },
     "/v1/subjects/{id}/explain": {
@@ -1934,7 +2014,8 @@
         "tags": [
           "explain"
         ],
-        "summary": "`GET /v1/subjects/{id}/explain?tenant=&action=`: which assignments and\npolicies bear on an action, and where it ends up granted.",
+        "summary": "Explains why a subject holds an action or not.",
+        "description": "Which assignments and policies bear on the action, and where it ends up\ngranted.",
         "operationId": "explain_entitlement",
         "parameters": [
           {
@@ -1984,7 +2065,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       }
     },
     "/v1/subjects/{id}/explain-decision": {
@@ -1992,7 +2074,8 @@
         "tags": [
           "explain"
         ],
-        "summary": "`POST /v1/subjects/{id}/explain-decision`",
+        "summary": "Explains an authorization decision.",
+        "description": "Evaluates requirements for the subject as a relying system would, and\nexplains the outcome.",
         "operationId": "explain_decision",
         "parameters": [
           {
@@ -2034,7 +2117,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       }
     },
     "/v1/subjects/{id}/global-assignments": {
@@ -2042,6 +2126,7 @@
         "tags": [
           "assignments"
         ],
+        "summary": "Lists a subject's global role assignments.",
         "operationId": "list_global_assignments",
         "parameters": [
           {
@@ -2076,13 +2161,14 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       },
       "post": {
         "tags": [
           "assignments"
         ],
-        "summary": "`POST /v1/subjects/{id}/global-assignments`",
+        "summary": "Assigns a global role to a subject.",
         "operationId": "assign_global_role",
         "parameters": [
           {
@@ -2125,7 +2211,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       }
     },
     "/v1/templates": {
@@ -2133,6 +2220,7 @@
         "tags": [
           "templates"
         ],
+        "summary": "Lists role templates.",
         "operationId": "list_templates",
         "responses": {
           "200": {
@@ -2157,7 +2245,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       }
     },
     "/v1/templates/{key}": {
@@ -2165,6 +2254,7 @@
         "tags": [
           "templates"
         ],
+        "summary": "Gets a role template.",
         "operationId": "get_template",
         "parameters": [
           {
@@ -2196,13 +2286,14 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       },
       "put": {
         "tags": [
           "templates"
         ],
-        "summary": "`PUT /v1/templates/{key}`: creates or replaces a template.",
+        "summary": "Creates or replaces a role template.",
         "operationId": "put_template",
         "parameters": [
           {
@@ -2244,7 +2335,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       }
     },
     "/v1/tenants": {
@@ -2252,7 +2344,7 @@
         "tags": [
           "tenants"
         ],
-        "summary": "`GET /v1/tenants?parent=&before=&limit=`",
+        "summary": "Lists tenants.",
         "operationId": "list_tenants",
         "parameters": [
           {
@@ -2301,7 +2393,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
       }
     },
     "/v1/tenants/{id}": {
@@ -2309,6 +2402,7 @@
         "tags": [
           "tenants"
         ],
+        "summary": "Gets a tenant.",
         "operationId": "get_tenant",
         "parameters": [
           {
@@ -2341,13 +2435,15 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
       },
       "put": {
         "tags": [
           "tenants"
         ],
-        "summary": "`PUT /v1/tenants/{id}`: idempotent on the id.",
+        "summary": "Creates a tenant.",
+        "description": "Idempotent on the caller-chosen id: repeating the request with the same\ncontent returns 200.",
         "operationId": "create_tenant",
         "parameters": [
           {
@@ -2401,7 +2497,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
       }
     },
     "/v1/tenants/{id}/facts": {
@@ -2409,6 +2506,7 @@
         "tags": [
           "tenants"
         ],
+        "summary": "Replaces a tenant's facts.",
         "operationId": "set_tenant_facts",
         "parameters": [
           {
@@ -2452,7 +2550,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
       }
     },
     "/v1/tenants/{id}/memberships": {
@@ -2460,7 +2559,7 @@
         "tags": [
           "memberships"
         ],
-        "summary": "`GET /v1/tenants/{id}/memberships?active=`",
+        "summary": "Lists a tenant's memberships.",
         "operationId": "list_memberships",
         "parameters": [
           {
@@ -2504,7 +2603,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
       }
     },
     "/v1/tenants/{id}/roles": {
@@ -2512,6 +2612,7 @@
         "tags": [
           "roles"
         ],
+        "summary": "Lists a tenant's roles.",
         "operationId": "list_roles",
         "parameters": [
           {
@@ -2547,7 +2648,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       }
     },
     "/v1/tenants/{id}/roles/{key}": {
@@ -2555,6 +2657,7 @@
         "tags": [
           "roles"
         ],
+        "summary": "Gets a role.",
         "operationId": "get_role",
         "parameters": [
           {
@@ -2595,13 +2698,15 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       },
       "put": {
         "tags": [
           "roles"
         ],
-        "summary": "`PUT /v1/tenants/{tenant}/roles/{key}`: creates or replaces a role.\nRoles of the root tenant are global roles.",
+        "summary": "Creates or replaces a role.",
+        "description": "Roles of the root tenant are global roles.",
         "operationId": "put_role",
         "parameters": [
           {
@@ -2652,12 +2757,14 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       },
       "delete": {
         "tags": [
           "roles"
         ],
+        "summary": "Deletes a role.",
         "operationId": "delete_role",
         "parameters": [
           {
@@ -2698,7 +2805,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       }
     },
     "/v1/tenants/{id}/shares": {
@@ -2706,7 +2814,7 @@
         "tags": [
           "shares"
         ],
-        "summary": "`GET /v1/tenants/{id}/shares?side=owner|recipient`",
+        "summary": "Lists a tenant's shares.",
         "operationId": "list_shares",
         "parameters": [
           {
@@ -2748,7 +2856,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
       }
     },
     "/v1/tenants/{id}/state": {
@@ -2756,7 +2865,8 @@
         "tags": [
           "tenants"
         ],
-        "summary": "`PUT /v1/tenants/{id}/state`: leaving `active` ends every session\ntargeting the tenant.",
+        "summary": "Sets a tenant's state.",
+        "description": "Leaving `active` ends every session targeting the tenant.",
         "operationId": "set_tenant_state",
         "parameters": [
           {
@@ -2799,7 +2909,8 @@
               }
             }
           }
-        }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
       }
     }
   },
@@ -2896,6 +3007,7 @@
         "oneOf": [
           {
             "type": "object",
+            "title": "AssignmentTargetMembership",
             "description": "A tenant role, for a membership in the role's tenant.",
             "required": [
               "id",
@@ -2916,6 +3028,7 @@
           },
           {
             "type": "object",
+            "title": "AssignmentTargetSubject",
             "description": "A global role, for a subject directly.",
             "required": [
               "id",
@@ -3052,6 +3165,7 @@
         "oneOf": [
           {
             "type": "object",
+            "title": "CreateCredentialPassword",
             "description": "With either `password` or an Argon2id `password_hash`.",
             "required": [
               "identifier",
@@ -3097,6 +3211,7 @@
           },
           {
             "type": "object",
+            "title": "CreateCredentialSecretKey",
             "required": [
               "kind"
             ],
@@ -3128,6 +3243,7 @@
           },
           {
             "type": "object",
+            "title": "CreateCredentialEmailLink",
             "description": "Log in with a magic link sent to `identifier`, an email address.",
             "required": [
               "identifier",
@@ -3157,6 +3273,7 @@
           },
           {
             "type": "object",
+            "title": "CreateCredentialPhoneOtp",
             "description": "Log in with a code sent to `identifier`, an E.164 phone number.",
             "required": [
               "identifier",
@@ -3186,6 +3303,7 @@
           },
           {
             "type": "object",
+            "title": "CreateCredentialFederated",
             "description": "A workload identity at an identity provider: tokens it issues for\n`subject` sign the service principal in with the JWT bearer grant.",
             "required": [
               "provider",
@@ -3345,7 +3463,8 @@
         "description": "A created invite. Its token is never returned: it is only delivered to\nthe invited address, as a `delivery.requested` event.",
         "required": [
           "invite_id",
-          "expires_at"
+          "expires_at",
+          "cursor"
         ],
         "properties": {
           "cursor": {
@@ -3377,7 +3496,10 @@
           "kind",
           "identifier",
           "mfa_factors_required",
+          "replaces",
           "created_at",
+          "revoked_at",
+          "revoked_reason",
           "break_glass",
           "session_flags"
         ],
@@ -3484,6 +3606,7 @@
         "oneOf": [
           {
             "type": "object",
+            "title": "DecisionAllow",
             "required": [
               "decision"
             ],
@@ -3505,6 +3628,7 @@
           },
           {
             "type": "object",
+            "title": "DecisionDeny",
             "required": [
               "reason",
               "decision"
@@ -3523,6 +3647,7 @@
           },
           {
             "type": "object",
+            "title": "DecisionStepUp",
             "description": "The caller may succeed after re-authenticating as described.",
             "required": [
               "requirement",
@@ -3597,6 +3722,7 @@
         "oneOf": [
           {
             "type": "string",
+            "title": "DenyReasonInvalidToken",
             "description": "The token doesn't verify, or its session has ended or moved on.",
             "enum": [
               "invalid_token"
@@ -3604,12 +3730,14 @@
           },
           {
             "type": "string",
+            "title": "DenyReasonTokenKind",
             "enum": [
               "token_kind"
             ]
           },
           {
             "type": "object",
+            "title": "DenyReasonRestrictedSession",
             "description": "The session carries a restrictive flag the operation doesn't admit.",
             "required": [
               "restricted_session"
@@ -3631,6 +3759,7 @@
           },
           {
             "type": "object",
+            "title": "DenyReasonMissingFlag",
             "description": "The session lacks an assertive flag the operation requires.",
             "required": [
               "missing_flag"
@@ -3652,6 +3781,7 @@
           },
           {
             "type": "string",
+            "title": "DenyReasonNoTenant",
             "description": "Tenant or scope requirements, but the token targets no tenant.",
             "enum": [
               "no_tenant"
@@ -3659,6 +3789,7 @@
           },
           {
             "type": "object",
+            "title": "DenyReasonUnknownScope",
             "description": "A required registered scope was never recorded, has been removed,\nor isn't in the tenant the requirement names.",
             "required": [
               "unknown_scope"
@@ -3684,6 +3815,7 @@
           },
           {
             "type": "object",
+            "title": "DenyReasonMissingActions",
             "required": [
               "missing_actions"
             ],
@@ -3923,6 +4055,7 @@
         "oneOf": [
           {
             "type": "object",
+            "title": "GroupActions",
             "description": "Exactly these actions.",
             "required": [
               "actions"
@@ -3940,6 +4073,7 @@
           },
           {
             "type": "object",
+            "title": "GroupAllExceptPrefixes",
             "description": "Every catalog name (actions and groups) not starting with one of\nthese prefixes.",
             "required": [
               "all_except_prefixes"
@@ -4111,6 +4245,7 @@
         "oneOf": [
           {
             "type": "object",
+            "title": "ImportedCredentialMaterialPassword",
             "required": [
               "password_hash",
               "kind"
@@ -4130,6 +4265,7 @@
           },
           {
             "type": "object",
+            "title": "ImportedCredentialMaterialSecretKey",
             "description": "Replaces the slots of an existing active secret key with the same\nid and subject.",
             "required": [
               "a",
@@ -4153,6 +4289,7 @@
           },
           {
             "type": "object",
+            "title": "ImportedCredentialMaterialEmailLink",
             "required": [
               "kind"
             ],
@@ -4167,6 +4304,7 @@
           },
           {
             "type": "object",
+            "title": "ImportedCredentialMaterialPhoneOtp",
             "required": [
               "kind"
             ],
@@ -4212,6 +4350,7 @@
         "oneOf": [
           {
             "type": "object",
+            "title": "ImportedFactorMaterialTotp",
             "required": [
               "seed_base32",
               "kind"
@@ -4231,6 +4370,7 @@
           },
           {
             "type": "object",
+            "title": "ImportedFactorMaterialEmailCode",
             "required": [
               "email",
               "kind"
@@ -4400,6 +4540,7 @@
           "tenant_id",
           "state",
           "facts",
+          "managed_by",
           "created_at",
           "updated_at"
         ],
@@ -4509,6 +4650,7 @@
             "required": [
               "id",
               "has_secret",
+              "disabled_at",
               "created_at",
               "updated_at"
             ],
@@ -4650,7 +4792,8 @@
       "Passkey": {
         "type": "object",
         "required": [
-          "label"
+          "label",
+          "last_used_at"
         ],
         "properties": {
           "label": {
@@ -4737,6 +4880,7 @@
         "oneOf": [
           {
             "type": "object",
+            "title": "ReasonAllowed",
             "description": "A policy allows it at a level that counts, and wins there.",
             "required": [
               "by",
@@ -4764,6 +4908,7 @@
           },
           {
             "type": "object",
+            "title": "ReasonDenied",
             "description": "No level that counts grants it, and a deny wins at one of them.",
             "required": [
               "by",
@@ -4791,6 +4936,7 @@
           },
           {
             "type": "object",
+            "title": "ReasonNotHere",
             "description": "No level that counts grants it, but these scopes do.",
             "required": [
               "granted_at",
@@ -4813,6 +4959,7 @@
           },
           {
             "type": "object",
+            "title": "ReasonNoRule",
             "description": "No policy grants it anywhere.",
             "required": [
               "kind"
@@ -4828,6 +4975,7 @@
           },
           {
             "type": "object",
+            "title": "ReasonNoShare",
             "description": "The other tenant's scope isn't shared with this tenant.",
             "required": [
               "kind"
@@ -4843,6 +4991,7 @@
           },
           {
             "type": "object",
+            "title": "ReasonShareNotAccepted",
             "required": [
               "share",
               "kind"
@@ -4861,6 +5010,7 @@
           },
           {
             "type": "object",
+            "title": "ReasonShareNotValid",
             "required": [
               "share",
               "kind"
@@ -4893,6 +5043,7 @@
           },
           {
             "type": "object",
+            "title": "ReasonNotShared",
             "description": "The share doesn't allow the action.",
             "required": [
               "share",
@@ -4912,6 +5063,7 @@
           },
           {
             "type": "object",
+            "title": "ReasonNotHeldAtRecipient",
             "description": "The share allows it, but the subject doesn't hold it at the\nrecipient.",
             "required": [
               "share",
@@ -4939,6 +5091,7 @@
           },
           {
             "type": "object",
+            "title": "ReasonAllowedByShare",
             "required": [
               "share",
               "recipient",
@@ -5063,6 +5216,7 @@
         "oneOf": [
           {
             "type": "object",
+            "title": "RegisteredScopeChangeRecord",
             "description": "Records the scope in `tenant`, or replaces its containers.",
             "required": [
               "kind",
@@ -5096,6 +5250,7 @@
           },
           {
             "type": "object",
+            "title": "RegisteredScopeChangeRemove",
             "description": "Removes the scope. Removing an unknown or removed scope changes\nnothing.",
             "required": [
               "kind",
@@ -5334,6 +5489,7 @@
           "id",
           "tenant_id",
           "key",
+          "template",
           "priority",
           "metadata",
           "policies",
@@ -5394,6 +5550,8 @@
           "id",
           "role_id",
           "target",
+          "scope",
+          "managed_by",
           "created_at"
         ],
         "properties": {
@@ -5562,7 +5720,8 @@
         "type": "object",
         "description": "One slot of a secret key, without its secret.",
         "required": [
-          "created_at"
+          "created_at",
+          "expires_at"
         ],
         "properties": {
           "created_at": {
@@ -5624,18 +5783,26 @@
           "id",
           "subject_id",
           "credential_id",
+          "tenant_id",
+          "membership_id",
           "stage",
           "client_kind",
           "amr",
           "auth_time",
           "flags",
+          "impersonator_subject_id",
           "mfa_factors",
+          "parent_session_id",
+          "oidc_client_id",
           "oidc_scopes",
           "oidc_claims",
+          "identity_claims",
           "version",
           "created_at",
           "updated_at",
-          "expires_at"
+          "expires_at",
+          "revoked_at",
+          "revoked_reason"
         ],
         "properties": {
           "amr": {
@@ -5874,7 +6041,8 @@
       "SessionPage": {
         "type": "object",
         "required": [
-          "sessions"
+          "sessions",
+          "next"
         ],
         "properties": {
           "next": {
@@ -5926,6 +6094,9 @@
             "required": [
               "id",
               "state",
+              "accepted_at",
+              "revoked_at",
+              "revoked_by",
               "created_at",
               "updated_at"
             ],
@@ -6125,7 +6296,10 @@
         "required": [
           "kid",
           "algorithm",
-          "published_at"
+          "published_at",
+          "activated_at",
+          "retired_at",
+          "revoked_at"
         ],
         "properties": {
           "activated_at": {
@@ -6256,7 +6430,8 @@
       "SubjectPage": {
         "type": "object",
         "required": [
-          "subjects"
+          "subjects",
+          "next"
         ],
         "properties": {
           "next": {
@@ -6331,6 +6506,7 @@
         "type": "object",
         "required": [
           "id",
+          "parent_id",
           "state",
           "facts",
           "created_at",
@@ -6374,7 +6550,8 @@
       "TenantPage": {
         "type": "object",
         "required": [
-          "tenants"
+          "tenants",
+          "next"
         ],
         "properties": {
           "next": {
@@ -6481,7 +6658,10 @@
               "kind",
               "identifier",
               "mfa_factors_required",
+              "replaces",
               "created_at",
+              "revoked_at",
+              "revoked_reason",
               "break_glass",
               "session_flags"
             ],
@@ -6623,6 +6803,7 @@
               "tenant_id",
               "state",
               "facts",
+              "managed_by",
               "created_at",
               "updated_at"
             ],
@@ -6783,6 +6964,7 @@
               "id",
               "tenant_id",
               "key",
+              "template",
               "priority",
               "metadata",
               "policies",
@@ -6863,6 +7045,8 @@
               "id",
               "role_id",
               "target",
+              "scope",
+              "managed_by",
               "created_at"
             ],
             "properties": {
@@ -6930,6 +7114,9 @@
                 "required": [
                   "id",
                   "state",
+                  "accepted_at",
+                  "revoked_at",
+                  "revoked_by",
                   "created_at",
                   "updated_at"
                 ],
@@ -7108,6 +7295,7 @@
             "type": "object",
             "required": [
               "id",
+              "parent_id",
               "state",
               "facts",
               "created_at",

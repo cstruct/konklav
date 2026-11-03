@@ -55,8 +55,11 @@ pub struct Share {
     #[serde(flatten)]
     pub terms: ShareTerms,
     pub state: ShareState,
+    #[schema(required)]
     pub accepted_at: Option<DateTime<Utc>>,
+    #[schema(required)]
     pub revoked_at: Option<DateTime<Utc>>,
+    #[schema(required)]
     pub revoked_by: Option<ShareSide>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

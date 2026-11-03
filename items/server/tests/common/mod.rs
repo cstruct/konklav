@@ -2,6 +2,8 @@
 
 #![allow(dead_code)]
 
+pub mod openapi;
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -268,7 +270,7 @@ impl TestApp {
         headers: &[(&str, &str)],
         body: Option<Value>,
     ) -> Reply {
-        let mut request = Request::builder().method(method).uri(uri);
+        let mut request = Request::builder().method(method.clone()).uri(uri);
         if let Some(peer) = peer {
             request = request.extension(axum::extract::ConnectInfo(peer));
         }
@@ -293,6 +295,7 @@ impl TestApp {
             serde_json::from_slice(&bytes)
                 .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()))
         };
+        openapi::check(&method, uri, status, &body);
         Reply {
             status,
             headers,

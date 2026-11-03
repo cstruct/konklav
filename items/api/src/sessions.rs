@@ -35,20 +35,25 @@ pub struct Session {
     pub id: SessionId,
     pub subject_id: SubjectId,
     pub credential_id: CredentialId,
+    #[schema(required)]
     pub tenant_id: Option<TenantId>,
+    #[schema(required)]
     pub membership_id: Option<MembershipId>,
     pub stage: SessionStage,
     pub client_kind: ClientKind,
     pub amr: Vec<String>,
     pub auth_time: DateTime<Utc>,
     pub flags: Vec<String>,
+    #[schema(required)]
     pub impersonator_subject_id: Option<SubjectId>,
     /// MFA factors verified in this session.
     pub mfa_factors: Vec<String>,
     /// The session this one was started from (impersonation); ending the
     /// parent ends this one.
+    #[schema(required)]
     pub parent_session_id: Option<SessionId>,
     /// The OIDC client the session was started for, if any.
+    #[schema(required)]
     pub oidc_client_id: Option<String>,
     /// The scopes granted to that client.
     pub oidc_scopes: Vec<String>,
@@ -57,12 +62,15 @@ pub struct Session {
     /// Claims passed from the identity provider the session was started
     /// through, by scope, until the session ends.
     #[schema(value_type = Option<Object>)]
+    #[schema(required)]
     pub identity_claims: Option<serde_json::Value>,
     pub version: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+    #[schema(required)]
     pub revoked_at: Option<DateTime<Utc>>,
+    #[schema(required)]
     pub revoked_reason: Option<String>,
 }
 
@@ -82,6 +90,7 @@ pub struct SessionQuery {
 pub struct SessionPage {
     pub sessions: Vec<Session>,
     /// Pass as `before` to get the next page.
+    #[schema(required)]
     pub next: Option<SessionId>,
 }
 

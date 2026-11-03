@@ -51,17 +51,21 @@ pub struct ImportedSecretSlot {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ImportedCredentialMaterial {
+    #[schema(title = "ImportedCredentialMaterialPassword")]
     Password {
         /// The password's hash, an Argon2 PHC string; never the password.
         password_hash: String,
     },
     /// Replaces the slots of an existing active secret key with the same
     /// id and subject.
+    #[schema(title = "ImportedCredentialMaterialSecretKey")]
     SecretKey {
         a: ImportedSecretSlot,
         b: ImportedSecretSlot,
     },
+    #[schema(title = "ImportedCredentialMaterialEmailLink")]
     EmailLink,
+    #[schema(title = "ImportedCredentialMaterialPhoneOtp")]
     PhoneOtp,
 }
 
@@ -88,13 +92,13 @@ pub struct ImportCredentials {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ImportedFactorMaterial {
+    #[schema(title = "ImportedFactorMaterialTotp")]
     Totp {
         /// The plaintext seed, base32; Konklav encrypts it on arrival.
         seed_base32: String,
     },
-    EmailCode {
-        email: String,
-    },
+    #[schema(title = "ImportedFactorMaterialEmailCode")]
+    EmailCode { email: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]

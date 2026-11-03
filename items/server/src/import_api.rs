@@ -35,7 +35,9 @@ fn count(result: &mut Imported, outcome: Outcome) {
     }
 }
 
-/// `POST /v1/import/subjects`
+/// Imports subjects.
+///
+/// Imports subjects from another system, all or nothing.
 #[utoipa::path(post, path = "/import/subjects", tag = "import",
     request_body = ImportSubjects,
     responses((status = 200, body = Imported)))]
@@ -61,7 +63,10 @@ async fn import_subjects(
     Ok(Json(result))
 }
 
-/// `POST /v1/import/credentials`
+/// Imports credentials.
+///
+/// Imports credentials from another system, with their existing hashes or
+/// secrets, all or nothing.
 #[utoipa::path(post, path = "/import/credentials", tag = "import",
     request_body = ImportCredentials,
     responses((status = 200, body = Imported)))]
@@ -86,8 +91,10 @@ async fn import_credentials(
     Ok(Json(result))
 }
 
-/// `POST /v1/import/mfa-factors`: TOTP seeds arrive in plaintext over the
-/// control plane and are encrypted before the transaction opens.
+/// Imports MFA factors.
+///
+/// TOTP seeds arrive in plaintext and are encrypted before they are stored. All
+/// or nothing.
 #[utoipa::path(post, path = "/import/mfa-factors", tag = "import",
     request_body = ImportFactors,
     responses((status = 200, body = Imported)))]
@@ -116,7 +123,9 @@ async fn import_factors(
     Ok(Json(result))
 }
 
-/// `POST /v1/import/sessions`
+/// Imports sessions.
+///
+/// Imports sessions from another system, all or nothing.
 #[utoipa::path(post, path = "/import/sessions", tag = "import",
     request_body = ImportSessions,
     responses((status = 200, body = Imported)))]

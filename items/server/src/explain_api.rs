@@ -164,7 +164,10 @@ async fn check_reach(
     Ok(())
 }
 
-/// `POST /v1/subjects/{id}/explain-decision`
+/// Explains an authorization decision.
+///
+/// Evaluates requirements for the subject as a relying system would, and
+/// explains the outcome.
 // r[impl authz.explain.decision]
 // r[impl authz.explain.checks]
 #[utoipa::path(post, path = "/subjects/{id}/explain-decision", tag = "explain",

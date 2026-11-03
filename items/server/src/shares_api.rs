@@ -35,8 +35,10 @@ fn share_id(value: &str) -> Result<ShareId, ApiError> {
     parse_id(value, "share id")
 }
 
-/// `PUT /v1/shares/{id}`: offers a share, or changes the terms of one that
-/// isn't revoked, which offers it again.
+/// Offers a share or changes its terms.
+///
+/// Changing the terms of a share that isn't revoked offers it again, so the
+/// recipient must accept it again.
 // r[impl authz.share.shape]
 // r[impl authz.share.attributes]
 #[utoipa::path(put, path = "/shares/{id}", operation_id = "offer_share", tag = "shares",
@@ -96,6 +98,7 @@ async fn offer(
     }))
 }
 
+/// Gets a share.
 #[utoipa::path(get, path = "/shares/{id}", tag = "shares",
     params(("id" = ShareId, Path)),
     responses((status = 200, body = Share)))]
@@ -112,7 +115,9 @@ async fn get_share(
     )))
 }
 
-/// `POST /v1/shares/{id}/accept`, for the recipient tenant.
+/// Accepts a share.
+///
+/// For the recipient tenant.
 // r[impl authz.share.acceptance]
 #[utoipa::path(post, path = "/shares/{id}/accept", operation_id = "accept_share", tag = "shares",
     params(("id" = ShareId, Path)),
@@ -137,7 +142,9 @@ async fn accept(
     }))
 }
 
-/// `POST /v1/shares/{id}/revoke`, by either side.
+/// Revokes a share.
+///
+/// Either side can revoke it.
 // r[impl authz.share.acceptance]
 #[utoipa::path(post, path = "/shares/{id}/revoke", operation_id = "revoke_share", tag = "shares",
     params(("id" = ShareId, Path)),
@@ -164,7 +171,7 @@ async fn revoke(
     }))
 }
 
-/// `GET /v1/tenants/{id}/shares?side=owner|recipient`
+/// Lists a tenant's shares.
 #[utoipa::path(get, path = "/tenants/{id}/shares", operation_id = "list_shares", tag = "shares",
     params(("id" = String, Path, description = "The tenant: a UUID or `root`"), ShareQuery),
     responses((status = 200, body = ShareList)))]

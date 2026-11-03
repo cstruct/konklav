@@ -40,6 +40,7 @@ pub struct SubjectQuery {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SubjectPage {
     pub subjects: Vec<Subject>,
+    #[schema(required)]
     pub next: Option<SubjectId>,
 }
 

@@ -35,5 +35,6 @@ fn default_hours() -> i64 {
 pub struct CreatedInvite {
     pub invite_id: uuid::Uuid,
     pub expires_at: DateTime<Utc>,
+    #[schema(required)]
     pub cursor: Option<Cursor>,
 }

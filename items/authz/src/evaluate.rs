@@ -75,27 +75,25 @@ pub struct Requirements {
 #[serde(rename_all = "snake_case")]
 pub enum DenyReason {
     /// The token doesn't verify, or its session has ended or moved on.
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonInvalidToken"))]
     InvalidToken,
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonTokenKind"))]
     TokenKind,
     /// The session carries a restrictive flag the operation doesn't admit.
-    RestrictedSession {
-        flag: String,
-    },
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonRestrictedSession"))]
+    RestrictedSession { flag: String },
     /// The session lacks an assertive flag the operation requires.
-    MissingFlag {
-        flag: String,
-    },
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonMissingFlag"))]
+    MissingFlag { flag: String },
     /// Tenant or scope requirements, but the token targets no tenant.
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonNoTenant"))]
     NoTenant,
     /// A required registered scope was never recorded, has been removed,
     /// or isn't in the tenant the requirement names.
-    UnknownScope {
-        kind: String,
-        id: String,
-    },
-    MissingActions {
-        actions: BTreeSet<String>,
-    },
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonUnknownScope"))]
+    UnknownScope { kind: String, id: String },
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonMissingActions"))]
+    MissingActions { actions: BTreeSet<String> },
 }
 
 /// A share's attributes, for the relying system to apply to an allowed
@@ -117,18 +115,17 @@ pub struct Obligation {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "decision", rename_all = "snake_case")]
 pub enum Decision {
+    #[cfg_attr(feature = "openapi", schema(title = "DecisionAllow"))]
     Allow {
         /// One per share the decision relied on.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         obligations: Vec<Obligation>,
     },
-    Deny {
-        reason: DenyReason,
-    },
+    #[cfg_attr(feature = "openapi", schema(title = "DecisionDeny"))]
+    Deny { reason: DenyReason },
     /// The caller may succeed after re-authenticating as described.
-    StepUp {
-        requirement: StepUp,
-    },
+    #[cfg_attr(feature = "openapi", schema(title = "DecisionStepUp"))]
+    StepUp { requirement: StepUp },
 }
 
 impl Decision {

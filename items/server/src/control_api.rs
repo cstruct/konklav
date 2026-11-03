@@ -203,7 +203,7 @@ fn last_cursor(revoked: &[(Session, Cursor)]) -> Option<Cursor> {
 
 // --- Subjects ---------------------------------------------------------------
 
-/// `GET /v1/subjects?kind=&identifier=&before=&limit=`
+/// Lists subjects.
 #[utoipa::path(get, path = "/subjects", tag = "subjects", params(SubjectQuery),
     responses((status = 200, body = SubjectPage)))]
 async fn list_subjects(
@@ -229,7 +229,10 @@ async fn list_subjects(
     }))
 }
 
-/// `PUT /v1/subjects/{id}`: idempotent on the id.
+/// Creates a subject.
+///
+/// Idempotent on the caller-chosen id: repeating the request with the same
+/// content returns 200.
 #[utoipa::path(put, path = "/subjects/{id}", tag = "subjects",
     params(("id" = SubjectId, Path, description = "Chosen by the caller")),
     request_body = CreateSubject,
@@ -254,6 +257,7 @@ async fn create_subject(
     Ok((status, Json(transport::subject(&subject))).into_response())
 }
 
+/// Gets a subject.
 #[utoipa::path(get, path = "/subjects/{id}", tag = "subjects", params(("id" = SubjectId, Path)),
     responses((status = 200, body = SubjectDetail)))]
 async fn get_subject(
@@ -307,7 +311,9 @@ async fn set_subject_state(
     }))
 }
 
-/// Disables the subject and ends its sessions.
+/// Disables a subject.
+///
+/// The subject's sessions end.
 #[utoipa::path(post, path = "/subjects/{id}/disable", tag = "subjects", params(("id" = SubjectId, Path)),
     responses((status = 200, body = Written<api::Subject>)))]
 async fn disable_subject(
@@ -318,6 +324,7 @@ async fn disable_subject(
     set_subject_state(&state, operator, &id, SubjectState::Disabled).await
 }
 
+/// Enables a disabled subject.
 #[utoipa::path(post, path = "/subjects/{id}/enable", tag = "subjects", params(("id" = SubjectId, Path)),
     responses((status = 200, body = Written<api::Subject>)))]
 async fn enable_subject(
@@ -383,7 +390,9 @@ async fn password_hash_for(
     }
 }
 
-/// `POST /v1/subjects/{id}/credentials`
+/// Creates a credential for a subject.
+///
+/// Generated secrets are shown only once.
 // r[impl credential.secret-key.hashed]
 #[utoipa::path(post, path = "/subjects/{id}/credentials", tag = "credentials",
     params(("id" = SubjectId, Path)),
@@ -522,8 +531,9 @@ fn passwordless_credential(
     })
 }
 
-/// `POST /v1/credentials/{id}/revoke`: revokes the credential and ends the
-/// sessions established with it.
+/// Revokes a credential.
+///
+/// Sessions established with the credential end.
 // r[impl credential.revocation-ends-sessions]
 #[utoipa::path(post, path = "/credentials/{id}/revoke", tag = "credentials",
     params(("id" = CredentialId, Path)),
@@ -567,9 +577,10 @@ async fn revoke_credential(
     }))
 }
 
-/// `POST /v1/credentials/{id}/replace`: replaces a password with a new
-/// credential that records what it replaces. Sessions established with the
-/// old one end.
+/// Replaces a password.
+///
+/// Creates a new password credential that records the one it replaces. Sessions
+/// established with the old one end.
 #[utoipa::path(post, path = "/credentials/{id}/replace", tag = "credentials",
     params(("id" = CredentialId, Path, description = "The password to replace")),
     request_body = ReplacePassword,
@@ -633,9 +644,10 @@ async fn replace_password(
     ))
 }
 
-/// `POST /v1/credentials/{id}/slots/{slot}/rotate`: sets a new secret for
-/// one slot of a secret key. The other slot keeps working, so clients can
-/// switch over without downtime.
+/// Rotates one slot of a secret key.
+///
+/// Sets a new secret for the slot. The other slot keeps working, so clients can
+/// switch over without downtime. The new secret is shown only once.
 #[utoipa::path(post, path = "/credentials/{id}/slots/{slot}/rotate", tag = "credentials",
     params(("id" = CredentialId, Path), ("slot" = api::SecretSlot, Path)),
     request_body(content = Option<RotateSlot>, description = "Optional; without it the new secret never expires"),
@@ -679,7 +691,7 @@ async fn rotate_secret_slot(
 
 // --- Sessions ---------------------------------------------------------------
 
-/// `GET /v1/sessions`
+/// Lists sessions.
 // r[impl session.admin]
 #[utoipa::path(get, path = "/sessions", tag = "sessions", params(SessionQuery),
     responses((status = 200, body = SessionPage)))]
@@ -705,6 +717,7 @@ async fn list_sessions(
     }))
 }
 
+/// Gets a session.
 #[utoipa::path(get, path = "/sessions/{id}", tag = "sessions", params(("id" = SessionId, Path)),
     responses((status = 200, body = api::Session)))]
 async fn get_session(
@@ -720,7 +733,7 @@ async fn get_session(
     )))
 }
 
-/// `POST /v1/sessions/revoke`
+/// Revokes the sessions matching a filter.
 #[utoipa::path(post, path = "/sessions/revoke", tag = "sessions",
     request_body = RevokeSessions,
     responses((status = 200, body = Written<RevokedSessions>)))]
@@ -749,6 +762,7 @@ async fn revoke_sessions(
 
 // --- Signing keys -----------------------------------------------------------
 
+/// Lists signing keys.
 #[utoipa::path(get, path = "/signing-keys", tag = "signing-keys",
     responses((status = 200, body = Vec<api::SigningKey>)))]
 async fn list_signing_keys(
@@ -764,7 +778,9 @@ async fn list_signing_keys(
     ))
 }
 
-/// `POST /v1/signing-keys/{kid}/revoke`: break-glass revocation.
+/// Revokes a signing key.
+///
+/// For break-glass use, when a key is compromised.
 #[utoipa::path(post, path = "/signing-keys/{kid}/revoke", tag = "signing-keys",
     params(("kid" = String, Path)),
     responses((status = 200, body = RevokedKey)))]
@@ -816,8 +832,9 @@ fn workload_credential(
     })
 }
 
-/// `PUT /v1/credentials/{id}/session-flags`: sets the restrictive session
-/// flags every session started with the credential carries.
+/// Sets a credential's session flags.
+///
+/// Every session started with the credential carries these restrictive flags.
 #[utoipa::path(put, path = "/credentials/{id}/session-flags", tag = "credentials",
     params(("id" = CredentialId, Path)),
     request_body = SessionFlags,
@@ -843,9 +860,10 @@ async fn set_session_flags(
     )))
 }
 
-/// `PUT /v1/credentials/{id}/break-glass`: marks a local password or secret
-/// key as a break-glass credential, whose every use appends
-/// `break_glass.used`.
+/// Marks a credential as break-glass.
+///
+/// Only local passwords and secret keys can be break-glass credentials. Every
+/// use of one appends `break_glass.used`.
 #[utoipa::path(put, path = "/credentials/{id}/break-glass", tag = "credentials",
     params(("id" = CredentialId, Path)),
     request_body = BreakGlass,

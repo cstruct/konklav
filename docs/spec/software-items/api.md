@@ -23,3 +23,15 @@ r[item.api.document]
 The server MUST generate the control-plane surface's API document from its
 routes and `konklav-api`'s types, and the copy committed at
 `items/server/openapi/control-plane.json` MUST match what the code generates.
+The document is shipped in the repository, not served by the control
+listener.
+
+r[item.api.capabilities]
+Every operation in the control-plane API document MUST name the capability
+its route's guard requires, as `x-konklav-capability`, taken from the same
+list that guards the route.
+
+r[item.api.responses]
+The server's tests MUST check the control-plane responses they receive against
+the committed API document, failing on a body that doesn't match the
+operation's schema for its status or on a status the document doesn't list.

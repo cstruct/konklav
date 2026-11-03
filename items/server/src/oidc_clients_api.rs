@@ -23,6 +23,7 @@ pub(crate) fn oidc_clients() -> OpenApiRouter<AppState> {
         .routes(routes!(new_secret))
 }
 
+/// Lists OIDC clients.
 #[utoipa::path(get, path = "/oidc/clients", operation_id = "list_oidc_clients", tag = "oidc-clients",
     responses((status = 200, body = Vec<api::OidcClient>)))]
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<api::OidcClient>>, ApiError> {
@@ -36,6 +37,7 @@ async fn list(State(state): State<AppState>) -> Result<Json<Vec<api::OidcClient>
     ))
 }
 
+/// Gets an OIDC client.
 #[utoipa::path(get, path = "/oidc/clients/{id}", operation_id = "get_oidc_client", tag = "oidc-clients",
     params(("id" = String, Path, description = "The client id")),
     responses((status = 200, body = api::OidcClient)))]
@@ -50,8 +52,9 @@ async fn get_client(
         .map_err(|_| ApiError::not_found("OIDC client"))
 }
 
-/// `PUT /v1/oidc/clients/{id}`: registers or replaces a client, enabling it
-/// again if it was disabled.
+/// Registers or replaces an OIDC client.
+///
+/// A disabled client is enabled again.
 #[utoipa::path(put, path = "/oidc/clients/{id}", operation_id = "put_oidc_client", tag = "oidc-clients",
     params(("id" = String, Path, description = "The client id, chosen by the caller")),
     request_body = OidcClientDefinition,
@@ -167,8 +170,9 @@ async fn bind_service_subject(
     Ok(())
 }
 
-/// `DELETE /v1/oidc/clients/{id}`: disables the client and revokes its
-/// sessions. The registration stays, as history.
+/// Disables an OIDC client.
+///
+/// The client's sessions are revoked. The registration stays, as history.
 #[utoipa::path(delete, path = "/oidc/clients/{id}", operation_id = "disable_oidc_client", tag = "oidc-clients",
     params(("id" = String, Path, description = "The client id")),
     responses((status = 200, description = "Disabled; the registration stays", body = api::OidcClient)))]
@@ -190,8 +194,10 @@ async fn disable_client(
     .await
 }
 
-/// `POST /v1/oidc/clients/{id}/secret`: a new secret for a confidential
-/// client, shown only once. The previous secret stops working.
+/// Issues a new OIDC client secret.
+///
+/// Only for confidential clients. The secret is shown only once, and the
+/// previous one stops working.
 #[utoipa::path(post, path = "/oidc/clients/{id}/secret", operation_id = "new_oidc_client_secret", tag = "oidc-clients",
     params(("id" = String, Path, description = "The client id")),
     responses((status = 200, description = "The new secret, shown only once", body = OidcClientSecret)))]

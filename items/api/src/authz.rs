@@ -8,8 +8,10 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case", tag = "type", content = "id")]
 pub enum AssignmentTarget {
     /// A tenant role, for a membership in the role's tenant.
+    #[schema(title = "AssignmentTargetMembership")]
     Membership(MembershipId),
     /// A global role, for a subject directly.
+    #[schema(title = "AssignmentTargetSubject")]
     Subject(SubjectId),
 }
 
@@ -18,8 +20,10 @@ pub struct RoleAssignment {
     pub id: uuid::Uuid,
     pub role_id: uuid::Uuid,
     pub target: AssignmentTarget,
+    #[schema(required)]
     pub scope: Option<Scope>,
     /// The identity provider whose claim mapping created it, if any.
+    #[schema(required)]
     pub managed_by: Option<String>,
     pub created_at: DateTime<Utc>,
 }

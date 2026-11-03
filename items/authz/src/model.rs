@@ -80,9 +80,11 @@ impl RegisteredScopes {
 #[serde(rename_all = "snake_case")]
 pub enum Group {
     /// Exactly these actions.
+    #[cfg_attr(feature = "openapi", schema(title = "GroupActions"))]
     Actions(BTreeSet<String>),
     /// Every catalog name (actions and groups) not starting with one of
     /// these prefixes.
+    #[cfg_attr(feature = "openapi", schema(title = "GroupAllExceptPrefixes"))]
     AllExceptPrefixes(Vec<String>),
 }
 
