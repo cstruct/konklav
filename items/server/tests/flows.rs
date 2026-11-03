@@ -660,6 +660,104 @@ async fn invites_can_name_the_membership_they_create() {
     assert_eq!(conflicting.code(), "CONFLICT");
 }
 
+// r[verify authn.invite.revoke]
+#[tokio::test(flavor = "multi_thread")]
+async fn revoked_invites_fail_like_expired_ones() {
+    let app = TestApp::new().await;
+    let mailer = mailer(&app).await;
+    let tenant = uuid::Uuid::now_v7();
+    app.control(
+        Method::PUT,
+        &format!("/v1/tenants/{tenant}"),
+        Some(json!({})),
+    )
+    .await;
+    let invite = |email: &'static str| {
+        let app = &app;
+        async move {
+            let created = app
+                .control(
+                    Method::POST,
+                    "/v1/invites",
+                    Some(json!({"email": email, "tenant": tenant})),
+                )
+                .await;
+            assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+            created.body["invite_id"].as_str().unwrap().to_owned()
+        }
+    };
+    let redeem = |token: String| {
+        let app = &app;
+        async move {
+            app.post(
+                "/v1/invites/redeem",
+                json!({"token": token, "password": "my new password"}),
+            )
+            .await
+        }
+    };
+
+    let id = invite("revoked@example.com").await;
+    let token = delivered(&app, &mailer, "revoked@example.com").await["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let pending = app
+        .control(Method::GET, &format!("/v1/invites/{id}"), None)
+        .await;
+    assert_eq!(pending.status, StatusCode::OK, "{:?}", pending.body);
+    assert_eq!(pending.body["state"], "pending");
+    assert_eq!(pending.body["email"], "revoked@example.com");
+    assert_eq!(pending.body["tenant"], json!(tenant.to_string()));
+    assert!(!pending.body.to_string().contains("token"));
+
+    let revoke = || {
+        let app = &app;
+        let id = id.clone();
+        async move {
+            app.control(Method::POST, &format!("/v1/invites/{id}/revoke"), None)
+                .await
+        }
+    };
+    let revoked = revoke().await;
+    assert_eq!(revoked.status, StatusCode::OK, "{:?}", revoked.body);
+    assert_eq!(revoked.body["state"], "revoked");
+    assert_eq!(
+        revoke().await.body,
+        revoked.body,
+        "revoking again changes nothing"
+    );
+
+    let refused = redeem(token).await;
+    let unknown = redeem(format!("{}.not-a-secret", uuid::Uuid::now_v7())).await;
+    assert_eq!(refused.code(), "INVALID_CREDENTIALS");
+    assert_eq!(refused.body, unknown.body, "says nothing about the revoke");
+
+    let id = invite("redeemed@example.com").await;
+    let token = delivered(&app, &mailer, "redeemed@example.com").await["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(redeem(token).await.status, StatusCode::OK);
+    let redeemed = app
+        .control(Method::POST, &format!("/v1/invites/{id}/revoke"), None)
+        .await;
+    assert_eq!(redeemed.code(), "CONFLICT");
+    let read = app
+        .control(Method::GET, &format!("/v1/invites/{id}"), None)
+        .await;
+    assert_eq!(read.body["state"], "redeemed");
+
+    let missing = app
+        .control(
+            Method::GET,
+            &format!("/v1/invites/{}", uuid::Uuid::now_v7()),
+            None,
+        )
+        .await;
+    assert_eq!(missing.code(), "NOT_FOUND");
+}
+
 // r[verify authn.impersonation.actor-chain]
 // r[verify authn.impersonation.time-bounded]
 // r[verify token.access.actor-chain]

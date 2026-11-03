@@ -37,7 +37,7 @@ pub use catalog::{
 pub use credentials::{
     BreakGlass, CreateCredential, CreatedCredential, Credential, CredentialKind, Passkey,
     ReplacePassword, RevokeCredential, RotateSlot, RotatedSlot, SecretKeySlot, SecretKeySlots,
-    SecretKeys, SecretSlot, SessionFlags,
+    SecretKeys, SecretSlot, SessionFlags, SlotExpiry,
 };
 pub use error::{ErrorBody, ErrorCode, ErrorResponse};
 pub use explain::{ExplainDecision, ExplainQuery};
@@ -46,7 +46,7 @@ pub use import::{
     ImportedCredentialMaterial, ImportedFactor, ImportedFactorMaterial, ImportedSecretSlot,
     ImportedSession, ImportedSubject,
 };
-pub use invites::{CreateInvite, CreatedInvite};
+pub use invites::{CreateInvite, CreatedInvite, Invite, InviteState};
 pub use keys::{RevokedKey, SigningKey};
 pub use konklav_authz::{
     ActionExplanation, Check, Contribution, Decision, DecisionExplanation, DenyReason, Effect,
@@ -67,7 +67,8 @@ pub use sessions::{
 };
 pub use shares::{RevokeShare, Share, ShareList, ShareQuery, ShareSide, ShareState, ShareTerms};
 pub use subjects::{
-    CreateSubject, Subject, SubjectDetail, SubjectKind, SubjectPage, SubjectQuery, SubjectState,
+    CreateSubject, MfaFactor, MfaFactorKind, Subject, SubjectDetail, SubjectKind, SubjectPage,
+    SubjectQuery, SubjectState,
 };
 pub use templates::{PutTemplate, Template};
 pub use tenancy::{

@@ -16,7 +16,8 @@ use diesel_async::AsyncConnection;
 use konklav_api::{
     self as api, BreakGlass, CreateCredential, CreateSubject, CreatedCredential, ReplacePassword,
     RevokeCredential, RevokeSessions, RevokedKey, RevokedSessions, RotateSlot, RotatedSlot,
-    SecretKeys, SessionFlags, SessionPage, SessionQuery, SubjectDetail, SubjectPage, SubjectQuery,
+    SecretKeys, SessionFlags, SessionPage, SessionQuery, SlotExpiry, SubjectDetail, SubjectPage,
+    SubjectQuery,
 };
 use konklav_authn::{PasswordCheck, PasswordHasher, generate_secret};
 use konklav_core::{CredentialId, Cursor, SessionId, SubjectId};
@@ -26,7 +27,7 @@ use konklav_store::credentials::{
 };
 use konklav_store::sessions::{self, Session, SessionFilter};
 use konklav_store::subjects::{self, Subject, SubjectKind, SubjectState};
-use konklav_store::{StoreError, signing_keys};
+use konklav_store::{StoreError, mfa, signing_keys};
 use subtle::ConstantTimeEq;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -52,6 +53,7 @@ pub(crate) fn subjects() -> OpenApiRouter<AppState> {
         .routes(routes!(set_break_glass))
         .routes(routes!(set_session_flags))
         .routes(routes!(rotate_secret_slot))
+        .routes(routes!(set_slot_expiry))
 }
 
 /// Sessions, described like [`subjects`].
@@ -294,9 +296,11 @@ async fn get_subject(db: Db, Path(id): Path<String>) -> Result<Json<SubjectDetai
         .await
         .map_err(|_| ApiError::not_found("subject"))?;
     let credentials = credentials::list_for_subject(&mut conn, id).await?;
+    let factors = mfa::list(&mut conn, id).await?;
     Ok(Json(SubjectDetail {
         subject: transport::subject(&subject),
         credentials: credentials.into_iter().map(transport::credential).collect(),
+        mfa_factors: factors.iter().map(transport::mfa_factor).collect(),
     }))
 }
 
@@ -846,11 +850,7 @@ async fn rotate_secret_slot(
     body: Option<ApiJson<RotateSlot>>,
 ) -> Result<Json<RotatedSlot>, ApiError> {
     let id: CredentialId = parse_id(&id, "credential id")?;
-    let slot = match slot.as_str() {
-        "a" => SecretSlot::A,
-        "b" => SecretSlot::B,
-        _ => return Err(ApiError::invalid_request("slot must be a or b")),
-    };
+    let slot = parse_slot(&slot)?;
     let expires_at = body.and_then(|ApiJson(body)| body.expires_at);
     let (secret, slot_data) = new_slot(&state, expires_at).await?;
     let mut conn = db.get().await?;
@@ -875,6 +875,54 @@ async fn rotate_secret_slot(
         slot: transport::secret_slot(slot),
         secret_key: format!("{id}.{secret}"),
     }))
+}
+
+/// Sets when one slot of a secret key expires.
+///
+/// The slot keeps its secret; `null` makes it never expire. An expiry in the
+/// past makes the slot's secret stop working at once.
+// r[impl credential.secret-key.expiry]
+#[utoipa::path(put, path = "/credentials/{id}/slots/{slot}/expiry", tag = "credentials",
+    params(("id" = CredentialId, Path), ("slot" = api::SecretSlot, Path)),
+    request_body = SlotExpiry,
+    responses((status = 200, body = api::Credential)))]
+async fn set_slot_expiry(
+    db: Db,
+    Extension(operator): Extension<Operator>,
+    Path((id, slot)): Path<(String, String)>,
+    ApiJson(body): ApiJson<SlotExpiry>,
+) -> Result<Json<api::Credential>, ApiError> {
+    let id: CredentialId = parse_id(&id, "credential id")?;
+    let slot = parse_slot(&slot)?;
+    let mut conn = db.get().await?;
+    let credential = conn
+        .transaction::<_, ApiError, _>(async |conn| {
+            let credential = credentials::get_for_update(conn, id)
+                .await
+                .map_err(|_| ApiError::not_found("credential"))?;
+            operator.may_change(conn, credential.subject_id).await?;
+            let CredentialData::SecretKey(mut data) = credential.data.clone() else {
+                return Err(ApiError::invalid_request("only secret keys have slots"));
+            };
+            if !credential.is_active() {
+                return Err(ApiError::invalid_request("the credential is revoked"));
+            }
+            let mut slot_data = data.slot(slot).clone();
+            slot_data.expires_at = body.expires_at;
+            data.set(slot, slot_data);
+            credentials::set_data(conn, id, &CredentialData::SecretKey(data)).await?;
+            Ok(credentials::get(conn, id).await?)
+        })
+        .await?;
+    Ok(Json(transport::credential(credential)))
+}
+
+fn parse_slot(slot: &str) -> Result<SecretSlot, ApiError> {
+    match slot {
+        "a" => Ok(SecretSlot::A),
+        "b" => Ok(SecretSlot::B),
+        _ => Err(ApiError::invalid_request("slot must be a or b")),
+    }
 }
 
 // --- Sessions ---------------------------------------------------------------

@@ -476,6 +476,96 @@ async fn service_principals_log_in_with_either_secret_key_slot() {
     assert_eq!(wrong.code(), "INVALID_CREDENTIALS");
 }
 
+// r[verify credential.secret-key.expiry]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slots_expiry_changes_without_a_new_secret() {
+    let app = TestApp::new().await;
+    let id = uuid::Uuid::now_v7();
+    app.control(
+        Method::PUT,
+        &format!("/v1/subjects/{id}"),
+        Some(json!({"kind": "service"})),
+    )
+    .await;
+    let created = app
+        .control(
+            Method::POST,
+            &format!("/v1/subjects/{id}/credentials"),
+            Some(json!({"kind": "secret_key"})),
+        )
+        .await;
+    let key_id = created.body["credential"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let secret = |slot: &str| {
+        let presented = created.body["secret_keys"][slot].as_str().unwrap();
+        presented.split_once('.').unwrap().1.to_owned()
+    };
+    let (a, b) = (secret("a"), secret("b"));
+    let login = |secret: String| {
+        let key_id = key_id.clone();
+        let app = &app;
+        async move {
+            app.post(
+                "/v1/login/secret-key",
+                json!({"key_id": key_id, "secret": secret}),
+            )
+            .await
+        }
+    };
+    let set = |slot: &'static str, expires_at: serde_json::Value| {
+        let key_id = key_id.clone();
+        let app = &app;
+        async move {
+            app.control(
+                Method::PUT,
+                &format!("/v1/credentials/{key_id}/slots/{slot}/expiry"),
+                Some(json!({"expires_at": expires_at})),
+            )
+            .await
+        }
+    };
+
+    let later = (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339();
+    let moved = set("a", json!(later)).await;
+    assert_eq!(moved.status, StatusCode::OK, "{:?}", moved.body);
+    let expires_at = |reply: &common::Reply, slot: &str| {
+        reply.body["slots"][slot]["expires_at"]
+            .as_str()
+            .map(|t| chrono::DateTime::parse_from_rfc3339(t).unwrap())
+    };
+    assert_eq!(
+        expires_at(&moved, "a"),
+        Some(chrono::DateTime::parse_from_rfc3339(&later).unwrap())
+    );
+    assert_eq!(expires_at(&moved, "b"), None, "the other slot is untouched");
+    assert_eq!(login(a.clone()).await.status, StatusCode::OK, "same secret");
+
+    let past = (chrono::Utc::now() - chrono::Duration::minutes(1)).to_rfc3339();
+    assert_eq!(set("a", json!(past)).await.status, StatusCode::OK);
+    assert_eq!(login(a.clone()).await.code(), "INVALID_CREDENTIALS");
+    assert_eq!(login(b).await.status, StatusCode::OK);
+
+    let cleared = set("a", serde_json::Value::Null).await;
+    assert_eq!(expires_at(&cleared, "a"), None);
+    assert_eq!(login(a).await.status, StatusCode::OK, "never expires again");
+
+    assert_eq!(
+        set("c", serde_json::Value::Null).await.code(),
+        "INVALID_REQUEST"
+    );
+    let revoked = app
+        .control(
+            Method::POST,
+            &format!("/v1/credentials/{key_id}/revoke"),
+            None,
+        )
+        .await;
+    assert_eq!(revoked.status, StatusCode::OK, "{:?}", revoked.body);
+    assert_eq!(set("b", json!(later)).await.code(), "INVALID_REQUEST");
+}
+
 // r[verify credential.revocation-ends-sessions]
 // r[verify credential.linked]
 #[tokio::test(flavor = "multi_thread")]

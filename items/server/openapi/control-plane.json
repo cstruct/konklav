@@ -392,6 +392,66 @@
         "x-konklav-capability": "konklav:subjects:manage"
       }
     },
+    "/v1/credentials/{id}/slots/{slot}/expiry": {
+      "put": {
+        "tags": [
+          "credentials"
+        ],
+        "summary": "Sets when one slot of a secret key expires.",
+        "description": "The slot keeps its secret; `null` makes it never expire. An expiry in the\npast makes the slot's secret stop working at once.",
+        "operationId": "set_slot_expiry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/CredentialId"
+            }
+          },
+          {
+            "name": "slot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SecretSlot"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlotExpiry"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Credential"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:subjects:manage"
+      }
+    },
     "/v1/credentials/{id}/slots/{slot}/rotate": {
       "post": {
         "tags": [
@@ -663,6 +723,101 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Written_CreatedInvite"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:invites:manage"
+      }
+    },
+    "/v1/invites/{id}": {
+      "get": {
+        "tags": [
+          "invites"
+        ],
+        "summary": "Gets an invite, without its token.",
+        "operationId": "get_invite",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Invite"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:invites:manage"
+      }
+    },
+    "/v1/invites/{id}/revoke": {
+      "post": {
+        "tags": [
+          "invites"
+        ],
+        "summary": "Revokes an invite, so it can no longer be redeemed.",
+        "description": "Redeeming a revoked invite fails as redeeming an expired one does.\nRevoking it again answers the same; a redeemed invite can't be revoked.",
+        "operationId": "revoke_invite",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Invite"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already redeemed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -4735,6 +4890,77 @@
           }
         }
       },
+      "Invite": {
+        "type": "object",
+        "description": "An invite, without its token.",
+        "required": [
+          "id",
+          "email",
+          "tenant",
+          "roles",
+          "membership",
+          "state",
+          "expires_at",
+          "consumed_at"
+        ],
+        "properties": {
+          "consumed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it was redeemed or revoked."
+          },
+          "email": {
+            "type": "string",
+            "description": "The invited address, normalized."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "membership": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MembershipId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "state": {
+            "$ref": "#/components/schemas/InviteState"
+          },
+          "tenant": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "InviteState": {
+        "type": "string",
+        "description": "Where an invite stands.",
+        "enum": [
+          "pending",
+          "redeemed",
+          "revoked",
+          "expired"
+        ]
+      },
       "Membership": {
         "type": "object",
         "required": [
@@ -4812,6 +5038,47 @@
         "enum": [
           "active",
           "ended"
+        ]
+      },
+      "MfaFactor": {
+        "type": "object",
+        "description": "An MFA factor as the control plane shows it: never its seed.",
+        "required": [
+          "id",
+          "kind",
+          "active",
+          "created_at"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "description": "Whether it has been activated; only active factors count towards a\ncredential's `mfa_factors_required`."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The address an email-code factor sends to."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MfaFactorKind"
+          }
+        }
+      },
+      "MfaFactorKind": {
+        "type": "string",
+        "enum": [
+          "totp",
+          "email_code"
         ]
       },
       "Obligation": {
@@ -6528,6 +6795,23 @@
           }
         }
       },
+      "SlotExpiry": {
+        "type": "object",
+        "description": "A slot's new expiry, keeping its secret.",
+        "required": [
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the slot's secret stops working; `null` for never."
+          }
+        }
+      },
       "StepUp": {
         "type": "object",
         "description": "Stronger or fresher authentication an operation needs.",
@@ -6593,7 +6877,8 @@
           {
             "type": "object",
             "required": [
-              "credentials"
+              "credentials",
+              "mfa_factors"
             ],
             "properties": {
               "credentials": {
@@ -6601,11 +6886,18 @@
                 "items": {
                   "$ref": "#/components/schemas/Credential"
                 }
+              },
+              "mfa_factors": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/MfaFactor"
+                },
+                "description": "Without their seeds."
               }
             }
           }
         ],
-        "description": "A subject with its credentials."
+        "description": "A subject with its credentials and MFA factors."
       },
       "SubjectId": {
         "type": "string",

@@ -4,12 +4,12 @@ use konklav_api::{
     AssignRole, AssignmentTarget, Batch, BatchResults, CatalogDocument, CreateCredential,
     CreateInvite, CreatedCredential, CreatedInvite, DecisionExplanation, Deleted, Entitlements,
     ErrorCode, ErrorResponse, ExplainDecision, Explanation, IdTokenAlgorithm, ImportCredentials,
-    ImportFactors, ImportSessions, ImportSubjects, Imported, ImportedCredentialMaterial,
+    ImportFactors, ImportSessions, ImportSubjects, Imported, ImportedCredentialMaterial, Invite,
     MembershipDetail, OidcClient, OidcClientDefinition, OidcClientSecret, PutRole, PutTemplate,
     Reason, RecordRegisteredScope, RegisteredScope, RegisteredScopeBatch, RegisteredScopeChanges,
     RevokeSessions, RevokeShare, RevokedKey, RevokedSessions, Role, RotatedSlot, SessionPage,
-    Share, ShareList, ShareTerms, SigningKey, SubjectDetail, SubjectPage, Template, TenantPage,
-    Written,
+    Share, ShareList, ShareTerms, SigningKey, SlotExpiry, SubjectDetail, SubjectPage, Template,
+    TenantPage, Written,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -135,6 +135,16 @@ fn subject_details_round_trip_with_flattened_subjects_and_omitted_credential_par
     passkey["passkey"] = json!({"label": "Laptop", "last_used_at": null});
     let mut detail = subject();
     detail["credentials"] = json!([credential("password"), secret_key(), passkey]);
+    detail["mfa_factors"] = json!([
+        {"id": CREDENTIAL, "kind": "totp", "active": true, "created_at": "2026-11-02T10:00:00Z"},
+        {
+            "id": CREDENTIAL,
+            "kind": "email_code",
+            "active": false,
+            "email": "ada@example.com",
+            "created_at": "2026-11-02T10:00:00Z",
+        },
+    ]);
     round_trips::<SubjectDetail>(&detail);
     round_trips::<SubjectPage>(&json!({"subjects": [subject()], "next": null}));
     let mut written = subject();
@@ -188,6 +198,8 @@ fn secrets_round_trip_and_are_omitted_when_absent() {
         "slot": "b",
         "secret_key": format!("{CREDENTIAL}.b"),
     }));
+    round_trips::<SlotExpiry>(&json!({"expires_at": "2026-12-01T00:00:00Z"}));
+    round_trips::<SlotExpiry>(&json!({"expires_at": null}));
 }
 
 #[test]
@@ -555,6 +567,16 @@ fn invites_round_trip() {
         "invite_id": "0195e0a0-0000-7000-8000-00000000000c",
         "expires_at": "2026-11-05T10:00:00Z",
         "cursor": 9,
+    }));
+    round_trips::<Invite>(&json!({
+        "id": "0195e0a0-0000-7000-8000-00000000000c",
+        "email": "ada@example.com",
+        "tenant": "root",
+        "roles": ["reader"],
+        "membership": null,
+        "state": "revoked",
+        "expires_at": "2026-11-05T10:00:00Z",
+        "consumed_at": "2026-11-04T10:00:00Z",
     }));
 }
 

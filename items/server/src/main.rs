@@ -56,6 +56,17 @@ enum Command {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
     },
+    /// Write the database's identity data as a bootstrap set that
+    /// `bootstrap` loads into an empty database, then exit.
+    ///
+    /// The set holds password and secret-key hashes and decrypted TOTP
+    /// seeds, so keep it as safe as the database itself. Sessions, signing
+    /// keys, OIDC clients and passkeys are left out.
+    Export {
+        /// The directory to write into; it must be empty or not exist.
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -107,6 +118,15 @@ async fn main() -> ExitCode {
                     allow_plaintext_passwords: *allow_plaintext_passwords,
                 };
                 return bootstrap(database, mfa, paths, options).await;
+            }
+            Err(code) => return code,
+        },
+        Command::Export { out } => match load::<BootstrapContexts>(&cli) {
+            Ok((database, telemetry, mfa)) => {
+                if let Err(code) = init_logs(&telemetry) {
+                    return code;
+                }
+                return export(database, mfa, out).await;
             }
             Err(code) => return code,
         },
@@ -166,19 +186,9 @@ async fn bootstrap(
             return ExitCode::from(1);
         }
     };
-    let secrets = match mfa.mfa.as_ref().map(|mfa| {
-        konklav_authn::SecretBox::new(
-            mfa.totp_keys
-                .iter()
-                .map(|key| (key.id.as_str(), key.key.as_str())),
-        )
-    }) {
-        Some(Ok(secrets)) => secrets,
-        None => konklav_authn::SecretBox::new([]).expect("an empty key set is valid"),
-        Some(Err(error)) => {
-            eprintln!("{error}");
-            return ExitCode::FAILURE;
-        }
+    let secrets = match totp_keys(&mfa) {
+        Ok(secrets) => secrets,
+        Err(code) => return code,
     };
     let result = async {
         let pool = konklav_store::connect(&database.database.connect_options())?;
@@ -214,6 +224,57 @@ async fn bootstrap(
                 );
                 ExitCode::SUCCESS
             }
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The keys TOTP seeds are encrypted with; none when MFA isn't configured.
+fn totp_keys(mfa: &MfaConfig) -> Result<konklav_authn::SecretBox, ExitCode> {
+    match mfa.mfa.as_ref().map(|mfa| {
+        konklav_authn::SecretBox::new(
+            mfa.totp_keys
+                .iter()
+                .map(|key| (key.id.as_str(), key.key.as_str())),
+        )
+    }) {
+        Some(Ok(secrets)) => Ok(secrets),
+        None => Ok(konklav_authn::SecretBox::new([]).expect("an empty key set is valid")),
+        Some(Err(error)) => {
+            eprintln!("{error}");
+            Err(ExitCode::FAILURE)
+        }
+    }
+}
+
+async fn export(database: DatabaseConfig, mfa: MfaConfig, out: &Path) -> ExitCode {
+    let secrets = match totp_keys(&mfa) {
+        Ok(secrets) => secrets,
+        Err(code) => return code,
+    };
+    let result = async {
+        let pool = konklav_store::connect(&database.database.connect_options())?;
+        let pending = konklav_store::pending_migrations(&pool).await?;
+        if !pending.is_empty() {
+            return Err(format!(
+                "{} migration(s) pending; run `migrate` first",
+                pending.len()
+            )
+            .into());
+        }
+        Ok::<_, Box<dyn std::error::Error>>(
+            konklav_server::export::run(&pool, &secrets, out).await?,
+        )
+    }
+    .await;
+    match result {
+        Ok(report) => {
+            print!("{report}");
+            println!("exported to {}", out.display());
+            ExitCode::SUCCESS
         }
         Err(error) => {
             eprintln!("{error}");

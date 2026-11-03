@@ -120,6 +120,13 @@ type (`confidential` or `public`), registered redirect URIs, allowed grants
 and scopes, the audience of their access tokens, and the claims they may
 receive. Redirect URIs MUST match exactly.
 
+r[oidc.provider.cors]
+The discovery document and the key set MUST allow cross-origin reads from
+any origin. The token, revocation and userinfo endpoints MUST allow
+cross-origin requests, and answer their preflights, only from an origin of
+a redirect URI of an active public client, without allowing credentials.
+Other endpoints and origins MUST NOT get CORS headers.
+
 r[oidc.provider.client-audience]
 A client's audience MUST NOT be Konklav's own access-token audience, so
 tokens issued to a client are never accepted by Konklav's own surfaces.

@@ -187,6 +187,59 @@ async fn imported_totp_seeds_are_encrypted_and_verify() {
     assert_eq!(stepped.status, StatusCode::OK, "{:?}", stepped.body);
 }
 
+// r[verify authn.mfa.factor-listing]
+#[tokio::test(flavor = "multi_thread")]
+async fn subject_reads_show_mfa_factors_without_seeds() {
+    let app = TestApp::new().await;
+    let subject = app.human("ada@example.com", "correct horse battery").await;
+    let (totp, email) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+    let seed = TotpSecret::generate().to_base32();
+    let reply = app
+        .control(
+            Method::POST,
+            "/v1/import/mfa-factors",
+            Some(json!({"factors": [
+                {"id": totp, "subject": subject, "kind": "totp", "seed_base32": seed},
+                {"id": email, "subject": subject, "kind": "email_code", "email": "ada@example.com", "active": false},
+            ]})),
+        )
+        .await;
+    assert_eq!(reply.body["imported"], 2, "{:?}", reply.body);
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    let mut factors = detail.body["mfa_factors"].as_array().unwrap().clone();
+    factors.sort_by_key(|f| f["kind"].as_str().unwrap().to_owned());
+    let shown: Vec<_> = factors
+        .iter()
+        .map(|f| {
+            (
+                f["id"].clone(),
+                f["kind"].clone(),
+                f["active"].clone(),
+                f.get("email").cloned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        vec![
+            (
+                json!(email),
+                json!("email_code"),
+                json!(false),
+                Some(json!("ada@example.com"))
+            ),
+            (json!(totp), json!("totp"), json!(true), None),
+        ]
+    );
+    let body = detail.body.to_string();
+    assert!(
+        !body.contains(&seed) && !body.contains("ciphertext"),
+        "{body}"
+    );
+}
+
 // r[verify import.sessions]
 #[tokio::test(flavor = "multi_thread")]
 async fn imported_sessions_refresh_with_the_carried_over_secret() {

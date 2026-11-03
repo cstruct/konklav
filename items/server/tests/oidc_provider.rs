@@ -369,6 +369,140 @@ async fn clients_sign_subjects_in_with_the_code_flow() {
     assert_eq!(plain.code(), "SESSION_ENDED");
 }
 
+// r[verify oidc.provider.cors]
+#[tokio::test(flavor = "multi_thread")]
+async fn browser_apps_of_public_clients_may_call_the_token_endpoints() {
+    let world = world().await;
+    let app = &world.app;
+    for (id, kind) in [("spa", "public"), ("server", "confidential")] {
+        let registered = app
+            .control(
+                Method::PUT,
+                &format!("/v1/oidc/clients/{id}"),
+                Some(json!({
+                    "kind": kind,
+                    "redirect_uris": [format!("https://{id}.example/callback")],
+                    "audience": id,
+                })),
+            )
+            .await;
+        assert_eq!(registered.status, StatusCode::OK, "{:?}", registered.body);
+    }
+    let allowed = |reply: &common::Reply| {
+        reply
+            .headers
+            .get("access-control-allow-origin")
+            .map(|v| v.to_str().unwrap().to_owned())
+    };
+    let preflight = |path: &'static str, origin: &'static str| {
+        let app = &app;
+        async move {
+            app.send(
+                Method::OPTIONS,
+                path,
+                &[
+                    ("origin", origin),
+                    ("access-control-request-method", "POST"),
+                    ("access-control-request-headers", "authorization"),
+                ],
+                None,
+            )
+            .await
+        }
+    };
+
+    for path in [
+        "/v1/oauth2/token",
+        "/v1/oauth2/revoke",
+        "/v1/oauth2/userinfo",
+    ] {
+        let answered = preflight(path, "https://spa.example").await;
+        assert_eq!(answered.status, StatusCode::NO_CONTENT, "{path}");
+        assert_eq!(allowed(&answered).as_deref(), Some("https://spa.example"));
+        assert!(
+            answered
+                .headers
+                .get("access-control-allow-credentials")
+                .is_none()
+        );
+        let methods = answered.headers["access-control-allow-methods"]
+            .to_str()
+            .unwrap();
+        assert!(methods.contains("POST"), "{methods}");
+        for origin in ["https://server.example", "https://elsewhere.example"] {
+            assert_eq!(
+                allowed(&preflight(path, origin).await),
+                None,
+                "{path} {origin}"
+            );
+        }
+    }
+
+    // The answer itself is readable from the client's origin, even an error.
+    let refused = app
+        .send_form(
+            "/v1/oauth2/token",
+            &[("origin", "https://spa.example")],
+            &[
+                ("grant_type", "authorization_code"),
+                ("client_id", "spa"),
+                ("code", "nope"),
+            ],
+        )
+        .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::BAD_REQUEST,
+        "{:?}",
+        refused.body
+    );
+    assert_eq!(allowed(&refused).as_deref(), Some("https://spa.example"));
+    assert!(refused.headers["vary"].to_str().unwrap().contains("origin"));
+
+    // A disabled client's origin is no longer allowed.
+    app.control(Method::DELETE, "/v1/oidc/clients/spa", None)
+        .await;
+    assert_eq!(
+        allowed(&preflight("/v1/oauth2/token", "https://spa.example").await),
+        None
+    );
+
+    // Discovery and the key set are public; the rest of the surface isn't.
+    for path in [
+        "/.well-known/openid-configuration",
+        "/.well-known/jwks.json",
+    ] {
+        let read = app
+            .send(
+                Method::GET,
+                path,
+                &[("origin", "https://elsewhere.example")],
+                None,
+            )
+            .await;
+        assert_eq!(read.status, StatusCode::OK, "{path}");
+        assert_eq!(allowed(&read).as_deref(), Some("*"), "{path}");
+        let preflight = app
+            .send(
+                Method::OPTIONS,
+                path,
+                &[("origin", "https://elsewhere.example")],
+                None,
+            )
+            .await;
+        assert_eq!(allowed(&preflight).as_deref(), Some("*"), "{path}");
+    }
+    let login = app
+        .send(
+            Method::OPTIONS,
+            "/v1/login/password",
+            &[("origin", "https://spa.example")],
+            None,
+        )
+        .await;
+    assert_eq!(allowed(&login), None);
+}
+
 // r[verify oidc.provider.discovery]
 #[tokio::test(flavor = "multi_thread")]
 async fn discovery_lists_the_endpoints() {

@@ -252,6 +252,21 @@ class Credentials(_Resource[M]):
         return self._do(Call("POST", path("credentials", id, "slots", slot, "rotate"), json=body))
 
     @overload
+    def set_slot_expiry(
+        self: Credentials[Direct], id: str, slot: types.SecretSlot, body: types.SlotExpiry
+    ) -> types.Credential: ...
+
+    @overload
+    def set_slot_expiry(
+        self: Credentials[Batched], id: str, slot: types.SecretSlot, body: types.SlotExpiry
+    ) -> Pending[types.Credential]: ...
+
+    @operation("set_slot_expiry")
+    def set_slot_expiry(self, id: str, slot: types.SecretSlot, body: types.SlotExpiry) -> Any:
+        """The slot keeps its secret; `expires_at` `None` makes it never expire."""
+        return self._do(Call("PUT", path("credentials", id, "slots", slot, "expiry"), json=body))
+
+    @overload
     def set_break_glass(self: Credentials[Direct], id: str, body: types.BreakGlass) -> types.Credential: ...
 
     @overload
@@ -546,6 +561,23 @@ class Invites(_Resource[M]):
     def create(self, body: types.CreateInvite) -> Any:
         """The invite's token is delivered to the address, never returned."""
         return self._do(Call("POST", path("invites"), json=body, create=True, written=True))
+
+    @operation("get_invite")
+    def get(self: Invites[Direct], id: str) -> types.Invite:
+        """The invite's state, without its token."""
+        return cast(types.Invite, self._direct._get(path("invites", id)))
+
+    @overload
+    def revoke(self: Invites[Direct], id: str) -> types.Invite: ...
+
+    @overload
+    def revoke(self: Invites[Batched], id: str) -> Pending[types.Invite]: ...
+
+    @operation("revoke_invite")
+    def revoke(self, id: str) -> Any:
+        """Redeeming it then fails as an expired invite does. A redeemed invite
+        can't be revoked."""
+        return self._do(Call("POST", path("invites", id, "revoke")))
 
 
 class OidcClients(_Resource[M]):

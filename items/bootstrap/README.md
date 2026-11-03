@@ -93,7 +93,7 @@ CSV can't declare an id namespace, templates or roles. Put those in a `.styx` fi
 
 | Software item | Relationship |
 |---|---|
-| `konklav-server` | Its `bootstrap` subcommand reads sets with this crate and applies them |
+| `konklav-server` | Its `bootstrap` subcommand reads sets with this crate and applies them; its `export` subcommand writes them |
 
 ## Running
 

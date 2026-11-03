@@ -11,8 +11,8 @@ use axum::routing::get;
 
 use crate::config::Listen;
 use crate::{
-    AppState, capabilities, control_api, error, federation_api, feed, flows, health, invites, keys,
-    oidc_api, passkeys_api, relying_api, subject_api, telemetry,
+    AppState, capabilities, control_api, cors, error, federation_api, feed, flows, health, invites,
+    keys, oidc_api, passkeys_api, relying_api, subject_api, telemetry,
 };
 
 /// One of Konklav's groups of endpoints.
@@ -35,7 +35,7 @@ impl Surface {
         match self {
             Self::Subject => subject_api::routes(state)
                 .merge(federation_api::routes())
-                .merge(oidc_api::routes())
+                .merge(oidc_api::routes(state))
                 .merge(flows::routes(state))
                 .merge(passkeys_api::routes(state))
                 .merge(invites::subject_routes(state))
@@ -50,7 +50,9 @@ impl Surface {
         match self {
             Self::Subject => Router::new().route(
                 "/.well-known/openid-configuration",
-                get(oidc_api::discovery),
+                get(oidc_api::discovery)
+                    .options(cors::preflight)
+                    .layer(middleware::from_fn(cors::public)),
             ),
             Self::Relying | Self::Control => Router::new(),
         }
@@ -84,7 +86,12 @@ pub fn router(surfaces: &[Surface], state: AppState) -> Router {
         .iter()
         .any(|s| matches!(s, Surface::Relying | Surface::Subject))
     {
-        root = root.route("/.well-known/jwks.json", get(keys::jwks));
+        root = root.route(
+            "/.well-known/jwks.json",
+            get(keys::jwks)
+                .options(cors::preflight)
+                .layer(middleware::from_fn(cors::public)),
+        );
     }
     let names: Arc<str> = surfaces
         .iter()

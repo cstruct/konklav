@@ -386,3 +386,150 @@ async fn plaintext_passwords_need_to_be_allowed() {
     .await;
     assert_eq!(tally(&again, "credentials"), skipped(1), "{again}");
 }
+
+fn read_dir(dir: &Path) -> std::collections::BTreeMap<String, String> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            (name, std::fs::read_to_string(&path).unwrap())
+        })
+        .collect()
+}
+
+// r[verify bootstrap.export]
+#[tokio::test(flavor = "multi_thread")]
+async fn an_exported_set_bootstraps_an_empty_database_unchanged() {
+    let app = TestApp::new().await;
+    let seeded = apply(
+        &app,
+        &[examples().join("nested/seed.styx")],
+        Options::default(),
+    )
+    .await;
+    assert!(seeded.committed, "{seeded}");
+    // What the example lacks: a secret key, a TOTP factor, a global role,
+    // a scoped assignment and a disabled subject.
+    let service = uuid::Uuid::now_v7();
+    app.control(
+        Method::PUT,
+        &format!("/v1/subjects/{service}"),
+        Some(serde_json::json!({"kind": "service"})),
+    )
+    .await;
+    let key = app
+        .control(
+            Method::POST,
+            &format!("/v1/subjects/{service}/credentials"),
+            Some(serde_json::json!({"kind": "secret_key"})),
+        )
+        .await;
+    let key_id = key.body["credential"]["id"].as_str().unwrap().to_owned();
+    let secret = key.body["secret_keys"]["b"]
+        .as_str()
+        .unwrap()
+        .split_once('.')
+        .unwrap()
+        .1
+        .to_owned();
+    let ada = app.human("ada@example.com", PASSWORD).await;
+    let seed = konklav_authn::TotpSecret::generate();
+    let imported = app
+        .control(
+            Method::POST,
+            "/v1/import/mfa-factors",
+            Some(serde_json::json!({"factors": [{
+                "id": uuid::Uuid::now_v7(),
+                "subject": ada,
+                "kind": "totp",
+                "seed_base32": seed.to_base32(),
+            }]})),
+        )
+        .await;
+    assert_eq!(imported.body["imported"], 1, "{:?}", imported.body);
+    app.control(
+        Method::PUT,
+        "/v1/tenants/root/roles/AUDITOR",
+        Some(serde_json::json!({"policies": [{"action": "project:read", "effect": "allow"}]})),
+    )
+    .await;
+    let granted = app
+        .control(
+            Method::POST,
+            &format!("/v1/subjects/{ada}/global-assignments"),
+            Some(serde_json::json!({"role": "AUDITOR"})),
+        )
+        .await;
+    assert!(granted.status.is_success(), "{:?}", granted.body);
+    let disabled = app.human("gone@example.com", PASSWORD).await;
+    app.control(
+        Method::POST,
+        &format!("/v1/subjects/{disabled}/disable"),
+        None,
+    )
+    .await;
+
+    let dir = std::env::temp_dir().join(format!("konklav-export-{}", uuid::Uuid::now_v7()));
+    let first =
+        konklav_server::export::run(app.db.pool(), &app.state.auth.secrets, &dir.join("first"))
+            .await
+            .unwrap();
+    assert_eq!(first.written["subjects"], 6, "{first}");
+    let files = read_dir(&dir.join("first"));
+    assert!(
+        files["credentials.csv"].contains("$argon2id$"),
+        "hashes are kept"
+    );
+    assert!(
+        files["mfa_factors.csv"].contains(&seed.to_base32()),
+        "seeds are decrypted"
+    );
+
+    let copy = TestApp::new().await;
+    let applied = apply(&copy, &[dir.join("first")], Options::default()).await;
+    assert!(applied.committed, "{applied}");
+    assert!(
+        applied.problems.is_empty() && applied.conflicts.is_empty(),
+        "{applied}"
+    );
+    konklav_server::export::run(
+        copy.db.pool(),
+        &copy.state.auth.secrets,
+        &dir.join("second"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        read_dir(&dir.join("second")),
+        files,
+        "the copy exports the same set"
+    );
+
+    // The copy lets the same people and keys in.
+    let login = copy.login("ada@example.com", PASSWORD).await;
+    assert_eq!(login.status, StatusCode::OK, "{:?}", login.body);
+    let signed_in = copy
+        .post(
+            "/v1/login/secret-key",
+            serde_json::json!({"key_id": key_id, "secret": secret}),
+        )
+        .await;
+    assert_eq!(signed_in.status, StatusCode::OK, "{:?}", signed_in.body);
+    assert_eq!(
+        copy.login("gone@example.com", PASSWORD).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+
+    let refused =
+        konklav_server::export::run(app.db.pool(), &app.state.auth.secrets, &dir.join("first"))
+            .await;
+    assert!(
+        matches!(
+            refused,
+            Err(konklav_server::export::ExportError::NotEmpty(_))
+        ),
+        "never overwrites"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}

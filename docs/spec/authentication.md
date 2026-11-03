@@ -81,6 +81,11 @@ Enrolling, activating or removing an MFA factor MUST require a full session
 that authenticated recently, so a stolen access token can't add or strip
 factors.
 
+r[authn.mfa.factor-listing]
+The control plane MUST show a subject's MFA factors with their kind,
+whether they are active and, for email-code factors, their address. It
+MUST NOT show a factor's seed or codes.
+
 r[authn.mfa.amr]
 Every session MUST record the authentication methods used, as `amr`
 values, together with the time of the last authentication. A method MUST use
@@ -261,6 +266,12 @@ r[authn.invite.membership-id]
 An invite to a tenant MAY name the id of the membership its redemption
 creates. Redemption by a subject that already has a different active
 membership in that tenant MUST fail with a typed conflict.
+
+r[authn.invite.revoke]
+An operator MUST be able to revoke an invite that hasn't been redeemed.
+Redeeming a revoked invite MUST fail exactly as redeeming an expired one
+does. Revoking an invite again MUST change nothing, and revoking a redeemed
+invite MUST fail with a typed conflict.
 
 r[authn.reset-password]
 Password reset MUST go through a challenge, and completing it MUST revoke
