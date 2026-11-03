@@ -16,6 +16,10 @@ Run one with:
 mise run example smtp-delivery
 ```
 
+## Python
+
+[`python/read_your_writes.py`](python/read_your_writes.py) uses both Python packages: `konklav-control-plane` assigns a role, and `konklav-relying` waits for that write's cursor with `await_cursor` and then allows what the role grants. Neither package imports the other; the cursor, an `int`, is all they share. `mise run example:python` runs it against a server on a fresh database, as `mise run test` does. `examples/python` is its own uv project, installing both packages from their source trees.
+
 That starts the development Postgres, builds `konklav-server` and runs the scenario, printing each step. Set `KONKLAV_SERVER_BIN` to run another build of the server.
 
 ## The delivery worker

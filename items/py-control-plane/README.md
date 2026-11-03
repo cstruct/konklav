@@ -63,6 +63,10 @@ async with ControlPlaneClient("https://konklav:8082", auth=auth) as client:
 The sync client is the same from `konklav_control_plane.sync`, without
 `await` and `async`.
 
+For read-your-writes with `konklav-relying`, pass `written.cursor` to
+`RelyingClient.await_cursor`; see
+[`examples/python/read_your_writes.py`](../../examples/python/read_your_writes.py).
+
 ## Running
 
 This is a library and can't run on its own.

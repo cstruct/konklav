@@ -11,3 +11,4 @@ __pycache__/
 *.so
 items/py-control-plane/.venv/
 items/py-control-plane/dist/
+examples/python/.venv/

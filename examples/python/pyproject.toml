@@ -1,0 +1,17 @@
+[project]
+name = "konklav-python-examples"
+version = "0"
+description = "Python examples of Konklav, run by the tests"
+requires-python = ">=3.12"
+dependencies = ["konklav-control-plane", "konklav-relying", "httpx>=0.28"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+# Scripts, not a package.
+package = false
+
+[tool.uv.sources]
+konklav-control-plane = { path = "../../items/py-control-plane" }
+konklav-relying = { path = "../../items/py" }

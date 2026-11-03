@@ -57,7 +57,7 @@ run = "cargo build --workspace"
 
 [tasks.test]
 description = "Run every test; database tests use isolated databases on the local Postgres"
-depends = ["db:up", "py:test", "py-control-plane:test", "py-control-plane:integration", "console:smoke"]
+depends = ["db:up", "py:test", "py-control-plane:test", "py-control-plane:integration", "example:python", "console:smoke"]
 run = "cargo test --workspace"
 
 [tasks."py:test"]
@@ -96,6 +96,17 @@ description = "Build the Python control-plane client's sdist and wheel into item
 dir = "items/py-control-plane"
 run = ["rm -rf dist", "uv build -q --out-dir dist"]
 
+[tasks."example:python"]
+description = "Run the Python examples in examples/python against servers on fresh databases"
+depends = ["db:up"]
+dir = "examples/python"
+env = { KONKLAV_TEST_SERVER = "{{config_root}}/target/debug/test-server" }
+run = [
+    "cargo build -q -p konklav-server -p konklav-examples --bin test-server",
+    "uv sync -q --locked --reinstall-package konklav-relying --reinstall-package konklav-control-plane",
+    "uv run -q pytest -q tests",
+]
+
 [tasks."release:bump"]
 description = "Set the release version everywhere it is recorded, then commit, tag and push the release"
 usage = 'arg "<version>" help="The new version, such as 1.3.0 or 1.3.0-rc.1"'
@@ -119,6 +130,7 @@ perl -pi -e "s/^(konklav-[a-z-]+ = \\{ version = \\")=[^\\"]*/\\1=$version/" Car
 cargo update -q --workspace
 cargo update -q --workspace --manifest-path items/py/Cargo.toml
 (cd items/py-control-plane && uv lock -q)
+(cd examples/python && uv lock -q)
 git commit -q -am "Release $version"
 git push origin HEAD
 git tag -a "v$version" -m "Konklav $version"
