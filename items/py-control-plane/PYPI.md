@@ -15,10 +15,11 @@ async with ControlPlaneClient("https://konklav:8082", auth=auth) as client:
 ```
 
 Every control-plane operation has a method, with request and response
-types generated from Konklav's API document. `konklav_control_plane.sync`
-has the same client for synchronous code. Failed requests are retried
-where that's safe, and errors raise `KonklavError` subclasses such as
-`NotFound` and `Forbidden`.
+types generated from Konklav's API document. `client.batch()` applies
+several writes in one request, all or nothing, through the same methods.
+`konklav_control_plane.sync` has the same client for synchronous code.
+Failed requests are retried where that's safe, and errors raise
+`KonklavError` subclasses such as `NotFound` and `Forbidden`.
 
 To decide authorization in a relying system, use
 [`konklav-relying`](https://pypi.org/project/konklav-relying/) instead. The

@@ -11,7 +11,8 @@ So far it covers the whole control-plane surface (tenants, memberships, subjects
 - `CreateInvite`, `OidcClient`, `OidcClientDefinition` and the import records (`ImportedSubject`, `ImportedCredential`, `ImportedFactor`, `ImportedSession`).
 - Re-exports of `konklav-authz`'s wire types, such as `Policy`, `Scope`, `Entitlements`, `Explanation`, `DecisionExplanation` and `Requirements`, which the relying core reads too. They aren't mirrored here, so both read one definition.
 - `Written<T>`: a write's result together with its change-feed cursor.
-- `ErrorCode`, `ErrorResponse` and `ErrorBody`: the stable error codes, each code's HTTP status, and the error envelope.
+- `Batch`, `BatchOperation`, `BatchMethod`, `BatchResults` and `BatchResult`: a control-plane batch and its answer.
+- `ErrorCode`, `ErrorResponse` and `ErrorBody`: the stable error codes, each code's HTTP status, and the error envelope, whose `operation` names a failed batch's failing operation.
 - OpenAPI schemas (utoipa `ToSchema` and `IntoParams`) for every type. The server builds its API document from them.
 
 Out of scope:
@@ -27,7 +28,7 @@ Out of scope:
 | `konklav-authz` | Authorization wire types, re-exported with their schemas (`openapi` feature, which also enables `konklav-token`'s for `TokenKind`) |
 | `konklav-server` | Returns these types and generates the control-plane API document from them |
 | `konklav-cli` (planned) | Will read and write the control plane with these types |
-| `konklav-control-plane` (planned, Python) | Generated from the API document, not from this crate |
+| `konklav-control-plane` (Python) | Generated from the API document, not from this crate |
 
 ## Running
 
@@ -39,7 +40,7 @@ This is a library and can't run on its own.
 cargo test -p konklav-api
 ```
 
-- Direct coverage: round trips of the tenant, membership, subject, credential, session, signing-key, written and error types, the tagged `AssignmentTarget`, the catalog with its flattened groups, roles, templates, entitlements and explanations, shares with their flattened terms, registered-scope changes, invites, OIDC clients with their flattened definitions, imports with their tagged material, and the mapping from error codes to HTTP statuses.
+- Direct coverage: round trips of the tenant, membership, subject, credential, session, signing-key, written and error types, the tagged `AssignmentTarget`, the catalog with its flattened groups, roles, templates, entitlements and explanations, shares with their flattened terms, registered-scope changes, invites, OIDC clients with their flattened definitions, imports with their tagged material, batches (which refuse `GET`s) and batch errors, and the mapping from error codes to HTTP statuses.
 - Indirect coverage: the server's integration-test harness checks every control-plane response it receives against the committed document, so a type that drifts from what a handler returns fails those tests. The server's `openapi` test fails when `items/server/openapi/control-plane.json` no longer matches these types. To rewrite the document after a deliberate change, run:
 
   ```sh
