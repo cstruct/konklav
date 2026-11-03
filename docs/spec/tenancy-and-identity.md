@@ -86,6 +86,11 @@ r[credential.secret-key.hashed]
 Secret-key values MUST only be shown once, when created, and MUST be stored
 as hashes.
 
+r[credential.secret-key.expiry]
+An operator MUST be able to set or clear the expiry of either slot of an
+active secret-key credential without changing the slot's secret, so a
+key's lifetime can change without handing out new secrets.
+
 r[credential.public-key.stored]
 Public-key credentials MUST store only public material: the public key and
 its algorithm, the signature counter, the attestation format and a label

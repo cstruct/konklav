@@ -1,7 +1,7 @@
 //! Invites: an operator invites an email address, optionally into a tenant
 //! with roles; the recipient redeems the delivered token with a password.
 
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::middleware;
 use axum::response::Response;
@@ -9,7 +9,7 @@ use axum::routing::post;
 use axum::{Json, Router};
 use chrono::{Duration, Utc};
 use diesel_async::AsyncConnection;
-use konklav_api::{CreateInvite, CreatedInvite};
+use konklav_api::{CreateInvite, CreatedInvite, Invite, InviteState};
 
 use crate::control_api::{Written, created_status};
 use crate::db::Db;
@@ -35,7 +35,10 @@ use crate::{AppState, pacing};
 /// taken from the handler's `#[utoipa::path]`. Redeeming one is on the
 /// subject-facing surface.
 pub(crate) fn invites() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(create_invite))
+    OpenApiRouter::new()
+        .routes(routes!(create_invite))
+        .routes(routes!(get_invite))
+        .routes(routes!(revoke_invite))
 }
 
 pub fn subject_routes(state: &AppState) -> Router<AppState> {
@@ -173,6 +176,78 @@ async fn create_invite(
             cursor,
         }),
     ))
+}
+
+/// Gets an invite, without its token.
+#[utoipa::path(get, path = "/invites/{id}", tag = "invites", params(("id" = uuid::Uuid, Path)),
+    responses((status = 200, body = Invite)))]
+async fn get_invite(db: Db, Path(id): Path<String>) -> Result<Json<Invite>, ApiError> {
+    let id = parse_invite_id(&id)?;
+    let mut conn = db.get().await?;
+    Ok(Json(invite(find_invite(&mut conn, id).await?)))
+}
+
+/// Revokes an invite, so it can no longer be redeemed.
+///
+/// Redeeming a revoked invite fails as redeeming an expired one does.
+/// Revoking it again answers the same; a redeemed invite can't be revoked.
+// r[impl authn.invite.revoke]
+#[utoipa::path(post, path = "/invites/{id}/revoke", tag = "invites", params(("id" = uuid::Uuid, Path)),
+    responses(
+        (status = 200, body = Invite),
+        (status = 409, description = "Already redeemed", body = konklav_api::ErrorResponse),
+    ))]
+async fn revoke_invite(db: Db, Path(id): Path<String>) -> Result<Json<Invite>, ApiError> {
+    let id = parse_invite_id(&id)?;
+    let mut conn = db.get().await?;
+    find_invite(&mut conn, id).await?;
+    challenges::revoke(&mut conn, id, Utc::now()).await?;
+    let revoked = find_invite(&mut conn, id).await?;
+    if revoked.revoked_at.is_none() {
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            "the invite was already redeemed",
+        ));
+    }
+    Ok(Json(invite(revoked)))
+}
+
+fn parse_invite_id(id: &str) -> Result<uuid::Uuid, ApiError> {
+    id.parse()
+        .map_err(|_| ApiError::invalid_request("invite id must be a UUID"))
+}
+
+async fn find_invite(
+    conn: &mut konklav_store::Connection,
+    id: uuid::Uuid,
+) -> Result<challenges::Challenge, ApiError> {
+    match challenges::get(conn, id).await {
+        Ok(challenge) if challenge.purpose == Purpose::Invite.as_str() => Ok(challenge),
+        _ => Err(ApiError::not_found("invite")),
+    }
+}
+
+fn invite(challenge: challenges::Challenge) -> Invite {
+    let state = if challenge.revoked_at.is_some() {
+        InviteState::Revoked
+    } else if challenge.consumed_at.is_some() {
+        InviteState::Redeemed
+    } else if challenge.is_usable(Utc::now()) {
+        InviteState::Pending
+    } else {
+        InviteState::Expired
+    };
+    let details: InviteDetails = serde_json::from_value(challenge.details).unwrap_or_default();
+    Invite {
+        id: challenge.id,
+        email: challenge.recipient,
+        tenant: details.tenant,
+        roles: details.roles,
+        membership: details.membership,
+        state,
+        expires_at: challenge.expires_at,
+        consumed_at: challenge.consumed_at,
+    }
 }
 
 #[derive(Deserialize)]

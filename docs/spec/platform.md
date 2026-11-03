@@ -406,6 +406,15 @@ Passwords and secret keys MUST arrive as Argon2 hashes, as
 the run explicitly allows them, and are then hashed before they are
 stored. TOTP seeds MUST be encrypted on arrival, as `import.mfa` describes.
 
+r[bootstrap.export]
+An `export` command MUST write the database's catalog, templates, tenants,
+roles, subjects, credentials with their hashes, MFA factors, memberships
+and role assignments as a bootstrap set that `bootstrap` applies to an
+empty database without problems or conflicts, so that exporting that
+database writes the same set. It MUST read the database directly, never
+the control plane, and MUST NOT write sessions or signing keys. It MUST
+report what it left out because a bootstrap set can't hold it.
+
 r[bootstrap.events]
 Applying a bootstrap set MUST emit the same events as the equivalent
 control-plane writes, in the same transaction, so relying systems see the

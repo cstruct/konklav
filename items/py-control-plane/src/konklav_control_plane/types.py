@@ -400,6 +400,12 @@ class ImportedSecretSlot(TypedDict):
     """
 
 
+type InviteState = Literal['pending', 'redeemed', 'revoked', 'expired']
+"""
+Where an invite stands.
+"""
+
+
 type MembershipId = str
 """
 Identifies a membership of one subject in one tenant.
@@ -407,6 +413,9 @@ Identifies a membership of one subject in one tenant.
 
 
 type MembershipState = Literal['active', 'ended']
+
+
+type MfaFactorKind = Literal['totp', 'email_code']
 
 
 type OidcClientKind = Literal['confidential', 'public']
@@ -683,6 +692,17 @@ class SigningKey(TypedDict):
     published_at: str
     retired_at: str | None
     revoked_at: str | None
+
+
+class SlotExpiry(TypedDict):
+    """
+    A slot's new expiry, keeping its secret.
+    """
+
+    expires_at: str | None
+    """
+    When the slot's secret stops working; `null` for never.
+    """
 
 
 class StepUp(TypedDict):
@@ -1298,6 +1318,27 @@ class ImportedSubject(TypedDict):
     state: NotRequired[SubjectState]
 
 
+class Invite(TypedDict):
+    """
+    An invite, without its token.
+    """
+
+    consumed_at: str | None
+    """
+    When it was redeemed or revoked.
+    """
+    email: str
+    """
+    The invited address, normalized.
+    """
+    expires_at: str
+    id: str
+    membership: MembershipId | None
+    roles: list[str]
+    state: InviteState
+    tenant: str | None
+
+
 class Membership(TypedDict):
     created_at: str
     facts: dict[str, Any]
@@ -1310,6 +1351,25 @@ class Membership(TypedDict):
     subject_id: SubjectId
     tenant_id: TenantId
     updated_at: str
+
+
+class MfaFactor(TypedDict):
+    """
+    An MFA factor as the control plane shows it: never its seed.
+    """
+
+    active: bool
+    """
+    Whether it has been activated; only active factors count towards a
+    credential's `mfa_factors_required`.
+    """
+    created_at: str
+    email: NotRequired[str | None]
+    """
+    The address an email-code factor sends to.
+    """
+    id: str
+    kind: MfaFactorKind
 
 
 class Obligation(TypedDict):
@@ -1692,10 +1752,14 @@ class Subject(TypedDict):
 
 class SubjectDetail(Subject):
     """
-    A subject with its credentials.
+    A subject with its credentials and MFA factors.
     """
 
     credentials: list[Credential]
+    mfa_factors: list[MfaFactor]
+    """
+    Without their seeds.
+    """
 
 
 class SubjectPage(TypedDict):

@@ -204,6 +204,14 @@ registered as pre-consented.
 - **Revocation** (`POST /v1/oauth2/revoke`, RFC 7009) ends the session
   behind a refresh or access token the client was issued, and answers 200
   for anything else.
+- **CORS.** A browser app registered as a public client calls the token,
+  revocation and userinfo endpoints from its own origin. They answer
+  preflights and send `Access-Control-Allow-Origin` for an origin of an
+  active public client's redirect URIs, never `*` and without allowing
+  credentials, so registering a client needs no list of origins. Discovery
+  and the key set allow any origin. Nothing else on the subject-facing
+  surface sends CORS headers: a login application is served from
+  Konklav's own origin.
 - **RP-initiated logout** (`GET /v1/oauth2/logout`) takes an
   `id_token_hint`. Konklav checks the hint against its own keys, and
   accepts it even if it has expired. It then ends the login application's

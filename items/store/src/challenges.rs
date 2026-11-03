@@ -66,6 +66,8 @@ pub struct Challenge {
     pub details: serde_json::Value,
     pub expires_at: DateTime<Utc>,
     pub consumed_at: Option<DateTime<Utc>>,
+    /// Set when an operator revoked it; a revoked challenge is also consumed.
+    pub revoked_at: Option<DateTime<Utc>>,
 }
 
 impl Challenge {
@@ -91,6 +93,7 @@ struct Row {
     details: serde_json::Value,
     expires_at: DateTime<Utc>,
     consumed_at: Option<DateTime<Utc>>,
+    revoked_at: Option<DateTime<Utc>>,
 }
 
 impl From<Row> for Challenge {
@@ -109,6 +112,7 @@ impl From<Row> for Challenge {
             details: row.details,
             expires_at: row.expires_at,
             consumed_at: row.consumed_at,
+            revoked_at: row.revoked_at,
         }
     }
 }
@@ -234,6 +238,24 @@ pub async fn consume(
         .execute(conn)
         .await?;
     Ok(consumed > 0)
+}
+
+/// Revokes a challenge that hasn't been used, consuming it so nothing can
+/// use it any more. Returns false if it was already consumed.
+pub async fn revoke(
+    conn: &mut AsyncPgConnection,
+    id: uuid::Uuid,
+    now: DateTime<Utc>,
+) -> StoreResult<bool> {
+    let revoked = diesel::update(challenge::table.find(id))
+        .filter(challenge::consumed_at.is_null())
+        .set((
+            challenge::consumed_at.eq(now),
+            challenge::revoked_at.eq(now),
+        ))
+        .execute(conn)
+        .await?;
+    Ok(revoked > 0)
 }
 
 /// Replaces a challenge's details.

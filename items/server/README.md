@@ -13,7 +13,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
 - Configuration is split into ordna contexts (`ListenConfig`, `DatabaseConfig`, `LogConfig`), and each command loads only the ones it needs:
   - `serve` and `check-config` load all three.
   - `migrate` loads only the database and log contexts, so it runs without any `listen` settings.
-  - `bootstrap` loads the database, log and MFA contexts.
+  - `bootstrap` and `export` load the database, log and MFA contexts.
 
   Keys belonging to contexts a command doesn't load are still validated, so typos are still caught.
 - Binding one listener per distinct surface address. Surfaces configured with the same address share a listener.
@@ -67,8 +67,8 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - `/v1/entitlements/{subject}[/{tenant}]`
   - `/v1/check`, which decides from current state, session validity included
 - Control-plane surface (`/v1`):
-  - subjects (idempotent `PUT`, disable and enable)
-  - credentials (create, revoke, replace a password, rotate a secret-key slot). A password credential can be created from an Argon2id `password_hash` made elsewhere instead of a `password`.
+  - subjects (idempotent `PUT`, disable and enable; a subject's read lists its credentials and MFA factors, never their secrets)
+  - credentials (create, revoke, replace a password, rotate a secret-key slot or set when it expires, keeping its secret). A password credential can be created from an Argon2id `password_hash` made elsewhere instead of a `password`.
   - sessions (list, get, revoke by filter)
   - signing keys (list, break-glass revoke)
   - the catalog
@@ -76,7 +76,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - memberships (create, facts, end, assignments)
   - templates and roles, where roles of `root` are global roles
   - global assignments
-  - invites (`POST /v1/invites`)
+  - invites (create, read without the token, and revoke; a revoked invite fails to redeem as an expired one does)
   - an operator view of a subject's entitlements, with explanations (`/v1/subjects/{id}/explain`)
   - decision explanations (`POST /v1/subjects/{id}/explain-decision`), now or, with `history.enabled`, as of a past time (`at`, RFC 3339) within the history horizon
   - listings of subjects (by kind or login identifier), tenants (by parent) and a tenant's memberships
@@ -88,7 +88,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
 
 ## Public interface
 
-- CLI: `konklav-server --config <file> --secrets <file> <serve|migrate|check-config|bootstrap>`.
+- CLI: `konklav-server --config <file> --secrets <file> <serve|migrate|check-config|bootstrap|export>`.
   - The file paths can also come from `KONKLAV_CONFIG` and `KONKLAV_SECRETS`.
 - Configuration: the contexts in `src/config.rs`:
   - `listen`, `database`, `log`
@@ -139,6 +139,17 @@ cargo run -p konklav-server -- bootstrap examples/bootstrap/nested/seed.styx
 - **Requirements:** it refuses to run while migrations are pending, and needs the `mfa` keys to import TOTP seeds.
 - **Exit codes:** 0 when the set applied or the dry run found nothing wrong, 1 for problems, 2 for conflicts.
 
+`export` does the reverse: it writes the database's catalog, templates, tenants, roles, subjects, credentials, MFA factors, memberships and role assignments as a bootstrap set, which `bootstrap` applies to an empty database unchanged.
+
+```sh
+cargo run -p konklav-server -- export --out seed
+```
+
+- **Sensitive.** It reads the database directly, so the set holds password and secret-key hashes and decrypted TOTP seeds, which the control plane never shows. Its files are readable by their owner only.
+- **What it leaves out:** sessions, signing keys, OIDC clients and the `client` credentials they bind, passkeys, revoked credentials, ended memberships, tenant states, and memberships and assignments an identity provider's claim mapping manages. It prints how many of each it left out.
+- **One snapshot.** It reads in one read-only, repeatable-read transaction.
+- **Requirements:** the directory must be empty or not exist, migrations must be applied, and it needs the `mfa` keys to decrypt TOTP seeds.
+
 ## Testing
 
 ```sh
@@ -160,7 +171,7 @@ mise run test
   - telemetry: spans, metrics and logs exported to a fake OTLP collector, trace propagation in and out, and nothing identifying in what's exported (`tests/telemetry.rs`)
   - retention: what the sweeper deletes and keeps, and its lock (`tests/retention.rs`)
   - history: decisions explained as of a past time, the history horizon, disabling, and sweeping old row versions (`tests/history.rs`)
-  - the bootstrap command, applying both example sets, re-runs, dry runs, conflicts and located problems (`tests/bootstrap.rs`)
+  - the bootstrap command, applying both example sets, re-runs, dry runs, conflicts and located problems, and an exported set bootstrapping an empty database unchanged (`tests/bootstrap.rs`)
   - idempotent creates for credentials, password replacement, assignments and invites (`tests/idempotency.rs`)
   - batches: references to earlier creates, failures that leave no trace, per-operation capabilities, limits, bulk endpoints inside a batch, a batch cut off by the request timeout, and idempotency keys with their secrets and lifetimes (`tests/batch.rs`). The test harness also checks each batch result against its own operation's schema.
 - Indirect coverage: none yet.

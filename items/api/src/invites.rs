@@ -40,3 +40,33 @@ pub struct CreatedInvite {
     pub invite_id: uuid::Uuid,
     pub expires_at: DateTime<Utc>,
 }
+
+/// Where an invite stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InviteState {
+    /// Can still be redeemed.
+    Pending,
+    Redeemed,
+    Revoked,
+    /// Expired, or used up its redemption attempts, without being redeemed.
+    Expired,
+}
+
+/// An invite, without its token.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct Invite {
+    pub id: uuid::Uuid,
+    /// The invited address, normalized.
+    pub email: String,
+    #[schema(required)]
+    pub tenant: Option<String>,
+    pub roles: Vec<String>,
+    #[schema(required)]
+    pub membership: Option<MembershipId>,
+    pub state: InviteState,
+    pub expires_at: DateTime<Utc>,
+    /// When it was redeemed or revoked.
+    #[schema(required)]
+    pub consumed_at: Option<DateTime<Utc>>,
+}

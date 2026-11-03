@@ -15,6 +15,7 @@
 
 use axum::extract::{Form, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -39,7 +40,7 @@ use crate::cookies::{Cookie, SameSite};
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::oidc::{self, OpenIdProvider, Selection};
 use crate::subject_api::{self, Started};
-use crate::{AppState, issue};
+use crate::{AppState, cors, issue};
 
 /// Binds a login request to the browser that started it. Lax: the browser
 /// comes back from the login application by navigation.
@@ -50,16 +51,30 @@ const AUTHORIZE_COOKIE: Cookie = Cookie {
 const LOGIN_REQUEST_MINUTES: i64 = 10;
 const CODE_SECONDS: i64 = 60;
 
-pub fn routes() -> Router<AppState> {
+pub fn routes(state: &AppState) -> Router<AppState> {
+    // Browser apps registered as public clients call these directly.
+    let cors = || middleware::from_fn_with_state(state.clone(), cors::clients);
     Router::new()
+        .route(
+            "/oauth2/token",
+            post(token).options(cors::preflight).layer(cors()),
+        )
+        .route(
+            "/oauth2/userinfo",
+            get(userinfo_get)
+                .post(userinfo_post)
+                .options(cors::preflight)
+                .layer(cors()),
+        )
+        .route(
+            "/oauth2/revoke",
+            post(revoke).options(cors::preflight).layer(cors()),
+        )
         .route("/oauth2/authorize", get(authorize_get).post(authorize_post))
         .route("/oauth2/authorize/resume", get(resume))
         .route("/oauth2/login-requests/{id}", get(login_request))
         .route("/oauth2/login-requests/{id}/accept", post(accept))
         .route("/oauth2/login-requests/{id}/reject", post(reject))
-        .route("/oauth2/token", post(token))
-        .route("/oauth2/userinfo", get(userinfo_get).post(userinfo_post))
-        .route("/oauth2/revoke", post(revoke))
         .route("/oauth2/logout", get(logout))
         .route("/oauth2/peer/events", post(peer_events))
         .route("/oauth2/peer/subjects", post(peer_subject))

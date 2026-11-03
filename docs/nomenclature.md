@@ -501,6 +501,12 @@ Terms are introduced in dependency order: each definition only uses terms define
     referring to each other by id) or as nested documents (Styx, with
     records inside the ones they belong to), or a mix of both.
 
+- `export`
+  - Writing a database's identity data as a bootstrap set, which the
+    `bootstrap` command applies to an empty database unchanged.
+  - It is a command with database access, not a control-plane operation,
+    because the set holds hashes and MFA seeds.
+
 ## Operations
 
 - `retention`

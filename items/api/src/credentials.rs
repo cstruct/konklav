@@ -159,6 +159,14 @@ pub struct RotateSlot {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
+/// A slot's new expiry, keeping its secret.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct SlotExpiry {
+    /// When the slot's secret stops working; `null` for never.
+    #[schema(required)]
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SessionFlags {
     pub session_flags: Vec<String>,

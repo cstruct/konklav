@@ -49,10 +49,35 @@ pub struct CreateSubject {
     pub kind: SubjectKind,
 }
 
-/// A subject with its credentials.
+/// A subject with its credentials and MFA factors.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SubjectDetail {
     #[serde(flatten)]
     pub subject: Subject,
     pub credentials: Vec<Credential>,
+    /// Without their seeds.
+    #[serde(default)]
+    #[schema(required)]
+    pub mfa_factors: Vec<MfaFactor>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MfaFactorKind {
+    Totp,
+    EmailCode,
+}
+
+/// An MFA factor as the control plane shows it: never its seed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct MfaFactor {
+    pub id: uuid::Uuid,
+    pub kind: MfaFactorKind,
+    /// Whether it has been activated; only active factors count towards a
+    /// credential's `mfa_factors_required`.
+    pub active: bool,
+    /// The address an email-code factor sends to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    pub created_at: DateTime<Utc>,
 }
