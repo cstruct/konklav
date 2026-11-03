@@ -10,10 +10,12 @@ import httpx
 
 from .. import _backend
 from .._backend import AsyncToken
-from .._common import Written, base, delay, retryable, written
+from .._common import Call, Written, base, delay, retryable, written
 from ..errors import KonklavError, from_response
 from . import resources
 from .auth import Auth, resolve
+from .batch import Batch
+from .resources import Direct
 
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_RETRIES = 3
@@ -30,27 +32,29 @@ class ControlPlaneClient:
     is sent again, where it is safe to; `0` turns retries off.
 
     The operations are grouped as the API document tags them, such as
-    `client.tenants.create(...)` and `client.roles.put(...)`.
+    `client.tenants.create(...)` and `client.roles.put(...)`. `batch()`
+    collects writes made through the same namespaces and applies them in
+    one request, all or nothing.
     """
 
-    tenants: resources.Tenants
-    memberships: resources.Memberships
-    subjects: resources.Subjects
-    credentials: resources.Credentials
-    sessions: resources.Sessions
-    signing_keys: resources.SigningKeys
-    catalog: resources.Catalog
-    templates: resources.Templates
-    roles: resources.Roles
-    assignments: resources.Assignments
-    entitlements: resources.Entitlements
-    explain: resources.Explain
-    shares: resources.Shares
-    registered_scopes: resources.RegisteredScopes
-    invites: resources.Invites
-    oidc_clients: resources.OidcClients
-    imports: resources.Imports
-    batches: resources.Batches
+    tenants: resources.Tenants[Direct]
+    memberships: resources.Memberships[Direct]
+    subjects: resources.Subjects[Direct]
+    credentials: resources.Credentials[Direct]
+    sessions: resources.Sessions[Direct]
+    signing_keys: resources.SigningKeys[Direct]
+    catalog: resources.Catalog[Direct]
+    templates: resources.Templates[Direct]
+    roles: resources.Roles[Direct]
+    assignments: resources.Assignments[Direct]
+    entitlements: resources.Entitlements[Direct]
+    explain: resources.Explain[Direct]
+    shares: resources.Shares[Direct]
+    registered_scopes: resources.RegisteredScopes[Direct]
+    invites: resources.Invites[Direct]
+    oidc_clients: resources.OidcClients[Direct]
+    imports: resources.Imports[Direct]
+    batches: resources.Batches[Direct]
 
     # r[impl item.py-control-plane.injectable-http]
     # r[impl item.py-control-plane.explicit-config]
@@ -89,6 +93,18 @@ class ControlPlaneClient:
         self.oidc_clients = resources.OidcClients(self)
         self.imports = resources.Imports(self)
         self.batches = resources.Batches(self)
+
+    def batch(self, *, idempotency_key: str | None = None, idempotency_seconds: int | None = None) -> Batch:
+        """A batch: `async with client.batch() as batch:` collects the writes
+        made through `batch`'s namespaces, which mirror the client's, and
+        sends them in one request on leaving the block without an error.
+
+        With an `idempotency_key`, sending the same batch again answers what
+        it first answered without applying it again, so it is retried like a
+        `PUT`. The server remembers the key for `idempotency_seconds`, or its
+        default (ten minutes) when `None`.
+        """
+        return Batch(self, idempotency_key=idempotency_key, idempotency_seconds=idempotency_seconds)
 
     async def __aenter__(self) -> ControlPlaneClient:
         return self
@@ -138,7 +154,12 @@ class ControlPlaneClient:
     ) -> Written[Any]:
         """Sends a write and splits the cursor off its result."""
         response = await self._send(method, f"{self._url}{path}", json=json, params=params)
-        return written(response, create=create)
+        return written(response.status_code, response.json(), create=create)
+
+    async def _call(self, call: Call) -> Any:
+        """Sends `call` and returns what its method returns."""
+        response = await self._send(call.method, f"{self._url}{call.path}", json=call.json, params=call.query())
+        return call.result(response.status_code, response.json() if response.content else None)
 
     # r[impl item.py-control-plane.paging]
     async def _pages(
@@ -162,8 +183,10 @@ class ControlPlaneClient:
         json: Any = None,
         params: Mapping[str, Any] | None = None,
         authenticate: bool = True,
+        retry_as: str | None = None,
     ) -> httpx.Response:
-        """Sends a request, logging in again once and retrying as allowed."""
+        """Sends a request, logging in again once and retrying as allowed,
+        as for `retry_as` when given instead of `method`."""
         attempt = 0
         relogged = False
         while True:
@@ -191,7 +214,7 @@ class ControlPlaneClient:
                 ):
                     relogged = True
                     continue
-            if attempt >= self._retries or not retryable(method, failure):
+            if attempt >= self._retries or not retryable(retry_as or method, failure):
                 raise failure from cause
             await _backend.async_sleep(delay(attempt, failure))
             attempt += 1

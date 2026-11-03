@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import random
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
-from urllib.parse import quote
+from enum import StrEnum
+from typing import Any, Generic, TypeVar, cast
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -44,18 +45,77 @@ class Written(Generic[T]):
 
 # r[impl item.py-control-plane.write-cursor]
 # r[impl item.py-control-plane.created]
-def written(response: httpx.Response, *, create: bool = False) -> Written[Any]:
+def written(status: int, body: Any, *, create: bool = False) -> Written[Any]:
     """Splits a write's `cursor` off its body."""
-    body = response.json()
     cursor = body.pop("cursor", None) if isinstance(body, dict) else None
-    created = response.status_code == httpx.codes.CREATED if create else None
+    created = status == httpx.codes.CREATED if create else None
     return Written(value=body, cursor=cursor, created=created)
+
+
+class Mode(StrEnum):
+    """Whether a namespace sends its calls (`DIRECT`, the client's) or
+    collects writes into a batch (`BATCH`)."""
+
+    DIRECT = "direct"
+    BATCH = "batch"
+
+
+@dataclass(frozen=True)
+class Call:
+    """One operation as a client method describes it, to send now or in a
+    batch, and how to turn its answer into what the method returns."""
+
+    method: str
+    path: str
+    json: Any = None
+    params: Mapping[str, Any] | None = None
+    create: bool = False
+    written: bool = False
+
+    def query(self) -> dict[str, Any]:
+        return {name: value for name, value in (self.params or {}).items() if value is not None}
+
+    def operation(self) -> dict[str, Any]:
+        """The call as an operation of a batch."""
+        query = urlencode(self.query())
+        operation: dict[str, Any] = {"method": self.method, "path": f"{self.path}?{query}" if query else self.path}
+        if self.json is not None:
+            operation["body"] = self.json
+        return operation
+
+    def result(self, status: int, body: Any) -> Any:
+        """What the method returns for an answer with `status` and `body`."""
+        return written(status, body, create=self.create) if self.written else body
+
+
+class Pending(Generic[T]):
+    """What a method called on a batch's namespace returns: its `result` is
+    what the method returns on the client, once the batch has been sent."""
+
+    def __init__(self) -> None:
+        self._sent = False
+        self._result: Any = None
+
+    @property
+    def result(self) -> T:
+        if not self._sent:
+            raise RuntimeError("the batch hasn't been sent")
+        return cast(T, self._result)
+
+    def _resolve(self, result: Any) -> None:
+        self._result = result
+        self._sent = True
+
+    def __repr__(self) -> str:
+        return f"Pending({self._result!r})" if self._sent else "Pending(<not sent>)"
 
 
 # r[impl item.py-control-plane.retries]
 # r[impl item.py-control-plane.no-ambiguous-retry]
 def retryable(method: str, error: KonklavError) -> bool:
-    """Whether a request that failed with `error` may be sent again."""
+    """Whether a request that failed with `error` may be sent again.
+    `method` is the request's, or `PUT` for a batch with an idempotency key,
+    which a repeat can't apply twice."""
     if error.code == "RATE_LIMITED":
         return True
     if method not in IDEMPOTENT:

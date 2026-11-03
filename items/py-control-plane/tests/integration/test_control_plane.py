@@ -304,3 +304,46 @@ async def test_creates_report_repeats(konklav):
         invite = {"id": new_id(), "email": "again@example.com"}
         assert (await client.invites.create(invite)).created is True
         assert (await client.invites.create(invite)).created is False
+
+
+async def test_batches(konklav):
+    async with operator(konklav) as client:
+        await catalog(client)
+        id, subject, membership, assignment = new_id(), new_id(), new_id(), new_id()
+        email = f"{new_id()}@example.com"
+        async with client.batch() as batch:
+            created = batch.tenants.create(id, {})
+            batch.roles.put(id, "reader", {"policies": [{"action": "document:read", "effect": "allow"}]})
+            batch.subjects.create(subject, {"kind": "human"})
+            batch.credentials.create(subject, {"kind": "password", "identifier": email, "password": PASSWORD})
+            batch.memberships.create(membership, {"subject": subject, "tenant": id})
+            assigned = batch.assignments.assign_to_membership(membership, {"id": assignment, "role": "reader"})
+        assert created.result.created is True
+        assert assigned.result.value["id"] == assignment
+        assert batch.cursor is not None and batch.cursor >= assigned.result.cursor
+        assert "document:read" in (await client.entitlements.get(subject, tenant=id))["tenant"]
+        assert (await login(konklav, email)).status_code == 200
+
+        other = new_id()
+        with pytest.raises(NotFound) as raised:
+            async with client.batch() as failing:
+                failing.tenants.create(other, {})
+                failing.assignments.assign_to_membership(membership, {"role": "no-such-role"})
+        assert raised.value.operation == 1
+        with pytest.raises(NotFound):
+            await client.tenants.get(other)
+
+        service, key = new_id(), new_id()
+        await client.subjects.create(service, {"kind": "service"})
+        firsts = []
+        for _ in range(2):
+            async with client.batch(idempotency_key=key) as keyed:
+                firsts.append(keyed.credentials.create(service, {"kind": "secret_key"}))
+        first, again = (pending.result.value for pending in firsts)
+        assert again["credential"]["id"] == first["credential"]["id"]
+        assert again["secret_keys"]["a"] != first["secret_keys"]["a"]
+        key_id, secret = again["secret_keys"]["a"].split(".", 1)
+        auth = SecretKey(subject_url=konklav["subject"], key_id=key_id, secret=secret)
+        async with ControlPlaneClient(konklav["control"], auth=auth) as service_client:
+            with pytest.raises(Forbidden):
+                await service_client.subjects.list()

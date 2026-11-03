@@ -33,7 +33,7 @@ dev = [
 ]
 
 [tool.mypy]
-files = ["src", "tools"]
+files = ["src", "tools", "tests/typing"]
 strict = true
 python_version = "3.12"
 

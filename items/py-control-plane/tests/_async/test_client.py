@@ -338,3 +338,107 @@ async def test_pages_are_followed_until_there_is_no_next():
     assert ids == ["a", "b", "c"]
     queries = [dict(r.url.params) for r in konklav.requests]
     assert queries == [{"kind": "human", "limit": "2"}, {"kind": "human", "limit": "2", "before": "b"}]
+
+
+def batch_answer(*results, cursor=None):
+    body = {"results": [{"status": status, "body": body} for status, body in results]}
+    if cursor is not None:
+        body["cursor"] = cursor
+    return httpx.Response(200, json=body)
+
+
+# r[verify item.py-control-plane.batch]
+async def test_a_batch_sends_its_writes_in_one_request():
+    konklav = Konklav(
+        batch_answer(
+            (201, {"id": "s", "kind": "human", "state": "active"}),
+            (200, {"id": "m", "state": "active", "cursor": 7}),
+            (200, {"id": "a", "role_id": "r", "cursor": 9}),
+            cursor=9,
+        )
+    )
+    async with konklav.client() as client:
+        async with client.batch() as batch:
+            subject = batch.subjects.create("s", {"kind": "human"})
+            membership = batch.memberships.create("m", {"subject": "s", "tenant": "t"})
+            assignment = batch.assignments.assign_to_membership("m", {"id": "a", "role": "reader"})
+            with pytest.raises(RuntimeError):
+                subject.result
+            assert not konklav.requests, "nothing is sent before the block ends"
+    (request,) = konklav.requests
+    assert (request.method, request.url.path) == ("POST", "/v1/batch")
+    assert json.loads(request.content) == {
+        "operations": [
+            {"method": "PUT", "path": "/subjects/s", "body": {"kind": "human"}},
+            {"method": "PUT", "path": "/memberships/m", "body": {"subject": "s", "tenant": "t"}},
+            {"method": "POST", "path": "/memberships/m/assignments", "body": {"id": "a", "role": "reader"}},
+        ]
+    }
+    assert (subject.result.value["id"], subject.result.created) == ("s", True)
+    assert (membership.result.cursor, membership.result.created) == (7, False)
+    assert assignment.result.cursor == 9
+    assert batch.cursor == 9
+
+
+# r[verify item.py-control-plane.batch]
+async def test_a_batch_holds_only_writes_and_is_sent_once():
+    konklav = Konklav(batch_answer((200, {"id": "app", "client_secret": "s3cret"})))
+    async with konklav.client() as client:
+        batch = client.batch()
+        with pytest.raises(TypeError):
+            await batch.tenants.get("t")
+        secret = batch.oidc_clients.new_secret("app")
+        await batch.send()
+        assert secret.result["client_secret"] == "s3cret"
+        with pytest.raises(RuntimeError):
+            batch.tenants.create("t", {})
+        with pytest.raises(RuntimeError):
+            await batch.send()
+        async with client.batch():
+            pass
+    assert len(konklav.requests) == 1, "an empty batch sends nothing"
+
+
+# r[verify item.py-control-plane.batch]
+async def test_a_batch_is_not_sent_when_its_block_raises():
+    konklav = Konklav()
+    async with konklav.client() as client:
+        with pytest.raises(ValueError):
+            async with client.batch() as batch:
+                batch.subjects.create("s", {"kind": "human"})
+                raise ValueError
+    assert not konklav.requests
+
+
+# r[verify item.py-control-plane.batch]
+# r[verify item.py-control-plane.errors]
+async def test_a_failed_batch_raises_its_operations_error():
+    failed = httpx.Response(403, json={"error": {"code": "FORBIDDEN", "message": "no", "operation": 1}})
+    async with Konklav(failed).client() as client:
+        with pytest.raises(errors.Forbidden) as raised:
+            async with client.batch() as batch:
+                batch.tenants.create("t", {})
+                created = batch.subjects.create("s", {"kind": "human"})
+    assert raised.value.operation == 1
+    with pytest.raises(RuntimeError):
+        created.result
+
+
+# r[verify item.py-control-plane.retries]
+# r[verify item.py-control-plane.no-ambiguous-retry]
+async def test_only_batches_with_a_key_are_retried_after_an_ambiguous_failure(waits):
+    konklav = Konklav(error(503, "OVERLOADED"), batch_answer((201, {"id": "t"})))
+    async with konklav.client() as client:
+        async with client.batch(idempotency_key="k", idempotency_seconds=60) as batch:
+            created = batch.tenants.create("t", {})
+    assert created.result.created is True
+    assert len(konklav.requests) == 2 and len(waits) == 1
+    sent = json.loads(konklav.requests[0].content)
+    assert (sent["idempotency_key"], sent["idempotency_seconds"]) == ("k", 60)
+
+    konklav = Konklav(error(503, "OVERLOADED"))
+    async with konklav.client() as client:
+        with pytest.raises(errors.Unavailable):
+            async with client.batch() as batch:
+                batch.tenants.create("t", {})
+    assert len(konklav.requests) == 1

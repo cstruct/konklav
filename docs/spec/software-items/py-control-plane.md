@@ -122,11 +122,14 @@ What it retries:
   work.
 - `OVERLOADED`, `DATABASE_UNAVAILABLE` and `MIGRATIONS_PENDING`, connection
   errors and timeouts, only for `GET`, `PUT` and `DELETE`, which are
-  idempotent on the control-plane surface.
+  idempotent on the control-plane surface, and for a batch that carries an
+  idempotency key, which a repeat can't apply twice
+  (`platform.batch.idempotency-key`).
 
 r[item.py-control-plane.no-ambiguous-retry]
-The client MUST NOT retry a `POST` after a failure that may have come after
-the server acted on it: `OVERLOADED` (which the server also answers when a
+The client MUST NOT retry a `POST`, including a batch without an
+idempotency key, after a failure that may have come after the server acted
+on it: `OVERLOADED` (which the server also answers when a
 request times out), `DATABASE_UNAVAILABLE`, `MIGRATIONS_PENDING`, a timeout,
 or a connection error once the request may have been sent.
 
@@ -144,6 +147,20 @@ A method for an idempotent create (any create taking a caller-chosen id,
 `platform.idempotency.client-ids`) MUST report whether the server created
 the resource (`201`) or found it already there with the same content
 (`200`).
+
+## Batches
+
+r[item.py-control-plane.batch]
+Both clients MUST offer batches (`platform.batch.atomic`) through the same
+namespaces and methods as single operations: a batch's namespaces offer
+every write, and only writes. A write called on a batch MUST be recorded,
+not sent, and MUST return a value whose `result` is what the same call on
+the client returns, once the batch has been sent; the batch MUST be sent
+in one request when its `with` block ends without an error, and not at all
+when it raises. A failed batch MUST raise its operation's error. The types
+MUST tell the two apart: a write's result on a batch is typed as the
+deferred value of its result on the client, and reads on a batch don't
+type-check.
 
 r[item.py-control-plane.paging]
 A method for a paged operation MUST return one page, including its `next`

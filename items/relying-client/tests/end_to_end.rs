@@ -372,6 +372,37 @@ async fn writes_are_readable_after_awaiting_their_cursor() {
     ));
 }
 
+/// A batch's cursor is awaited like a single write's.
+// r[verify platform.batch.results]
+#[tokio::test(flavor = "multi_thread")]
+async fn batches_are_readable_after_awaiting_their_cursor() {
+    let world = world().await;
+    until_trusted(&world.client).await;
+    let tenant = uuid::Uuid::now_v7();
+    let applied = world
+        .server
+        .control(
+            Method::POST,
+            "/v1/batch",
+            json!({"operations": [
+                {"method": "PUT", "path": format!("/tenants/{tenant}"), "body": {}},
+                {"method": "POST", "path": format!("/memberships/{}/end", world.membership)},
+            ]}),
+        )
+        .await;
+    let cursor = Cursor::new(applied["cursor"].as_i64().unwrap());
+    assert!(
+        world
+            .client
+            .await_cursor(cursor, Duration::from_secs(5))
+            .await
+    );
+    assert!(matches!(
+        world.client.decide(&world.token, &reading()).await.unwrap(),
+        Decision::Deny { .. }
+    ));
+}
+
 fn reading_document(id: &str) -> Requirements {
     Requirements {
         scopes: vec![konklav_authz::ScopeRequirement {

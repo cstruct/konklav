@@ -1,8 +1,9 @@
 """Read-your-writes across Konklav's two Python packages.
 
-An operator's tool grants a role through the control plane with
-`konklav-control-plane`; a relying system deciding with `konklav-relying`
-waits for that write's cursor and then allows what the role grants. The
+An operator's tool sets up a tenant, a person and a service principal in
+one batch through the control plane with `konklav-control-plane`, then
+grants the person a role; a relying system deciding with `konklav-relying`
+waits for each write's cursor, and then allows what the role grants. The
 packages don't import each other: the cursor, a plain `int`, is all they
 share.
 
@@ -56,24 +57,22 @@ async def tenant_token(konklav: Konklav, email: str, tenant: str) -> str:
 async def run(konklav: Konklav) -> str:
     """Returns the final decision: `allow` when read-your-writes held."""
     async with ControlPlaneClient(konklav.control, auth=BearerToken(konklav.token)) as control:
-        await control.catalog.put({"actions": [{"name": "document:read"}]})
-        tenant = str(uuid.uuid4())
-        await control.tenants.create(tenant, {})
-        await control.roles.put(tenant, "reader", {"policies": [{"action": "document:read", "effect": "allow"}]})
-
+        tenant, person, membership, service = (str(uuid.uuid4()) for _ in range(4))
         email = f"{uuid.uuid4().hex}@example.com"
-        person = str(uuid.uuid4())
-        await control.subjects.create(person, {"kind": "human"})
-        await control.credentials.create(person, {"kind": "password", "identifier": email, "password": PASSWORD})
-        membership = str(uuid.uuid4())
-        await control.memberships.create(membership, {"subject": person, "tenant": tenant})
-        step(f"created tenant {tenant} with a reader role, and a member without it")
-
-        # The relying system's own service principal, whose key it logs in with.
-        service = str(uuid.uuid4())
-        await control.subjects.create(service, {"kind": "service"})
-        key = await control.credentials.create(service, {"kind": "secret_key"})
-        key_id, secret = key.value["secret_keys"]["a"].split(".", 1)
+        # One request, all or nothing. Later operations name what earlier
+        # ones create by the ids chosen for them here.
+        async with control.batch() as setup:
+            setup.catalog.put({"actions": [{"name": "document:read"}]})
+            setup.tenants.create(tenant, {})
+            setup.roles.put(tenant, "reader", {"policies": [{"action": "document:read", "effect": "allow"}]})
+            setup.subjects.create(person, {"kind": "human"})
+            setup.credentials.create(person, {"kind": "password", "identifier": email, "password": PASSWORD})
+            setup.memberships.create(membership, {"subject": person, "tenant": tenant})
+            # The relying system's own service principal, whose key it logs in with.
+            setup.subjects.create(service, {"kind": "service"})
+            key = setup.credentials.create(service, {"kind": "secret_key"})
+        step(f"created tenant {tenant} with a reader role, and a member without it, in one batch")
+        key_id, secret = key.result.value["secret_keys"]["a"].split(".", 1)
 
         relying = RelyingClient(
             relying_url=konklav.relying,
