@@ -57,7 +57,7 @@ run = "cargo build --workspace"
 
 [tasks.test]
 description = "Run every test; database tests use isolated databases on the local Postgres"
-depends = ["db:up", "py:test", "console:smoke"]
+depends = ["db:up", "py:test", "py-control-plane:test", "console:smoke"]
 run = "cargo test --workspace"
 
 [tasks."py:test"]
@@ -68,6 +68,16 @@ run = ["uv sync -q --reinstall-package konklav-relying", "uv run -q pytest -q te
 [tasks."py:build"]
 description = "Build the Python relying binding's sdist and a release wheel for this machine into items/py/dist"
 dir = "items/py"
+run = ["rm -rf dist", "uv build -q --out-dir dist"]
+
+[tasks."py-control-plane:test"]
+description = "Run the Python control-plane client's tests"
+dir = "items/py-control-plane"
+run = ["uv sync -q --locked", "uv run -q pytest -q tests"]
+
+[tasks."py-control-plane:build"]
+description = "Build the Python control-plane client's sdist and wheel into items/py-control-plane/dist"
+dir = "items/py-control-plane"
 run = ["rm -rf dist", "uv build -q --out-dir dist"]
 
 [tasks."release:bump"]
@@ -82,9 +92,9 @@ test -z "$(git status --porcelain)" || { echo "The working tree has uncommitted 
 # Releases are made from main.
 test "$(git branch --show-current)" = main || { echo "Not on main" >&2; exit 1; }
 git pull -q --ff-only
-# The workspace version, and the Python binding's, which maturin also uses
-# for the Python package.
-for manifest in Cargo.toml items/py/Cargo.toml; do
+# The workspace version, the Python binding's, which maturin also uses for
+# the Python package, and the Python control-plane client's.
+for manifest in Cargo.toml items/py/Cargo.toml items/py-control-plane/pyproject.toml; do
   test "$(grep -c '^version = ' "$manifest")" = 1
   perl -pi -e "s/^version = \\"[^\\"]*\\"/version = \\"$version\\"/" "$manifest"
 done
@@ -92,6 +102,7 @@ done
 perl -pi -e "s/^(konklav-[a-z-]+ = \\{ version = \\")=[^\\"]*/\\1=$version/" Cargo.toml
 cargo update -q --workspace
 cargo update -q --workspace --manifest-path items/py/Cargo.toml
+(cd items/py-control-plane && uv lock -q)
 git commit -q -am "Release $version"
 git push origin HEAD
 git tag -a "v$version" -m "Konklav $version"

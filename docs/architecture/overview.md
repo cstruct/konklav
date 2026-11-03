@@ -54,6 +54,7 @@ and spec-first development with Tracey.
 | `konklav-relying` | Sans-I/O relying core |
 | `konklav-relying-client` | Native Rust host binding (reqwest + tokio) |
 | `konklav-py` | pyo3 host binding |
+| `konklav-py-control-plane` | Python control-plane client (`konklav-control-plane`), with types generated from the API document |
 | `konklav-cli` | Admin tooling and importers |
 
 Dependencies point inward: `server` → `authn`/`authz`/`store` → `core`.

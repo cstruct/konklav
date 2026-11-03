@@ -9,3 +9,5 @@ items/py/target/
 items/py/dist/
 __pycache__/
 *.so
+items/py-control-plane/.venv/
+items/py-control-plane/dist/

@@ -35,6 +35,10 @@ Terms are introduced in dependency order: each definition only uses terms define
   - It describes one release: a client generated from it is supported against a server of the same version only.
   - Only the control-plane surface has one so far.
 
+- `control-plane client`
+  - A library that calls the control-plane surface on an operator's or automation's behalf, such as the Python package `konklav-control-plane`.
+  - It is separate from the relying SDK: it changes what Konklav knows, while the relying SDK asks Konklav for decisions. Neither depends on the other.
+
 ## Tenancy
 
 - `tenant`
