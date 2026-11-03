@@ -47,7 +47,15 @@ table, view or join. The schemas mirror the serde types in
 - `event` is the outbox, with columns `cursor bigserial`, `kind`, `subject`,
   `tenant`, `payload jsonb`, `created_at`. A helper inside the repository
   transaction writes events, so no state change can commit without its
-  event (`r[platform.storage.transactional-events]`).
+  event (`r[platform.storage.transactional-events]`). A trigger draws each
+  cursor under a transaction-scoped advisory lock, so event-writing
+  transactions commit in cursor order and a reader resuming from a cursor
+  never passes an event that commits later (`r[feed.commit-order]`). The
+  cost is that they run one at a time from their first event to their end,
+  a control-plane batch for its whole run.
+- `batch_result` keeps the answers of committed control-plane batches that
+  carried an idempotency key, per caller, until the key's lifetime passes
+  (`r[platform.batch.idempotency-key]`).
 - The revision of any piece of state is the cursor of the last event that
   touched it. There are no separate revision counters to keep in sync.
 

@@ -1,18 +1,24 @@
 //! The control-plane surface: subjects, credentials, sessions and signing
-//! keys.
+//! keys, and the route groups and guards for the whole surface.
 //!
-//! Until operator authorization arrives (M6), every route requires the
-//! configured bootstrap bearer token.
+//! Every route needs an operator: the bootstrap token, when configured, or
+//! an access token whose subject holds the route group's capability
+//! (`konklav:control:all` holds them all). The batch route needs only an
+//! operator, since each of its operations is guarded on its own.
 
 use axum::extract::{Extension, Path, Query, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use diesel_async::AsyncConnection;
-use konklav_authn::{PasswordHasher, generate_secret};
+use konklav_api::{
+    self as api, BreakGlass, CreateCredential, CreateSubject, CreatedCredential, ReplacePassword,
+    RevokeCredential, RevokeSessions, RevokedKey, RevokedSessions, RotateSlot, RotatedSlot,
+    SecretKeys, SessionFlags, SessionPage, SessionQuery, SubjectDetail, SubjectPage, SubjectQuery,
+};
+use konklav_authn::{PasswordCheck, PasswordHasher, generate_secret};
 use konklav_core::{CredentialId, Cursor, SessionId, SubjectId};
 use konklav_store::credentials::{
     self, Credential, CredentialData, CredentialKind, NewCredential, PasswordData, SecretKeyData,
@@ -21,45 +27,98 @@ use konklav_store::credentials::{
 use konklav_store::sessions::{self, Session, SessionFilter};
 use konklav_store::subjects::{self, Subject, SubjectKind, SubjectState};
 use konklav_store::{StoreError, signing_keys};
-use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
+
+pub(crate) use konklav_api::Written;
 
 use crate::capabilities::Operator;
+use crate::db::Db;
 use crate::error::{ApiError, ApiJson, ErrorCode};
-use crate::{AppState, capabilities, subject_api};
+use crate::{AppState, batch_api, capabilities, subject_api, transport};
 
+/// Subjects and their credentials, with the `OpenAPI` description of each
+/// route taken from its handler's `#[utoipa::path]`.
+pub(crate) fn subjects() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list_subjects))
+        .routes(routes!(create_subject, get_subject))
+        .routes(routes!(disable_subject))
+        .routes(routes!(enable_subject))
+        .routes(routes!(create_credential))
+        .routes(routes!(revoke_credential))
+        .routes(routes!(replace_password))
+        .routes(routes!(set_break_glass))
+        .routes(routes!(set_session_flags))
+        .routes(routes!(rotate_secret_slot))
+}
+
+/// Sessions, described like [`subjects`].
+pub(crate) fn sessions() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list_sessions))
+        .routes(routes!(revoke_sessions))
+        .routes(routes!(get_session))
+}
+
+/// Signing keys, described like [`subjects`].
+pub(crate) fn signing_keys() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list_signing_keys))
+        .routes(routes!(revoke_signing_key))
+}
+
+/// Every control-plane route group with the capability that guards it. The
+/// control surface and its API document are both built from this list, so a
+/// route can't be served without being documented.
+// r[impl item.api.document]
+pub(crate) fn groups() -> [(OpenApiRouter<AppState>, &'static str); 11] {
+    use crate::{
+        control_authz, explain_api, import_api, invites, oidc_clients_api, registered_scopes_api,
+        shares_api,
+    };
+    [
+        (control_authz::tenancy(), capabilities::TENANTS),
+        (subjects(), capabilities::SUBJECTS),
+        (sessions(), capabilities::SESSIONS),
+        (signing_keys(), capabilities::KEYS),
+        (control_authz::authz(), capabilities::AUTHZ),
+        (explain_api::explain(), capabilities::AUTHZ),
+        (shares_api::shares(), capabilities::AUTHZ),
+        (
+            registered_scopes_api::registered_scopes(),
+            capabilities::SCOPES_REGISTER,
+        ),
+        (invites::invites(), capabilities::INVITES),
+        (oidc_clients_api::oidc_clients(), capabilities::CLIENTS),
+        (import_api::import(), capabilities::IMPORT),
+    ]
+}
+
+/// The control surface's `/v1` routes, each group behind its guard, and
+/// the batch route, which runs its operations through the others.
 pub fn routes(state: &AppState) -> Router<AppState> {
-    let subjects = Router::new()
-        .route("/subjects", get(list_subjects))
-        .route("/subjects/{id}", put(create_subject).get(get_subject))
-        .route("/subjects/{id}/disable", post(disable_subject))
-        .route("/subjects/{id}/enable", post(enable_subject))
-        .route("/subjects/{id}/credentials", post(create_credential))
-        .route("/credentials/{id}/revoke", post(revoke_credential))
-        .route("/credentials/{id}/replace", post(replace_password))
-        .route("/credentials/{id}/break-glass", put(set_break_glass))
-        .route("/credentials/{id}/session-flags", put(set_session_flags))
-        .route(
-            "/credentials/{id}/slots/{slot}/rotate",
-            post(rotate_secret_slot),
-        )
-        .route_layer(guard(state, capabilities::SUBJECTS));
-    let sessions = Router::new()
-        .route("/sessions", get(list_sessions))
-        .route("/sessions/revoke", post(revoke_sessions))
-        .route("/sessions/{id}", get(get_session))
-        .route_layer(guard(state, capabilities::SESSIONS));
-    let keys = Router::new()
-        .route("/signing-keys", get(list_signing_keys))
-        .route("/signing-keys/{kid}/revoke", post(revoke_signing_key))
-        .route_layer(guard(state, capabilities::KEYS));
-    subjects.merge(sessions).merge(keys)
+    let routes = groups()
+        .into_iter()
+        .fold(Router::new(), |all, (group, capability)| {
+            let (router, _) = group
+                .route_layer(guard(state, Some(capability)))
+                .split_for_parts();
+            all.merge(router)
+        });
+    let dispatch = batch_api::Dispatch(batch_api::dispatch_router(routes.clone(), state));
+    let (batch, _) = batch_api::batch()
+        .route_layer(guard(state, None))
+        .layer(Extension(dispatch))
+        .split_for_parts();
+    routes.merge(batch)
 }
 
 /// Guards control-plane routes: the bootstrap token (when configured), or an
 /// operator's access token whose subject holds `capability` or
-/// `konklav:control:all`.
-pub(crate) fn guard(state: &AppState, capability: &'static str) -> GuardLayer {
+/// `konklav:control:all`. Without a capability, any operator passes.
+pub(crate) fn guard(state: &AppState, capability: Option<&'static str>) -> GuardLayer {
     middleware::from_fn_with_state(
         (state.clone(), capability),
         check_operator as fn(_, _, _) -> _,
@@ -67,7 +126,7 @@ pub(crate) fn guard(state: &AppState, capability: &'static str) -> GuardLayer {
 }
 
 type GuardFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>>;
-type GuardState = (AppState, &'static str);
+type GuardState = (AppState, Option<&'static str>);
 type GuardLayer = axum::middleware::FromFnLayer<
     fn(State<GuardState>, Request, Next) -> GuardFuture,
     GuardState,
@@ -76,13 +135,14 @@ type GuardLayer = axum::middleware::FromFnLayer<
 
 // r[impl authz.control-plane.capability]
 fn check_operator(
-    State((state, capability)): State<(AppState, &'static str)>,
+    State((state, capability)): State<GuardState>,
     request: Request,
     next: Next,
 ) -> GuardFuture {
     Box::pin(async move {
         let mut request = request;
-        match authorize_operator(&state, capability, request.headers()).await {
+        let db = Db::new(&state, request.extensions());
+        match authorize_operator(&state, &db, capability, request.headers()).await {
             Ok(operator) => {
                 request.extensions_mut().insert(operator);
                 next.run(request).await
@@ -94,7 +154,8 @@ fn check_operator(
 
 async fn authorize_operator(
     state: &AppState,
-    capability: &'static str,
+    db: &Db,
+    capability: Option<&'static str>,
     headers: &axum::http::HeaderMap,
 ) -> Result<Operator, ApiError> {
     let presented = headers
@@ -115,10 +176,13 @@ async fn authorize_operator(
             .control_token_expires_at
             .is_none_or(|expires| Utc::now() < expires)
     {
-        tracing::info!(capability, "control plane used with the bootstrap token");
-        return Ok(Operator { all: true });
+        tracing::info!(?capability, "control plane used with the bootstrap token");
+        return Ok(Operator {
+            all: true,
+            subject: None,
+        });
     }
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let (_, session) = crate::subject_api::verify_access_token(state, &mut conn, presented)
         .await
         .map_err(|_| {
@@ -132,8 +196,15 @@ async fn authorize_operator(
     }
     crate::subject_api::refuse_impersonation(&session)?;
     let all = capabilities::holds(&mut conn, session.subject_id, capabilities::CONTROL_ALL).await?;
+    let operator = Operator {
+        all,
+        subject: Some(session.subject_id),
+    };
+    let Some(capability) = capability else {
+        return Ok(operator);
+    };
     if all || capabilities::holds(&mut conn, session.subject_id, capability).await? {
-        Ok(Operator { all })
+        Ok(operator)
     } else {
         Err(ApiError::new(
             ErrorCode::Forbidden,
@@ -148,14 +219,13 @@ pub(crate) fn parse_id<T: std::str::FromStr>(value: &str, what: &str) -> Result<
         .map_err(|_| ApiError::invalid_request(format!("{what} is not a valid identifier")))
 }
 
-/// A write's result and the cursor of the last event it produced, if any.
-// r[impl platform.idempotency.write-cursor]
-#[derive(Serialize)]
-pub(crate) struct Written<T> {
-    #[serde(flatten)]
-    pub(crate) value: T,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) cursor: Option<Cursor>,
+/// 201 for a create that created, 200 for an idempotent repeat.
+pub(crate) fn created_status(created: bool) -> StatusCode {
+    if created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    }
 }
 
 fn last_cursor(revoked: &[(Session, Cursor)]) -> Option<Cursor> {
@@ -164,50 +234,18 @@ fn last_cursor(revoked: &[(Session, Cursor)]) -> Option<Cursor> {
 
 // --- Subjects ---------------------------------------------------------------
 
-#[derive(Serialize)]
-struct SubjectView {
-    id: SubjectId,
-    kind: SubjectKind,
-    state: SubjectState,
-    created_at: DateTime<Utc>,
-}
-
-impl From<Subject> for SubjectView {
-    fn from(subject: Subject) -> Self {
-        Self {
-            id: subject.id,
-            kind: subject.kind,
-            state: subject.state,
-            created_at: subject.created_at,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct SubjectQuery {
-    kind: Option<SubjectKind>,
-    /// A login identifier (email address, phone number or key id).
-    identifier: Option<String>,
-    before: Option<SubjectId>,
-    limit: Option<i64>,
-}
-
-#[derive(Serialize)]
-struct SubjectPage {
-    subjects: Vec<SubjectView>,
-    next: Option<SubjectId>,
-}
-
-/// `GET /v1/subjects?kind=&identifier=&before=&limit=`
+/// Lists subjects.
+#[utoipa::path(get, path = "/subjects", tag = "subjects", params(SubjectQuery),
+    responses((status = 200, body = SubjectPage)))]
 async fn list_subjects(
-    State(state): State<AppState>,
+    db: Db,
     Query(query): Query<SubjectQuery>,
 ) -> Result<Json<SubjectPage>, ApiError> {
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let subjects = subjects::list(
         &mut conn,
-        query.kind,
+        query.kind.map(transport::store_subject_kind),
         query.identifier.as_deref(),
         query.before,
         limit,
@@ -217,64 +255,59 @@ async fn list_subjects(
         .then(|| subjects.last().map(|s| s.id))
         .flatten();
     Ok(Json(SubjectPage {
-        subjects: subjects.into_iter().map(SubjectView::from).collect(),
+        subjects: subjects.iter().map(transport::subject).collect(),
         next,
     }))
 }
 
-#[derive(Deserialize)]
-struct CreateSubject {
-    kind: SubjectKind,
-}
-
-/// `PUT /v1/subjects/{id}`: idempotent on the id.
+/// Creates a subject.
+///
+/// Idempotent on the caller-chosen id: repeating the request with the same
+/// content returns 200.
+#[utoipa::path(put, path = "/subjects/{id}", tag = "subjects",
+    params(("id" = SubjectId, Path, description = "Chosen by the caller")),
+    request_body = CreateSubject,
+    responses(
+        (status = 201, description = "Created", body = api::Subject),
+        (status = 200, description = "Already existed with the same kind", body = api::Subject),
+    ))]
 async fn create_subject(
-    State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<CreateSubject>,
 ) -> Result<Response, ApiError> {
     let id = parse_id(&id, "subject id")?;
-    let mut conn = state.pool.get().await?;
-    let (subject, created) = subjects::create(&mut conn, id, body.kind).await?;
-    let status = if created {
-        StatusCode::CREATED
-    } else {
-        StatusCode::OK
-    };
-    Ok((status, Json(SubjectView::from(subject))).into_response())
+    let mut conn = db.get().await?;
+    let (subject, created) =
+        subjects::create(&mut conn, id, transport::store_subject_kind(body.kind)).await?;
+    let status = created_status(created);
+    Ok((status, Json(transport::subject(&subject))).into_response())
 }
 
-#[derive(Serialize)]
-struct SubjectDetail {
-    #[serde(flatten)]
-    subject: SubjectView,
-    credentials: Vec<CredentialView>,
-}
-
-async fn get_subject(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<SubjectDetail>, ApiError> {
+/// Gets a subject.
+#[utoipa::path(get, path = "/subjects/{id}", tag = "subjects", params(("id" = SubjectId, Path)),
+    responses((status = 200, body = SubjectDetail)))]
+async fn get_subject(db: Db, Path(id): Path<String>) -> Result<Json<SubjectDetail>, ApiError> {
     let id = parse_id(&id, "subject id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let subject = subjects::get(&mut conn, id)
         .await
         .map_err(|_| ApiError::not_found("subject"))?;
     let credentials = credentials::list_for_subject(&mut conn, id).await?;
     Ok(Json(SubjectDetail {
-        subject: subject.into(),
-        credentials: credentials.into_iter().map(CredentialView::from).collect(),
+        subject: transport::subject(&subject),
+        credentials: credentials.into_iter().map(transport::credential).collect(),
     }))
 }
 
 async fn set_subject_state(
-    state: &AppState,
+    db: &Db,
     operator: Operator,
     id: &str,
     target: SubjectState,
-) -> Result<Json<Written<SubjectView>>, ApiError> {
+) -> Result<Json<Written<api::Subject>>, ApiError> {
     let id = parse_id(id, "subject id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     operator.may_change(&mut conn, id).await?;
     let revoked = conn
         .transaction::<_, ApiError, _>(async |conn| {
@@ -297,174 +330,36 @@ async fn set_subject_state(
         .await?;
     let subject = subjects::get(&mut conn, id).await?;
     Ok(Json(Written {
-        value: subject.into(),
+        value: transport::subject(&subject),
         cursor: last_cursor(&revoked),
     }))
 }
 
+/// Disables a subject.
+///
+/// The subject's sessions end.
+#[utoipa::path(post, path = "/subjects/{id}/disable", tag = "subjects", params(("id" = SubjectId, Path)),
+    responses((status = 200, body = Written<api::Subject>)))]
 async fn disable_subject(
-    State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
-) -> Result<Json<Written<SubjectView>>, ApiError> {
-    set_subject_state(&state, operator, &id, SubjectState::Disabled).await
+) -> Result<Json<Written<api::Subject>>, ApiError> {
+    set_subject_state(&db, operator, &id, SubjectState::Disabled).await
 }
 
+/// Enables a disabled subject.
+#[utoipa::path(post, path = "/subjects/{id}/enable", tag = "subjects", params(("id" = SubjectId, Path)),
+    responses((status = 200, body = Written<api::Subject>)))]
 async fn enable_subject(
-    State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
-) -> Result<Json<Written<SubjectView>>, ApiError> {
-    set_subject_state(&state, operator, &id, SubjectState::Active).await
+) -> Result<Json<Written<api::Subject>>, ApiError> {
+    set_subject_state(&db, operator, &id, SubjectState::Active).await
 }
 
 // --- Credentials ------------------------------------------------------------
-
-#[derive(Serialize)]
-struct SlotView {
-    created_at: DateTime<Utc>,
-    expires_at: Option<DateTime<Utc>>,
-}
-
-impl From<&SecretSlotData> for SlotView {
-    fn from(slot: &SecretSlotData) -> Self {
-        Self {
-            created_at: slot.created_at,
-            expires_at: slot.expires_at,
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct SlotsView {
-    a: SlotView,
-    b: SlotView,
-}
-
-#[derive(Serialize)]
-struct PasskeyView {
-    label: String,
-    last_used_at: Option<DateTime<Utc>>,
-}
-
-/// A credential without any secret material.
-#[derive(Serialize)]
-struct CredentialView {
-    id: CredentialId,
-    subject_id: SubjectId,
-    kind: CredentialKind,
-    identifier: String,
-    mfa_factors_required: i16,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    slots: Option<SlotsView>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    passkey: Option<PasskeyView>,
-    replaces: Option<CredentialId>,
-    created_at: DateTime<Utc>,
-    revoked_at: Option<DateTime<Utc>>,
-    revoked_reason: Option<String>,
-    break_glass: bool,
-    session_flags: Vec<String>,
-}
-
-impl From<Credential> for CredentialView {
-    fn from(credential: Credential) -> Self {
-        let (slots, passkey) = match &credential.data {
-            CredentialData::SecretKey(data) => (
-                Some(SlotsView {
-                    a: SlotView::from(&data.a),
-                    b: SlotView::from(&data.b),
-                }),
-                None,
-            ),
-            CredentialData::PublicKey(data) => (
-                None,
-                Some(PasskeyView {
-                    label: data.label.clone(),
-                    last_used_at: data.last_used_at,
-                }),
-            ),
-            CredentialData::Password(_)
-            | CredentialData::EmailLink
-            | CredentialData::PhoneOtp
-            | CredentialData::Federated(_)
-            | CredentialData::Client => (None, None),
-        };
-        Self {
-            id: credential.id,
-            subject_id: credential.subject_id,
-            kind: credential.kind(),
-            identifier: credential.identifier,
-            mfa_factors_required: credential.mfa_factors_required,
-            slots,
-            passkey,
-            replaces: credential.replaces,
-            created_at: credential.created_at,
-            revoked_at: credential.revoked_at,
-            revoked_reason: credential.revoked_reason,
-            break_glass: credential.break_glass,
-            session_flags: credential.session_flags,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum CreateCredential {
-    /// With either `password` or an Argon2id `password_hash`.
-    Password {
-        id: Option<CredentialId>,
-        identifier: String,
-        password: Option<String>,
-        password_hash: Option<String>,
-        #[serde(default)]
-        mfa_factors_required: i16,
-    },
-    SecretKey {
-        id: Option<CredentialId>,
-        expires_at: Option<DateTime<Utc>>,
-    },
-    /// Log in with a magic link sent to `identifier`, an email address.
-    EmailLink {
-        id: Option<CredentialId>,
-        identifier: String,
-    },
-    /// Log in with a code sent to `identifier`, an E.164 phone number.
-    PhoneOtp {
-        id: Option<CredentialId>,
-        identifier: String,
-    },
-    /// A workload identity at an identity provider: tokens it issues for
-    /// `subject` sign the service principal in with the JWT bearer grant.
-    Federated {
-        id: Option<CredentialId>,
-        provider: String,
-        subject: String,
-    },
-}
-
-#[derive(Serialize)]
-struct CreatedCredential {
-    credential: CredentialView,
-    /// For secret keys: both slots' `<key id>.<secret>`, shown only once.
-    // r[impl credential.secret-key.hashed]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    secret_keys: Option<SecretKeys>,
-}
-
-#[derive(Serialize)]
-struct SecretKeys {
-    a: String,
-    b: String,
-}
-
-#[derive(Serialize)]
-struct RotatedSlot {
-    credential: CredentialView,
-    slot: SecretSlot,
-    /// The slot's new `<key id>.<secret>`, shown only once.
-    secret_key: String,
-}
 
 /// A new secret and its slot data.
 async fn new_slot(
@@ -519,19 +414,39 @@ async fn password_hash_for(
     }
 }
 
-/// `POST /v1/subjects/{id}/credentials`
+/// Creates a credential for a subject.
+///
+/// Generated secrets are shown only once. Idempotent on a caller-chosen `id`:
+/// repeating the request with the same content returns 200, and for a secret
+/// key generates new secrets for both slots and shows those, so the first
+/// ones stop working.
+// r[impl credential.secret-key.hashed]
+#[utoipa::path(post, path = "/subjects/{id}/credentials", tag = "credentials",
+    params(("id" = SubjectId, Path)),
+    request_body = CreateCredential,
+    responses(
+        (status = 201, description = "Created. A secret key's secrets are in `secret_keys`, shown only once.", body = CreatedCredential),
+        (status = 200, description = "Already existed with the same content. A secret key's new secrets are in `secret_keys`.", body = CreatedCredential),
+    ))]
 async fn create_credential(
     State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(subject_id): Path<String>,
     ApiJson(body): ApiJson<CreateCredential>,
 ) -> Result<(StatusCode, Json<CreatedCredential>), ApiError> {
     let subject_id: SubjectId = parse_id(&subject_id, "subject id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let subject = subjects::get(&mut conn, subject_id)
         .await
         .map_err(|_| ApiError::not_found("subject"))?;
     operator.may_change(&mut conn, subject_id).await?;
+    // r[impl platform.idempotency.client-ids]
+    if let Some(id) = requested_id(&body)
+        && let Ok(existing) = credentials::get(&mut conn, id).await
+    {
+        return repeat_credential(&state, &mut conn, subject_id, existing, body).await;
+    }
 
     let is_email = matches!(body, CreateCredential::EmailLink { .. });
     let (new, secret_keys) = match body {
@@ -607,8 +522,122 @@ async fn create_credential(
     Ok((
         StatusCode::CREATED,
         Json(CreatedCredential {
-            credential: credential.into(),
+            credential: transport::credential(credential),
             secret_keys,
+        }),
+    ))
+}
+
+fn requested_id(body: &CreateCredential) -> Option<CredentialId> {
+    match body {
+        CreateCredential::Password { id, .. }
+        | CreateCredential::SecretKey { id, .. }
+        | CreateCredential::EmailLink { id, .. }
+        | CreateCredential::PhoneOtp { id, .. }
+        | CreateCredential::Federated { id, .. } => *id,
+    }
+}
+
+/// Answers a repeated create of `existing`: 200 with the credential when
+/// the request matches it, with new secrets for a secret key, or a
+/// conflict.
+async fn repeat_credential(
+    state: &AppState,
+    conn: &mut konklav_store::Connection,
+    subject_id: SubjectId,
+    existing: Credential,
+    body: CreateCredential,
+) -> Result<(StatusCode, Json<CreatedCredential>), ApiError> {
+    let id = existing.id;
+    let conflict = || {
+        ApiError::new(
+            ErrorCode::Conflict,
+            format!("credential {id} already exists with other content"),
+        )
+    };
+    if existing.subject_id != subject_id || existing.replaces.is_some() {
+        return Err(conflict());
+    }
+    if !existing.is_active() {
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            format!("credential {id} was revoked"),
+        ));
+    }
+    let same = match (body, &existing.data) {
+        (
+            CreateCredential::Password {
+                identifier,
+                password,
+                password_hash,
+                mfa_factors_required,
+                ..
+            },
+            CredentialData::Password(data),
+        ) => {
+            existing.identifier == credentials::normalize_identifier(&identifier)
+                && existing.mfa_factors_required == mfa_factors_required
+                && match (password, password_hash) {
+                    (Some(password), None) => {
+                        let hash = data.hash.clone();
+                        let check = state
+                            .auth
+                            .hashing(move |hasher| hasher.verify(&password, &hash))
+                            .await?;
+                        matches!(check, PasswordCheck::Match { .. })
+                    }
+                    (None, Some(given)) => given.trim() == data.hash,
+                    _ => false,
+                }
+        }
+        (CreateCredential::EmailLink { identifier, .. }, CredentialData::EmailLink)
+        | (CreateCredential::PhoneOtp { identifier, .. }, CredentialData::PhoneOtp) => {
+            existing.identifier == credentials::normalize_identifier(&identifier)
+        }
+        (
+            CreateCredential::Federated {
+                provider,
+                subject: upstream,
+                ..
+            },
+            CredentialData::Federated(_),
+        ) => {
+            existing.identifier
+                == credentials::normalize_identifier(&credentials::federated_identifier(
+                    &provider, &upstream,
+                ))
+        }
+        (CreateCredential::SecretKey { expires_at, .. }, CredentialData::SecretKey(data)) => {
+            if data.a.expires_at != expires_at || data.b.expires_at != expires_at {
+                return Err(conflict());
+            }
+            // The first answer's secrets were shown once and aren't kept.
+            let (secret_a, a) = new_slot(state, expires_at).await?;
+            let (secret_b, b) = new_slot(state, expires_at).await?;
+            credentials::set_data(conn, id, &CredentialData::SecretKey(SecretKeyData { a, b }))
+                .await?;
+            let credential = credentials::get(conn, id).await?;
+            return Ok((
+                StatusCode::OK,
+                Json(CreatedCredential {
+                    credential: transport::credential(credential),
+                    secret_keys: Some(SecretKeys {
+                        a: format!("{id}.{secret_a}"),
+                        b: format!("{id}.{secret_b}"),
+                    }),
+                }),
+            ));
+        }
+        _ => false,
+    };
+    if !same {
+        return Err(conflict());
+    }
+    Ok((
+        StatusCode::OK,
+        Json(CreatedCredential {
+            credential: transport::credential(existing),
+            secret_keys: None,
         }),
     ))
 }
@@ -653,25 +682,25 @@ fn passwordless_credential(
     })
 }
 
-#[derive(Default, Deserialize)]
-struct RevokeCredential {
-    reason: Option<String>,
-}
-
-/// `POST /v1/credentials/{id}/revoke`: revokes the credential and ends the
-/// sessions established with it.
+/// Revokes a credential.
+///
+/// Sessions established with the credential end.
 // r[impl credential.revocation-ends-sessions]
+#[utoipa::path(post, path = "/credentials/{id}/revoke", tag = "credentials",
+    params(("id" = CredentialId, Path)),
+    request_body(content = Option<RevokeCredential>, description = "Optional"),
+    responses((status = 200, body = Written<api::Credential>)))]
 async fn revoke_credential(
-    State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
     body: Option<ApiJson<RevokeCredential>>,
-) -> Result<Json<Written<CredentialView>>, ApiError> {
+) -> Result<Json<Written<api::Credential>>, ApiError> {
     let id: CredentialId = parse_id(&id, "credential id")?;
     let reason = body
         .and_then(|ApiJson(body)| body.reason)
         .unwrap_or_else(|| "revoked".to_owned());
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     if let Ok(credential) = credentials::get(&mut conn, id).await {
         operator
             .may_change(&mut conn, credential.subject_id)
@@ -694,36 +723,71 @@ async fn revoke_credential(
         .await?;
     let credential = credentials::get(&mut conn, id).await?;
     Ok(Json(Written {
-        value: credential.into(),
+        value: transport::credential(credential),
         cursor: last_cursor(&revoked),
     }))
 }
 
-#[derive(Deserialize)]
-struct ReplacePassword {
-    password: String,
-    id: Option<CredentialId>,
-}
-
-/// `POST /v1/credentials/{id}/replace`: replaces a password with a new
-/// credential that records what it replaces. Sessions established with the
-/// old one end.
+/// Replaces a password.
+///
+/// Creates a new password credential that records the one it replaces. Sessions
+/// established with the old one end. Idempotent on a caller-chosen `id`:
+/// repeating the request with the same password returns 200.
+#[utoipa::path(post, path = "/credentials/{id}/replace", tag = "credentials",
+    params(("id" = CredentialId, Path, description = "The password to replace")),
+    request_body = ReplacePassword,
+    responses(
+        (status = 201, description = "The new password credential", body = Written<api::Credential>),
+        (status = 200, description = "Already replaced by this credential with the same password", body = Written<api::Credential>),
+    ))]
 async fn replace_password(
     State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<ReplacePassword>,
-) -> Result<(StatusCode, Json<Written<CredentialView>>), ApiError> {
+) -> Result<(StatusCode, Json<Written<api::Credential>>), ApiError> {
     let old_id: CredentialId = parse_id(&id, "credential id")?;
     if body.password.chars().count() < MIN_PASSWORD_LENGTH {
         return Err(ApiError::invalid_request(format!(
             "passwords need at least {MIN_PASSWORD_LENGTH} characters"
         )));
     }
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     // Outside the transaction: entitlement compilation opens its own.
     if let Ok(old) = credentials::get(&mut conn, old_id).await {
         operator.may_change(&mut conn, old.subject_id).await?;
+    }
+    // r[impl platform.idempotency.client-ids]
+    if let Some(new_id) = body.id
+        && let Ok(existing) = credentials::get(&mut conn, new_id).await
+    {
+        let same = match &existing.data {
+            CredentialData::Password(data)
+                if existing.replaces == Some(old_id) && existing.is_active() =>
+            {
+                let (password, hash) = (body.password, data.hash.clone());
+                let check = state
+                    .auth
+                    .hashing(move |hasher| hasher.verify(&password, &hash))
+                    .await?;
+                matches!(check, PasswordCheck::Match { .. })
+            }
+            _ => false,
+        };
+        if !same {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                format!("credential {new_id} already exists with other content"),
+            ));
+        }
+        return Ok((
+            StatusCode::OK,
+            Json(Written {
+                value: transport::credential(existing),
+                cursor: None,
+            }),
+        ));
     }
     let hash = hash(&state, body.password).await?;
     let new_id = body.id.unwrap_or_else(CredentialId::new_v7);
@@ -761,22 +825,23 @@ async fn replace_password(
     Ok((
         StatusCode::CREATED,
         Json(Written {
-            value: credential.into(),
+            value: transport::credential(credential),
             cursor: last_cursor(&revoked),
         }),
     ))
 }
 
-#[derive(Default, Deserialize)]
-struct RotateSlot {
-    expires_at: Option<DateTime<Utc>>,
-}
-
-/// `POST /v1/credentials/{id}/slots/{slot}/rotate`: sets a new secret for
-/// one slot of a secret key. The other slot keeps working, so clients can
-/// switch over without downtime.
+/// Rotates one slot of a secret key.
+///
+/// Sets a new secret for the slot. The other slot keeps working, so clients can
+/// switch over without downtime. The new secret is shown only once.
+#[utoipa::path(post, path = "/credentials/{id}/slots/{slot}/rotate", tag = "credentials",
+    params(("id" = CredentialId, Path), ("slot" = api::SecretSlot, Path)),
+    request_body(content = Option<RotateSlot>, description = "Optional; without it the new secret never expires"),
+    responses((status = 200, description = "Rotated. The slot's new secret is in `secret_key`, shown only once.", body = RotatedSlot)))]
 async fn rotate_secret_slot(
     State(state): State<AppState>,
+    db: Db,
     Path((id, slot)): Path<(String, String)>,
     body: Option<ApiJson<RotateSlot>>,
 ) -> Result<Json<RotatedSlot>, ApiError> {
@@ -788,7 +853,7 @@ async fn rotate_secret_slot(
     };
     let expires_at = body.and_then(|ApiJson(body)| body.expires_at);
     let (secret, slot_data) = new_slot(&state, expires_at).await?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let credential = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let credential = credentials::get_for_update(conn, id)
@@ -806,35 +871,20 @@ async fn rotate_secret_slot(
         })
         .await?;
     Ok(Json(RotatedSlot {
-        credential: credential.into(),
-        slot,
+        credential: transport::credential(credential),
+        slot: transport::secret_slot(slot),
         secret_key: format!("{id}.{secret}"),
     }))
 }
 
 // --- Sessions ---------------------------------------------------------------
 
-#[derive(Deserialize)]
-struct SessionQuery {
-    subject: Option<SubjectId>,
-    credential: Option<CredentialId>,
-    #[serde(default)]
-    active: bool,
-    before: Option<SessionId>,
-    limit: Option<i64>,
-}
-
-#[derive(Serialize)]
-struct SessionPage {
-    sessions: Vec<Session>,
-    /// Pass as `before` to get the next page.
-    next: Option<SessionId>,
-}
-
-/// `GET /v1/sessions`
+/// Lists sessions.
 // r[impl session.admin]
+#[utoipa::path(get, path = "/sessions", tag = "sessions", params(SessionQuery),
+    responses((status = 200, body = SessionPage)))]
 async fn list_sessions(
-    State(state): State<AppState>,
+    db: Db,
     Query(query): Query<SessionQuery>,
 ) -> Result<Json<SessionPage>, ApiError> {
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
@@ -843,47 +893,41 @@ async fn list_sessions(
         credential: query.credential,
         ..Default::default()
     };
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let active_at = query.active.then(Utc::now);
     let sessions = sessions::list(&mut conn, &filter, active_at, query.before, limit).await?;
     let next = (i64::try_from(sessions.len()) == Ok(limit))
         .then(|| sessions.last().map(|s| s.id))
         .flatten();
-    Ok(Json(SessionPage { sessions, next }))
+    Ok(Json(SessionPage {
+        sessions: sessions.into_iter().map(transport::session).collect(),
+        next,
+    }))
 }
 
-async fn get_session(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Session>, ApiError> {
+/// Gets a session.
+#[utoipa::path(get, path = "/sessions/{id}", tag = "sessions", params(("id" = SessionId, Path)),
+    responses((status = 200, body = api::Session)))]
+async fn get_session(db: Db, Path(id): Path<String>) -> Result<Json<api::Session>, ApiError> {
     let id = parse_id(&id, "session id")?;
-    let mut conn = state.pool.get().await?;
-    Ok(Json(
+    let mut conn = db.get().await?;
+    Ok(Json(transport::session(
         sessions::get(&mut conn, id)
             .await
             .map_err(|_| ApiError::not_found("session"))?,
-    ))
+    )))
 }
 
-#[derive(Deserialize)]
-struct RevokeSessions {
-    #[serde(flatten)]
-    filter: SessionFilter,
-    keep: Option<SessionId>,
-    reason: Option<String>,
-}
-
-#[derive(Serialize)]
-struct RevokedSessions {
-    revoked: Vec<SessionId>,
-}
-
-/// `POST /v1/sessions/revoke`
+/// Revokes the sessions matching a filter.
+#[utoipa::path(post, path = "/sessions/revoke", tag = "sessions",
+    request_body = RevokeSessions,
+    responses((status = 200, body = Written<RevokedSessions>)))]
 async fn revoke_sessions(
-    State(state): State<AppState>,
+    db: Db,
     ApiJson(body): ApiJson<RevokeSessions>,
 ) -> Result<Json<Written<RevokedSessions>>, ApiError> {
-    if body.filter.is_empty() {
+    let filter = transport::session_filter(&body.filter);
+    if filter.is_empty() {
         return Err(ApiError::invalid_request(
             "name at least one of session, subject, credential, tenant or membership",
         ));
@@ -891,8 +935,8 @@ async fn revoke_sessions(
     let reason = body
         .reason
         .unwrap_or_else(|| "revoked_by_operator".to_owned());
-    let mut conn = state.pool.get().await?;
-    let revoked = sessions::revoke(&mut conn, &body.filter, body.keep, &reason).await?;
+    let mut conn = db.get().await?;
+    let revoked = sessions::revoke(&mut conn, &filter, body.keep, &reason).await?;
     Ok(Json(Written {
         value: RevokedSessions {
             revoked: revoked.iter().map(|(s, _)| s.id).collect(),
@@ -903,25 +947,28 @@ async fn revoke_sessions(
 
 // --- Signing keys -----------------------------------------------------------
 
-async fn list_signing_keys(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<signing_keys::SigningKey>>, ApiError> {
-    let mut conn = state.pool.get().await?;
-    Ok(Json(signing_keys::list(&mut conn).await?))
+/// Lists signing keys.
+#[utoipa::path(get, path = "/signing-keys", tag = "signing-keys",
+    responses((status = 200, body = Vec<api::SigningKey>)))]
+async fn list_signing_keys(db: Db) -> Result<Json<Vec<api::SigningKey>>, ApiError> {
+    let mut conn = db.get().await?;
+    Ok(Json(
+        signing_keys::list(&mut conn)
+            .await?
+            .into_iter()
+            .map(transport::signing_key)
+            .collect(),
+    ))
 }
 
-#[derive(Serialize)]
-struct RevokedKey {
-    kid: String,
-    revoked: bool,
-}
-
-/// `POST /v1/signing-keys/{kid}/revoke`: break-glass revocation.
-async fn revoke_signing_key(
-    State(state): State<AppState>,
-    Path(kid): Path<String>,
-) -> Result<Json<RevokedKey>, ApiError> {
-    let mut conn = state.pool.get().await?;
+/// Revokes a signing key.
+///
+/// For break-glass use, when a key is compromised.
+#[utoipa::path(post, path = "/signing-keys/{kid}/revoke", tag = "signing-keys",
+    params(("kid" = String, Path)),
+    responses((status = 200, body = RevokedKey)))]
+async fn revoke_signing_key(db: Db, Path(kid): Path<String>) -> Result<Json<RevokedKey>, ApiError> {
+    let mut conn = db.get().await?;
     let revoked = signing_keys::revoke(&mut conn, &kid)
         .await
         .map_err(|error| match error {
@@ -965,21 +1012,21 @@ fn workload_credential(
     })
 }
 
-#[derive(Deserialize)]
-struct SessionFlags {
-    session_flags: Vec<String>,
-}
-
-/// `PUT /v1/credentials/{id}/session-flags`: sets the restrictive session
-/// flags every session started with the credential carries.
+/// Sets a credential's session flags.
+///
+/// Every session started with the credential carries these restrictive flags.
+#[utoipa::path(put, path = "/credentials/{id}/session-flags", tag = "credentials",
+    params(("id" = CredentialId, Path)),
+    request_body = SessionFlags,
+    responses((status = 200, body = api::Credential)))]
 async fn set_session_flags(
-    State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<SessionFlags>,
-) -> Result<Json<CredentialView>, ApiError> {
+) -> Result<Json<api::Credential>, ApiError> {
     let id: CredentialId = parse_id(&id, "credential id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let credential = credentials::get(&mut conn, id)
         .await
         .map_err(|_| ApiError::not_found("credential"))?;
@@ -988,25 +1035,27 @@ async fn set_session_flags(
         .await?;
     subject_api::check_credential_flags(&mut conn, &body.session_flags).await?;
     credentials::set_session_flags(&mut conn, id, &body.session_flags).await?;
-    Ok(Json(credentials::get(&mut conn, id).await?.into()))
+    Ok(Json(transport::credential(
+        credentials::get(&mut conn, id).await?,
+    )))
 }
 
-#[derive(Deserialize)]
-struct BreakGlass {
-    break_glass: bool,
-}
-
-/// `PUT /v1/credentials/{id}/break-glass`: marks a local password or secret
-/// key as a break-glass credential, whose every use appends
-/// `break_glass.used`.
+/// Marks a credential as break-glass.
+///
+/// Only local passwords and secret keys can be break-glass credentials. Every
+/// use of one appends `break_glass.used`.
+#[utoipa::path(put, path = "/credentials/{id}/break-glass", tag = "credentials",
+    params(("id" = CredentialId, Path)),
+    request_body = BreakGlass,
+    responses((status = 200, body = api::Credential)))]
 async fn set_break_glass(
-    State(state): State<AppState>,
+    db: Db,
     Extension(operator): Extension<Operator>,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<BreakGlass>,
-) -> Result<Json<CredentialView>, ApiError> {
+) -> Result<Json<api::Credential>, ApiError> {
     let id: CredentialId = parse_id(&id, "credential id")?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     let credential = credentials::get(&mut conn, id)
         .await
         .map_err(|_| ApiError::not_found("credential"))?;
@@ -1023,5 +1072,7 @@ async fn set_break_glass(
         ));
     }
     credentials::set_break_glass(&mut conn, id, body.break_glass).await?;
-    Ok(Json(credentials::get(&mut conn, id).await?.into()))
+    Ok(Json(transport::credential(
+        credentials::get(&mut conn, id).await?,
+    )))
 }

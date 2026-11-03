@@ -10,6 +10,7 @@ use crate::{Entitlements, RegisteredScopes, Registration, Scope};
 /// it names alone.
 // r[impl authz.resource-context.external]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ScopeRequirement {
     /// The tenant that owns the scope, when it isn't the token's: then only
     /// shares of the scope with the token's tenant satisfy it.
@@ -23,6 +24,7 @@ pub struct ScopeRequirement {
 
 /// Stronger or fresher authentication an operation needs.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct StepUp {
     /// At least this many distinct authentication methods.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -44,6 +46,7 @@ impl StepUp {
 /// What an operation demands of the caller.
 // r[impl relying.decision.requirements]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Requirements {
     /// Accepted token kinds; `tenant` only when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -68,60 +71,61 @@ pub struct Requirements {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum DenyReason {
     /// The token doesn't verify, or its session has ended or moved on.
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonInvalidToken"))]
     InvalidToken,
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonTokenKind"))]
     TokenKind,
     /// The session carries a restrictive flag the operation doesn't admit.
-    RestrictedSession {
-        flag: String,
-    },
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonRestrictedSession"))]
+    RestrictedSession { flag: String },
     /// The session lacks an assertive flag the operation requires.
-    MissingFlag {
-        flag: String,
-    },
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonMissingFlag"))]
+    MissingFlag { flag: String },
     /// Tenant or scope requirements, but the token targets no tenant.
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonNoTenant"))]
     NoTenant,
     /// A required registered scope was never recorded, has been removed,
     /// or isn't in the tenant the requirement names.
-    UnknownScope {
-        kind: String,
-        id: String,
-    },
-    MissingActions {
-        actions: BTreeSet<String>,
-    },
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonUnknownScope"))]
+    UnknownScope { kind: String, id: String },
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonMissingActions"))]
+    MissingActions { actions: BTreeSet<String> },
 }
 
 /// A share's attributes, for the relying system to apply to an allowed
 /// operation: Konklav doesn't interpret them.
 // r[impl authz.share.attributes]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Obligation {
     pub share: konklav_core::ShareId,
     /// The owner tenant of the shared scope.
     pub tenant: konklav_core::TenantId,
     pub kind: String,
     pub id: String,
+    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
     pub attributes: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "decision", rename_all = "snake_case")]
 pub enum Decision {
+    #[cfg_attr(feature = "openapi", schema(title = "DecisionAllow"))]
     Allow {
         /// One per share the decision relied on.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         obligations: Vec<Obligation>,
     },
-    Deny {
-        reason: DenyReason,
-    },
+    #[cfg_attr(feature = "openapi", schema(title = "DecisionDeny"))]
+    Deny { reason: DenyReason },
     /// The caller may succeed after re-authenticating as described.
-    StepUp {
-        requirement: StepUp,
-    },
+    #[cfg_attr(feature = "openapi", schema(title = "DecisionStepUp"))]
+    StepUp { requirement: StepUp },
 }
 
 impl Decision {

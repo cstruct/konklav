@@ -17,6 +17,10 @@ pub struct FeedEvent {
 /// exactly where it left off, so every cached state may be stale.
 pub const RESET: &str = "reset";
 
+/// The kind of the synthetic event that begins a stream which needs no
+/// reset, telling a consumer the cursor it starts after.
+pub const POSITION: &str = "position";
+
 /// `session.changed`: enough to apply without calling back.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionChanged {
@@ -74,6 +78,7 @@ pub enum FeedPayload {
     SigningKeysChanged(SigningKeysChanged),
     ScopeChanged(ScopeChanged),
     Reset,
+    Position,
     Other,
 }
 
@@ -93,6 +98,7 @@ impl FeedEvent {
             }
             "scope.changed" => FeedPayload::ScopeChanged(serde_json::from_value(payload)?),
             RESET => FeedPayload::Reset,
+            POSITION => FeedPayload::Position,
             _ => FeedPayload::Other,
         })
     }

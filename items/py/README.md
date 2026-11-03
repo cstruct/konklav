@@ -41,6 +41,10 @@ await client.start()
 decision = await client.decide(token, {"scopes": [{"kind": "project", "id": project_id, "actions": ["document:read"]}]})
 ```
 
+`await_cursor` takes the cursor a control-plane write returned, such as
+`konklav-control-plane`'s `Written.cursor`; see
+[`examples/python/read_your_writes.py`](../../examples/python/read_your_writes.py).
+
 ## Running and testing
 
 The crate is its own Cargo workspace, built by maturin.

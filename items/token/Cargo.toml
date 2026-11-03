@@ -8,6 +8,11 @@ rust-version.workspace = true
 publish = true
 repository.workspace = true
 
+[features]
+# OpenAPI schemas for the claim types the control plane returns, for the
+# server's API document.
+openapi = ["dep:utoipa"]
+
 [dependencies]
 konklav-core.workspace = true
 base64.workspace = true
@@ -16,6 +21,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
 konklav-core = { workspace = true, features = ["generate"] }

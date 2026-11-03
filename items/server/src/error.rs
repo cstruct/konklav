@@ -7,64 +7,13 @@
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequest, OptionalFromRequest, Request};
-use axum::http::StatusCode;
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use konklav_store::{PoolError, StoreError};
-use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-/// Stable, machine-readable error codes. Never rename a variant: add a new
-/// one instead.
-// r[impl platform.error.typed-codes]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ErrorCode {
-    NotFound,
-    MethodNotAllowed,
-    InvalidRequest,
-    Conflict,
-    /// No usable credentials were presented (missing or invalid token).
-    Unauthenticated,
-    /// The login identifier, secret or credential is wrong. Deliberately
-    /// says nothing about which.
-    InvalidCredentials,
-    /// The session behind a token or refresh token has ended.
-    SessionEnded,
-    Forbidden,
-    RateLimited,
-    /// The server is serving too many requests, or this one took too long.
-    Overloaded,
-    SigningKeyUnavailable,
-    /// The claims hook failed and is configured to refuse userinfo then.
-    ClaimsHookUnavailable,
-    Internal,
-    DatabaseUnavailable,
-    MigrationsPending,
-}
-
-impl ErrorCode {
-    #[must_use]
-    pub fn status(self) -> StatusCode {
-        match self {
-            Self::NotFound => StatusCode::NOT_FOUND,
-            Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
-            Self::InvalidRequest => StatusCode::BAD_REQUEST,
-            Self::Conflict => StatusCode::CONFLICT,
-            Self::Unauthenticated | Self::InvalidCredentials | Self::SessionEnded => {
-                StatusCode::UNAUTHORIZED
-            }
-            Self::Forbidden => StatusCode::FORBIDDEN,
-            Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
-            Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::Overloaded
-            | Self::SigningKeyUnavailable
-            | Self::ClaimsHookUnavailable
-            | Self::DatabaseUnavailable
-            | Self::MigrationsPending => StatusCode::SERVICE_UNAVAILABLE,
-        }
-    }
-}
+pub use konklav_api::ErrorCode;
+use konklav_api::{ErrorBody, ErrorResponse};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiError {
@@ -99,23 +48,13 @@ impl ApiError {
     }
 }
 
-#[derive(Serialize)]
-struct Envelope<'a> {
-    error: Body<'a>,
-}
-
-#[derive(Serialize)]
-struct Body<'a> {
-    code: ErrorCode,
-    message: &'a str,
-}
-
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let body = Envelope {
-            error: Body {
+        let body = ErrorResponse {
+            error: ErrorBody {
                 code: self.code,
-                message: &self.message,
+                message: self.message,
+                operation: None,
             },
         };
         let mut response = (self.code.status(), Json(body)).into_response();

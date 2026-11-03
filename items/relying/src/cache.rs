@@ -629,7 +629,9 @@ impl Relying {
                     entry.stale.get_or_insert((now, event.cursor));
                 }
             }
-            FeedPayload::Other => {}
+            // The cursor below is all a position carries.
+            // r[impl relying.feed.position]
+            FeedPayload::Position | FeedPayload::Other => {}
         }
         self.feed.cursor = Some(event.cursor);
         Ok(())

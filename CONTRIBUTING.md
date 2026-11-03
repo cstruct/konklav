@@ -28,6 +28,7 @@ with the [README](README.md).
   [`overview.md`](docs/architecture/overview.md).
 - `items/`: software items:
   - `core`: identifiers
+  - `api`: transport types of the HTTP surfaces
   - `token`: claims, JWS, JWKS
   - `authn`: hashing, refresh tokens
   - `authz`: entitlement compilation and evaluation
@@ -37,6 +38,7 @@ with the [README](README.md).
   - `relying`: the sans-I/O relying core
   - `relying-client`: the native Rust host
   - `py`: the Python binding (maturin)
+  - `py-control-plane`: the Python control-plane client (pure Python)
   - `console`: the operators' web UI (Leptos, WASM)
   - `test-support`: shared test helpers
 - `config/`: development configuration.
@@ -98,19 +100,22 @@ To use another port, set `KONKLAV_DEV_PG_PORT`, for example in an untracked
 Run `mise run lint` and `mise run test` before opening one. GitHub Actions
 runs both on every push to `main` and every pull request
 (`.github/workflows/ci.yml`), and checks that the container image builds
-and that the Python wheels and sdist build and pass the binding's tests
+and that the Python packages' wheels and sdists build and pass their tests
 (`.github/workflows/python.yml`).
 
 ## Releases
 
 Every release has one version, shared by the server, the console, the
-Docker image, the Python package (`konklav-relying` on PyPI) and the Rust
-crates on crates.io, and is made from one `v<version>` tag. On `main` with a clean working tree, run
+Docker image, the Python packages (`konklav-relying` and the control-plane
+client `konklav-control-plane`, both on PyPI) and the Rust crates on crates.io, and is made from one
+`v<version>` tag. Konklav's clients are supported only against a server of
+the same version. On `main` with a clean working tree, run
 `mise run release:bump <version>`. It refuses to run with uncommitted
 changes or off `main`, pulls `main`, then:
 
-1. Sets `version` under `[workspace.package]` in `Cargo.toml` and in
-   `items/py/Cargo.toml` (which maturin also uses for the Python package),
+1. Sets `version` under `[workspace.package]` in `Cargo.toml`, in
+   `items/py/Cargo.toml` (which maturin also uses for the Python package)
+   and in `items/py-control-plane/pyproject.toml`,
    and the published crates' exact requirements on each other under
    `[workspace.dependencies]`, and refreshes the lockfiles.
 2. Commits that as "Release <version>" and pushes it.
@@ -119,18 +124,20 @@ changes or off `main`, pulls `main`, then:
 
 The release workflow then:
 
-1. Checks the tag against both manifests and the crates' requirements on
-   each other, and runs CI again.
+1. Checks the tag against the three manifests and the crates' requirements
+   on each other, and runs CI again.
 2. Builds `konklav-server` for x86_64 and aarch64 Linux and aarch64 macOS,
    and the console as a static bundle.
 3. Builds the Python wheels (abi3, for Python 3.12 and later) for x86_64 and
    aarch64 Linux (manylinux_2_28 and musllinux_1_2) and aarch64 macOS, and
    an sdist, and runs the binding's tests against each, the musllinux ones
-   on Alpine.
+   on Alpine. Builds the control-plane client's wheel (pure Python) and
+   sdist and runs its tests against each.
 4. Pushes a linux/amd64 and linux/arm64 image to Docker Hub. The repository is
    the `DOCKERHUB_IMAGE` variable; the `deploy` environment holds
    `DOCKERHUB_USERNAME` and the `DOCKERHUB_TOKEN` secret.
-5. Once everything has built, publishes the Python packages to PyPI through
+5. Once everything has built, publishes `konklav-relying` and
+   `konklav-control-plane` to PyPI through
    trusted publishing from the `pypi` environment, so no PyPI token is
    stored.
 6. Publishes the crates with `publish = true` to crates.io, also through
@@ -161,6 +168,13 @@ publisher for it on crates.io (repository `cstruct/konklav`, workflow
 crate and builds it from its packaged sources, so packaging problems show
 up before a release.
 
+A new PyPI project is published through a pending trusted publisher
+registered for it on PyPI (repository `cstruct/konklav`, workflow
+`release.yml`, environment `pypi`); `konklav-control-plane` was set up
+that way.
+
 `mise run py:build` builds the sdist and a wheel for this machine into
-`items/py/dist` to check the packaging locally. Pull requests build and test
+`items/py/dist` to check the packaging locally, and `mise run
+py-control-plane:build` does the same for the control-plane client in
+`items/py-control-plane/dist`. Pull requests build and test
 every wheel and the sdist (`.github/workflows/python.yml`).

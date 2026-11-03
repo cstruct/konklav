@@ -125,7 +125,8 @@ async fn shares_for_member(
 /// subjects, ended memberships and inactive tenants contribute nothing.
 ///
 /// Reads run in one repeatable-read transaction so the revision matches
-/// the data.
+/// the data, or, inside a transaction already, in that one, which then
+/// sees its own uncommitted writes.
 // r[impl authz.compile.inactive]
 // r[impl authz.compile.revision]
 // r[impl item.store.compile-snapshot]
@@ -134,6 +135,9 @@ pub async fn load(
     subject_id: SubjectId,
     tenant_id: Option<TenantId>,
 ) -> StoreResult<CompileInput> {
+    if crate::in_transaction(conn) {
+        return read(conn, subject_id, tenant_id).await;
+    }
     conn.build_transaction()
         .read_only()
         .repeatable_read()

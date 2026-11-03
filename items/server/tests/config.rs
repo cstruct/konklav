@@ -94,6 +94,11 @@ fn environment_overrides_the_config_file() {
     assert_eq!(control.bootstrap_token().as_deref(), Some("t"));
     assert!(control.bootstrap_expiry().is_err(), "`t` is too short");
     assert_eq!(
+        control.batches(),
+        konklav_server::batch_api::BatchLimits::DEFAULT,
+        "default applies"
+    );
+    assert_eq!(
         feed.retention(),
         chrono::Duration::hours(168),
         "default applies"
@@ -557,6 +562,9 @@ fn bootstrap_tokens_must_be_long_and_may_expire() {
         control: Some(Control {
             bootstrap_token: Some(token.to_owned()),
             bootstrap_token_expires_at: expires.map(str::to_owned),
+            batch_max_operations: 100,
+            batch_key_seconds: 600,
+            batch_key_max_seconds: 3600,
         }),
     };
     assert!(config("short", None).bootstrap_expiry().is_err());

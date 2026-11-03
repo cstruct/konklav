@@ -20,6 +20,7 @@ use crate::{
 
 /// One policy that bears on an action, and where it lands.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Contribution {
     pub assignment: String,
     /// `global`, `tenant`, or `<scope kind>/<scope id>`.
@@ -53,6 +54,7 @@ impl Contribution {
 
 /// Why a subject has (or lacks) an action.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Explanation {
     pub action: String,
     pub contributions: Vec<Contribution>,
@@ -122,6 +124,7 @@ pub fn explain(catalog: &Catalog, assignments: &[Assignment], action: &str) -> E
 
 /// One check a decision makes besides the required actions.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Check {
     /// Such as `subject_active`, `token_kind` or `step_up`.
     pub check: String,
@@ -142,9 +145,11 @@ impl Check {
 
 /// Why a required action is granted or not.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Reason {
     /// A policy allows it at a level that counts, and wins there.
+    #[cfg_attr(feature = "openapi", schema(title = "ReasonAllowed"))]
     Allowed {
         by: Contribution,
         /// Denies that don't cancel it: outranked where it wins, or at other
@@ -152,41 +157,46 @@ pub enum Reason {
         ineffective: Vec<Contribution>,
     },
     /// No level that counts grants it, and a deny wins at one of them.
+    #[cfg_attr(feature = "openapi", schema(title = "ReasonDenied"))]
     Denied {
         by: Contribution,
         /// The allows at the deny's level that it overrides.
         overrides: Vec<Contribution>,
     },
     /// No level that counts grants it, but these scopes do.
-    NotHere {
-        granted_at: Vec<String>,
-    },
+    #[cfg_attr(feature = "openapi", schema(title = "ReasonNotHere"))]
+    NotHere { granted_at: Vec<String> },
     /// No policy grants it anywhere.
+    #[cfg_attr(feature = "openapi", schema(title = "ReasonNoRule"))]
     NoRule,
     /// The other tenant's scope isn't shared with this tenant.
+    #[cfg_attr(feature = "openapi", schema(title = "ReasonNoShare"))]
     NoShare,
-    ShareNotAccepted {
-        share: ShareId,
-    },
+    #[cfg_attr(feature = "openapi", schema(title = "ReasonShareNotAccepted"))]
+    ShareNotAccepted { share: ShareId },
+    #[cfg_attr(feature = "openapi", schema(title = "ReasonShareNotValid"))]
     ShareNotValid {
         share: ShareId,
         valid_from: Option<i64>,
         valid_until: Option<i64>,
     },
     /// The share doesn't allow the action.
-    NotShared {
-        share: ShareId,
-    },
+    #[cfg_attr(feature = "openapi", schema(title = "ReasonNotShared"))]
+    NotShared { share: ShareId },
     /// The share allows it, but the subject doesn't hold it at the
     /// recipient.
+    #[cfg_attr(feature = "openapi", schema(title = "ReasonNotHeldAtRecipient"))]
     NotHeldAtRecipient {
         share: ShareId,
         recipient: String,
+        #[cfg_attr(feature = "openapi", schema(no_recursion))]
         held: Box<Reason>,
     },
+    #[cfg_attr(feature = "openapi", schema(title = "ReasonAllowedByShare"))]
     AllowedByShare {
         share: ShareId,
         recipient: String,
+        #[cfg_attr(feature = "openapi", schema(no_recursion))]
         held: Box<Reason>,
     },
 }
@@ -276,6 +286,7 @@ fn capitalized(text: &str) -> String {
 
 /// Why one required action at one level is granted or not.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ActionExplanation {
     pub action: String,
     /// `global`, `tenant`, or `<scope kind>/<scope id>`.
@@ -292,6 +303,7 @@ pub struct ActionExplanation {
 
 /// Why a decision allows or denies.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DecisionExplanation {
     /// The decision the check API would reach, when explaining for a
     /// session.

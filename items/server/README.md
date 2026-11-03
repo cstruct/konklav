@@ -80,6 +80,9 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - an operator view of a subject's entitlements, with explanations (`/v1/subjects/{id}/explain`)
   - decision explanations (`POST /v1/subjects/{id}/explain-decision`), now or, with `history.enabled`, as of a past time (`at`, RFC 3339) within the history horizon
   - listings of subjects (by kind or login identifier), tenants (by parent) and a tenant's memberships
+  - batches (`POST /v1/batch`, `src/batch_api.rs`): `PUT`, `POST` and `DELETE` operations applied in order in one transaction, all or nothing. Each runs through the control-plane router on the batch's connection (handlers get theirs through `src/db.rs`), so it is guarded, parsed and answered as it is alone. A failure answers the failing operation's error with its position as `error.operation`. A batch may carry an idempotency key: a committed batch's answer is kept per caller in `batch_result`, without the secrets it showed, and a repeat answers it, running only the operations that showed secrets again so they show new ones.
+
+  Every create takes an id the caller chooses and is idempotent on it: an identical repeat answers `200` and applies nothing again (a repeated invite isn't delivered again, a repeated secret key gets new secrets), and conflicting content answers `CONFLICT`. That is what lets a batch's later operations name what earlier ones create.
 
   Each area requires a `konklav:` capability, held through a global role (`konklav:control:all` covers everything). Two built-in global roles ship with every instance and can be assigned but not changed: `konklav.admin` (`konklav:control:all`) and `konklav.delivery` (`konklav:delivery:read`). Role keys starting with `konklav.` are reserved for them. An optional bootstrap token from the secrets file is also accepted. Use it to create the first operator (a human subject with a password credential and the `konklav.admin` global role), then remove it.
 
@@ -92,7 +95,9 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - `tokens`: issuer, audience, lifetimes and signing-key PEM files
   - `history`: `enabled` (default off) and `retention_days` (default 90). Applied at startup, so every instance on a database must agree; turning it off discards what was recorded
   - `browser`: allowed origins, cookie security, and the `passkeys` section (relying party ID and name, origins)
-  - `control`: the bootstrap token (secret) The development config is in `config/dev.styx` and `config/dev.secrets.styx`.
+  - `control`: the bootstrap token (secret), and batches: `batch_max_operations` (default 100), `batch_key_seconds` (how long an idempotency key is kept, default 600) and `batch_key_max_seconds` (the longest a batch may ask for, default 3600)
+
+  The development config is in `config/dev.styx` and `config/dev.secrets.styx`.
 - HTTP: health endpoints at the root; versioned endpoints under `/v1`. Each surface's routes are in `src/surface.rs`.
 
 ## Relationships
@@ -156,6 +161,8 @@ mise run test
   - retention: what the sweeper deletes and keeps, and its lock (`tests/retention.rs`)
   - history: decisions explained as of a past time, the history horizon, disabling, and sweeping old row versions (`tests/history.rs`)
   - the bootstrap command, applying both example sets, re-runs, dry runs, conflicts and located problems (`tests/bootstrap.rs`)
+  - idempotent creates for credentials, password replacement, assignments and invites (`tests/idempotency.rs`)
+  - batches: references to earlier creates, failures that leave no trace, per-operation capabilities, limits, bulk endpoints inside a batch, a batch cut off by the request timeout, and idempotency keys with their secrets and lifetimes (`tests/batch.rs`). The test harness also checks each batch result against its own operation's schema.
 - Indirect coverage: none yet.
 
 ## Behavior notes

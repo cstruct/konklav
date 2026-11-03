@@ -1667,3 +1667,36 @@ async fn passed_claims_reach_clients_through_userinfo() {
     let info = userinfo_for(&world, "openid email").await;
     assert!(info.body.get("nickname").is_none());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn operators_read_registered_clients_without_their_secrets() {
+    let world = world().await;
+    let app = &world.app;
+    let list = app.control(Method::GET, "/v1/oidc/clients", None).await;
+    assert_eq!(list.status, StatusCode::OK, "{:?}", list.body);
+    let ids: Vec<&str> = list
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|client| client["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&"console"), "{ids:?}");
+
+    let client = app
+        .control(Method::GET, "/v1/oidc/clients/console", None)
+        .await;
+    assert_eq!(client.status, StatusCode::OK, "{:?}", client.body);
+    assert_eq!(client.body["kind"], "confidential");
+    assert_eq!(client.body["has_secret"], true);
+    assert!(client.body["disabled_at"].is_null());
+    assert!(
+        !client.body.to_string().contains(&world.secret),
+        "the secret is never returned"
+    );
+
+    let unknown = app
+        .control(Method::GET, "/v1/oidc/clients/nobody", None)
+        .await;
+    assert_eq!(unknown.code(), "NOT_FOUND");
+}

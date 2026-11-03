@@ -2,6 +2,8 @@
 
 #![allow(dead_code)]
 
+pub mod openapi;
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -75,6 +77,7 @@ pub fn auth_context(signer: Signer) -> AuthContext {
         oidc: None,
         passkeys: None,
         trusted_proxies: Vec::new(),
+        batches: konklav_server::batch_api::BatchLimits::DEFAULT,
     }
 }
 
@@ -268,13 +271,14 @@ impl TestApp {
         headers: &[(&str, &str)],
         body: Option<Value>,
     ) -> Reply {
-        let mut request = Request::builder().method(method).uri(uri);
+        let mut request = Request::builder().method(method.clone()).uri(uri);
         if let Some(peer) = peer {
             request = request.extension(axum::extract::ConnectInfo(peer));
         }
         for (name, value) in headers {
             request = request.header(*name, *value);
         }
+        let sent = body.clone();
         let request = match body {
             Some(body) => request
                 .header("content-type", "application/json")
@@ -293,6 +297,10 @@ impl TestApp {
             serde_json::from_slice(&bytes)
                 .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()))
         };
+        openapi::check(&method, uri, status, &body);
+        if uri == "/v1/batch" && status.is_success() {
+            openapi::check_batch(sent.as_ref(), &body);
+        }
         Reply {
             status,
             headers,

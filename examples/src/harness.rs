@@ -26,6 +26,9 @@ pub fn server_binary() -> PathBuf {
         .unwrap_or_else(|| "konklav-server".into())
 }
 
+/// The `aud` of every example server's tokens.
+pub const AUDIENCE: &str = "konklav-example";
+
 /// What a server is started with, beyond its listeners, database, keys and
 /// bootstrap token.
 #[derive(Clone, Debug, Default)]
@@ -132,7 +135,7 @@ impl Server {
             "listen {{\n    subject \"127.0.0.1:{subject}\"\n    relying \"127.0.0.1:{relying}\"\n    control \"127.0.0.1:{control}\"\n}}\n\
              database {{\n    host {host}\n    port {port}\n    name {name}\n    user {user}\n    max_connections 4\n}}\n\
              telemetry {{logs {{level warn}}}}\n\
-             tokens {{\n    issuer {issuer}\n    audience konklav-example\n    signing_key_file signing-key.pem\n}}\n\
+             tokens {{\n    issuer {issuer}\n    audience {AUDIENCE}\n    signing_key_file signing-key.pem\n}}\n\
              pacing {{floor_ms 0, jitter_ms 0}}\n\
              browser {{allowed_origins ({origins}), secure_cookies false}}\n\
              {oidc}{extra}\n",

@@ -87,6 +87,10 @@ r[relying.feed.consume]
 The relying SDK MUST consume the change feed for the event kinds it caches,
 keeping its cursor.
 
+r[relying.feed.position]
+The relying SDK MUST take a stream's `position` event as its cursor, so that
+waiting for a cursor at or below it succeeds without a later event.
+
 r[relying.feed.reset]
 On a `reset` event, the relying SDK MUST treat every cached session,
 entitlement set and registered scope as stale.

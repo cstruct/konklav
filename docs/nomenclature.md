@@ -26,6 +26,28 @@ Terms are introduced in dependency order: each definition only uses terms define
     - the `relying surface`, used by relying systems to fetch keys and authorization data, ask for decisions, and read events
     - the `control-plane surface`, used to administer the control plane
 
+- `transport types`
+  - The request and response types of Konklav's HTTP surfaces, defined once and shared by the server and Konklav's own clients.
+  - They are kept separate from storage models, so the shape of an API changes only on purpose.
+
+- `API document`
+  - The OpenAPI description of a surface, generated from the server's routes and transport types and committed next to the server.
+  - It describes one release: a client generated from it is supported against a server of the same version only.
+  - Only the control-plane surface has one so far.
+
+- `control-plane client`
+  - A library that calls the control-plane surface on an operator's or automation's behalf, such as the Python package `konklav-control-plane`.
+  - It is separate from the relying SDK: it changes what Konklav knows, while the relying SDK asks Konklav for decisions. Neither depends on the other.
+
+- `batch`
+  - One control-plane request that applies several control-plane write operations in order, all or nothing.
+  - Its operations are the ordinary ones, with their usual paths, bodies and answers. Later operations name what earlier ones created by the ids the caller chose, never by reading earlier results.
+  - Not to be confused with the bulk endpoints that take many records of one kind, such as imports and registered-scope changes.
+
+- `idempotency key`
+  - A value a caller chooses and sends with a batch, so that the server answers a repeat with the first answer instead of applying the batch again.
+  - Kept for a limited time, per caller.
+
 ## Tenancy
 
 - `tenant`
@@ -360,6 +382,9 @@ Terms are introduced in dependency order: each definition only uses terms define
 
 - `reset`
   - A special event that tells a consumer it cannot resume exactly from its cursor, for example because the cursor is older than retention. Everything it has cached may be stale.
+
+- `position`
+  - A special event that begins a change-feed stream which needs no reset. Its cursor is where the stream starts, so a consumer knows its place in the feed even before any other event arrives.
 
 - `revision`
   - A number identifying a state of Konklav's data: the cursor of the last event that affected it.

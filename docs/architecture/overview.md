@@ -45,6 +45,7 @@ and spec-first development with Tracey.
 | Item | Responsibility |
 |---|---|
 | `konklav-core` | Identifiers, nomenclature types, action names and selectors |
+| `konklav-api` | Transport types of the HTTP surfaces, with their OpenAPI schemas |
 | `konklav-store` | Diesel schema, migrations, repositories, event outbox |
 | `konklav-authz` | Pure compilation of entitlement sets and evaluation of requirements |
 | `konklav-token` | Access-token claims, EdDSA JWS signing and verification, JWKS (shared by the issuer and the relying core) |
@@ -53,9 +54,12 @@ and spec-first development with Tracey.
 | `konklav-relying` | Sans-I/O relying core |
 | `konklav-relying-client` | Native Rust host binding (reqwest + tokio) |
 | `konklav-py` | pyo3 host binding |
+| `konklav-py-control-plane` | Python control-plane client (`konklav-control-plane`), with types generated from the API document |
 | `konklav-cli` | Admin tooling and importers |
 
 Dependencies point inward: `server` → `authn`/`authz`/`store` → `core`.
+`api` depends only on `core`; the server converts its models to `api`'s
+transport types at the boundary.
 `relying` depends only on `core`, `token` and `authz` (for evaluation), and
 the bindings depend only on `relying`.
 

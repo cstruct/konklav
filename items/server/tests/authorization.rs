@@ -624,3 +624,57 @@ async fn local_evaluation_matches_the_check_api() {
         );
     }
 }
+
+// r[verify fact.typed]
+// r[verify fact.portability]
+#[tokio::test(flavor = "multi_thread")]
+async fn membership_facts_must_match_the_catalog_and_reach_tokens() {
+    let world = world().await;
+    let uri = format!("/v1/memberships/{}/facts", world.membership);
+    for facts in [
+        json!({"tenant_type": "personal"}),
+        json!({"member_number": 7}),
+    ] {
+        let reply = world
+            .app
+            .control(Method::PUT, &uri, Some(facts.clone()))
+            .await;
+        assert_eq!(reply.code(), "INVALID_REQUEST", "{facts}");
+    }
+    let set = world
+        .app
+        .control(Method::PUT, &uri, Some(json!({"member_number": "m-10"})))
+        .await;
+    assert_eq!(set.status, StatusCode::OK, "{:?}", set.body);
+    assert_eq!(set.body["facts"], json!({"member_number": "m-10"}));
+    assert!(set.body["cursor"].is_i64());
+
+    let token = tenant_token(&world, &[]).await;
+    let claims = world.app.verify(&token).await;
+    assert_eq!(claims.fct.get("member_number"), Some(&json!("m-10")));
+
+    let unknown = world
+        .app
+        .control(
+            Method::PUT,
+            &format!("/v1/memberships/{}/facts", uuid::Uuid::now_v7()),
+            Some(json!({"member_number": "m-11"})),
+        )
+        .await;
+    assert_eq!(unknown.code(), "NOT_FOUND");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn templates_are_listed() {
+    let world = world().await;
+    let reply = world.app.control(Method::GET, "/v1/templates", None).await;
+    assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+    let keys: Vec<&str> = reply
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|template| template["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(keys, ["reader"]);
+}

@@ -59,7 +59,7 @@ run = "cargo build --workspace"
 
 [tasks.test]
 description = "Run every test; database tests use isolated databases on the local Postgres"
-depends = ["db:up", "py:test", "console:smoke"]
+depends = ["db:up", "py:test", "py-control-plane:test", "py-control-plane:integration", "example:python", "console:smoke"]
 run = "cargo test --workspace"
 
 [tasks.deny]
@@ -69,12 +69,54 @@ run = "cargo deny --locked check"
 [tasks."py:test"]
 description = "Build the Python relying binding and run its tests"
 dir = "items/py"
-run = ["uv sync -q --reinstall-package konklav-relying", "uv run -q pytest -q tests"]
+# --refresh-package rebuilds the Rust extension: uv's build cache only
+# notices changes to pyproject.toml, not to the Rust sources.
+run = ["uv sync -q --refresh-package konklav-relying --reinstall-package konklav-relying", "uv run -q pytest -q tests"]
 
 [tasks."py:build"]
 description = "Build the Python relying binding's sdist and a release wheel for this machine into items/py/dist"
 dir = "items/py"
 run = ["rm -rf dist", "uv build -q --out-dir dist"]
+
+[tasks."py-control-plane:test"]
+description = "Run the Python control-plane client's unit tests"
+dir = "items/py-control-plane"
+run = ["uv sync -q --locked", "uv run -q pytest -q tests --ignore=tests/integration"]
+
+[tasks."py-control-plane:integration"]
+description = "Run the Python control-plane client's integration tests against servers on fresh databases"
+depends = ["db:up"]
+dir = "items/py-control-plane"
+env = { KONKLAV_TEST_SERVER = "{{config_root}}/target/debug/test-server" }
+run = [
+    # test-server starts the konklav-server binary next to it.
+    "cargo build -q -p konklav-server --bin konklav-server -p konklav-examples --bin test-server",
+    "uv sync -q --locked",
+    "uv run -q pytest -q tests/integration",
+]
+
+[tasks."py-control-plane:generate"]
+description = "Regenerate the Python control-plane client's types from the API document, and its sync client and tests from the async ones"
+dir = "items/py-control-plane"
+run = "uv run -q --locked python tools/generate.py"
+
+[tasks."py-control-plane:build"]
+description = "Build the Python control-plane client's sdist and wheel into items/py-control-plane/dist"
+dir = "items/py-control-plane"
+run = ["rm -rf dist", "uv build -q --out-dir dist"]
+
+[tasks."example:python"]
+description = "Run the Python examples in examples/python against servers on fresh databases"
+depends = ["db:up"]
+dir = "examples/python"
+env = { KONKLAV_TEST_SERVER = "{{config_root}}/target/debug/test-server" }
+run = [
+    # test-server starts the konklav-server binary next to it.
+    "cargo build -q -p konklav-server --bin konklav-server -p konklav-examples --bin test-server",
+    # --refresh-package rebuilds the Rust extension, as in py:test.
+    "uv sync -q --locked --refresh-package konklav-relying --reinstall-package konklav-relying --reinstall-package konklav-control-plane",
+    "uv run -q pytest -q tests",
+]
 
 [tasks."release:bump"]
 description = "Set the release version everywhere it is recorded, then commit, tag and push the release"
@@ -88,9 +130,9 @@ test -z "$(git status --porcelain)" || { echo "The working tree has uncommitted 
 # Releases are made from main.
 test "$(git branch --show-current)" = main || { echo "Not on main" >&2; exit 1; }
 git pull -q --ff-only
-# The workspace version, and the Python binding's, which maturin also uses
-# for the Python package.
-for manifest in Cargo.toml items/py/Cargo.toml; do
+# The workspace version, the Python binding's, which maturin also uses for
+# the Python package, and the Python control-plane client's.
+for manifest in Cargo.toml items/py/Cargo.toml items/py-control-plane/pyproject.toml; do
   test "$(grep -c '^version = ' "$manifest")" = 1
   perl -pi -e "s/^version = \\"[^\\"]*\\"/version = \\"$version\\"/" "$manifest"
 done
@@ -98,6 +140,8 @@ done
 perl -pi -e "s/^(konklav-[a-z-]+ = \\{ version = \\")=[^\\"]*/\\1=$version/" Cargo.toml
 cargo update -q --workspace
 cargo update -q --workspace --manifest-path items/py/Cargo.toml
+(cd items/py-control-plane && uv lock -q)
+(cd examples/python && uv lock -q)
 git commit -q -am "Release $version"
 git push origin HEAD
 git tag -a "v$version" -m "Konklav $version"
@@ -113,6 +157,8 @@ run = [
     "cargo clippy -q -p konklav-console --target wasm32-unknown-unknown -- -D warnings",
     "cargo fmt --manifest-path items/py/Cargo.toml --check",
     "PYO3_PYTHON=$(cd items/py && uv python find) cargo clippy --manifest-path items/py/Cargo.toml -- -D warnings",
+    "cd items/py-control-plane && uv run -q --locked python tools/generate.py --check",
+    "cd items/py-control-plane && uv run -q --locked mypy",
     "cargo deny --locked check",
     "actionlint",
     "tracey query validate",

@@ -64,6 +64,7 @@ async fn server() -> Server {
             oidc: None,
             passkeys: None,
             trusted_proxies: Vec::new(),
+            batches: konklav_server::batch_api::BatchLimits::DEFAULT,
         }),
         feed: Arc::new(FeedHub::new(Duration::from_millis(100))),
     };
@@ -135,6 +136,8 @@ struct World {
     server: Server,
     tenant: uuid::Uuid,
     client: RelyingClient,
+    /// How `client` was configured, for starting more clients.
+    config: ClientConfig,
     token: String,
     session: String,
     membership: String,
@@ -229,7 +232,7 @@ async fn world() -> World {
         )
         .await;
 
-    let client = RelyingClient::new(ClientConfig {
+    let config = ClientConfig {
         relying_url: format!("http://{}", server.relying),
         subject_url: format!("http://{}", server.subject),
         key_id: key_id.into(),
@@ -239,13 +242,15 @@ async fn world() -> World {
             audience: AUDIENCE.into(),
             ..Config::default()
         },
-    });
+    };
+    let client = RelyingClient::new(config.clone());
     let _tasks = client.start();
     World {
         token: selected["access_token"].as_str().unwrap().to_owned(),
         session: selected["session_id"].as_str().unwrap().to_owned(),
         membership,
         client,
+        config,
         server,
         tenant,
     }
@@ -368,6 +373,55 @@ async fn writes_are_readable_after_awaiting_their_cursor() {
         Decision::Deny {
             reason: DenyReason::MissingActions { .. }
         }
+    ));
+}
+
+/// A client started after a write reaches that write's cursor even when no
+/// event follows it, because the stream tells it where it starts.
+// r[verify feed.sse.position]
+// r[verify relying.feed.position]
+#[tokio::test(flavor = "multi_thread")]
+async fn clients_started_after_a_write_reach_its_cursor_on_a_quiet_feed() {
+    let world = world().await;
+    let tenant = uuid::Uuid::now_v7();
+    let written = world
+        .server
+        .control(Method::PUT, &format!("/v1/tenants/{tenant}"), json!({}))
+        .await;
+    let cursor = Cursor::new(written["cursor"].as_i64().unwrap());
+    let late = RelyingClient::new(world.config.clone());
+    let _tasks = late.start();
+    assert!(late.await_cursor(cursor, Duration::from_secs(5)).await);
+}
+
+/// A batch's cursor is awaited like a single write's.
+// r[verify platform.batch.results]
+#[tokio::test(flavor = "multi_thread")]
+async fn batches_are_readable_after_awaiting_their_cursor() {
+    let world = world().await;
+    until_trusted(&world.client).await;
+    let tenant = uuid::Uuid::now_v7();
+    let applied = world
+        .server
+        .control(
+            Method::POST,
+            "/v1/batch",
+            json!({"operations": [
+                {"method": "PUT", "path": format!("/tenants/{tenant}"), "body": {}},
+                {"method": "POST", "path": format!("/memberships/{}/end", world.membership)},
+            ]}),
+        )
+        .await;
+    let cursor = Cursor::new(applied["cursor"].as_i64().unwrap());
+    assert!(
+        world
+            .client
+            .await_cursor(cursor, Duration::from_secs(5))
+            .await
+    );
+    assert!(matches!(
+        world.client.decide(&world.token, &reading()).await.unwrap(),
+        Decision::Deny { .. }
     ));
 }
 

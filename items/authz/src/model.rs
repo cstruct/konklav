@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum Effect {
     Allow,
@@ -12,6 +13,7 @@ pub enum Effect {
 /// One rule of a role or template.
 // r[impl authz.policy.shape]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Policy {
     /// An action or action group.
     pub action: String,
@@ -23,6 +25,7 @@ pub struct Policy {
 
 /// A resource inside a tenant. Konklav treats the id as opaque.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Scope {
     pub kind: String,
     pub id: String,
@@ -73,12 +76,15 @@ impl RegisteredScopes {
 
 /// How an action group expands.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum Group {
     /// Exactly these actions.
+    #[cfg_attr(feature = "openapi", schema(title = "GroupActions"))]
     Actions(BTreeSet<String>),
     /// Every catalog name (actions and groups) not starting with one of
     /// these prefixes.
+    #[cfg_attr(feature = "openapi", schema(title = "GroupAllExceptPrefixes"))]
     AllExceptPrefixes(Vec<String>),
 }
 
@@ -165,6 +171,7 @@ pub struct Share {
 /// What a share grants one subject: the share's actions that the subject
 /// holds at the recipient.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Shared {
     pub share: konklav_core::ShareId,
     pub owner_tenant: konklav_core::TenantId,
@@ -172,6 +179,7 @@ pub struct Shared {
     pub id: String,
     pub actions: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
     pub attributes: serde_json::Map<String, serde_json::Value>,
     /// Unix seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -193,10 +201,13 @@ impl Shared {
 /// Effective allows for one subject in one tenant. Denies are already
 /// resolved, and an action granted at a higher level is not repeated below.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Entitlements {
     pub global: BTreeSet<String>,
     pub tenant: BTreeSet<String>,
+    /// Actions granted at one scope each, as a list.
     #[serde(with = "scoped_entries")]
+    #[cfg_attr(feature = "openapi", schema(value_type = Vec<scoped_entries::ScopedActions>))]
     pub scoped: BTreeMap<Scope, BTreeSet<String>>,
     /// Other tenants' scopes shared with this tenant.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -245,8 +256,10 @@ mod scoped_entries {
 
     use super::Scope;
 
+    /// The actions granted at one scope.
     #[derive(Serialize, Deserialize)]
-    struct Entry {
+    #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+    pub(super) struct ScopedActions {
         kind: String,
         id: String,
         actions: BTreeSet<String>,
@@ -256,7 +269,7 @@ mod scoped_entries {
         scoped: &BTreeMap<Scope, BTreeSet<String>>,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(scoped.iter().map(|(scope, actions)| Entry {
+        serializer.collect_seq(scoped.iter().map(|(scope, actions)| ScopedActions {
             kind: scope.kind.clone(),
             id: scope.id.clone(),
             actions: actions.clone(),
@@ -266,7 +279,7 @@ mod scoped_entries {
     pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<BTreeMap<Scope, BTreeSet<String>>, D::Error> {
-        Ok(Vec::<Entry>::deserialize(deserializer)?
+        Ok(Vec::<ScopedActions>::deserialize(deserializer)?
             .into_iter()
             .map(|entry| {
                 (

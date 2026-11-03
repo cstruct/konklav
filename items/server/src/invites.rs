@@ -9,8 +9,12 @@ use axum::routing::post;
 use axum::{Json, Router};
 use chrono::{Duration, Utc};
 use diesel_async::AsyncConnection;
+use konklav_api::{CreateInvite, CreatedInvite};
+
+use crate::control_api::{Written, created_status};
+use crate::db::Db;
 use konklav_authn::{PasswordCheck, generate_secret, hash_challenge_secret};
-use konklav_core::{CredentialId, Cursor, MembershipId, SubjectId};
+use konklav_core::{CredentialId, MembershipId, SubjectId};
 use konklav_store::challenges::{self, NewChallenge, Purpose};
 use konklav_store::credentials::{
     self, CredentialData, CredentialKind, NewCredential, PasswordData,
@@ -20,16 +24,18 @@ use konklav_store::subjects::{self, SubjectKind};
 use konklav_store::{events, memberships, tenants};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
-use crate::control_api::guard;
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::subject_api::start_passwordless_session;
-use crate::{AppState, capabilities, pacing};
+use crate::{AppState, pacing};
 
-pub fn control_routes(state: &AppState) -> Router<AppState> {
-    Router::new()
-        .route("/invites", post(create_invite))
-        .route_layer(guard(state, capabilities::INVITES))
+/// Creating invites on the control plane, with the `OpenAPI` description
+/// taken from the handler's `#[utoipa::path]`. Redeeming one is on the
+/// subject-facing surface.
+pub(crate) fn invites() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(create_invite))
 }
 
 pub fn subject_routes(state: &AppState) -> Router<AppState> {
@@ -54,41 +60,21 @@ fn empty_object() -> serde_json::Value {
     serde_json::json!({})
 }
 
-#[derive(Deserialize)]
-struct CreateInvite {
-    email: String,
-    /// A tenant (UUID or `root`) to join on redemption.
-    tenant: Option<String>,
-    /// Role keys in that tenant to assign.
-    #[serde(default)]
-    roles: Vec<String>,
-    /// Membership facts.
-    #[serde(default = "empty_object")]
-    facts: serde_json::Value,
-    /// The id of the membership redemption creates, so a relying system's
-    /// own record of the pending member keeps its id.
-    membership: Option<MembershipId>,
-    #[serde(default = "default_hours")]
-    expires_in_hours: i64,
-}
-
-fn default_hours() -> i64 {
-    72
-}
-
-#[derive(Serialize)]
-struct CreatedInvite {
-    invite_id: uuid::Uuid,
-    expires_at: chrono::DateTime<Utc>,
-    cursor: Option<Cursor>,
-}
-
-/// `POST /v1/invites`: the token is only delivered (as `delivery.requested`),
-/// never returned.
+/// Invites someone to a tenant.
+///
+/// The invite token is delivered (as `delivery.requested`) and never returned.
+/// Idempotent on a caller-chosen `id`: repeating the request with the same
+/// content returns 200 and delivers nothing again.
+#[utoipa::path(post, path = "/invites", tag = "invites",
+    request_body = CreateInvite,
+    responses(
+        (status = 201, description = "Created; the token is delivered to the address, never returned", body = Written<CreatedInvite>),
+        (status = 200, description = "Already existed with the same content; nothing is delivered again", body = Written<CreatedInvite>),
+    ))]
 async fn create_invite(
-    State(state): State<AppState>,
+    db: Db,
     ApiJson(body): ApiJson<CreateInvite>,
-) -> Result<(StatusCode, Json<CreatedInvite>), ApiError> {
+) -> Result<(StatusCode, Json<Written<CreatedInvite>>), ApiError> {
     if !body.email.contains('@') {
         return Err(ApiError::invalid_request("email must be an email address"));
     }
@@ -97,13 +83,36 @@ async fn create_invite(
             "roles and memberships need a tenant",
         ));
     }
-    let mut conn = state.pool.get().await?;
-    let id = uuid::Uuid::now_v7();
+    let mut conn = db.get().await?;
+    let id = body.id.unwrap_or_else(uuid::Uuid::now_v7);
     let secret = generate_secret();
     let expires_at = Utc::now() + Duration::hours(body.expires_in_hours.clamp(1, 24 * 30));
     let recipient = credentials::normalize_identifier(&body.email);
-    let cursor = conn
+    let details = serde_json::to_value(InviteDetails {
+        tenant: body.tenant.clone(),
+        roles: body.roles.clone(),
+        facts: body.facts.clone(),
+        membership: body.membership,
+    })
+    .unwrap_or_default();
+    let (expires_at, created, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
+            // r[impl platform.idempotency.client-ids]
+            if body.id.is_some()
+                && let Ok(existing) = challenges::get(conn, id).await
+            {
+                return if existing.purpose == Purpose::Invite.as_str()
+                    && existing.recipient == recipient
+                    && existing.details == details
+                {
+                    Ok((existing.expires_at, false, None))
+                } else {
+                    Err(ApiError::new(
+                        ErrorCode::Conflict,
+                        format!("invite {id} already exists with other content"),
+                    ))
+                };
+            }
             if let Some(reference) = &body.tenant {
                 let tenant = tenants::parse_reference(reference)
                     .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
@@ -116,13 +125,9 @@ async fn create_invite(
                         .map_err(|_| ApiError::not_found("role"))?;
                 }
             }
-            let details = InviteDetails {
-                tenant: body.tenant.clone(),
-                roles: body.roles.clone(),
-                facts: body.facts.clone(),
-                membership: body.membership,
-            };
-            challenges::create(
+            // What Postgres stored, to the microsecond, so a repeat answers
+            // the same `expires_at`.
+            let created = challenges::create(
                 conn,
                 NewChallenge {
                     id,
@@ -133,7 +138,7 @@ async fn create_invite(
                     session_id: None,
                     recipient: recipient.clone(),
                     secret_hash: hash_challenge_secret(&id.to_string(), &secret),
-                    details: serde_json::to_value(&details).unwrap_or_default(),
+                    details: details.clone(),
                     expires_at,
                 },
             )
@@ -151,14 +156,20 @@ async fn create_invite(
                 }),
             )
             .await?;
-            Ok(events::last_in_transaction(conn).await?)
+            Ok((
+                created.expires_at,
+                true,
+                events::last_in_transaction(conn).await?,
+            ))
         })
         .await?;
     Ok((
-        StatusCode::CREATED,
-        Json(CreatedInvite {
-            invite_id: id,
-            expires_at,
+        created_status(created),
+        Json(Written {
+            value: CreatedInvite {
+                invite_id: id,
+                expires_at,
+            },
             cursor,
         }),
     ))

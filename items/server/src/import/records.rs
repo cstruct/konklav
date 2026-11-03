@@ -17,7 +17,7 @@ use super::Outcome;
 use crate::error::ApiError;
 use crate::subject_api;
 
-#[derive(Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize)]
 pub(crate) struct SubjectRecord {
     pub(crate) id: SubjectId,
     pub(crate) kind: SubjectKind,
@@ -42,7 +42,7 @@ pub(crate) async fn subject(
     Ok(Outcome::created_if(created))
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize)]
 pub(crate) struct SlotRecord {
     /// An Argon2 PHC string.
     pub(crate) hash: String,
@@ -50,7 +50,7 @@ pub(crate) struct SlotRecord {
     pub(crate) expires_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum CredentialMaterial {
     /// An Argon2 PHC string.
@@ -65,7 +65,7 @@ pub(crate) enum CredentialMaterial {
     PhoneOtp,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize)]
 pub(crate) struct CredentialRecord {
     pub(crate) id: CredentialId,
     pub(crate) subject: SubjectId,
@@ -137,7 +137,7 @@ pub(crate) async fn credential(
     Ok(Outcome::created_if(inserted))
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum FactorMaterial {
     /// The plaintext seed, base32; Konklav encrypts it on arrival.
@@ -149,7 +149,7 @@ pub(crate) enum FactorMaterial {
     },
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize)]
 pub(crate) struct FactorRecord {
     pub(crate) id: uuid::Uuid,
     pub(crate) subject: SubjectId,
@@ -221,7 +221,7 @@ pub(crate) async fn factor(
     ))
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize)]
 pub(crate) struct SessionRecord {
     pub(crate) id: SessionId,
     pub(crate) subject: SubjectId,

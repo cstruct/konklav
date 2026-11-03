@@ -80,6 +80,24 @@ pub async fn login_attempts(
     .await?)
 }
 
+/// Deletes remembered batch answers whose idempotency keys expired.
+// r[impl retention.batch-results]
+pub async fn batch_results(
+    conn: &mut AsyncPgConnection,
+    now: DateTime<Utc>,
+    batch: i64,
+) -> StoreResult<usize> {
+    Ok(diesel::sql_query(
+        "delete from batch_result where (caller, key) in (
+             select caller, key from batch_result where expires_at <= $1 limit $2
+         )",
+    )
+    .bind::<Timestamptz, _>(now)
+    .bind::<BigInt, _>(batch)
+    .execute(conn)
+    .await?)
+}
+
 /// Deletes recorded client-assertion `jti`s whose assertions expired.
 // r[impl retention.assertions]
 pub async fn client_assertions(

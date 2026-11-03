@@ -16,6 +16,10 @@ Run one with:
 mise run example smtp-delivery
 ```
 
+## Python
+
+[`python/read_your_writes.py`](python/read_your_writes.py) uses both Python packages: `konklav-control-plane` assigns a role, and `konklav-relying` waits for that write's cursor with `await_cursor` and then allows what the role grants. Neither package imports the other; the cursor, an `int`, is all they share. `mise run example:python` runs it against a server on a fresh database, as `mise run test` does. `examples/python` is its own uv project, installing both packages from their source trees.
+
 That starts the development Postgres, builds `konklav-server` and runs the scenario, printing each step. Set `KONKLAV_SERVER_BIN` to run another build of the server.
 
 ## The delivery worker
@@ -77,6 +81,7 @@ Last run with suite release v5.3.4, both plans had no failures, and the Basic OP
 - `src/harness.rs`: starts servers. It writes config, secrets and keys to a temporary directory, creates a database, waits for readiness, and stops everything on drop.
 - `src/scenario/`: the scenarios. The binaries in `src/bin/` and `items/server/tests/examples.rs` both call them.
 - `src/smtp_sink.rs`: a minimal SMTP server that keeps what it receives, for the tests.
+- `src/bin/test-server.rs`: starts one server for another language's tests, such as the Python control-plane client's integration tests. It prints the surfaces' URLs and the bootstrap token as one JSON line, and stops when its stdin closes.
 - `bootstrap/`: the example bootstrap sets, nested and flat.
 
 ## Testing

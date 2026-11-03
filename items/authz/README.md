@@ -13,6 +13,7 @@ Library crate for Konklav authorization without I/O. It compiles role assignment
   - Higher levels subsume lower ones.
 - `evaluate`: decides `Requirements` (token kinds, actions per level and scope, restrictive and assertive session flags, step-up) to `Allow`, `Deny { reason }` or `StepUp { requirement }`.
   - Requirements at registered scopes are decided from `RegisteredScopes`, the records the caller resolved: in the scope's own tenant, from grants tenant-wide, at the scope or at any one of its containing scopes; from another tenant, only through shares of those. Unknown or removed scopes deny with `unknown_scope`.
+- The wire types the control plane returns or accepts, such as `Policy`, `Entitlements`, `Explanation`, `DecisionExplanation` and `Requirements`, describe themselves as OpenAPI schemas with the optional `openapi` feature. Relying systems don't need it.
 
 The server compiles; relying systems evaluate locally (M4) using the same `evaluate`, so local and central decisions agree.
 
@@ -23,6 +24,7 @@ The server compiles; relying systems evaluate locally (M4) using the same `evalu
 | `konklav-token` | `AccessClaims` and `TokenKind` in evaluation |
 | `konklav-store` | Loads compile input (`compile_input`) and catalog types |
 | `konklav-server` | Serves entitlement sets and the check API |
+| `konklav-api` | Re-exports the wire types with their schemas (`openapi` feature) |
 | `konklav-relying` (planned) | Evaluates locally |
 
 ## Running

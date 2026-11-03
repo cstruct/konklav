@@ -1,56 +1,69 @@
 //! Registering OIDC clients on the control plane.
 
 use axum::Json;
-use axum::Router;
 use axum::extract::{Path, State};
-use axum::routing::{get, post};
 use diesel_async::AsyncConnection;
+use konklav_api::{self as api, OidcClientDefinition, OidcClientSecret};
 use konklav_store::credentials::{self, CredentialData, CredentialKind};
-use konklav_store::oidc_clients::{
-    self, ClientDefinition, ClientKind, IdTokenAlgorithm, OidcClient,
-};
+use konklav_store::oidc_clients::{self, ClientKind, IdTokenAlgorithm, OidcClient};
 use konklav_store::{sessions, subjects};
-use serde::Serialize;
 use sha2::{Digest, Sha256};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
-use crate::control_api::guard;
+use crate::db::Db;
 use crate::error::{ApiError, ApiJson};
-use crate::{AppState, capabilities};
+use crate::{AppState, transport};
 
-pub fn routes(state: &AppState) -> Router<AppState> {
-    Router::new()
-        .route("/oidc/clients", get(list))
-        .route(
-            "/oidc/clients/{id}",
-            get(get_client).put(put_client).delete(disable_client),
-        )
-        .route("/oidc/clients/{id}/secret", post(new_secret))
-        .route_layer(guard(state, capabilities::CLIENTS))
+/// OIDC clients, with the `OpenAPI` description of each route taken from
+/// its handler's `#[utoipa::path]`.
+pub(crate) fn oidc_clients() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(get_client, put_client, disable_client))
+        .routes(routes!(new_secret))
 }
 
-async fn list(State(state): State<AppState>) -> Result<Json<Vec<OidcClient>>, ApiError> {
-    let mut conn = state.pool.get().await?;
-    Ok(Json(oidc_clients::list(&mut conn).await?))
+/// Lists OIDC clients.
+#[utoipa::path(get, path = "/oidc/clients", operation_id = "list_oidc_clients", tag = "oidc-clients",
+    responses((status = 200, body = Vec<api::OidcClient>)))]
+async fn list(db: Db) -> Result<Json<Vec<api::OidcClient>>, ApiError> {
+    let mut conn = db.get().await?;
+    Ok(Json(
+        oidc_clients::list(&mut conn)
+            .await?
+            .into_iter()
+            .map(transport::oidc_client)
+            .collect(),
+    ))
 }
 
-async fn get_client(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<OidcClient>, ApiError> {
-    let mut conn = state.pool.get().await?;
+/// Gets an OIDC client.
+#[utoipa::path(get, path = "/oidc/clients/{id}", operation_id = "get_oidc_client", tag = "oidc-clients",
+    params(("id" = String, Path, description = "The client id")),
+    responses((status = 200, body = api::OidcClient)))]
+async fn get_client(db: Db, Path(id): Path<String>) -> Result<Json<api::OidcClient>, ApiError> {
+    let mut conn = db.get().await?;
     oidc_clients::get(&mut conn, &id)
         .await
-        .map(Json)
+        .map(|client| Json(transport::oidc_client(client)))
         .map_err(|_| ApiError::not_found("OIDC client"))
 }
 
-/// `PUT /v1/oidc/clients/{id}`: registers or replaces a client, enabling it
-/// again if it was disabled.
+/// Registers or replaces an OIDC client.
+///
+/// A disabled client is enabled again.
+#[utoipa::path(put, path = "/oidc/clients/{id}", operation_id = "put_oidc_client", tag = "oidc-clients",
+    params(("id" = String, Path, description = "The client id, chosen by the caller")),
+    request_body = OidcClientDefinition,
+    responses((status = 200, body = api::OidcClient)))]
 async fn put_client(
     State(state): State<AppState>,
+    db: Db,
     Path(id): Path<String>,
-    ApiJson(definition): ApiJson<ClientDefinition>,
-) -> Result<Json<OidcClient>, ApiError> {
+    ApiJson(definition): ApiJson<OidcClientDefinition>,
+) -> Result<Json<api::OidcClient>, ApiError> {
+    let definition = transport::client_definition(definition);
     if !definition.scopes.iter().any(|s| s == "openid") {
         return Err(ApiError::invalid_request("clients need the openid scope"));
     }
@@ -99,11 +112,11 @@ async fn put_client(
             "only confidential clients can act as service principals",
         ));
     }
-    let mut conn = state.pool.get().await?;
+    let mut conn = db.get().await?;
     conn.transaction::<_, ApiError, _>(async |conn| {
         let client = oidc_clients::put(conn, &id, &definition).await?;
         bind_service_subject(conn, &client).await?;
-        Ok(Json(client))
+        Ok(Json(transport::oidc_client(client)))
     })
     .await
 }
@@ -156,36 +169,36 @@ async fn bind_service_subject(
     Ok(())
 }
 
-/// `DELETE /v1/oidc/clients/{id}`: disables the client and revokes its
-/// sessions. The registration stays, as history.
-async fn disable_client(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<OidcClient>, ApiError> {
-    let mut conn = state.pool.get().await?;
+/// Disables an OIDC client.
+///
+/// The client's sessions are revoked. The registration stays, as history.
+#[utoipa::path(delete, path = "/oidc/clients/{id}", operation_id = "disable_oidc_client", tag = "oidc-clients",
+    params(("id" = String, Path, description = "The client id")),
+    responses((status = 200, description = "Disabled; the registration stays", body = api::OidcClient)))]
+async fn disable_client(db: Db, Path(id): Path<String>) -> Result<Json<api::OidcClient>, ApiError> {
+    let mut conn = db.get().await?;
     conn.transaction::<_, ApiError, _>(async |conn| {
         oidc_clients::get(conn, &id)
             .await
             .map_err(|_| ApiError::not_found("OIDC client"))?;
         oidc_clients::disable(conn, &id).await?;
         sessions::revoke_for_client(conn, &id, "client_disabled").await?;
-        Ok(Json(oidc_clients::get(conn, &id).await?))
+        Ok(Json(transport::oidc_client(
+            oidc_clients::get(conn, &id).await?,
+        )))
     })
     .await
 }
 
-#[derive(Serialize)]
-struct NewSecret {
-    client_secret: String,
-}
-
-/// `POST /v1/oidc/clients/{id}/secret`: a new secret for a confidential
-/// client, shown only once. The previous secret stops working.
-async fn new_secret(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<NewSecret>, ApiError> {
-    let mut conn = state.pool.get().await?;
+/// Issues a new OIDC client secret.
+///
+/// Only for confidential clients. The secret is shown only once, and the
+/// previous one stops working.
+#[utoipa::path(post, path = "/oidc/clients/{id}/secret", operation_id = "new_oidc_client_secret", tag = "oidc-clients",
+    params(("id" = String, Path, description = "The client id")),
+    responses((status = 200, description = "The new secret, shown only once", body = OidcClientSecret)))]
+async fn new_secret(db: Db, Path(id): Path<String>) -> Result<Json<OidcClientSecret>, ApiError> {
+    let mut conn = db.get().await?;
     let client = oidc_clients::get(&mut conn, &id)
         .await
         .map_err(|_| ApiError::not_found("OIDC client"))?;
@@ -194,7 +207,7 @@ async fn new_secret(
     }
     let secret = konklav_authn::generate_secret();
     oidc_clients::set_secret_hash(&mut conn, &id, &Sha256::digest(secret.as_bytes())).await?;
-    Ok(Json(NewSecret {
+    Ok(Json(OidcClientSecret {
         client_secret: secret,
     }))
 }

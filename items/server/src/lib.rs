@@ -1,6 +1,7 @@
 //! The Konklav server: one binary serving the subject-facing, relying and
 //! control-plane surfaces.
 
+pub mod batch_api;
 pub mod bootstrap;
 mod capabilities;
 pub mod claim_mapping;
@@ -10,6 +11,7 @@ pub mod config;
 mod control_api;
 mod control_authz;
 mod cookies;
+mod db;
 pub mod error;
 mod explain_api;
 pub mod federation;
@@ -25,6 +27,7 @@ pub mod keys;
 pub mod oidc;
 mod oidc_api;
 mod oidc_clients_api;
+pub mod openapi;
 pub mod pacing;
 pub mod passkeys;
 mod passkeys_api;
@@ -37,6 +40,7 @@ mod subject_api;
 pub mod surface;
 pub mod sweeper;
 pub mod telemetry;
+mod transport;
 
 use std::sync::Arc;
 
@@ -80,6 +84,9 @@ pub struct AuthContext {
     pub passkeys: Option<passkeys::Verifier>,
     /// Reverse proxies trusted to report client addresses.
     pub trusted_proxies: Vec<std::net::IpAddr>,
+    /// How large control-plane batches may be, and how long their
+    /// idempotency keys are kept.
+    pub batches: batch_api::BatchLimits,
 }
 
 #[derive(Clone, Debug)]
@@ -155,6 +162,7 @@ impl AuthContext {
             oidc: None,
             passkeys: None,
             trusted_proxies: Vec::new(),
+            batches: control.batches(),
         }
     }
 }

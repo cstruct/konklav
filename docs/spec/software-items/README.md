@@ -20,6 +20,7 @@ Rule naming convention: `item.<software-item>.*`.
 Planned software items (see
 [`../../architecture/overview.md`](../../architecture/overview.md)):
 
+- [`api`](api.md)
 - `core`
 - [`store`](store.md)
 - [`authz`](authz.md)
@@ -31,6 +32,7 @@ Planned software items (see
 - [`console`](console.md)
 - `relying-client`
 - `py` (built separately by maturin)
+- [`py-control-plane`](py-control-plane.md) (pure Python, built by uv)
 - `cli`
 - `test-support` (test-only)
 

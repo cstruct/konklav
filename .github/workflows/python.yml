@@ -1,9 +1,10 @@
 name: Python
 
-# Builds the Python relying binding's wheels and sdist, and runs its tests
+# Builds the Python relying binding's wheels and sdist, and the Python
+# control-plane client's wheel and sdist, and runs each package's tests
 # against each one installed. Pull requests and runs started by hand only
-# build and test; the release workflow calls this and publishes the result
-# to PyPI.
+# build and test; the release workflow calls this, publishes the relying
+# binding to PyPI and attaches both packages to the GitHub release.
 on:
   pull_request:
   workflow_dispatch:
@@ -164,5 +165,46 @@ jobs:
         with:
           name: python-sdist
           path: items/py/dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  # Pure Python, so one wheel covers every platform. Its artifact isn't
+  # named `python-*`, so the release doesn't publish it to PyPI yet.
+  control-plane:
+    name: Control-plane client
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          install_args: uv
+
+      - name: Build wheel and sdist
+        working-directory: items/py-control-plane
+        run: uv build --out-dir dist
+
+      # On the oldest Python the package supports, with the locked test
+      # dependencies and each distribution in place of the project.
+      - name: Test the wheel and the sdist
+        working-directory: items/py-control-plane
+        run: |
+          uv sync --locked --no-install-project --python 3.12
+          for dist in dist/*.whl dist/*.tar.gz; do
+            uv pip install --python .venv --no-deps --reinstall "$dist"
+            uv run --no-sync --python 3.12 pytest -q tests --ignore=tests/integration
+          done
+
+      - name: Upload wheel and sdist
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: control-plane-python
+          path: |
+            items/py-control-plane/dist/*.whl
+            items/py-control-plane/dist/*.tar.gz
           if-no-files-found: error
           retention-days: 7

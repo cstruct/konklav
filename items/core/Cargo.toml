@@ -13,10 +13,13 @@ default = ["generate"]
 # Generating ids needs system randomness; verifiers (such as the relying
 # core on wasm) only parse them.
 generate = ["uuid/v7"]
+# OpenAPI schemas for the identifiers, for the server's API document.
+openapi = ["dep:utoipa"]
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+utoipa = { workspace = true, optional = true }
 uuid.workspace = true
 
 [lints]

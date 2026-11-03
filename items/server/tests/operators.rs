@@ -589,3 +589,36 @@ async fn an_expired_bootstrap_token_is_refused() {
     let refused = app.control(Method::GET, "/v1/subjects", None).await;
     assert_eq!(refused.code(), "UNAUTHENTICATED", "{:?}", refused.body);
 }
+
+/// The harness checks control-plane responses against the API document, so
+/// a body of the wrong shape fails the test that receives it.
+// r[verify item.api.responses]
+#[test]
+fn responses_that_differ_from_the_api_document_fail() {
+    let tenant = json!({"id": "not-a-uuid", "name": 7});
+    let checked = std::panic::catch_unwind(|| {
+        common::openapi::check(&Method::GET, "/v1/tenants/root", StatusCode::OK, &tenant);
+    });
+    assert!(checked.is_err(), "a malformed tenant passed the check");
+
+    let undocumented = std::panic::catch_unwind(|| {
+        common::openapi::check(
+            &Method::GET,
+            "/v1/tenants/root",
+            StatusCode::CREATED,
+            &json!({}),
+        );
+    });
+    assert!(
+        undocumented.is_err(),
+        "an undocumented status passed the check"
+    );
+
+    let error = json!({"error": {"code": "NOT_FOUND", "message": "tenant not found"}});
+    common::openapi::check(
+        &Method::GET,
+        "/v1/tenants/root?x=1",
+        StatusCode::NOT_FOUND,
+        &error,
+    );
+}
