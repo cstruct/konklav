@@ -1,8 +1,10 @@
 //! The control-plane surface: subjects, credentials, sessions and signing
-//! keys.
+//! keys, and the route groups and guards for the whole surface.
 //!
-//! Until operator authorization arrives (M6), every route requires the
-//! configured bootstrap bearer token.
+//! Every route needs an operator: the bootstrap token, when configured, or
+//! an access token whose subject holds the route group's capability
+//! (`konklav:control:all` holds them all). The batch route needs only an
+//! operator, since each of its operations is guarded on its own.
 
 use axum::extract::{Extension, Path, Query, Request, State};
 use axum::http::{StatusCode, header};
