@@ -98,8 +98,10 @@ jobs:
         with:
           install_args: rust
 
-      - name: Cache Cargo dependencies and build artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # Restore only: a cache saved by a tag run is scoped to the tag, so no
+      # other run could restore it.
+      - name: Restore Cargo dependencies and build artifacts
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
