@@ -92,6 +92,10 @@ A challenge MUST be deleted once it has expired, but not before the longest
 send-limit window has passed since it was created, since send limits count
 challenges.
 
+r[retention.batch-results]
+A remembered batch answer MUST be deleted once its idempotency key's
+lifetime has passed (`platform.batch.key-lifetime`).
+
 r[retention.login-attempts]
 A login attempt MUST be deleted once the longest rate-limit window has
 passed since it was made.
@@ -251,6 +255,55 @@ r[platform.idempotency.write-cursor]
 Every successful state-changing response MUST include the change-feed cursor
 of the last event the change produced, so that callers can wait for their
 own writes to propagate.
+
+## Batches
+
+r[platform.batch.atomic]
+The control plane MUST offer a batch: one request holding an ordered list
+of control-plane operations, applied in order in one database transaction.
+Either every operation is applied or none is.
+
+r[platform.batch.operations]
+Each operation in a batch MUST name a method, a control-plane path without
+its version prefix (with an optional query string), and the request body
+the operation takes on its own. A batch MUST accept only `PUT`, `POST` and
+`DELETE` operations, and MUST NOT contain a batch.
+
+r[platform.batch.same-as-alone]
+Each operation in a batch MUST be routed, authorized, validated and
+answered exactly as it would be on its own, against the capabilities of
+the batch's caller. A batch MUST NOT add an operation that doesn't exist
+on its own.
+
+r[platform.batch.limits]
+A batch MUST hold at most a configured number of operations, 100 by
+default, and MUST count as one request against `platform.server.limits`.
+An empty batch is invalid.
+
+r[platform.batch.results]
+A batch that succeeds MUST answer with each operation's status and body,
+in order, as the operation would have answered alone, and with the
+change-feed cursor of the last event the whole batch produced, if it
+produced any (`platform.idempotency.write-cursor`).
+
+r[platform.batch.failure]
+A batch whose operation fails MUST commit nothing and MUST answer with
+that operation's status and error, with the operation's position in the
+batch, counted from zero, added to the error as `operation`.
+
+r[platform.batch.idempotency-key]
+A batch MAY carry an idempotency key. A repeat of a batch with the same
+key, from the same caller and with the same operations, MUST answer what
+the first answered without applying anything again, except that secrets
+the first answer showed are generated anew and shown, as for
+`platform.idempotency.client-ids`. The same key with other operations MUST
+fail with a typed conflict error. Only a batch that committed is
+remembered, so a failed batch may be repeated with its key.
+
+r[platform.batch.key-lifetime]
+Konklav MUST remember an idempotency key for a configured time, 10 minutes
+by default, and for longer when the batch asks, up to a configured maximum
+of 1 hour by default.
 
 ## Import
 

@@ -39,6 +39,15 @@ Terms are introduced in dependency order: each definition only uses terms define
   - A library that calls the control-plane surface on an operator's or automation's behalf, such as the Python package `konklav-control-plane`.
   - It is separate from the relying SDK: it changes what Konklav knows, while the relying SDK asks Konklav for decisions. Neither depends on the other.
 
+- `batch`
+  - One control-plane request that applies several control-plane write operations in order, all or nothing.
+  - Its operations are the ordinary ones, with their usual paths, bodies and answers. Later operations name what earlier ones created by the ids the caller chose, never by reading earlier results.
+  - Not to be confused with the bulk endpoints that take many records of one kind, such as imports and registered-scope changes.
+
+- `idempotency key`
+  - A value a caller chooses and sends with a batch, so that the server answers a repeat with the first answer instead of applying the batch again.
+  - Kept for a limited time, per caller.
+
 ## Tenancy
 
 - `tenant`
