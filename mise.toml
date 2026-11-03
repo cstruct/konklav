@@ -63,7 +63,9 @@ run = "cargo test --workspace"
 [tasks."py:test"]
 description = "Build the Python relying binding and run its tests"
 dir = "items/py"
-run = ["uv sync -q --reinstall-package konklav-relying", "uv run -q pytest -q tests"]
+# --refresh-package rebuilds the Rust extension: uv's build cache only
+# notices changes to pyproject.toml, not to the Rust sources.
+run = ["uv sync -q --refresh-package konklav-relying --reinstall-package konklav-relying", "uv run -q pytest -q tests"]
 
 [tasks."py:build"]
 description = "Build the Python relying binding's sdist and a release wheel for this machine into items/py/dist"
@@ -103,7 +105,8 @@ dir = "examples/python"
 env = { KONKLAV_TEST_SERVER = "{{config_root}}/target/debug/test-server" }
 run = [
     "cargo build -q -p konklav-server -p konklav-examples --bin test-server",
-    "uv sync -q --locked --reinstall-package konklav-relying --reinstall-package konklav-control-plane",
+    # --refresh-package rebuilds the Rust extension, as in py:test.
+    "uv sync -q --locked --refresh-package konklav-relying --reinstall-package konklav-relying --reinstall-package konklav-control-plane",
     "uv run -q pytest -q tests",
 ]
 
