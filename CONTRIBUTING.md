@@ -118,9 +118,15 @@ changes or off `main`, pulls `main`, then:
    and in `items/py-control-plane/pyproject.toml`,
    and the published crates' exact requirements on each other under
    `[workspace.dependencies]`, and refreshes the lockfiles.
-2. Commits that as "Release <version>" and pushes it.
-3. Tags the commit `v<version>` with an annotated tag ("Konklav <version>")
-   and pushes the tag.
+2. Commits that as "Release <version>" on a new `release/v<version>` branch,
+   pushes the branch, opens a pull request for it and switches back to
+   `main`.
+
+Once the pull request is merged, run `mise run release:tag` on `main` with a
+clean working tree. It pulls `main`, reads the version from `Cargo.toml`,
+refuses if that version is already tagged (as it is until the pull request
+is merged), then tags the commit `v<version>` with an annotated tag
+("Konklav <version>") and pushes the tag.
 
 The release workflow then:
 
