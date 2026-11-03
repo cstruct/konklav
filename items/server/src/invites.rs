@@ -125,7 +125,9 @@ async fn create_invite(
                         .map_err(|_| ApiError::not_found("role"))?;
                 }
             }
-            challenges::create(
+            // What Postgres stored, to the microsecond, so a repeat answers
+            // the same `expires_at`.
+            let created = challenges::create(
                 conn,
                 NewChallenge {
                     id,
@@ -154,7 +156,11 @@ async fn create_invite(
                 }),
             )
             .await?;
-            Ok((expires_at, true, events::last_in_transaction(conn).await?))
+            Ok((
+                created.expires_at,
+                true,
+                events::last_in_transaction(conn).await?,
+            ))
         })
         .await?;
     Ok((
