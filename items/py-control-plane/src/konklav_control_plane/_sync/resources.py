@@ -382,3 +382,14 @@ class Imports(_Resource):
     @operation("import_sessions")
     def sessions(self, body: types.ImportSessions) -> types.Imported:
         return cast(types.Imported, self._client._post(path("import", "sessions"), body))
+
+
+class Batches(_Resource):
+    """Several operations in one request, applied all or nothing."""
+
+    @operation("apply_batch")
+    def apply(self, body: types.Batch) -> Written[types.BatchResults]:
+        """Each operation is given as it would be sent alone; `results` holds
+        what each answered. A failure raises the failing operation's error,
+        whose `operation` is its position, and nothing is applied."""
+        return self._client._write("POST", path("batch"), json=body)

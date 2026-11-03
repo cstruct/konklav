@@ -444,6 +444,16 @@ config_tree! {
             /// When the bootstrap token stops working, as RFC 3339, such as
             /// `2026-11-01T00:00:00Z`.
             pub bootstrap_token_expires_at: Option<String>,
+            /// Operations a batch may hold.
+            #[facet(default = 100)]
+            pub batch_max_operations: u32,
+            /// How long a batch's idempotency key is remembered unless the
+            /// batch asks for longer.
+            #[facet(default = 600)]
+            pub batch_key_seconds: u32,
+            /// The longest a batch may ask for its key to be remembered.
+            #[facet(default = 3600)]
+            pub batch_key_max_seconds: u32,
         }>,
     }
 }
@@ -632,6 +642,22 @@ impl Database {
 pub const MIN_BOOTSTRAP_TOKEN_CHARS: usize = 32;
 
 impl ControlConfig {
+    /// The batch limits, the defaults when `[control]` is absent.
+    #[must_use]
+    pub fn batches(&self) -> crate::batch_api::BatchLimits {
+        self.control
+            .as_ref()
+            .map_or(crate::batch_api::BatchLimits::DEFAULT, |c| {
+                crate::batch_api::BatchLimits {
+                    max_operations: usize::try_from(c.batch_max_operations).unwrap_or(usize::MAX),
+                    key_lifetime: std::time::Duration::from_secs(u64::from(c.batch_key_seconds)),
+                    max_key_lifetime: std::time::Duration::from_secs(u64::from(
+                        c.batch_key_max_seconds,
+                    )),
+                }
+            })
+    }
+
     #[must_use]
     pub fn bootstrap_token(&self) -> Option<String> {
         self.control

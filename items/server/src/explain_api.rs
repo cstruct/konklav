@@ -227,6 +227,10 @@ async fn explain_decision(
         offered,
         registered,
     } = match body.at {
+        // In a batch, in the batch's transaction.
+        None if konklav_store::in_transaction(&mut conn) => {
+            gather(&mut conn, subject, tenant, &body.requirements).await?
+        }
         None => {
             conn.build_transaction()
                 .read_only()
@@ -235,6 +239,11 @@ async fn explain_decision(
                     gather(conn, subject, tenant, &body.requirements).await
                 })
                 .await?
+        }
+        Some(_) if konklav_store::in_transaction(&mut conn) => {
+            return Err(ApiError::invalid_request(
+                "explanations of the past can't run in a batch",
+            ));
         }
         Some(at) => {
             check_reach(&mut conn, at, now).await?;

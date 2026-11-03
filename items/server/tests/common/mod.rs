@@ -77,6 +77,7 @@ pub fn auth_context(signer: Signer) -> AuthContext {
         oidc: None,
         passkeys: None,
         trusted_proxies: Vec::new(),
+        batches: konklav_server::batch_api::BatchLimits::DEFAULT,
     }
 }
 
@@ -277,6 +278,7 @@ impl TestApp {
         for (name, value) in headers {
             request = request.header(*name, *value);
         }
+        let sent = body.clone();
         let request = match body {
             Some(body) => request
                 .header("content-type", "application/json")
@@ -296,6 +298,9 @@ impl TestApp {
                 .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()))
         };
         openapi::check(&method, uri, status, &body);
+        if uri == "/v1/batch" && status.is_success() {
+            openapi::check_batch(sent.as_ref(), &body);
+        }
         Reply {
             status,
             headers,

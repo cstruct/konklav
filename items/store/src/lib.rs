@@ -78,3 +78,14 @@ impl StoreError {
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;
+
+/// Whether `conn` is inside a transaction, such as a control-plane batch's.
+/// Work that would open a transaction with its own isolation level then
+/// runs in the caller's instead, since such a transaction can't nest.
+#[must_use]
+pub fn in_transaction(conn: &mut Connection) -> bool {
+    use diesel_async::{AnsiTransactionManager, TransactionManager};
+    AnsiTransactionManager::transaction_manager_status_mut(conn)
+        .transaction_depth()
+        .map_or(true, |depth| depth.is_some())
+}

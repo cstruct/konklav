@@ -85,7 +85,8 @@ and retry that request once. It MUST NOT retry it more than once.
 r[item.py-control-plane.errors]
 Every error response MUST raise `KonklavError`, or a subclass of it,
 carrying the HTTP status, the `code` and the `message` from the error
-envelope. The codes are those of the API document's `ErrorCode` schema.
+envelope, and, for a failed batch, the failing operation's position as
+`operation`. The codes are those of the API document's `ErrorCode` schema.
 Callers branch on the subclass or `code`, never on `message`. The
 subclasses are:
 

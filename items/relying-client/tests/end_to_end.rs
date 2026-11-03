@@ -64,6 +64,7 @@ async fn server() -> Server {
             oidc: None,
             passkeys: None,
             trusted_proxies: Vec::new(),
+            batches: konklav_server::batch_api::BatchLimits::DEFAULT,
         }),
         feed: Arc::new(FeedHub::new(Duration::from_millis(100))),
     };

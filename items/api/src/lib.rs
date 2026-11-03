@@ -10,6 +10,7 @@
 // r[impl item.api.both-directions]
 // r[impl item.api.schemas]
 mod authz;
+mod batch;
 mod catalog;
 mod credentials;
 mod error;
@@ -28,6 +29,7 @@ mod tenancy;
 mod written;
 
 pub use authz::{AssignRole, AssignmentTarget, EntitlementQuery, RoleAssignment};
+pub use batch::{Batch, BatchMethod, BatchOperation, BatchResult, BatchResults};
 pub use catalog::{
     ActionEntry, CatalogDocument, FactEntry, FactTarget, FactType, FlagKind, GroupEntry,
     ScopeKindEntry, SessionFlagEntry,

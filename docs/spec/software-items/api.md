@@ -29,7 +29,8 @@ listener.
 r[item.api.capabilities]
 Every operation in the control-plane API document MUST name the capability
 its route's guard requires, as `x-konklav-capability`, taken from the same
-list that guards the route.
+list that guards the route. The batch operation, which any operator may
+send since each of its operations is guarded on its own, MUST NOT name one.
 
 r[item.api.responses]
 The server's tests MUST check the control-plane responses they receive against

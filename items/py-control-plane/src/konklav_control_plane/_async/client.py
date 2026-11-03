@@ -50,6 +50,7 @@ class ControlPlaneClient:
     invites: resources.Invites
     oidc_clients: resources.OidcClients
     imports: resources.Imports
+    batches: resources.Batches
 
     # r[impl item.py-control-plane.injectable-http]
     # r[impl item.py-control-plane.explicit-config]
@@ -87,6 +88,7 @@ class ControlPlaneClient:
         self.invites = resources.Invites(self)
         self.oidc_clients = resources.OidcClients(self)
         self.imports = resources.Imports(self)
+        self.batches = resources.Batches(self)
 
     async def __aenter__(self) -> ControlPlaneClient:
         return self

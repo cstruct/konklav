@@ -189,6 +189,17 @@ def test_error_codes_raise_their_errors(status, code, kind):
             client.request("POST", "/invites", json={})
     assert type(raised.value) is kind
     assert (raised.value.status, raised.value.code, raised.value.message) == (status, code, "what happened")
+    assert raised.value.operation is None
+
+
+# r[verify item.py-control-plane.errors]
+def test_a_failed_batch_names_its_operation():
+    failed = httpx.Response(404, json={"error": {"code": "NOT_FOUND", "message": "role not found", "operation": 2}})
+    with Konklav(failed).client(retries=0) as client:
+        with pytest.raises(errors.NotFound) as raised:
+            client.batches.apply({"operations": []})
+    assert raised.value.operation == 2
+    assert "operation=2" in repr(raised.value)
 
 
 # r[verify item.py-control-plane.errors]

@@ -15,6 +15,49 @@ class ActionEntry(TypedDict):
     name: str
 
 
+type BatchMethod = Literal['PUT', 'POST', 'DELETE']
+"""
+The methods a batch accepts: only writes.
+"""
+
+
+class BatchOperation(TypedDict):
+    """
+    One operation of a batch, as it would be sent on its own.
+    """
+
+    body: NotRequired[dict[str, Any] | None]
+    """
+    The operation's request body, if it takes one.
+    """
+    method: BatchMethod
+    path: str
+    """
+    A control-plane path without `/v1`, such as `/subjects/{id}`, with an
+    optional query string.
+    """
+
+
+class BatchResult(TypedDict):
+    """
+    One operation's answer, as it would have answered alone.
+    """
+
+    body: dict[str, Any]
+    """
+    The operation's response body, including its own `cursor`.
+    """
+    status: int
+
+
+class BatchResults(TypedDict):
+    """
+    What every operation of a committed batch answered, in order.
+    """
+
+    results: list[BatchResult]
+
+
 class BreakGlass(TypedDict):
     break_glass: bool
 
@@ -709,6 +752,15 @@ What an access token may be used for.
 """
 
 
+class WrittenBatchResults(TypedDict):
+    """
+    A write's result and the cursor of the last event it produced, if any.
+    """
+
+    results: list[BatchResult]
+    cursor: NotRequired[Cursor | None]
+
+
 class WrittenCreatedInvite(TypedDict):
     """
     A write's result and the cursor of the last event it produced, if any.
@@ -925,6 +977,14 @@ Who a role is assigned to.
 """
 
 
+class Batch(TypedDict):
+    """
+    Control-plane operations to apply in order, all or nothing.
+    """
+
+    operations: list[BatchOperation]
+
+
 class Contribution(TypedDict):
     """
     One policy that bears on an action, and where it lands.
@@ -1080,6 +1140,10 @@ class ErrorBody(TypedDict):
     message: str
     """
     For humans; it may change between releases.
+    """
+    operation: NotRequired[int | None]
+    """
+    For a failed batch: the failing operation's position, from zero.
     """
 
 

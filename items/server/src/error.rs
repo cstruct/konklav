@@ -54,6 +54,7 @@ impl IntoResponse for ApiError {
             error: ErrorBody {
                 code: self.code,
                 message: self.message,
+                operation: None,
             },
         };
         let mut response = (self.code.status(), Json(body)).into_response();

@@ -1,9 +1,9 @@
 //! Every transport type reads back what it writes.
 
 use konklav_api::{
-    AssignRole, AssignmentTarget, CatalogDocument, CreateCredential, CreateInvite,
-    CreatedCredential, CreatedInvite, DecisionExplanation, Deleted, Entitlements, ErrorCode,
-    ErrorResponse, ExplainDecision, Explanation, IdTokenAlgorithm, ImportCredentials,
+    AssignRole, AssignmentTarget, Batch, BatchResults, CatalogDocument, CreateCredential,
+    CreateInvite, CreatedCredential, CreatedInvite, DecisionExplanation, Deleted, Entitlements,
+    ErrorCode, ErrorResponse, ExplainDecision, Explanation, IdTokenAlgorithm, ImportCredentials,
     ImportFactors, ImportSessions, ImportSubjects, Imported, ImportedCredentialMaterial,
     MembershipDetail, OidcClient, OidcClientDefinition, OidcClientSecret, PutRole, PutTemplate,
     Reason, RecordRegisteredScope, RegisteredScope, RegisteredScopeBatch, RegisteredScopeChanges,
@@ -657,4 +657,28 @@ fn imports_round_trip_with_tagged_material() {
         "revoked_at": null,
     }]}));
     round_trips::<Imported>(&json!({"imported": 2, "skipped": 1, "updated": 0}));
+}
+
+#[test]
+fn batches_round_trip() {
+    round_trips::<Batch>(&json!({"operations": [
+        {"method": "PUT", "path": "/subjects/0195e0a0-0000-7000-8000-000000000001", "body": {"kind": "human"}},
+        {"method": "DELETE", "path": "/assignments/0195e0a0-0000-7000-8000-000000000002"},
+    ]}));
+    assert!(
+        serde_json::from_value::<Batch>(
+            json!({"operations": [{"method": "GET", "path": "/subjects"}]})
+        )
+        .is_err()
+    );
+    round_trips::<Written<BatchResults>>(&json!({
+        "results": [{"status": 201, "body": {"id": "x"}}],
+        "cursor": 9,
+    }));
+    round_trips::<ErrorResponse>(
+        &json!({"error": {"code": "NOT_FOUND", "message": "role not found", "operation": 3}}),
+    );
+    round_trips::<ErrorResponse>(
+        &json!({"error": {"code": "NOT_FOUND", "message": "role not found"}}),
+    );
 }

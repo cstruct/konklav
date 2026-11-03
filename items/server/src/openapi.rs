@@ -13,7 +13,7 @@ use crate::{AppState, control_api};
 #[openapi(
     info(
         title = "Konklav control plane",
-        description = "Every operation's `x-konklav-capability` names the capability its caller needs. The bootstrap token and `konklav:control:all` hold them all.",
+        description = "Every operation's `x-konklav-capability` names the capability its caller needs. The bootstrap token and `konklav:control:all` hold them all. A batch (`POST /v1/batch`) needs none of its own: each of its operations needs the capability it needs alone.",
     ),
     components(schemas(konklav_api::ErrorResponse)),
     security(("bearer" = [])),
@@ -98,6 +98,8 @@ pub fn control_plane() -> String {
             OpenApiRouter::with_openapi(ControlPlaneDoc::openapi()),
             |doc, (group, capability)| doc.nest("/v1", requires(group, capability)),
         )
+        // Any operator may send a batch; each operation needs its own.
+        .nest("/v1", crate::batch_api::batch())
         .into_openapi();
     ControlPlane.modify(&mut openapi);
     openapi.to_pretty_json().expect("the document serializes")
@@ -138,6 +140,10 @@ mod tests {
         for (path, item) in document["paths"].as_object().expect("paths") {
             for (method, operation) in item.as_object().expect("operations") {
                 let capability = operation["x-konklav-capability"].as_str();
+                if path == "/v1/batch" {
+                    assert_eq!(capability, None, "a batch needs only an operator");
+                    continue;
+                }
                 assert!(
                     capability.is_some_and(|capability| guarded.contains(capability)),
                     "{method} {path} names no guarding capability"

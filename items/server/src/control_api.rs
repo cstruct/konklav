@@ -34,7 +34,7 @@ pub(crate) use konklav_api::Written;
 use crate::capabilities::Operator;
 use crate::db::Db;
 use crate::error::{ApiError, ApiJson, ErrorCode};
-use crate::{AppState, capabilities, subject_api, transport};
+use crate::{AppState, batch_api, capabilities, subject_api, transport};
 
 /// Subjects and their credentials, with the `OpenAPI` description of each
 /// route taken from its handler's `#[utoipa::path]`.
@@ -94,22 +94,29 @@ pub(crate) fn groups() -> [(OpenApiRouter<AppState>, &'static str); 11] {
     ]
 }
 
-/// The control surface's `/v1` routes, each group behind its guard.
+/// The control surface's `/v1` routes, each group behind its guard, and
+/// the batch route, which runs its operations through the others.
 pub fn routes(state: &AppState) -> Router<AppState> {
-    groups()
+    let routes = groups()
         .into_iter()
         .fold(Router::new(), |all, (group, capability)| {
             let (router, _) = group
-                .route_layer(guard(state, capability))
+                .route_layer(guard(state, Some(capability)))
                 .split_for_parts();
             all.merge(router)
-        })
+        });
+    let dispatch = batch_api::Dispatch(batch_api::dispatch_router(routes.clone(), state));
+    let (batch, _) = batch_api::batch()
+        .route_layer(guard(state, None))
+        .layer(Extension(dispatch))
+        .split_for_parts();
+    routes.merge(batch)
 }
 
 /// Guards control-plane routes: the bootstrap token (when configured), or an
 /// operator's access token whose subject holds `capability` or
-/// `konklav:control:all`.
-pub(crate) fn guard(state: &AppState, capability: &'static str) -> GuardLayer {
+/// `konklav:control:all`. Without a capability, any operator passes.
+pub(crate) fn guard(state: &AppState, capability: Option<&'static str>) -> GuardLayer {
     middleware::from_fn_with_state(
         (state.clone(), capability),
         check_operator as fn(_, _, _) -> _,
@@ -117,7 +124,7 @@ pub(crate) fn guard(state: &AppState, capability: &'static str) -> GuardLayer {
 }
 
 type GuardFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>>;
-type GuardState = (AppState, &'static str);
+type GuardState = (AppState, Option<&'static str>);
 type GuardLayer = axum::middleware::FromFnLayer<
     fn(State<GuardState>, Request, Next) -> GuardFuture,
     GuardState,
@@ -126,7 +133,7 @@ type GuardLayer = axum::middleware::FromFnLayer<
 
 // r[impl authz.control-plane.capability]
 fn check_operator(
-    State((state, capability)): State<(AppState, &'static str)>,
+    State((state, capability)): State<GuardState>,
     request: Request,
     next: Next,
 ) -> GuardFuture {
@@ -146,7 +153,7 @@ fn check_operator(
 async fn authorize_operator(
     state: &AppState,
     db: &Db,
-    capability: &'static str,
+    capability: Option<&'static str>,
     headers: &axum::http::HeaderMap,
 ) -> Result<Operator, ApiError> {
     let presented = headers
@@ -167,7 +174,7 @@ async fn authorize_operator(
             .control_token_expires_at
             .is_none_or(|expires| Utc::now() < expires)
     {
-        tracing::info!(capability, "control plane used with the bootstrap token");
+        tracing::info!(?capability, "control plane used with the bootstrap token");
         return Ok(Operator { all: true });
     }
     let mut conn = db.get().await?;
@@ -184,6 +191,9 @@ async fn authorize_operator(
     }
     crate::subject_api::refuse_impersonation(&session)?;
     let all = capabilities::holds(&mut conn, session.subject_id, capabilities::CONTROL_ALL).await?;
+    let Some(capability) = capability else {
+        return Ok(Operator { all });
+    };
     if all || capabilities::holds(&mut conn, session.subject_id, capability).await? {
         Ok(Operator { all })
     } else {

@@ -10,17 +10,30 @@ class KonklavError(Exception):
 
     Branch on the subclass or `code`, never on `message`. `status` and
     `code` are `None` when no response arrived, and `code` is `None` when
-    the response had no error envelope.
+    the response had no error envelope. For a failed batch, `operation` is
+    the failing operation's position, counted from zero.
     """
 
-    def __init__(self, message: str, *, status: int | None = None, code: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        code: str | None = None,
+        operation: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
+        self.operation = operation
 
     def __repr__(self) -> str:
-        return f"{type(self).__name__}(status={self.status!r}, code={self.code!r}, message={self.message!r})"
+        operation = "" if self.operation is None else f", operation={self.operation!r}"
+        return (
+            f"{type(self).__name__}(status={self.status!r}, code={self.code!r}, "
+            f"message={self.message!r}{operation})"
+        )
 
 
 class NotFound(KonklavError):
@@ -52,9 +65,10 @@ class RateLimited(KonklavError):
         *,
         status: int | None = None,
         code: str | None = None,
+        operation: int | None = None,
         retry_after: float | None = None,
     ) -> None:
-        super().__init__(message, status=status, code=code)
+        super().__init__(message, status=status, code=code, operation=operation)
         self.retry_after = retry_after
 
 
@@ -86,7 +100,10 @@ def from_response(response: httpx.Response) -> KonklavError:
         body = response.json()
         code = body["error"]["code"]
         message = body["error"]["message"]
+        operation = body["error"].get("operation")
         if not isinstance(code, str) or not isinstance(message, str):
+            raise TypeError
+        if operation is not None and not isinstance(operation, int):
             raise TypeError
     except (ValueError, KeyError, TypeError):
         return KonklavError(
@@ -98,9 +115,10 @@ def from_response(response: httpx.Response) -> KonklavError:
             message,
             status=response.status_code,
             code=code,
+            operation=operation,
             retry_after=_retry_after(response.headers.get("retry-after")),
         )
-    return kind(message, status=response.status_code, code=code)
+    return kind(message, status=response.status_code, code=code, operation=operation)
 
 
 # r[impl item.py-control-plane.retry-after]

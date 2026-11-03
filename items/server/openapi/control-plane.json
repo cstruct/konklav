@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Konklav control plane",
-    "description": "Every operation's `x-konklav-capability` names the capability its caller needs. The bootstrap token and `konklav:control:all` hold them all.",
+    "description": "Every operation's `x-konklav-capability` names the capability its caller needs. The bootstrap token and `konklav:control:all` hold them all. A batch (`POST /v1/batch`) needs none of its own: each of its operations needs the capability it needs alone.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -50,6 +50,48 @@
           }
         },
         "x-konklav-capability": "konklav:authz:manage"
+      }
+    },
+    "/v1/batch": {
+      "post": {
+        "tags": [
+          "batch"
+        ],
+        "summary": "Applies operations in order, all or nothing.",
+        "description": "Each operation is a `PUT`, `POST` or `DELETE` with the path (without\n`/v1`) and body it takes alone, and is authorized against the caller's own\ncapabilities. On success, `results` holds what each answered; on failure\nnothing is committed and the error is the failing operation's, with its\nposition as `error.operation`.",
+        "operationId": "apply_batch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Batch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Every operation was applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_BatchResults"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/v1/catalog": {
@@ -3108,6 +3150,88 @@
         ],
         "description": "Who a role is assigned to."
       },
+      "Batch": {
+        "type": "object",
+        "description": "Control-plane operations to apply in order, all or nothing.",
+        "required": [
+          "operations"
+        ],
+        "properties": {
+          "operations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatchOperation"
+            }
+          }
+        }
+      },
+      "BatchMethod": {
+        "type": "string",
+        "description": "The methods a batch accepts: only writes.",
+        "enum": [
+          "PUT",
+          "POST",
+          "DELETE"
+        ]
+      },
+      "BatchOperation": {
+        "type": "object",
+        "description": "One operation of a batch, as it would be sent on its own.",
+        "required": [
+          "method",
+          "path"
+        ],
+        "properties": {
+          "body": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The operation's request body, if it takes one."
+          },
+          "method": {
+            "$ref": "#/components/schemas/BatchMethod"
+          },
+          "path": {
+            "type": "string",
+            "description": "A control-plane path without `/v1`, such as `/subjects/{id}`, with an\noptional query string."
+          }
+        }
+      },
+      "BatchResult": {
+        "type": "object",
+        "description": "One operation's answer, as it would have answered alone.",
+        "required": [
+          "status",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "object",
+            "description": "The operation's response body, including its own `cursor`."
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "BatchResults": {
+        "type": "object",
+        "description": "What every operation of a committed batch answered, in order.",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatchResult"
+            }
+          }
+        }
+      },
       "BreakGlass": {
         "type": "object",
         "required": [
@@ -3953,6 +4077,14 @@
           "message": {
             "type": "string",
             "description": "For humans; it may change between releases."
+          },
+          "operation": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "For a failed batch: the failing operation's position, from zero.",
+            "minimum": 0
           }
         }
       },
@@ -6635,6 +6767,41 @@
           "reset_password",
           "invite"
         ]
+      },
+      "Written_BatchResults": {
+        "allOf": [
+          {
+            "type": "object",
+            "description": "What every operation of a committed batch answered, in order.",
+            "required": [
+              "results"
+            ],
+            "properties": {
+              "results": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/BatchResult"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
       },
       "Written_CatalogDocument": {
         "allOf": [

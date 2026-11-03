@@ -19,6 +19,26 @@ static DOCUMENT: LazyLock<Value> = LazyLock::new(|| {
 static VALIDATORS: LazyLock<Mutex<HashMap<String, &'static Validator>>> =
     LazyLock::new(Default::default);
 
+/// [`check`] for each result of a committed batch, against the operation
+/// that produced it.
+pub fn check_batch(sent: Option<&Value>, answer: &Value) {
+    let operations = sent
+        .and_then(|sent| sent["operations"].as_array())
+        .expect("a batch sends operations");
+    let results = answer["results"]
+        .as_array()
+        .expect("a batch answers results");
+    assert_eq!(operations.len(), results.len(), "one result per operation");
+    for (operation, result) in operations.iter().zip(results) {
+        let method: Method = operation["method"].as_str().unwrap().parse().unwrap();
+        let uri = format!("/v1{}", operation["path"].as_str().unwrap());
+        let status =
+            StatusCode::from_u16(u16::try_from(result["status"].as_u64().unwrap()).unwrap())
+                .unwrap();
+        check(&method, &uri, status, &result["body"]);
+    }
+}
+
 /// Panics unless `body` matches what the API document says the operation
 /// answering `method` and `uri` returns with `status`. Requests that match
 /// no documented operation, such as the subject-facing surface's, pass.

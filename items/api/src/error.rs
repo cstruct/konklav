@@ -65,4 +65,7 @@ pub struct ErrorBody {
     pub code: ErrorCode,
     /// For humans; it may change between releases.
     pub message: String,
+    /// For a failed batch: the failing operation's position, from zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation: Option<usize>,
 }
