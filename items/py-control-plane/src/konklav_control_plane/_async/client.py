@@ -35,6 +35,11 @@ class ControlPlaneClient:
     `client.tenants.create(...)` and `client.roles.put(...)`. `batch()`
     collects writes made through the same namespaces and applies them in
     one request, all or nothing.
+
+    `last_cursor` is the highest write cursor that a write or batch sent
+    through the client has answered with, or `None` before one has: pass it
+    to `konklav_relying.RelyingClient.await_cursor` to wait for every write
+    the client made.
     """
 
     tenants: resources.Tenants[Direct]
@@ -75,6 +80,7 @@ class ControlPlaneClient:
         # The environment holds no configuration for this client.
         self._http = http if http is not None else httpx.AsyncClient(timeout=timeout, trust_env=False)
         self._retries = retries
+        self.last_cursor: int | None = None
         self.tenants = resources.Tenants(self)
         self.memberships = resources.Memberships(self)
         self.subjects = resources.Subjects(self)
@@ -154,12 +160,24 @@ class ControlPlaneClient:
     ) -> Written[Any]:
         """Sends a write and splits the cursor off its result."""
         response = await self._send(method, f"{self._url}{path}", json=json, params=params)
-        return written(response.status_code, response.json(), create=create)
+        result = written(response.status_code, response.json(), create=create)
+        self._saw(result.cursor)
+        return result
 
     async def _call(self, call: Call) -> Any:
         """Sends `call` and returns what its method returns."""
         response = await self._send(call.method, f"{self._url}{call.path}", json=call.json, params=call.query())
-        return call.result(response.status_code, response.json() if response.content else None)
+        result = call.result(response.status_code, response.json() if response.content else None)
+        if isinstance(result, Written):
+            self._saw(result.cursor)
+        return result
+
+    # r[impl item.py-control-plane.last-cursor]
+    def _saw(self, cursor: int | None) -> None:
+        """Remembers a write's cursor in `last_cursor`, which only grows,
+        whatever order concurrent writes answer in."""
+        if cursor is not None and (self.last_cursor is None or cursor > self.last_cursor):
+            self.last_cursor = cursor
 
     # r[impl item.py-control-plane.paging]
     async def _pages(

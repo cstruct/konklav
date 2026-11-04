@@ -103,6 +103,7 @@ class Batch:
         )
         answer = response.json()
         self.cursor = answer.get("cursor")
+        self._client._saw(self.cursor)
         for (call, pending), result in zip(self._calls, answer["results"], strict=True):
             pending._resolve(call.result(result["status"], result["body"]))
 
