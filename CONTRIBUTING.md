@@ -109,20 +109,24 @@ Every release has one version, shared by the server, the console, the
 Docker image, the Python packages (`konklav-relying` and the control-plane
 client `konklav-control-plane`, both on PyPI) and the Rust crates on crates.io, and is made from one
 `v<version>` tag. Konklav's clients are supported only against a server of
-the same version. On `main` with a clean working tree, run
+the same version. With a clean working tree, run
 `mise run release:bump <version>`. It refuses to run with uncommitted
-changes or off `main`, pulls `main`, then:
+changes, then:
 
 1. Sets `version` under `[workspace.package]` in `Cargo.toml`, in
    `items/py/Cargo.toml` (which maturin also uses for the Python package)
    and in `items/py-control-plane/pyproject.toml`,
    and the published crates' exact requirements on each other under
-   `[workspace.dependencies]`, and refreshes the lockfiles.
-2. Commits that as "Release <version>" on a new `release/v<version>` branch,
-   pushes the branch, opens a pull request for it and switches back to
-   `main`.
+   `[workspace.dependencies]`, refreshes the lockfiles and regenerates the
+   API document `items/server/openapi/control-plane.json`, which records the
+   version.
+2. Commits that as "Release <version>". On `main` it first pulls `main` and
+   commits on a new `release/v<version>` branch, then pushes the branch,
+   opens a pull request for it and switches back to `main`. On any other
+   branch it commits there and pushes nothing, so the bump is released with
+   the rest of that branch's pull request.
 
-Once the pull request is merged, run `mise run release:tag` on `main` with a
+Once the pull request with the bump is merged, run `mise run release:tag` on `main` with a
 clean working tree. It pulls `main`, reads the version from `Cargo.toml`,
 refuses if that version is already tagged (as it is until the pull request
 is merged), then tags the commit `v<version>` with an annotated tag
