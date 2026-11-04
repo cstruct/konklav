@@ -123,7 +123,7 @@ impl OpenIdProvider {
     pub fn from_pem(pem: &str, login_url: String, jwks_uri: String) -> Result<Self, String> {
         let secret = p256::SecretKey::from_pkcs8_pem(pem)
             .map_err(|error| format!("the ID-token key must be a PKCS#8 P-256 key: {error}"))?;
-        let point = p256::EncodedPoint::from(secret.public_key());
+        let point = p256::Sec1Point::from(secret.public_key());
         let (x, y) = point
             .x()
             .zip(point.y())
