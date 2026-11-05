@@ -24,6 +24,13 @@ tokens {
     issuer "http://127.0.0.1:8080"
     audience konklav-dev
     signing_key_file "config/dev.signing-key.pem"
+    // Where clients address Konklav, for DPoP proofs: directly, and through
+    // the console's proxy, which mounts the control plane under /control.
+    dpop_urls (
+        "http://127.0.0.1:8080"
+        "http://127.0.0.1:8083" "http://127.0.0.1:8083/control"
+        "http://localhost:8083" "http://localhost:8083/control"
+    )
 }
 
 // Origins whose pages may use browser sign-in with the refresh cookie. The

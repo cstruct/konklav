@@ -224,6 +224,28 @@ When MFA completes a browser session's login, the refresh cookie MUST be
 delivered in that response, after the same `Origin` and header checks as
 the login itself.
 
+r[session.dpop.bind]
+A request that starts a session (a password, secret-key, passkey, email-link
+or one-time-code login, or redeeming an invite) MAY carry a DPoP proof for
+its own URL, and the session MUST then be bound to the proof's key. A
+federated sign-in starts with a browser navigation, which can't carry the
+header, so it MAY name the key with `dpop_jkt` instead, and the session the
+callback starts MUST be bound to that key. A session started from another,
+by impersonation, MUST keep its parent's binding.
+
+r[session.dpop.required]
+A deployment MUST be able to require that browser sessions are bound. A
+browser login, or federated sign-in, without a DPoP proof or `dpop_jkt` is
+then refused.
+
+r[session.dpop.surfaces]
+The subject-facing and control-plane surfaces MUST accept Konklav's own
+sender-constrained access tokens under the `DPoP` scheme with a valid proof,
+and refuse them under `Bearer` (`r[token.dpop.scheme]`). A proof's `htu`
+MUST be one of the configured base URLs at which clients address Konklav,
+followed by the request's path, so a reverse proxy that mounts a surface
+under a prefix can be described.
+
 r[session.client-kind]
 Whether a login returns cookies or body tokens MUST be decided by the
 endpoint or an explicit request parameter, never by inspecting user-agent

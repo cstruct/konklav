@@ -1066,7 +1066,7 @@ async fn token(
     let mut conn = state.pool.get().await?;
     let expected = dpop::Expected {
         method: "POST",
-        endpoint: "token",
+        urls: dpop::Expected::endpoint(&state, "token"),
         access_token: None,
         bound_to: None,
     };
@@ -1933,7 +1933,7 @@ async fn userinfo(
         (Some(cnf), Scheme::Dpop) => {
             let expected = dpop::Expected {
                 method,
-                endpoint: "userinfo",
+                urls: dpop::Expected::endpoint(state, "userinfo"),
                 access_token: Some(token),
                 bound_to: Some(&cnf.jkt),
             };

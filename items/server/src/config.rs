@@ -254,6 +254,14 @@ config_tree! {
             /// signing, such as the next key ahead of a rotation.
             #[facet(default)]
             pub published_key_files: Vec<String>,
+            /// Base URLs at which clients address the subject-facing and
+            /// control-plane surfaces, for the `htu` of DPoP proofs: a
+            /// proof must name one of them followed by the request's path.
+            /// List each prefix a reverse proxy mounts a surface under,
+            /// such as `https://admin.example/control`. Defaults to the
+            /// issuer.
+            #[facet(default)]
+            pub dpop_urls: Vec<String>,
         },
         /// Konklav as an OpenID provider. A section of its own, loaded with
         /// tokens (contexts are limited in number). Without it, the
@@ -341,6 +349,10 @@ config_tree! {
             /// Set to `false` only for local development over plain HTTP.
             #[facet(default = true)]
             pub secure_cookies: bool,
+            /// Refuse browser logins and federated sign-ins that bring no
+            /// DPoP key, so every browser session is bound.
+            #[facet(default)]
+            pub require_dpop: bool,
         }>,
         /// Passkey login and registration. A section of its own, loaded with
         /// `browser`. Without it, the passkey endpoints answer 404.

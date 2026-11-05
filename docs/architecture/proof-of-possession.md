@@ -141,14 +141,40 @@ The key thumbprint for `dpop_jkt` is the base64url SHA-256 of
 `{"crv":"P-256","kty":"EC","x":"…","y":"…"}`, with exactly those members in
 that order and no whitespace.
 
+### Konklav's own sessions
+
+The console, and any other client of Konklav's own API, can bind its
+sessions too (`session.dpop.*`). A browser session's refresh token is
+already an `HttpOnly` cookie, but its access token lives in page memory
+and reaches the control plane, so it's the most valuable token to steal.
+
+- **Binding.** Every request that starts a session may carry a proof for
+  its own URL. A federated sign-in begins with a navigation, so the page
+  passes `dpop_jkt` to `/v1/login/oidc/{provider}/start` instead, as for
+  the authorization endpoint. Impersonation sessions keep the operator's
+  binding.
+- **One check for both surfaces.** A middleware on the subject-facing and
+  control-plane routers handles Konklav's own tokens (those with its own
+  audience): under `DPoP` it verifies the proof and hands the handlers a
+  plain bearer token, under `Bearer` it refuses a token with `cnf`, and
+  for a request without a token it verifies a binding proof that the
+  session-starting handlers and the cookie refresh pick up. The OpenID
+  provider's endpoints and client tokens are left to `oidc_api`.
+- **`htu` behind a proxy.** The console reaches the control plane at
+  `/control/v1/…`, which a proxy maps to `/v1/…`. `tokens.dpop_urls` lists
+  the base URLs clients use (the issuer by default), such as
+  `https://admin.example` and `https://admin.example/control`; a proof's
+  `htu` must be one of them followed by the path Konklav sees.
+- **Requiring it.** `browser { require_dpop true }` refuses browser logins
+  and federated sign-ins that bring no key.
+- **The console** creates its key with WebCrypto, keeps the `CryptoKey` in
+  IndexedDB, and signs a proof in its single `send` function.
+
 Out of scope for the first slice:
 
 - Server-provided nonces (`DPoP-Nonce`, `use_dpop_nonce`). They remove the
   dependence on client clocks, but cost an extra round trip. CORS already
   exposes `dpop-nonce`, so they can be added later.
-- Binding Konklav's own `/v1` native sessions (password, OTP and passkey
-  logins that return a refresh token in the body). Browser sessions don't
-  need it: their refresh token is already an `HttpOnly` cookie.
 - Requiring a proof at revocation. RFC 9449 doesn't, and the worst a thief
   can do there is end the session.
 

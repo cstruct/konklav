@@ -90,12 +90,17 @@ pub struct AuthContext {
     /// How large control-plane batches may be, and how long their
     /// idempotency keys are kept.
     pub batches: batch_api::BatchLimits,
+    /// Base URLs DPoP proofs to Konklav's own surfaces may name; the issuer
+    /// when empty.
+    pub dpop_urls: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
 pub struct BrowserSettings {
     pub allowed_origins: Vec<String>,
     pub secure_cookies: bool,
+    /// Whether browser sessions must be bound to a DPoP key.
+    pub require_dpop: bool,
 }
 
 impl AuthContext {
@@ -156,6 +161,7 @@ impl AuthContext {
             browser: browser.map(|browser| BrowserSettings {
                 allowed_origins: browser.allowed_origins.clone(),
                 secure_cookies: browser.secure_cookies,
+                require_dpop: browser.require_dpop,
             }),
             control_token: control.bootstrap_token(),
             control_token_expires_at: None,
@@ -166,6 +172,7 @@ impl AuthContext {
             passkeys: None,
             trusted_proxies: Vec::new(),
             batches: control.batches(),
+            dpop_urls: tokens.dpop_urls.clone(),
         }
     }
 }
@@ -185,6 +192,7 @@ mod tests {
             session_lifetime_seconds: 3600,
             signing_key_file: String::new(),
             published_key_files: Vec::new(),
+            dpop_urls: Vec::new(),
         };
         let signer = Signer::new(ed25519_dalek::SigningKey::from_bytes(&[1; 32]));
         let mut auth = AuthContext::new(
