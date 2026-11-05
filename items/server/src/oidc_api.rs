@@ -36,11 +36,11 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 use crate::claims_hook::ClaimsFor;
+use crate::config::DpopRequirement;
 use crate::cookies::{Cookie, SameSite};
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::oidc::{self, OpenIdProvider, Selection};
 use crate::subject_api::{self, Started};
-use crate::config::DpopRequirement;
 use crate::{AppState, cors, dpop, issue};
 
 /// Binds a login request to the browser that started it. Lax: the browser

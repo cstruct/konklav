@@ -2164,6 +2164,11 @@ async fn the_provider_can_require_dpop_of_every_public_client() {
     // A confidential client isn't covered by `public_clients`.
     let code = authorize(&world, &[]).await;
     let confidential = exchange(&world, &code, VERIFIER).await;
-    assert_eq!(confidential.status, StatusCode::OK, "{:?}", confidential.body);
+    assert_eq!(
+        confidential.status,
+        StatusCode::OK,
+        "{:?}",
+        confidential.body
+    );
     assert_eq!(confidential.body["token_type"], "Bearer");
 }
