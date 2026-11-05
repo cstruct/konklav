@@ -321,6 +321,8 @@ async def test_batches(konklav):
         assert created.result.created is True
         assert assigned.result.value["id"] == assignment
         assert batch.cursor is not None and batch.cursor >= assigned.result.cursor
+        # r[verify item.py-control-plane.last-cursor]
+        assert client.last_cursor == batch.cursor
         assert "document:read" in (await client.entitlements.get(subject, tenant=id))["tenant"]
         assert (await login(konklav, email)).status_code == 200
 

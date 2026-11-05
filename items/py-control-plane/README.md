@@ -33,7 +33,8 @@ Each release publishes it to PyPI.
   a `Pending` of what it returns on the client, and reads don't
   type-check.
 - `Written`: a write's result with its change-feed cursor, and whether an
-  idempotent create created. The paged lists (`tenants`, `subjects`,
+  idempotent create created. `last_cursor` is the highest cursor the
+  client's writes and batches have answered with. The paged lists (`tenants`, `subjects`,
   `sessions`) also have `iter`, which follows every page.
 - `konklav_control_plane.types`: `TypedDict`s generated from the
   control-plane API document (`items/server/openapi/control-plane.json`).
@@ -160,6 +161,15 @@ same content (`False`). Repeating a secret-key create shows new secrets.
 For read-your-writes with `konklav-relying`, pass `written.cursor` (or a
 batch's `cursor`) to `RelyingClient.await_cursor`; see
 [`examples/python/read_your_writes.py`](../../examples/python/read_your_writes.py).
+To wait for every write a client has made, such as before answering a
+request that made several, pass `client.last_cursor` instead: the highest
+cursor its writes and batches have answered with, or `None` before any
+has. It never decreases, whatever order concurrent writes answer in.
+
+```python
+if client.last_cursor is not None:
+    await relying.await_cursor(client.last_cursor)
+```
 
 ### Batches
 
@@ -240,7 +250,7 @@ its tools and `tests/typing`.
     tests are generated from the async ones): URLs, the injected client,
     each way to authenticate and re-login, the error mapping,
     `Retry-After`, which failures are retried and which aren't, write
-    cursors, created-or-found, paging, and batches (what they send, their
+    cursors and `last_cursor`, created-or-found, paging, and batches (what they send, their
     results, failures, and retries with and without a key);
   - `tests/typing/batches.py`, checked by `mypy`: writes keep their types
     on the client and are `Pending` on a batch, and reads on a batch don't

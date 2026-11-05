@@ -317,6 +317,30 @@ def test_writes_split_off_their_cursor():
         assert (written.value, written.cursor) == ({"id": "c"}, None)
 
 
+# r[verify item.py-control-plane.last-cursor]
+def test_the_client_remembers_its_highest_write_cursor():
+    konklav = Konklav(
+        httpx.Response(200, json={"id": "c", "cursor": 42}),
+        httpx.Response(200, json={"id": "t"}),
+        # An earlier write answering last, as concurrent writes may.
+        httpx.Response(200, json={"id": "r", "cursor": 40}),
+        batch_answer((201, {"id": "t", "cursor": 50}), cursor=50),
+        httpx.Response(200, json={"subjects": [], "next": None, "cursor": 99}),
+    )
+    with konklav.client() as client:
+        assert client.last_cursor is None
+        client.catalog.put({"actions": []})
+        assert client.last_cursor == 42
+        client.tenants.set_facts("t", {})
+        client.roles.put("t", "reader", {})
+        assert client.last_cursor == 42
+        with client.batch() as batch:
+            batch.tenants.create("t", {})
+        assert client.last_cursor == 50
+        client.subjects.list()
+        assert client.last_cursor == 50, "reads don't move it"
+
+
 # r[verify item.py-control-plane.created]
 def test_idempotent_creates_say_whether_they_created():
     konklav = Konklav(

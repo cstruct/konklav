@@ -142,6 +142,13 @@ cursor as `cursor` (an `int`, or `None` when the write produced no event).
 The cursor MUST be usable unchanged with `konklav-relying`'s
 `RelyingClient.await_cursor`.
 
+r[item.py-control-plane.last-cursor]
+Both clients MUST expose `last_cursor`: the highest write cursor that any
+write or batch sent through that client has answered with, or `None`
+before one has. It MUST never decrease, also when writes run concurrently,
+so that a caller can wait for every write it made with one
+`RelyingClient.await_cursor` call instead of collecting cursors itself.
+
 r[item.py-control-plane.created]
 A method for an idempotent create (any create taking a caller-chosen id,
 `platform.idempotency.client-ids`) MUST report whether the server created
