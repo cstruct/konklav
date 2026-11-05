@@ -22,6 +22,11 @@ The verification API of `konklav-relying` MUST accept an optional request
 descriptor (method and URL) so that sender-constrained tokens can be
 verified later without breaking the API.
 
+r[item.relying.raw-headers]
+The verification API of `konklav-relying` MUST take the request's raw
+`Authorization` and `DPoP` header values, so host bindings never parse
+authorization schemes or proofs themselves.
+
 r[item.relying.single-implementation]
 Host bindings MUST NOT re-implement verification, evaluation or cache-state
 logic. They only translate between the core and their language's runtime.

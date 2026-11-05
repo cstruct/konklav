@@ -285,6 +285,37 @@ Clients MUST be able to revoke a refresh or access token they were issued
 (RFC 7009), which MUST end the session behind it. Revoking an unknown token
 MUST succeed without effect.
 
+r[oidc.provider.dpop.token]
+A grant at the token endpoint that comes with a valid DPoP proof MUST
+start a bound session for the proof's key and answer with `token_type`
+`DPoP`. A grant without a proof MUST start an unbound session and answer
+with `token_type` `Bearer`. The refresh grant continues the session it
+refreshes, bound or not, and never starts one.
+
+r[oidc.provider.dpop.required]
+An OIDC client MUST be registrable as requiring DPoP. The token endpoint
+MUST refuse that client's grants without a valid DPoP proof.
+
+r[oidc.provider.dpop.code-binding]
+An authorization request MAY carry `dpop_jkt`. The authorization code MUST
+then be bound to that key thumbprint, and exchanged only with a DPoP proof
+made with that key.
+
+r[oidc.provider.dpop.htu]
+Konklav MUST compare a DPoP proof's `htu` with the endpoint URL its
+discovery document publishes, never with the request's `Host` or forwarded
+headers.
+
+r[oidc.provider.dpop.errors]
+A token request refused for its DPoP proof MUST be answered with 400 and
+`invalid_dpop_proof`. The UserInfo endpoint MUST answer a sender-constrained
+token without a valid proof with 401 and a
+`WWW-Authenticate: DPoP error="invalid_dpop_proof"` challenge that lists the
+supported algorithms in `algs`.
+
+r[oidc.provider.dpop.discovery]
+Discovery MUST list `dpop_signing_alg_values_supported`.
+
 r[oidc.provider.logout]
 Konklav MUST support RP-initiated logout, and MUST send back-channel logout
 tokens to clients that registered a back-channel URI whenever a session

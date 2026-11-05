@@ -18,8 +18,8 @@ Product specs:
   flags, challenges and delivery
 - [authorization](authorization.md): catalog, roles, templates, policies,
   assignments, entitlements and the check API
-- [tokens and claims](tokens-and-claims.md): access tokens, refresh tokens
-  and signing keys
+- [tokens and claims](tokens-and-claims.md): access tokens, refresh tokens,
+  sender-constrained tokens (DPoP) and signing keys
 - [change feed](change-feed.md): events, cursors and transport
 - [relying systems](relying-systems.md): obligations on the relying core and
   host bindings

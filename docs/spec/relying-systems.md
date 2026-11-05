@@ -22,6 +22,28 @@ r[relying.verify.session]
 The relying SDK MUST reject tokens whose session is known to be revoked or
 whose `sv` is below the session's latest known version.
 
+r[relying.verify.dpop]
+The relying SDK MUST verify sender-constrained access tokens from the
+request's `Authorization` and `DPoP` headers and a request descriptor (the
+method and the URL the client addressed). Without a request descriptor, it
+MUST refuse an access token carrying `cnf`.
+
+r[relying.verify.dpop-before-check]
+The relying SDK MUST verify the DPoP proof itself before it decides through
+the check API. The check API MUST NOT require a DPoP proof, since the
+relying system that calls it has already checked the proof.
+
+r[relying.verify.dpop-replay]
+One relying core MUST remember the `jti`s of the DPoP proofs it accepted
+for as long as they could pass the freshness check, so it can refuse a
+replay (`r[token.dpop.replay]`). It need not detect replays across separate
+relying cores.
+
+r[relying.verify.dpop-challenge]
+When the relying SDK refuses an access token for its DPoP proof or scheme,
+it MUST report that reason, so the relying system can answer with a
+`WWW-Authenticate: DPoP` challenge.
+
 ## Decisions
 
 r[relying.decision.local]

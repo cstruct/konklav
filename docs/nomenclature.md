@@ -243,6 +243,21 @@ Terms are introduced in dependency order: each definition only uses terms define
   - An opaque, long-lived secret bound to one session, exchanged for a new access token.
   - Every use rotates it. Presenting an already-rotated refresh token revokes the session (`reuse detection`).
 
+- `DPoP key`
+  - A key pair a client generates and keeps, ideally non-extractable (a WebCrypto key or a platform keystore key), to prove that it is the party a session's tokens were issued to (DPoP, RFC 9449).
+  - Konklav and relying systems know it only by its `key thumbprint`: the RFC 7638 SHA-256 thumbprint of its public JWK, carried as `jkt`.
+
+- `DPoP proof`
+  - A short-lived JWT signed with a DPoP key and sent in the `DPoP` request header. It names one HTTP request (method and URL), when it was made, and, when an access token comes with it, a hash of that access token.
+
+- `bound session`
+  - A session tied to one DPoP key when it was created. Its access tokens carry the key thumbprint in `cnf.jkt`, and its access and refresh tokens are accepted only together with a DPoP proof made with that key.
+  - A session is bound or unbound for its whole life.
+
+- `sender-constrained token`
+  - An access or refresh token of a bound session. A stolen one is useless without the DPoP key. Prefer this term over `bound token` or `PoP token`.
+  - An access token that is not sender-constrained is a `bearer token`.
+
 - `session flag`
   - A label on a session, declared in the action catalog and set only by the flow that created or stepped up the session.
   - Konklav copies flags into tokens without interpreting them.
