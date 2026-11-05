@@ -140,6 +140,13 @@ The token doesn't verify, or its session has ended or moved on.
 """
 
 
+type DenyReasonInvalidDpopProof = Literal['invalid_dpop_proof']
+"""
+The access token is sender-constrained and its DPoP proof is
+missing or invalid, or a bearer token came under the `DPoP` scheme.
+"""
+
+
 type DenyReasonTokenKind = Literal['token_kind']
 
 
@@ -218,7 +225,7 @@ class DenyReasonMissingActions(TypedDict):
     missing_actions: MissingActions
 
 
-type DenyReason = DenyReasonInvalidToken | DenyReasonTokenKind | DenyReasonRestrictedSession | DenyReasonMissingFlag | DenyReasonNoTenant | DenyReasonUnknownScope | DenyReasonMissingActions
+type DenyReason = DenyReasonInvalidToken | DenyReasonInvalidDpopProof | DenyReasonTokenKind | DenyReasonRestrictedSession | DenyReasonMissingFlag | DenyReasonNoTenant | DenyReasonUnknownScope | DenyReasonMissingActions
 
 
 type Effect = Literal['allow', 'deny']
@@ -1417,6 +1424,11 @@ class OidcClientDefinition(TypedDict):
     """
     Whether the client may use the refresh token grant.
     """
+    require_dpop: NotRequired[bool]
+    """
+    Whether the client's grants must come with a DPoP proof, so all
+    its tokens are sender-constrained.
+    """
     require_pkce: NotRequired[bool]
     """
     Whether authorization requests must use PKCE. Only a confidential
@@ -1639,6 +1651,10 @@ class Session(TypedDict):
     client_kind: ClientKind
     created_at: str
     credential_id: CredentialId
+    dpop_jkt: NotRequired[str | None]
+    """
+    The DPoP key thumbprint of a bound session.
+    """
     expires_at: str
     flags: list[str]
     id: SessionId

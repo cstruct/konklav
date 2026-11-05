@@ -2864,7 +2864,11 @@ dependencies = [
  "base64 0.23.1",
  "ed25519-dalek 3.0.0",
  "getrandom 0.4.3",
+ "konklav-authz",
+ "konklav-relying",
+ "konklav-relying-client",
  "konklav-test-support",
+ "konklav-token",
  "lettre",
  "p256 0.14.0",
  "percent-encoding",
@@ -2882,6 +2886,7 @@ dependencies = [
  "ed25519-dalek 3.0.0",
  "konklav-authz",
  "konklav-core",
+ "konklav-test-support",
  "konklav-token",
  "serde",
  "serde_json",
@@ -2996,9 +3001,13 @@ dependencies = [
 name = "konklav-test-support"
 version = "1.4.0"
 dependencies = [
+ "base64 0.23.1",
  "diesel",
  "diesel-async",
  "konklav-store",
+ "konklav-token",
+ "p256 0.14.0",
+ "serde_json",
  "tokio",
  "uuid",
 ]
@@ -3010,6 +3019,7 @@ dependencies = [
  "base64 0.23.1",
  "ed25519-dalek 3.0.0",
  "konklav-core",
+ "p256 0.14.0",
  "serde",
  "serde_json",
  "sha2 0.11.1",

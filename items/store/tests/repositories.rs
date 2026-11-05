@@ -7,7 +7,7 @@ use konklav_store::credentials::{
 };
 use konklav_store::sessions::{self, ClientKind, NewSession, Rotation, SessionFilter, Stage};
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
-use konklav_store::{Connection, StoreError, events, signing_keys};
+use konklav_store::{Connection, StoreError, dpop_proofs, events, signing_keys};
 use konklav_test_support::TestDatabase;
 
 const HASH: &str = "$argon2id$v=19$m=8,t=1,p=1$c29tZXNhbHQ$aGFzaGhhc2hoYXNo";
@@ -47,6 +47,7 @@ async fn session(
     sessions::insert(
         conn,
         NewSession {
+            dpop_jkt: None,
             id,
             subject_id: subject,
             credential_id: credential,
@@ -413,6 +414,82 @@ async fn rotating_refresh_tokens_detects_reuse() {
             .await
             .unwrap(),
         Rotation::Invalid
+    );
+}
+
+// r[verify token.dpop.binding]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sessions_dpop_binding_survives_rotation_and_revocation() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let subject = subject(&mut conn).await;
+    let credential = password(&mut conn, subject, "a@x").await;
+    let id = SessionId::new_v7();
+    let (inserted, _) = sessions::insert(
+        &mut conn,
+        NewSession {
+            dpop_jkt: Some("jkt".into()),
+            id,
+            subject_id: subject,
+            credential_id: credential,
+            stage: Stage::Identity,
+            client_kind: ClientKind::Native,
+            amr: vec!["pwd".into()],
+            auth_time: Utc::now(),
+            flags: vec![],
+            impersonator_subject_id: None,
+            parent_session_id: None,
+            refresh_hash: b"r1".to_vec(),
+            expires_at: Utc::now() + Duration::days(1),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(inserted.dpop_jkt.as_deref(), Some("jkt"));
+    let Rotation::Rotated(rotated, _) =
+        sessions::rotate_refresh(&mut conn, id, b"r1", b"r2", Utc::now())
+            .await
+            .unwrap()
+    else {
+        panic!("expected rotation");
+    };
+    assert_eq!(rotated.dpop_jkt.as_deref(), Some("jkt"));
+    let filter = SessionFilter {
+        session: Some(id),
+        ..Default::default()
+    };
+    sessions::revoke(&mut conn, &filter, None, "signed_out")
+        .await
+        .unwrap();
+    let revoked = sessions::get(&mut conn, id).await.unwrap();
+    assert_eq!(revoked.dpop_jkt.as_deref(), Some("jkt"));
+    let unbound = session(&mut conn, subject, credential, b"u1").await;
+    assert_eq!(
+        sessions::get(&mut conn, unbound).await.unwrap().dpop_jkt,
+        None
+    );
+}
+
+// r[verify token.dpop.replay]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dpop_proof_id_is_accepted_once_per_key() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let until = Utc::now() + Duration::minutes(1);
+    assert!(
+        dpop_proofs::record(&mut conn, "k1", "a", until)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !dpop_proofs::record(&mut conn, "k1", "a", until)
+            .await
+            .unwrap()
+    );
+    assert!(
+        dpop_proofs::record(&mut conn, "k2", "a", until)
+            .await
+            .unwrap()
     );
 }
 

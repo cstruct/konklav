@@ -180,7 +180,12 @@ Konklav has no user interface, and `/v1/oauth2/authorize` doesn't add one:
 5. The client calls `POST /v1/oauth2/token` with the code, the redirect
    URI, the PKCE verifier and its credentials (HTTP basic or form; none for
    public clients). The response holds an access token, an ID token and,
-   if allowed, a refresh token.
+   if allowed, a refresh token. With a `DPoP` header (RFC 9449), the
+   session is bound to the proof's key and the tokens are
+   sender-constrained (`token_type` `DPoP`). A client registered with
+   `require_dpop` gets no tokens without one, and an authorization request
+   can bind its code to a key with `dpop_jkt`. See
+   [proof-of-possession](proof-of-possession.md#sender-constrained-tokens-dpop).
 
 Consent screens are left to the login application. First-party clients are
 registered as pre-consented.
@@ -205,7 +210,8 @@ registered as pre-consented.
   behind a refresh or access token the client was issued, and answers 200
   for anything else.
 - **CORS.** A browser app registered as a public client calls the token,
-  revocation and userinfo endpoints from its own origin. They answer
+  revocation and userinfo endpoints from its own origin, with the `DPoP`
+  header allowed. They answer
   preflights and send `Access-Control-Allow-Origin` for an origin of an
   active public client's redirect URIs, never `*` and without allowing
   credentials, so registering a client needs no list of origins. Discovery

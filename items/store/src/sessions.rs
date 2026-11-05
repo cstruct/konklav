@@ -91,6 +91,9 @@ pub struct Session {
     /// Claims passed from the identity provider the session was started
     /// through, by scope, until the session ends.
     pub identity_claims: Option<serde_json::Value>,
+    /// The thumbprint of the DPoP key a bound session is tied to, fixed
+    /// when the session is created.
+    pub dpop_jkt: Option<String>,
     pub version: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -144,6 +147,7 @@ struct Row {
     oidc_userinfo_claims: Vec<Option<String>>,
     oidc_id_token_claims: Vec<Option<String>>,
     identity_claims: Option<serde_json::Value>,
+    dpop_jkt: Option<String>,
 }
 
 impl From<Row> for Session {
@@ -169,6 +173,7 @@ impl From<Row> for Session {
                 id_token: row.oidc_id_token_claims.into_iter().flatten().collect(),
             },
             identity_claims: row.identity_claims,
+            dpop_jkt: row.dpop_jkt,
             version: row.version,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -215,6 +220,9 @@ pub struct NewSession {
     pub parent_session_id: Option<SessionId>,
     pub refresh_hash: Vec<u8>,
     pub expires_at: DateTime<Utc>,
+    /// The DPoP key thumbprint to bind the session to; set only here
+    /// (`r[token.dpop.binding]`).
+    pub dpop_jkt: Option<String>,
 }
 
 // r[impl session.server-side]
@@ -238,6 +246,9 @@ pub async fn insert(
                 session::refresh_hash.eq(&new.refresh_hash),
                 session::expires_at.eq(new.expires_at),
                 session::parent_session_id.eq(new.parent_session_id.map(uuid::Uuid::from)),
+                // The only write of a session's binding.
+                // r[impl token.dpop.binding]
+                session::dpop_jkt.eq(new.dpop_jkt.as_deref()),
             ))
             .returning(Row::as_returning())
             .get_result(conn)

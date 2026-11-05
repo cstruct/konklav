@@ -21,6 +21,22 @@ decision = await client.decide(token, {"tenant": ["project:read"]})
 if decision["decision"] != "allow":
     ...
 ```
+
+For sender-constrained (DPoP) tokens, pass the request's raw headers and
+the public URL the client addressed (behind a proxy, not the upstream URL):
+
+```python
+decision = await client.decide_request(
+    authorization=request.headers["authorization"],
+    dpop=request.headers.get("dpop"),
+    method=request.method,
+    url=public_url,
+    requirements={"tenant": ["project:read"]},
+)
+```
+
+A decision denied with reason `invalid_dpop_proof` should be answered with
+401 and `WWW-Authenticate: DPoP error="invalid_dpop_proof"`.
 """
 
 from __future__ import annotations
@@ -33,14 +49,14 @@ import logging
 import threading
 import time
 import urllib.parse
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import httpx
 
 from konklav_relying._core import Core
 
-__all__ = ["KonklavError", "Core", "RelyingClient"]
+__all__ = ["InvalidDpopProof", "KonklavError", "Core", "RelyingClient"]
 
 _log = logging.getLogger(__name__)
 
@@ -51,8 +67,30 @@ class KonklavError(Exception):
     """Konklav could not be reached or answered with an error. Treat as deny."""
 
 
+class InvalidDpopProof(Exception):
+    """
+    The token was refused for its DPoP proof or authorization scheme.
+    Answer with 401 and `WWW-Authenticate: DPoP error="invalid_dpop_proof"`.
+    """
+
+
 def _now() -> int:
     return time.time_ns() // 1_000_000
+
+
+def _presented(authorization: str, dpop: str | None, method: str, url: str) -> str:
+    return json.dumps(
+        {
+            "authorization": authorization,
+            "dpop": dpop,
+            "request": {"method": method, "url": url},
+        }
+    )
+
+
+def _token_of(authorization: str) -> str:
+    """The token after the scheme, for the check API."""
+    return authorization.partition(" ")[2].strip()
 
 
 class RelyingClient:
@@ -107,35 +145,89 @@ class RelyingClient:
 
     async def decide(self, token: str, requirements: Mapping[str, Any]) -> Decision:
         """
-        Decide `requirements` for an access token presented to this system.
+        Decide `requirements` for a bearer access token presented to this
+        system. A sender-constrained (DPoP) token is denied: use
+        `decide_request`.
 
         Returns a decision such as `{"decision": "allow"}`. Raises
         `KonklavError` when no decision can be reached; callers must deny.
         """
         encoded = json.dumps(requirements)
+        return await self._decide(
+            token, requirements, lambda: self._core.decide(token, encoded, _now())
+        )
+
+    async def decide_request(
+        self,
+        *,
+        authorization: str,
+        dpop: str | None,
+        method: str,
+        url: str,
+        requirements: Mapping[str, Any],
+    ) -> Decision:
+        """
+        Decide `requirements` for a request's raw `Authorization` and `DPoP`
+        headers. `url` is the URL the client addressed. Bearer and
+        sender-constrained tokens both work.
+        """
+        presented = _presented(authorization, dpop, method, url)
+        encoded = json.dumps(requirements)
+        return await self._decide(
+            _token_of(authorization),
+            requirements,
+            lambda: self._core.decide_presented(presented, encoded, _now()),
+        )
+
+    async def _decide(
+        self, token: str, requirements: Mapping[str, Any], ask: Callable[[], str]
+    ) -> Decision:
         for _ in range(4):
             with self._lock:
-                outcome = json.loads(self._core.decide(token, encoded, _now()))
+                outcome = json.loads(ask())
             if outcome["outcome"] == "decided":
                 return outcome["decision"]
             needs = outcome["needs"]
             if any(need["need"] == "check" for need in needs):
+                # The core has checked any DPoP proof; the check API takes
+                # the token alone.
                 return await self._check(token, requirements)
             await asyncio.gather(*(self._fetch(need) for need in needs))
         raise KonklavError("could not reach a decision")
 
     async def verify(self, token: str) -> dict[str, Any] | None:
         """
-        Verify a token and its session; return its claims, or None if it is
-        not valid. Raises `KonklavError` when it can't be verified now.
+        Verify a bearer token and its session; return its claims, or None if
+        it is not valid. Raises `KonklavError` when it can't be verified now,
+        and `InvalidDpopProof` for a sender-constrained token: use
+        `verify_request` for those.
         """
+        return await self._verify(token, lambda: self._core.verify(token, _now()))
+
+    async def verify_request(
+        self, *, authorization: str, dpop: str | None, method: str, url: str
+    ) -> dict[str, Any] | None:
+        """
+        `verify` for a request's raw `Authorization` and `DPoP` headers, like
+        `decide_request`. Raises `InvalidDpopProof` when the proof or scheme
+        is wrong.
+        """
+        presented = _presented(authorization, dpop, method, url)
+        return await self._verify(
+            _token_of(authorization),
+            lambda: self._core.verify_presented(presented, _now()),
+        )
+
+    async def _verify(self, token: str, ask: Callable[[], str]) -> dict[str, Any] | None:
         for _ in range(4):
             with self._lock:
-                outcome = json.loads(self._core.verify(token, _now()))
+                outcome = json.loads(ask())
             if outcome["outcome"] == "verified":
                 return outcome["claims"]
             if outcome["outcome"] == "invalid":
                 return None
+            if outcome["outcome"] == "invalid_proof":
+                raise InvalidDpopProof("the DPoP proof or scheme is invalid")
             if any(need["need"] == "check" for need in outcome["needs"]):
                 return await self._verify_centrally(token)
             await asyncio.gather(*(self._fetch(need) for need in outcome["needs"]))

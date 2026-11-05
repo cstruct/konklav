@@ -202,6 +202,7 @@ fn claims(tenant: TenantId, amr: &[&str], flags: &[&str]) -> AccessClaims {
         sfl: flags.iter().map(|f| (*f).to_owned()).collect(),
         fct: BTreeMap::new(),
         act: None,
+        cnf: None,
     }
 }
 

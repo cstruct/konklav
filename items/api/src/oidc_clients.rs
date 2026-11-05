@@ -63,6 +63,10 @@ pub struct OidcClientDefinition {
     /// client may be registered without it.
     #[serde(default = "yes")]
     pub require_pkce: bool,
+    /// Whether the client's grants must come with a DPoP proof, so all
+    /// its tokens are sender-constrained.
+    #[serde(default)]
+    pub require_dpop: bool,
 }
 
 fn default_scopes() -> Vec<String> {

@@ -27,7 +27,7 @@ facet.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 jsonwebtoken = { workspace = true, features = ["use_pem"] }
-p256.workspace = true
+p256 = { workspace = true, features = ["pkcs8", "pem", "std"] }
 ordna-core.workspace = true
 ordna-source-env.workspace = true
 ordna-source-file.workspace = true

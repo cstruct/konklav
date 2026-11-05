@@ -101,8 +101,9 @@ A login attempt MUST be deleted once the longest rate-limit window has
 passed since it was made.
 
 r[retention.assertions]
-A recorded client-assertion or bearer-assertion identifier MUST be deleted
-once the assertion it was recorded for has expired.
+A recorded client-assertion, bearer-assertion or DPoP-proof identifier
+MUST be deleted once the assertion or proof it was recorded for has expired
+(for a DPoP proof: once it is too old to pass the freshness check).
 
 r[retention.sessions]
 A session MUST be deleted a configured period after it expired or was

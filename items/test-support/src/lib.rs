@@ -16,6 +16,10 @@
 //! }
 //! ```
 
+mod dpop;
+
+pub use dpop::DpopKey;
+
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 use konklav_store::{ConnectOptions, Pool};
 

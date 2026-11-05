@@ -281,6 +281,7 @@ pub(crate) async fn session(
         conn,
         ImportedSession {
             session: NewSession {
+                dpop_jkt: None,
                 id: record.id,
                 subject_id: record.subject,
                 credential_id: record.credential,

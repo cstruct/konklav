@@ -12,6 +12,7 @@ use konklav_token::{AccessClaims, JwkSet, VerifyOptions};
 use serde::{Deserialize, Serialize};
 
 use crate::Config;
+use crate::presented::{self, Presented, ProofSettings, Refused, Replays};
 
 /// Which entitlement set: a subject in a tenant, or its global-only set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -63,6 +64,12 @@ pub enum Verification {
     },
     /// The token doesn't verify, or its session has ended or moved on.
     Invalid,
+    /// Refused for the DPoP proof or the authorization scheme: a
+    /// sender-constrained token without a valid proof, or a bearer token
+    /// under the `DPoP` scheme. Answer with a `WWW-Authenticate: DPoP`
+    /// challenge.
+    // r[impl relying.verify.dpop-challenge]
+    InvalidProof,
     /// Provide these, then ask again.
     Need { needs: Vec<Need> },
 }
@@ -75,9 +82,8 @@ pub struct Work {
     pub next_poll_at: u64,
 }
 
-/// The request a token was presented with. Unused until sender-constrained
-/// tokens arrive, but part of the API so adding them is not a breaking
-/// change.
+/// The request a token was presented with: the method and the URL the
+/// client addressed, which a DPoP proof must name.
 // r[impl item.relying.request-descriptor]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestDescriptor {
@@ -175,6 +181,8 @@ pub struct Relying {
     feed: Feed,
     /// The highest cursor a caller waits to read its own writes at.
     awaited: Option<Cursor>,
+    /// DPoP proofs accepted recently, so none is accepted twice.
+    replays: Replays,
 }
 
 impl Relying {
@@ -192,6 +200,7 @@ impl Relying {
             scopes: BTreeMap::new(),
             feed: Feed::default(),
             awaited: None,
+            replays: Replays::default(),
         }
     }
 
@@ -215,16 +224,56 @@ impl Relying {
         self.feed.cursor
     }
 
-    /// Verifies `token` and checks its session, without evaluating any
-    /// requirements: for hosts that build their own request context.
+    /// Verifies a bearer `token` and checks its session, without
+    /// evaluating any requirements: for hosts that build their own request
+    /// context. A sender-constrained token is refused: use
+    /// [`Relying::verify_presented`] for those.
     pub fn verify(&mut self, token: &str, now: u64) -> Verification {
-        match self.check_token(token, now) {
+        self.verify_presented(&Presented::bearer(token), now)
+    }
+
+    /// [`Relying::verify`] for a request's raw `Authorization` and `DPoP`
+    /// headers, so sender-constrained tokens verify too.
+    pub fn verify_presented(&mut self, presented: &Presented, now: u64) -> Verification {
+        let (token, accepted) =
+            match presented::token(presented, &self.replays, &self.proof_settings(), now) {
+                Ok(found) => found,
+                Err(Refused::Token) => return Verification::Invalid,
+                Err(Refused::Proof) => return Verification::InvalidProof,
+            };
+        let verification = match self.check_token(token, now) {
             Ok((claims, needs)) if needs.is_empty() => Verification::Verified {
                 claims: Box::new(claims),
             },
             Ok((_, needs)) | Err(Outcome::Need { needs }) => Verification::Need { needs },
             Err(Outcome::Decided { .. }) => Verification::Invalid,
+        };
+        let answered = match &verification {
+            Verification::Need { needs } => needs.contains(&Need::Check),
+            _ => true,
+        };
+        if answered && !self.remember(accepted, now) {
+            return Verification::InvalidProof;
         }
+        verification
+    }
+
+    fn proof_settings(&self) -> ProofSettings {
+        ProofSettings {
+            max_age_seconds: self.config.dpop_max_age_seconds,
+            leeway_seconds: self.config.leeway_seconds,
+        }
+    }
+
+    /// Remembers an accepted proof once the core has answered with it: a
+    /// decision, or a hand-off to the check API. Not while it still waits
+    /// for a fetch, since the host then asks again with the same proof.
+    /// Returns false if the replay set is full.
+    fn remember(&mut self, accepted: Option<presented::Accepted>, now: u64) -> bool {
+        accepted.is_none_or(|accepted| {
+            self.replays
+                .remember(accepted, self.config.dpop_replay_capacity, now)
+        })
     }
 
     /// The cached entitlement set for `key`, or what to fetch first.
@@ -309,13 +358,55 @@ impl Relying {
     // r[impl relying.verify.offline]
     // r[impl relying.verify.session]
     // r[depends item.authz.single-evaluator]
+    ///
+    /// `token` is a bearer token; a sender-constrained one is denied. Use
+    /// [`Relying::decide_presented`] for requests that may carry DPoP.
     pub fn decide(
         &mut self,
         token: &str,
         requirements: &Requirements,
-        _request: Option<&RequestDescriptor>,
+        request: Option<&RequestDescriptor>,
         now: u64,
     ) -> Outcome {
+        let presented = Presented {
+            request: request.cloned(),
+            ..Presented::bearer(token)
+        };
+        self.decide_presented(&presented, requirements, now)
+    }
+
+    /// [`Relying::decide`] for a request's raw `Authorization` and `DPoP`
+    /// headers and its request descriptor. The DPoP proof is checked before
+    /// anything else, including before a hand-off to the check API, which
+    /// never sees it (`r[relying.verify.dpop-before-check]`).
+    // r[impl relying.verify.dpop-before-check]
+    pub fn decide_presented(
+        &mut self,
+        presented: &Presented,
+        requirements: &Requirements,
+        now: u64,
+    ) -> Outcome {
+        let deny = |reason| Outcome::Decided {
+            decision: Decision::Deny { reason },
+        };
+        let (token, accepted) =
+            match presented::token(presented, &self.replays, &self.proof_settings(), now) {
+                Ok(found) => found,
+                Err(Refused::Token) => return deny(DenyReason::InvalidToken),
+                Err(Refused::Proof) => return deny(DenyReason::InvalidDpopProof),
+            };
+        let outcome = self.decide_token(token, requirements, now);
+        let answered = match &outcome {
+            Outcome::Need { needs } => needs.contains(&Need::Check),
+            Outcome::Decided { .. } => true,
+        };
+        if answered && !self.remember(accepted, now) {
+            return deny(DenyReason::InvalidDpopProof);
+        }
+        outcome
+    }
+
+    fn decide_token(&mut self, token: &str, requirements: &Requirements, now: u64) -> Outcome {
         let (claims, mut needs) = match self.check_token(token, now) {
             Ok(checked) => checked,
             Err(outcome) => return outcome,

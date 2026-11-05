@@ -13,6 +13,7 @@ mod control_authz;
 mod cookies;
 mod cors;
 mod db;
+mod dpop;
 pub mod error;
 mod explain_api;
 pub mod export;

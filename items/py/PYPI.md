@@ -60,6 +60,11 @@ await client.stop()
   error. Treat it as a deny.
 - `await_cursor` waits until a change you just made through Konklav has
   reached the cache, for read-your-writes.
+- `decide_request` and `verify_request` take a request's raw
+  `Authorization` and `DPoP` headers, its method and the public URL, so
+  sender-constrained (DPoP) tokens work too. A deny with reason
+  `invalid_dpop_proof` should be answered with 401 and
+  `WWW-Authenticate: DPoP error="invalid_dpop_proof"`.
 
 The decision logic lives in a Rust core shared with Konklav's other relying
 bindings, so they can't disagree. Python does only the I/O.

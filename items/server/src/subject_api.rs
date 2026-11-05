@@ -291,6 +291,7 @@ pub(crate) async fn create_session(
         Stage::Identity
     };
     let new = NewSession {
+        dpop_jkt: None,
         id,
         subject_id: credential.subject_id,
         credential_id: credential.id,
@@ -548,17 +549,25 @@ pub(crate) async fn still_valid(
 
 /// Rotates a refresh token, checking that its session is still usable and,
 /// when `client` is given, that it belongs to that OIDC client.
+///
+/// `dpop_jkt` is the key thumbprint of the request's verified DPoP proof. A
+/// bound session's refresh token is refused before anything rotates unless
+/// it matches.
 pub(crate) async fn rotate(
     conn: &mut Connection,
     presented: &str,
     client: Option<&str>,
+    dpop_jkt: Option<&str>,
 ) -> Result<Started, ApiError> {
     let presented = RefreshToken::parse(presented).map_err(|_| session_ended())?;
     let current = sessions::get(conn, presented.session())
         .await
         .map_err(|_| session_ended())?;
+    // r[impl token.refresh.dpop-bound]
+    let wrong_key = current.dpop_jkt.is_some() && current.dpop_jkt.as_deref() != dpop_jkt;
     if current.stage == Stage::Partial
         || current.oidc_client_id.as_deref() != client
+        || wrong_key
         || !still_valid(conn, &current).await?
     {
         return Err(session_ended());
@@ -608,7 +617,7 @@ async fn refresh(
         session,
         refresh: next,
         cursor,
-    } = rotate(&mut conn, &presented, None).await?;
+    } = rotate(&mut conn, &presented, None, None).await?;
     let token = issue::access_token(&mut conn, &state.auth, &session).await?;
     let now = Utc::now();
     let (refresh_token, cookies) = match &browser {
@@ -678,7 +687,15 @@ pub(crate) async fn authenticate(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or_else(unauthenticated)?;
-    verify_access_token(state, conn, token).await
+    let (claims, session) = verify_access_token(state, conn, token).await?;
+    // Konklav's own surfaces take bearer tokens only. Sender-constrained
+    // tokens are issued to OIDC clients, for other audiences, and the check
+    // API takes them without a proof (`r[relying.verify.dpop-before-check]`).
+    // r[impl token.dpop.scheme]
+    if claims.cnf.is_some() {
+        return Err(unauthenticated());
+    }
+    Ok((claims, session))
 }
 
 /// Verifies an access token and its session: the session must be active

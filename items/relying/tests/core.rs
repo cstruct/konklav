@@ -66,6 +66,7 @@ impl Fixture {
             sfl: vec![],
             fct: BTreeMap::new(),
             act: None,
+            cnf: None,
         })
     }
 

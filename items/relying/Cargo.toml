@@ -16,6 +16,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+konklav-test-support.workspace = true
 serde_json.workspace = true
 konklav-core = { workspace = true, features = ["generate"] }
 ed25519-dalek.workspace = true

@@ -272,6 +272,9 @@ config_tree! {
             /// offer RS256; without this key, clients can't be registered
             /// for it.
             pub rsa_key_file: Option<String>,
+            /// How old a DPoP proof may be, in seconds.
+            #[facet(default = 60)]
+            pub dpop_max_age_seconds: u32,
             /// A relying system's endpoint that userinfo asks for profile
             /// claims Konklav doesn't hold, such as `name`.
             pub claims_hook: Option<pub struct ClaimsHook {

@@ -11,6 +11,7 @@ use common::{ISSUER, ORIGIN, TestApp};
 use jsonwebtoken::jwk::Jwk;
 use jsonwebtoken::{DecodingKey, Validation};
 use konklav_server::oidc::OpenIdProvider;
+use konklav_test_support::DpopKey;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -504,6 +505,7 @@ async fn browser_apps_of_public_clients_may_call_the_token_endpoints() {
 }
 
 // r[verify oidc.provider.discovery]
+// r[verify oidc.provider.dpop.discovery]
 #[tokio::test(flavor = "multi_thread")]
 async fn discovery_lists_the_endpoints() {
     let world = world().await;
@@ -520,6 +522,10 @@ async fn discovery_lists_the_endpoints() {
     assert_eq!(
         document.body["code_challenge_methods_supported"],
         json!(["S256"])
+    );
+    assert_eq!(
+        document.body["dpop_signing_alg_values_supported"],
+        json!(["ES256", "EdDSA"])
     );
     for unsupported in [
         "request_parameter_supported",
@@ -1833,4 +1839,308 @@ async fn operators_read_registered_clients_without_their_secrets() {
         .control(Method::GET, "/v1/oidc/clients/nobody", None)
         .await;
     assert_eq!(unknown.code(), "NOT_FOUND");
+}
+
+// --- DPoP ------------------------------------------------------------------------
+
+const TOKEN_URL: &str = "https://auth.example/v1/oauth2/token";
+const USERINFO_URL: &str = "https://auth.example/v1/oauth2/userinfo";
+
+/// Registers a public client `spa` that may refresh.
+async fn register_spa(world: &World, extra: Value) {
+    let mut definition = json!({
+        "kind": "public",
+        "redirect_uris": [REDIRECT],
+        "audience": "spa",
+    });
+    for (key, value) in extra.as_object().unwrap() {
+        definition[key] = value.clone();
+    }
+    let registered = world
+        .app
+        .control(Method::PUT, "/v1/oidc/clients/spa", Some(definition))
+        .await;
+    assert_eq!(registered.status, StatusCode::OK, "{:?}", registered.body);
+}
+
+/// Exchanges `code` for `spa`, with a proof from `key` when given.
+async fn spa_tokens(world: &World, code: &str, key: Option<&DpopKey>) -> common::Reply {
+    let proof = key.map(|key| key.proof("POST", TOKEN_URL, None));
+    let headers: Vec<(&str, &str)> = proof.iter().map(|p| ("dpop", p.as_str())).collect();
+    world
+        .app
+        .send_form(
+            "/v1/oauth2/token",
+            &headers,
+            &[
+                ("grant_type", "authorization_code"),
+                ("client_id", "spa"),
+                ("code", code),
+                ("redirect_uri", REDIRECT),
+                ("code_verifier", VERIFIER),
+            ],
+        )
+        .await
+}
+
+async fn spa_refresh(world: &World, refresh: &str, proof: Option<&str>) -> common::Reply {
+    let headers: Vec<(&str, &str)> = proof.iter().map(|p| ("dpop", *p)).collect();
+    world
+        .app
+        .send_form(
+            "/v1/oauth2/token",
+            &headers,
+            &[
+                ("grant_type", "refresh_token"),
+                ("client_id", "spa"),
+                ("refresh_token", refresh),
+            ],
+        )
+        .await
+}
+
+async fn userinfo_with(world: &World, headers: &[(&str, &str)]) -> common::Reply {
+    world
+        .app
+        .send(Method::GET, "/v1/oauth2/userinfo", headers, None)
+        .await
+}
+
+fn challenge_of(reply: &common::Reply) -> Vec<String> {
+    reply
+        .headers
+        .get_all(header::WWW_AUTHENTICATE)
+        .iter()
+        .map(|v| v.to_str().unwrap().to_owned())
+        .collect()
+}
+
+// r[verify oidc.provider.dpop.token]
+// r[verify token.dpop.cnf]
+// r[verify token.dpop.scheme]
+// r[verify token.dpop.replay]
+// r[verify oidc.provider.dpop.errors]
+// r[verify oidc.provider.dpop.htu]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proof_at_the_token_endpoint_binds_the_clients_tokens_to_its_key() {
+    let world = world().await;
+    register_spa(&world, json!({})).await;
+    let key = DpopKey::new(1);
+    let code = authorize(&world, &[("client_id", "spa"), ("scope", "openid")]).await;
+    let tokens = spa_tokens(&world, &code, Some(&key)).await;
+    assert_eq!(tokens.status, StatusCode::OK, "{:?}", tokens.body);
+    assert_eq!(tokens.body["token_type"], "DPoP");
+    let access = tokens.body["access_token"].as_str().unwrap();
+    let claims = konklav_token::decode_claims_unverified(access).unwrap();
+    assert_eq!(claims.cnf.unwrap().jkt, key.jkt());
+
+    // The session records the key, for operators.
+    let sessions = world
+        .app
+        .control(
+            Method::GET,
+            &format!("/v1/sessions?subject={}&active=true", world.subject),
+            None,
+        )
+        .await;
+    let bound: Vec<_> = sessions.body["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["dpop_jkt"].as_str())
+        .collect();
+    assert_eq!(bound, [key.jkt()]);
+
+    // UserInfo takes the token only under DPoP, with a proof for itself.
+    let dpop_auth = format!("DPoP {access}");
+    let proof = key.proof("GET", USERINFO_URL, Some(access));
+    let served = userinfo_with(&world, &[("authorization", &dpop_auth), ("dpop", &proof)]).await;
+    assert_eq!(served.status, StatusCode::OK, "{:?}", served.body);
+    assert_eq!(served.body["sub"], world.subject);
+
+    let refused = |reply: &common::Reply| {
+        assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{:?}", reply.body);
+        assert_eq!(
+            challenge_of(reply),
+            ["DPoP error=\"invalid_dpop_proof\", algs=\"ES256 EdDSA\""]
+        );
+    };
+    // The same proof again.
+    refused(&userinfo_with(&world, &[("authorization", &dpop_auth), ("dpop", &proof)]).await);
+    // As a bearer token, or without a proof.
+    let bearer = format!("Bearer {access}");
+    refused(&userinfo_with(&world, &[("authorization", &bearer)]).await);
+    refused(&userinfo_with(&world, &[("authorization", &dpop_auth)]).await);
+    // A proof for another URL, another token, or from another key.
+    let elsewhere = key.proof(
+        "GET",
+        "https://elsewhere.example/v1/oauth2/userinfo",
+        Some(access),
+    );
+    refused(
+        &userinfo_with(
+            &world,
+            &[("authorization", &dpop_auth), ("dpop", &elsewhere)],
+        )
+        .await,
+    );
+    let other_token = key.proof("GET", USERINFO_URL, Some("another token"));
+    refused(
+        &userinfo_with(
+            &world,
+            &[("authorization", &dpop_auth), ("dpop", &other_token)],
+        )
+        .await,
+    );
+    let other_key = DpopKey::new(2).proof("GET", USERINFO_URL, Some(access));
+    refused(
+        &userinfo_with(
+            &world,
+            &[("authorization", &dpop_auth), ("dpop", &other_key)],
+        )
+        .await,
+    );
+    // A proof whose claims are fine but which is too old.
+    let stale = key.sign(&json!({
+        "jti": "stale",
+        "htm": "GET",
+        "htu": USERINFO_URL,
+        "iat": chrono::Utc::now().timestamp() - 120,
+        "ath": konklav_token::access_token_hash(access),
+    }));
+    refused(&userinfo_with(&world, &[("authorization", &dpop_auth), ("dpop", &stale)]).await);
+
+    // A bad proof at the token endpoint is `invalid_dpop_proof`.
+    let code = authorize(&world, &[("client_id", "spa"), ("scope", "openid")]).await;
+    let wrong_url = key.proof("POST", "https://auth.example/v1/oauth2/revoke", None);
+    let bad = world
+        .app
+        .send_form(
+            "/v1/oauth2/token",
+            &[("dpop", &wrong_url)],
+            &[
+                ("grant_type", "authorization_code"),
+                ("client_id", "spa"),
+                ("code", &code),
+                ("redirect_uri", REDIRECT),
+                ("code_verifier", VERIFIER),
+            ],
+        )
+        .await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+    assert_eq!(bad.body["error"], "invalid_dpop_proof");
+}
+
+// r[verify token.refresh.dpop-bound]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_bound_sessions_refresh_token_needs_a_proof_from_its_key() {
+    let world = world().await;
+    register_spa(&world, json!({})).await;
+    let key = DpopKey::new(1);
+    let code = authorize(&world, &[("client_id", "spa"), ("scope", "openid")]).await;
+    let tokens = spa_tokens(&world, &code, Some(&key)).await;
+    let refresh = tokens.body["refresh_token"].as_str().unwrap().to_owned();
+
+    // Without a proof, or with another key's, the refresh is refused and
+    // nothing rotates: the same refresh token still works afterwards.
+    let without = spa_refresh(&world, &refresh, None).await;
+    assert_eq!(without.status, StatusCode::BAD_REQUEST);
+    assert_eq!(without.body["error"], "invalid_dpop_proof");
+    let other = DpopKey::new(2).proof("POST", TOKEN_URL, None);
+    let stolen = spa_refresh(&world, &refresh, Some(&other)).await;
+    assert_eq!(stolen.body["error"], "invalid_dpop_proof");
+
+    let proof = key.proof("POST", TOKEN_URL, None);
+    let refreshed = spa_refresh(&world, &refresh, Some(&proof)).await;
+    assert_eq!(refreshed.status, StatusCode::OK, "{:?}", refreshed.body);
+    assert_eq!(refreshed.body["token_type"], "DPoP");
+    let access = refreshed.body["access_token"].as_str().unwrap();
+    let claims = konklav_token::decode_claims_unverified(access).unwrap();
+    assert_eq!(claims.cnf.unwrap().jkt, key.jkt());
+}
+
+// r[verify oidc.provider.dpop.token]
+// r[verify token.dpop.binding]
+#[tokio::test(flavor = "multi_thread")]
+async fn grants_without_a_proof_stay_bearer_tokens_for_good() {
+    let world = world().await;
+    register_spa(&world, json!({})).await;
+    let code = authorize(&world, &[("client_id", "spa"), ("scope", "openid")]).await;
+    let tokens = spa_tokens(&world, &code, None).await;
+    assert_eq!(tokens.status, StatusCode::OK, "{:?}", tokens.body);
+    assert_eq!(tokens.body["token_type"], "Bearer");
+    let access = tokens.body["access_token"].as_str().unwrap();
+    assert!(
+        konklav_token::decode_claims_unverified(access)
+            .unwrap()
+            .cnf
+            .is_none()
+    );
+
+    // A proof at refresh doesn't bind the session after the fact.
+    let refresh = tokens.body["refresh_token"].as_str().unwrap();
+    let proof = DpopKey::new(1).proof("POST", TOKEN_URL, None);
+    let refreshed = spa_refresh(&world, refresh, Some(&proof)).await;
+    assert_eq!(refreshed.status, StatusCode::OK, "{:?}", refreshed.body);
+    assert_eq!(refreshed.body["token_type"], "Bearer");
+    let access = refreshed.body["access_token"].as_str().unwrap();
+    assert!(
+        konklav_token::decode_claims_unverified(access)
+            .unwrap()
+            .cnf
+            .is_none()
+    );
+
+    // A bearer token isn't accepted under the DPoP scheme.
+    let auth = format!("DPoP {access}");
+    let proof = DpopKey::new(1).proof("GET", USERINFO_URL, Some(access));
+    let refused = userinfo_with(&world, &[("authorization", &auth), ("dpop", &proof)]).await;
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+}
+
+// r[verify oidc.provider.dpop.required]
+// r[verify oidc.provider.dpop.code-binding]
+#[tokio::test(flavor = "multi_thread")]
+async fn clients_can_require_dpop_and_codes_can_be_bound_to_a_key() {
+    let world = world().await;
+    register_spa(&world, json!({"require_dpop": true})).await;
+    let read = world
+        .app
+        .control(Method::GET, "/v1/oidc/clients/spa", None)
+        .await;
+    assert_eq!(read.body["require_dpop"], true);
+    let code = authorize(&world, &[("client_id", "spa"), ("scope", "openid")]).await;
+    let refused = spa_tokens(&world, &code, None).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    assert_eq!(refused.body["error"], "invalid_dpop_proof");
+
+    let key = DpopKey::new(1);
+    let jkt = key.jkt();
+    let bound = authorize(
+        &world,
+        &[
+            ("client_id", "spa"),
+            ("scope", "openid"),
+            ("dpop_jkt", &jkt),
+        ],
+    )
+    .await;
+    let other = spa_tokens(&world, &bound, Some(&DpopKey::new(2))).await;
+    assert_eq!(other.status, StatusCode::BAD_REQUEST);
+    assert_eq!(other.body["error"], "invalid_dpop_proof");
+    let exchanged = spa_tokens(&world, &bound, Some(&key)).await;
+    assert_eq!(exchanged.status, StatusCode::OK, "{:?}", exchanged.body);
+    assert_eq!(exchanged.body["token_type"], "DPoP");
+
+    // A malformed `dpop_jkt` is an invalid request.
+    let started = world
+        .app
+        .send(
+            Method::GET,
+            &authorize_uri(&[("client_id", "spa"), ("dpop_jkt", "not-a-thumbprint")]),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(query(&location(&started))["error"], "invalid_request");
 }

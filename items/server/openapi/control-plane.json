@@ -4080,6 +4080,14 @@
           },
           {
             "type": "string",
+            "title": "DenyReasonInvalidDpopProof",
+            "description": "The access token is sender-constrained and its DPoP proof is\nmissing or invalid, or a bearer token came under the `DPoP` scheme.",
+            "enum": [
+              "invalid_dpop_proof"
+            ]
+          },
+          {
+            "type": "string",
             "title": "DenyReasonTokenKind",
             "enum": [
               "token_kind"
@@ -5208,6 +5216,10 @@
             "type": "boolean",
             "description": "Whether the client may use the refresh token grant."
           },
+          "require_dpop": {
+            "type": "boolean",
+            "description": "Whether the client's grants must come with a DPoP proof, so all\nits tokens are sender-constrained."
+          },
           "require_pkce": {
             "type": "boolean",
             "description": "Whether authorization requests must use PKCE. Only a confidential\nclient may be registered without it."
@@ -6284,6 +6296,13 @@
           },
           "credential_id": {
             "$ref": "#/components/schemas/CredentialId"
+          },
+          "dpop_jkt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The DPoP key thumbprint of a bound session."
           },
           "expires_at": {
             "type": "string",

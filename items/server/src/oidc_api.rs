@@ -40,7 +40,7 @@ use crate::cookies::{Cookie, SameSite};
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::oidc::{self, OpenIdProvider, Selection};
 use crate::subject_api::{self, Started};
-use crate::{AppState, cors, issue};
+use crate::{AppState, cors, dpop, issue};
 
 /// Binds a login request to the browser that started it. Lax: the browser
 /// comes back from the login application by navigation.
@@ -88,7 +88,7 @@ fn provider(state: &AppState) -> Result<&OpenIdProvider, ApiError> {
         .ok_or_else(|| ApiError::not_found("OpenID provider"))
 }
 
-fn endpoint(state: &AppState, path: &str) -> String {
+pub(crate) fn endpoint(state: &AppState, path: &str) -> String {
     format!(
         "{}/v1/oauth2/{path}",
         state.auth.issuer.trim_end_matches('/')
@@ -164,6 +164,8 @@ pub async fn discovery(State(state): State<AppState>) -> Result<Response, ApiErr
         // r[impl oidc.provider.algorithms]
         "id_token_signing_alg_values_supported": provider.algorithms(),
         "code_challenge_methods_supported": ["S256"],
+        // r[impl oidc.provider.dpop.discovery]
+        "dpop_signing_alg_values_supported": konklav_token::PROOF_ALGORITHMS,
         "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt", "none"],
         "token_endpoint_auth_signing_alg_values_supported": ["ES256", "ES384", "RS256", "PS256", "EdDSA"],
         "scopes_supported": scopes,
@@ -202,6 +204,7 @@ struct AuthorizeQuery {
     request: Option<String>,
     request_uri: Option<String>,
     claims: Option<String>,
+    dpop_jkt: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -235,6 +238,9 @@ struct RequestDetails {
     /// Single claims asked for with the `claims` parameter.
     #[serde(default)]
     claims: RequestedClaims,
+    /// The DPoP key thumbprint the code is bound to (`dpop_jkt`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dpop_jkt: Option<String>,
 }
 
 impl RequestDetails {
@@ -259,6 +265,9 @@ struct CodeDetails {
     /// is presented again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     issued_session: Option<SessionId>,
+    /// The DPoP key thumbprint the authorization request bound the code to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dpop_jkt: Option<String>,
 }
 
 fn redirect_to(url: &str, params: &[(&str, &str)]) -> Response {
@@ -390,6 +399,14 @@ async fn authorize(state: &AppState, query: AuthorizeQuery) -> Result<Response, 
         (None, _) if !client.require_pkce => None,
         _ => return Ok(fail("invalid_request")),
     };
+    // r[impl oidc.provider.dpop.code-binding]
+    if query
+        .dpop_jkt
+        .as_deref()
+        .is_some_and(|jkt| !is_thumbprint(jkt))
+    {
+        return Ok(fail("invalid_request"));
+    }
     let prompt = query
         .prompt
         .as_deref()
@@ -424,6 +441,7 @@ async fn authorize(state: &AppState, query: AuthorizeQuery) -> Result<Response, 
         acceptance_hash: None,
         refusal: None,
         claims,
+        dpop_jkt: query.dpop_jkt.clone(),
     };
     challenges::create(
         &mut conn,
@@ -509,6 +527,14 @@ fn claim_scope<'a>(state: &'a AppState, claim: &str) -> Option<(&'a str, bool)> 
 
 /// An S256 challenge: the base64url SHA-256 of a verifier, 43 characters
 /// (RFC 7636 4.2 allows 43 to 128 unreserved characters).
+/// A SHA-256 key thumbprint: 43 base64url characters.
+fn is_thumbprint(jkt: &str) -> bool {
+    jkt.len() == 43
+        && jkt
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 fn is_code_challenge(challenge: &str) -> bool {
     (43..=128).contains(&challenge.len())
         && challenge
@@ -811,6 +837,7 @@ async fn resume(
                 code_challenge: details.code_challenge.clone(),
                 claims: details.claims.clone(),
                 issued_session: None,
+                dpop_jkt: details.dpop_jkt.clone(),
             })
             .map_err(ApiError::internal)?,
             expires_at: Utc::now() + Duration::seconds(CODE_SECONDS),
@@ -884,6 +911,16 @@ fn client_unauthenticated(headers: &HeaderMap) -> Response {
         );
     }
     response
+}
+
+/// `DPoP` for a bound session's tokens, `Bearer` otherwise.
+// r[impl oidc.provider.dpop.token]
+fn token_type(session: &Session) -> &'static str {
+    if session.dpop_jkt.is_some() {
+        "DPoP"
+    } else {
+        "Bearer"
+    }
 }
 
 fn invalid_grant(description: &str) -> Response {
@@ -1008,17 +1045,34 @@ async fn token(
 ) -> Result<Response, ApiError> {
     provider(&state)?;
     let mut conn = state.pool.get().await?;
+    let expected = dpop::Expected {
+        method: "POST",
+        endpoint: "token",
+        access_token: None,
+        bound_to: None,
+    };
+    let proof = match dpop::check(&state, &mut conn, &headers, &expected).await? {
+        Ok(proof) => proof,
+        Err(reason) => return Ok(dpop::invalid_token_request(reason)),
+    };
+    let jkt = proof.as_ref().map(|proof| proof.jkt.as_str());
     // The assertion is the credential: no client authenticates this grant.
     if form.grant_type.as_deref() == Some(JWT_BEARER_GRANT) {
-        return jwt_bearer_grant(&state, &mut conn, form.assertion.as_deref()).await;
+        return jwt_bearer_grant(&state, &mut conn, form.assertion.as_deref(), jkt).await;
     }
     let Some(client) = authenticate_client(&state, &mut conn, &headers, &form).await else {
         return Ok(client_unauthenticated(&headers));
     };
+    // r[impl oidc.provider.dpop.required]
+    if client.require_dpop && jkt.is_none() {
+        return Ok(dpop::invalid_token_request(
+            "this client must send a DPoP proof",
+        ));
+    }
     Ok(match form.grant_type.as_deref().unwrap_or_default() {
-        "authorization_code" => code_grant(&state, &mut conn, &client, &form).await?,
+        "authorization_code" => code_grant(&state, &mut conn, &client, &form, jkt).await?,
         "refresh_token" if client.refresh => {
-            refresh_grant(&state, &mut conn, &client, &form).await?
+            refresh_grant(&state, &mut conn, &client, &form, jkt).await?
         }
         "refresh_token" => oauth_error(
             StatusCode::BAD_REQUEST,
@@ -1026,7 +1080,7 @@ async fn token(
             "refresh is off for this client",
         ),
         "client_credentials" if client.service_subject.is_some() => {
-            client_credentials_grant(&state, &mut conn, &client).await?
+            client_credentials_grant(&state, &mut conn, &client, jkt).await?
         }
         "client_credentials" => oauth_error(
             StatusCode::BAD_REQUEST,
@@ -1041,11 +1095,14 @@ async fn token(
     })
 }
 
+/// `jkt` is the key thumbprint of the request's DPoP proof, if it had one.
+// r[impl oidc.provider.dpop.token]
 async fn code_grant(
     state: &AppState,
     conn: &mut Connection,
     client: &OidcClient,
     form: &TokenRequest,
+    jkt: Option<&str>,
 ) -> Result<Response, ApiError> {
     let Some((id, secret)) = form.code.as_deref().and_then(|c| c.split_once('.')) else {
         return Ok(invalid_grant("malformed code"));
@@ -1085,6 +1142,13 @@ async fn code_grant(
     if !verified {
         return Ok(invalid_grant("PKCE verification failed"));
     }
+    // A code bound with `dpop_jkt` is exchanged only with that key's proof.
+    // r[impl oidc.provider.dpop.code-binding]
+    if details.dpop_jkt.is_some() && details.dpop_jkt.as_deref() != jkt {
+        return Ok(dpop::invalid_token_request(
+            "the code is bound to another DPoP key",
+        ));
+    }
     // Consuming the code and recording the session it issued commit
     // together, so a concurrent second use waits and then finds the session.
     let outcome = conn
@@ -1100,7 +1164,7 @@ async fn code_grant(
                 return Ok(Err("the sign-in has ended"));
             }
             let (session, refresh) =
-                start_client_session(conn, &parent, client, &details.scopes, &details.claims)
+                start_client_session(conn, &parent, client, &details.scopes, &details.claims, jkt)
                     .await?;
             let issued = CodeDetails {
                 issued_session: Some(session.id),
@@ -1156,6 +1220,7 @@ async fn start_client_session(
     client: &OidcClient,
     scopes: &[String],
     claims: &RequestedClaims,
+    dpop_jkt: Option<&str>,
 ) -> Result<(Session, RefreshToken), ApiError> {
     let id = SessionId::new_v7();
     let refresh = RefreshToken::generate(id);
@@ -1164,6 +1229,7 @@ async fn start_client_session(
             let (session, _) = sessions::insert(
                 conn,
                 NewSession {
+                    dpop_jkt: dpop_jkt.map(str::to_owned),
                     id,
                     subject_id: parent.subject_id,
                     credential_id: parent.credential_id,
@@ -1228,7 +1294,7 @@ async fn tokens_for(
     let id_token = oidc::id_token(&state.auth, provider, client, session, nonce, &claims)?;
     let body = Tokens {
         access_token: access.access_token,
-        token_type: "Bearer",
+        token_type: token_type(session),
         expires_in: access.expires_in,
         id_token,
         refresh_token: client.refresh.then(|| refresh.as_str().to_owned()),
@@ -1237,16 +1303,30 @@ async fn tokens_for(
     Ok(([(header::CACHE_CONTROL, "no-store")], Json(body)).into_response())
 }
 
+/// The refresh grant. A bound session's refresh token needs a proof made
+/// with its key, checked before anything rotates, so a refused refresh
+/// leaves the session as it was.
+// r[impl token.refresh.dpop-bound]
 async fn refresh_grant(
     state: &AppState,
     conn: &mut Connection,
     client: &OidcClient,
     form: &TokenRequest,
+    jkt: Option<&str>,
 ) -> Result<Response, ApiError> {
     let Some(presented) = form.refresh_token.as_deref() else {
         return Ok(invalid_grant("refresh_token is required"));
     };
-    match subject_api::rotate(conn, presented, Some(&client.id)).await {
+    if let Ok(parsed) = RefreshToken::parse(presented)
+        && let Ok(session) = sessions::get(conn, parsed.session()).await
+        && session.dpop_jkt.is_some()
+        && session.dpop_jkt.as_deref() != jkt
+    {
+        return Ok(dpop::invalid_token_request(
+            "the refresh token is bound to another DPoP key",
+        ));
+    }
+    match subject_api::rotate(conn, presented, Some(&client.id), jkt).await {
         Ok(Started {
             session, refresh, ..
         }) => tokens_for(state, conn, client, &session, None, &refresh).await,
@@ -1263,6 +1343,7 @@ async fn client_credentials_grant(
     state: &AppState,
     conn: &mut Connection,
     client: &OidcClient,
+    dpop_jkt: Option<&str>,
 ) -> Result<Response, ApiError> {
     let unbound = || {
         oauth_error(
@@ -1287,6 +1368,7 @@ async fn client_credentials_grant(
             let (session, _) = sessions::insert(
                 conn,
                 NewSession {
+                    dpop_jkt: dpop_jkt.map(str::to_owned),
                     id,
                     subject_id: credential.subject_id,
                     credential_id: credential.id,
@@ -1458,6 +1540,7 @@ async fn jwt_bearer_grant(
     state: &AppState,
     conn: &mut Connection,
     assertion: Option<&str>,
+    dpop_jkt: Option<&str>,
 ) -> Result<Response, ApiError> {
     #[derive(Deserialize)]
     struct Issuer {
@@ -1520,6 +1603,7 @@ async fn jwt_bearer_grant(
     let (session, _) = sessions::insert(
         conn,
         NewSession {
+            dpop_jkt: dpop_jkt.map(str::to_owned),
             id: SessionId::new_v7(),
             subject_id: credential.subject_id,
             credential_id: credential.id,
@@ -1541,7 +1625,7 @@ async fn jwt_bearer_grant(
         [(header::CACHE_CONTROL, "no-store")],
         Json(serde_json::json!({
             "access_token": access.access_token,
-            "token_type": "Bearer",
+            "token_type": token_type(&session),
             "expires_in": access.expires_in,
         })),
     )
@@ -1721,7 +1805,7 @@ struct UserinfoForm {
 
 /// `GET /v1/oauth2/userinfo`
 async fn userinfo_get(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    challenged(userinfo(&state, &headers, None).await)
+    challenged(userinfo(&state, "GET", &headers, None).await)
 }
 
 /// `POST /v1/oauth2/userinfo`, with the access token in the header or the
@@ -1732,46 +1816,88 @@ async fn userinfo_post(
     form: Result<Form<UserinfoForm>, axum::extract::rejection::FormRejection>,
 ) -> Response {
     let body_token = form.ok().and_then(|Form(form)| form.access_token);
-    challenged(userinfo(&state, &headers, body_token.as_deref()).await)
+    challenged(userinfo(&state, "POST", &headers, body_token.as_deref()).await)
 }
 
-/// A 401 carries a bearer challenge (RFC 6750 3).
+/// Why userinfo refused a request.
+enum UserinfoRefusal {
+    Api(ApiError),
+    /// Refused for the DPoP proof or the authorization scheme.
+    Dpop(&'static str),
+}
+
+impl From<ApiError> for UserinfoRefusal {
+    fn from(error: ApiError) -> Self {
+        Self::Api(error)
+    }
+}
+
+/// A 401 carries a bearer challenge (RFC 6750 3), offering DPoP too; a
+/// refusal for the DPoP proof carries a DPoP challenge (RFC 9449 7.1).
 // r[impl oidc.provider.userinfo]
-fn challenged(result: Result<Response, ApiError>) -> Response {
+fn challenged(result: Result<Response, UserinfoRefusal>) -> Response {
     match result {
         Ok(response) => response,
-        Err(error) => {
+        Err(UserinfoRefusal::Dpop(reason)) => dpop::invalid_resource_request(reason),
+        Err(UserinfoRefusal::Api(error)) => {
             let mut response = error.into_response();
             if response.status() == StatusCode::UNAUTHORIZED {
-                response.headers_mut().insert(
+                let headers = response.headers_mut();
+                headers.insert(
                     header::WWW_AUTHENTICATE,
                     HeaderValue::from_static("Bearer error=\"invalid_token\""),
                 );
+                headers.append(header::WWW_AUTHENTICATE, dpop::challenge());
             }
             response
         }
     }
 }
 
+/// How the access token came: which authorization scheme, or the form.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scheme {
+    Bearer,
+    Dpop,
+}
+
+/// The access token and its scheme, from the `Authorization` header or,
+/// as a bearer token, the form body.
+fn presented_token<'a>(
+    headers: &'a HeaderMap,
+    body_token: Option<&'a str>,
+) -> Option<(&'a str, Scheme)> {
+    let from_header = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split_once(' '))
+        .and_then(|(scheme, token)| {
+            if scheme.eq_ignore_ascii_case("Bearer") {
+                Some((token, Scheme::Bearer))
+            } else if scheme.eq_ignore_ascii_case("DPoP") {
+                Some((token, Scheme::Dpop))
+            } else {
+                None
+            }
+        });
+    from_header.or(body_token.map(|token| (token, Scheme::Bearer)))
+}
+
 async fn userinfo(
     state: &AppState,
+    method: &str,
     headers: &HeaderMap,
     body_token: Option<&str>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, UserinfoRefusal> {
     provider(state)?;
-    let mut conn = state.pool.get().await?;
+    let mut conn = state.pool.get().await.map_err(ApiError::from)?;
     let unauthenticated = || {
         ApiError::new(
             ErrorCode::Unauthenticated,
             "missing or invalid access token",
         )
     };
-    let token = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .or(body_token)
-        .ok_or_else(unauthenticated)?;
+    let (token, scheme) = presented_token(headers, body_token).ok_or_else(unauthenticated)?;
     // Only tokens issued to a client, checked against that client's audience.
     let claimed = konklav_token::decode_claims_unverified(token).ok_or_else(unauthenticated)?;
     let client_id = sessions::get(&mut conn, claimed.sid)
@@ -1779,10 +1905,39 @@ async fn userinfo(
         .ok()
         .and_then(|session| session.oidc_client_id)
         .ok_or_else(unauthenticated)?;
-    let client = oidc_clients::get(&mut conn, &client_id).await?;
-    let (_, session) =
+    let client = oidc_clients::get(&mut conn, &client_id)
+        .await
+        .map_err(ApiError::from)?;
+    let (verified, session) =
         subject_api::verify_access_token_for(state, &mut conn, token, &client.audience).await?;
-    let credential = credentials::get(&mut conn, session.credential_id).await?;
+    // r[impl token.dpop.scheme]
+    match (&verified.cnf, scheme) {
+        (Some(cnf), Scheme::Dpop) => {
+            let expected = dpop::Expected {
+                method,
+                endpoint: "userinfo",
+                access_token: Some(token),
+                bound_to: Some(&cnf.jkt),
+            };
+            match dpop::check(state, &mut conn, headers, &expected).await? {
+                Ok(Some(_)) => {}
+                Ok(None) => return Err(UserinfoRefusal::Dpop("a DPoP proof is required")),
+                Err(reason) => return Err(UserinfoRefusal::Dpop(reason)),
+            }
+        }
+        (Some(_), Scheme::Bearer) => {
+            return Err(UserinfoRefusal::Dpop(
+                "the access token is DPoP-bound; use the DPoP scheme",
+            ));
+        }
+        (None, Scheme::Dpop) => {
+            return Err(UserinfoRefusal::Dpop("the access token isn't DPoP-bound"));
+        }
+        (None, Scheme::Bearer) => {}
+    }
+    let credential = credentials::get(&mut conn, session.credential_id)
+        .await
+        .map_err(ApiError::from)?;
     let selection = Selection {
         scopes: &session.oidc_scopes,
         claims: &session.oidc_claims.userinfo,

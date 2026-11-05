@@ -1034,6 +1034,7 @@ async fn impersonate(
     let (session, _) = sessions::insert(
         &mut conn,
         NewSession {
+            dpop_jkt: None,
             id,
             subject_id: target.id,
             // The impersonator's credential: the target's credentials were

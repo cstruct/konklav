@@ -11,7 +11,10 @@ import uuid
 from typing import Any
 
 import httpx
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 ISSUER = "https://auth.example"
@@ -35,7 +38,16 @@ class Keys:
             ]
         }
 
-    def token(self, *, subject: str, session: str, tenant: str, version: int = 1, flags: list[str] | None = None) -> str:
+    def token(
+        self,
+        *,
+        subject: str,
+        session: str,
+        tenant: str,
+        version: int = 1,
+        flags: list[str] | None = None,
+        jkt: str | None = None,
+    ) -> str:
         now = int(time.time())
         header = {"alg": "EdDSA", "typ": "JWT", "kid": self.kid}
         claims = {
@@ -53,9 +65,38 @@ class Keys:
             "tid": tenant,
             "sfl": flags or [],
         }
+        if jkt is not None:
+            claims["cnf"] = {"jkt": jkt}
         signing_input = f"{b64(json.dumps(header).encode())}.{b64(json.dumps(claims).encode())}"
         signature = self.private.sign(signing_input.encode())
         return f"{signing_input}.{b64(signature)}"
+
+
+class DpopKey:
+    """A client's P-256 DPoP key, signing proofs (RFC 9449)."""
+
+    def __init__(self) -> None:
+        self.private = ec.generate_private_key(ec.SECP256R1())
+        numbers = self.private.public_key().public_numbers()
+        self.x = b64(numbers.x.to_bytes(32, "big"))
+        self.y = b64(numbers.y.to_bytes(32, "big"))
+
+    def jkt(self) -> str:
+        canonical = json.dumps({"crv": "P-256", "kty": "EC", "x": self.x, "y": self.y}, separators=(",", ":"))
+        return b64(hashlib.sha256(canonical.encode()).digest())
+
+    def proof(self, method: str, url: str, token: str) -> str:
+        header = {"typ": "dpop+jwt", "alg": "ES256", "jwk": {"kty": "EC", "crv": "P-256", "x": self.x, "y": self.y}}
+        claims = {
+            "jti": str(uuid.uuid4()),
+            "htm": method,
+            "htu": url,
+            "iat": int(time.time()),
+            "ath": b64(hashlib.sha256(token.encode()).digest()),
+        }
+        signing_input = f"{b64(json.dumps(header).encode())}.{b64(json.dumps(claims).encode())}"
+        r, s = decode_dss_signature(self.private.sign(signing_input.encode(), ec.ECDSA(hashes.SHA256())))
+        return f"{signing_input}.{b64(r.to_bytes(32, 'big') + s.to_bytes(32, 'big'))}"
 
 
 class FakeKonklav:

@@ -595,6 +595,7 @@ fn client_definition() -> Value {
         "post_logout_redirect_uris": [],
         "backchannel_logout_uri": "https://console.example.com/logout",
         "require_pkce": false,
+        "require_dpop": true,
     })
 }
 
@@ -608,7 +609,7 @@ fn oidc_clients_round_trip_with_flattened_definitions() {
     }));
     assert_eq!(minimal.scopes, ["openid"]);
     assert_eq!(minimal.id_token_alg, IdTokenAlgorithm::Es256);
-    assert!(minimal.refresh && minimal.require_pkce);
+    assert!(minimal.refresh && minimal.require_pkce && !minimal.require_dpop);
     let mut client = client_definition();
     let fields = json!({
         "id": "console",

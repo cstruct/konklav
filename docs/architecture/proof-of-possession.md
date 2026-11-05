@@ -1,9 +1,10 @@
 # Proof-of-possession credentials (outline)
 
 Status: passkeys are implemented: WebAuthn through `webauthn-rs`, with no
-attestation (see `authn.passkey.*` in the authentication spec). DPoP is specified
-but not built (see below). Hardware attestation, assertive flags and smart
-cards remain an outline, not scheduled. Federation, including national eID
+attestation (see `authn.passkey.*` in the authentication spec). DPoP is
+implemented for the OpenID provider and the relying SDK (see below).
+Hardware attestation, assertive flags and smart cards remain an outline,
+not scheduled. Federation, including national eID
 schemes through OIDC brokers, is covered by
 [OIDC and federation](oidc-and-federation.md). This note captures the
 generic building block that covers both software and hardware keys, so that
@@ -45,8 +46,9 @@ The result becomes credential facts such as `hardware_backed=true` or
 
 ## Sender-constrained tokens (DPoP)
 
-Status: specified (`token.dpop.*`, `oidc.provider.dpop.*`,
-`relying.verify.dpop*`), not built.
+Status: implemented at the OpenID provider's token and UserInfo endpoints
+and in the relying SDK (`token.dpop.*`, `oidc.provider.dpop.*`,
+`relying.verify.dpop*`). The `dpop` example shows it end to end.
 
 DPoP (RFC 9449) makes a stolen access or refresh token useless without the
 client's key. That matters most for browser apps registered as public OIDC
@@ -101,6 +103,43 @@ Where proofs are checked:
   first, against the token's `cnf.jkt` read without verification, and the
   check API then verifies the token's signature. A forged `cnf` therefore
   fails at Konklav (`r[relying.verify.dpop-before-check]`).
+
+A browser app makes its key and proofs with WebCrypto. The private key is
+created non-extractable, so a script can use it but never read it out.
+WebCrypto's ECDSA signatures are already the raw `r || s` that ES256 JWS
+uses. Keep the key in IndexedDB to survive reloads (a `CryptoKey` can be
+stored there as is):
+
+```js
+const b64url = (bytes) =>
+  btoa(String.fromCharCode(...new Uint8Array(bytes)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const text = (value) => new TextEncoder().encode(value);
+
+const { privateKey, publicKey } = await crypto.subtle.generateKey(
+  { name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
+const { kty, crv, x, y } = await crypto.subtle.exportKey("jwk", publicKey);
+
+async function proof(method, url, accessToken) {
+  const header = { typ: "dpop+jwt", alg: "ES256", jwk: { kty, crv, x, y } };
+  const claims = { jti: crypto.randomUUID(), htm: method, htu: url,
+                   iat: Math.floor(Date.now() / 1000) };
+  if (accessToken) {
+    claims.ath = b64url(await crypto.subtle.digest("SHA-256", text(accessToken)));
+  }
+  const input = `${b64url(text(JSON.stringify(header)))}.${b64url(text(JSON.stringify(claims)))}`;
+  const signature = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" }, privateKey, text(input));
+  return `${input}.${b64url(signature)}`;
+}
+
+// fetch(api, { headers: { Authorization: `DPoP ${token}`,
+//                         DPoP: await proof("GET", api, token) } })
+```
+
+The key thumbprint for `dpop_jkt` is the base64url SHA-256 of
+`{"crv":"P-256","kty":"EC","x":"…","y":"…"}`, with exactly those members in
+that order and no whitespace.
 
 Out of scope for the first slice:
 

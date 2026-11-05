@@ -77,6 +77,10 @@ pub enum DenyReason {
     /// The token doesn't verify, or its session has ended or moved on.
     #[cfg_attr(feature = "openapi", schema(title = "DenyReasonInvalidToken"))]
     InvalidToken,
+    /// The access token is sender-constrained and its DPoP proof is
+    /// missing or invalid, or a bearer token came under the `DPoP` scheme.
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonInvalidDpopProof"))]
+    InvalidDpopProof,
     #[cfg_attr(feature = "openapi", schema(title = "DenyReasonTokenKind"))]
     TokenKind,
     /// The session carries a restrictive flag the operation doesn't admit.

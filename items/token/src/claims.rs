@@ -28,6 +28,13 @@ pub struct Actor {
     pub tid: Option<TenantId>,
 }
 
+/// The `cnf` claim: the key a sender-constrained token is bound to.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Confirmation {
+    /// The RFC 7638 thumbprint of the session's DPoP key.
+    pub jkt: String,
+}
+
 /// The claims of a Konklav access token. Times are Unix seconds.
 // r[impl token.access.standard-claims]
 // r[impl token.access.session-claims]
@@ -64,4 +71,9 @@ pub struct AccessClaims {
     // r[impl token.access.actor-chain]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub act: Option<Actor>,
+    /// The key thumbprint of a bound session, for sender-constrained
+    /// tokens.
+    // r[impl token.dpop.cnf]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cnf: Option<Confirmation>,
 }

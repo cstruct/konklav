@@ -104,6 +104,11 @@ pub async fn access_token(
             }
             None => None,
         },
+        // r[impl token.dpop.cnf]
+        cnf: session
+            .dpop_jkt
+            .clone()
+            .map(|jkt| konklav_token::Confirmation { jkt }),
     };
     crate::telemetry::metrics::count(
         &crate::telemetry::metrics::METRICS.tokens_issued,

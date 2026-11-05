@@ -116,6 +116,25 @@ pub async fn client_assertions(
     .await?)
 }
 
+/// Deletes recorded DPoP-proof `jti`s whose proofs are too old to be
+/// accepted again.
+// r[impl retention.assertions]
+pub async fn dpop_proofs(
+    conn: &mut AsyncPgConnection,
+    now: DateTime<Utc>,
+    batch: i64,
+) -> StoreResult<usize> {
+    Ok(diesel::sql_query(
+        "delete from dpop_proof where (jkt, jti) in (
+             select jkt, jti from dpop_proof where expires_at < $1 limit $2
+         )",
+    )
+    .bind::<Timestamptz, _>(now)
+    .bind::<BigInt, _>(batch)
+    .execute(conn)
+    .await?)
+}
+
 /// Deletes recorded bearer-assertion `jti`s whose assertions expired.
 // r[impl retention.assertions]
 pub async fn bearer_assertions(

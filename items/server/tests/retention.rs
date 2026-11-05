@@ -108,7 +108,9 @@ async fn expired_rows_go_once_no_window_counts_them() {
                 "insert into client_assertion (client_id, jti, expires_at)
                  values ('retention', '{jti}', now() - interval '{expires}');
                  insert into bearer_assertion (issuer, jti, expires_at)
-                 values ('https://retention.example', '{jti}', now() - interval '{expires}')"
+                 values ('https://retention.example', '{jti}', now() - interval '{expires}');
+                 insert into dpop_proof (jkt, jti, expires_at)
+                 values ('retention', '{jti}', now() - interval '{expires}')"
             ),
         )
         .await;
@@ -119,6 +121,7 @@ async fn expired_rows_go_once_no_window_counts_them() {
     assert_eq!(swept.login_attempts, 2, "{swept:?}");
     assert_eq!(swept.client_assertions, 1);
     assert_eq!(swept.bearer_assertions, 1);
+    assert_eq!(swept.dpop_proofs, 1);
     assert_eq!(count(&app, challenges).await, 2);
     assert_eq!(
         count(

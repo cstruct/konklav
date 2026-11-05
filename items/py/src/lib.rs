@@ -7,7 +7,7 @@
 use konklav_authz::{EntitlementSet, Requirements};
 use konklav_core::Cursor;
 use konklav_core::feed::{FeedEvent, SessionChanged};
-use konklav_relying::{Config, Key, Need, Relying, ScopeRecord};
+use konklav_relying::{Config, Key, Need, Presented, Relying, ScopeRecord};
 use konklav_token::JwkSet;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -42,10 +42,32 @@ impl Core {
         dump(&self.inner.decide(token, &requirements, None, now))
     }
 
+    /// [`Core::decide`] for a request's raw headers: `presented` is
+    /// `{"authorization": ..., "dpop": ..., "request": {"method": ...,
+    /// "url": ...}}`, so sender-constrained tokens work too.
+    fn decide_presented(
+        &mut self,
+        presented: &str,
+        requirements: &str,
+        now: u64,
+    ) -> PyResult<String> {
+        let presented: Presented = parse(presented, "presented token")?;
+        let requirements: Requirements = parse(requirements, "requirements")?;
+        dump(&self.inner.decide_presented(&presented, &requirements, now))
+    }
+
     /// Returns `{"outcome": "verified", "claims": ...}`, `{"outcome":
-    /// "invalid"}` or `{"outcome": "need", "needs": [...]}`.
+    /// "invalid"}`, `{"outcome": "invalid_proof"}` or `{"outcome": "need",
+    /// "needs": [...]}`.
     fn verify(&mut self, token: &str, now: u64) -> PyResult<String> {
         dump(&self.inner.verify(token, now))
+    }
+
+    /// [`Core::verify`] for a request's raw headers, like
+    /// [`Core::decide_presented`].
+    fn verify_presented(&mut self, presented: &str, now: u64) -> PyResult<String> {
+        let presented: Presented = parse(presented, "presented token")?;
+        dump(&self.inner.verify_presented(&presented, now))
     }
 
     /// Returns `{"outcome": "ready", "set": ...}` or `{"outcome": "need",
