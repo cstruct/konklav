@@ -40,6 +40,7 @@ use crate::cookies::{Cookie, SameSite};
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::oidc::{self, OpenIdProvider, Selection};
 use crate::subject_api::{self, Started};
+use crate::config::DpopRequirement;
 use crate::{AppState, cors, dpop, issue};
 
 /// Binds a login request to the browser that started it. Lax: the browser
@@ -913,6 +914,24 @@ fn client_unauthenticated(headers: &HeaderMap) -> Response {
     response
 }
 
+/// Whether `client`'s grants need a DPoP proof: by its registration, or by
+/// the provider's policy.
+// r[impl oidc.provider.dpop.required]
+// r[impl oidc.provider.dpop.policy]
+fn dpop_required(state: &AppState, client: &OidcClient) -> bool {
+    let policy = state
+        .auth
+        .oidc
+        .as_ref()
+        .map_or(DpopRequirement::None, |provider| provider.require_dpop);
+    client.require_dpop
+        || match policy {
+            DpopRequirement::None => false,
+            DpopRequirement::PublicClients => client.kind == ClientKind::Public,
+            DpopRequirement::All => true,
+        }
+}
+
 /// `DPoP` for a bound session's tokens, `Bearer` otherwise.
 // r[impl oidc.provider.dpop.token]
 fn token_type(session: &Session) -> &'static str {
@@ -1063,8 +1082,7 @@ async fn token(
     let Some(client) = authenticate_client(&state, &mut conn, &headers, &form).await else {
         return Ok(client_unauthenticated(&headers));
     };
-    // r[impl oidc.provider.dpop.required]
-    if client.require_dpop && jkt.is_none() {
+    if dpop_required(&state, &client) && jkt.is_none() {
         return Ok(dpop::invalid_token_request(
             "this client must send a DPoP proof",
         ));

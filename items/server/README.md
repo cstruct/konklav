@@ -95,7 +95,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - `tokens`: issuer, audience, lifetimes and signing-key PEM files
   - `history`: `enabled` (default off) and `retention_days` (default 90). Applied at startup, so every instance on a database must agree; turning it off discards what was recorded
   - `browser`: allowed origins, cookie security, and the `passkeys` section (relying party ID and name, origins)
-  - `oidc_provider`: the ID-token keys, login URL, claims hook, and `dpop_max_age_seconds` (how old a DPoP proof may be, default 60)
+  - `oidc_provider`: the ID-token keys, login URL, claims hook, `dpop_max_age_seconds` (how old a DPoP proof may be, default 60) and `require_dpop` (`none`, `public_clients` or `all`: which clients need DPoP on top of those registered with `require_dpop`)
   - `control`: the bootstrap token (secret), and batches: `batch_max_operations` (default 100), `batch_key_seconds` (how long an idempotency key is kept, default 600) and `batch_key_max_seconds` (the longest a batch may ask for, default 3600)
 
   The development config is in `config/dev.styx` and `config/dev.secrets.styx`.

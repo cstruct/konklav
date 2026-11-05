@@ -33,6 +33,8 @@ pub struct OpenIdProvider {
     pub claims_hook: Option<crate::claims_hook::ClaimsHook>,
     /// How old a DPoP proof may be, in seconds.
     pub dpop_max_age: i64,
+    /// Which clients must use DPoP regardless of their registration.
+    pub require_dpop: crate::config::DpopRequirement,
 }
 
 impl OpenIdProvider {
@@ -57,6 +59,7 @@ impl OpenIdProvider {
             None => provider,
         };
         provider.dpop_max_age = i64::from(config.dpop_max_age_seconds);
+        provider.require_dpop = config.require_dpop;
         provider.claims_hook = config
             .claims_hook
             .as_ref()
@@ -139,6 +142,7 @@ impl OpenIdProvider {
             jwks_uri,
             claims_hook: None,
             dpop_max_age: 60,
+            require_dpop: crate::config::DpopRequirement::None,
         })
     }
 }

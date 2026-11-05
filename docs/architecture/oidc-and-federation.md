@@ -183,7 +183,9 @@ Konklav has no user interface, and `/v1/oauth2/authorize` doesn't add one:
    if allowed, a refresh token. With a `DPoP` header (RFC 9449), the
    session is bound to the proof's key and the tokens are
    sender-constrained (`token_type` `DPoP`). A client registered with
-   `require_dpop` gets no tokens without one, and an authorization request
+   `require_dpop` gets no tokens without one, nor does any public client
+   (or any client) when `oidc_provider { require_dpop public_clients }`
+   (or `all`) is set, and an authorization request
    can bind its code to a key with `dpop_jkt`. See
    [proof-of-possession](proof-of-possession.md#sender-constrained-tokens-dpop).
 

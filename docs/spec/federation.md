@@ -296,6 +296,12 @@ r[oidc.provider.dpop.required]
 An OIDC client MUST be registrable as requiring DPoP. The token endpoint
 MUST refuse that client's grants without a valid DPoP proof.
 
+r[oidc.provider.dpop.policy]
+The OpenID provider MUST be configurable to require DPoP of no client (the
+default), of every public client, or of every client. The token endpoint
+MUST refuse a grant without a valid DPoP proof when either this setting or
+the client's registration requires one.
+
 r[oidc.provider.dpop.code-binding]
 An authorization request MAY carry `dpop_jkt`. The authorization code MUST
 then be bound to that key thumbprint, and exchanged only with a DPoP proof

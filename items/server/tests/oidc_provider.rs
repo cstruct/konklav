@@ -2144,3 +2144,26 @@ async fn clients_can_require_dpop_and_codes_can_be_bound_to_a_key() {
         .await;
     assert_eq!(query(&location(&started))["error"], "invalid_request");
 }
+
+// r[verify oidc.provider.dpop.policy]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_provider_can_require_dpop_of_every_public_client() {
+    let mut provider = provider();
+    provider.require_dpop = konklav_server::config::DpopRequirement::PublicClients;
+    let world = world_with(provider).await;
+    register_spa(&world, json!({})).await;
+
+    let code = authorize(&world, &[("client_id", "spa"), ("scope", "openid")]).await;
+    let refused = spa_tokens(&world, &code, None).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    assert_eq!(refused.body["error"], "invalid_dpop_proof");
+    let bound = spa_tokens(&world, &code, Some(&DpopKey::new(1))).await;
+    assert_eq!(bound.status, StatusCode::OK, "{:?}", bound.body);
+    assert_eq!(bound.body["token_type"], "DPoP");
+
+    // A confidential client isn't covered by `public_clients`.
+    let code = authorize(&world, &[]).await;
+    let confidential = exchange(&world, &code, VERIFIER).await;
+    assert_eq!(confidential.status, StatusCode::OK, "{:?}", confidential.body);
+    assert_eq!(confidential.body["token_type"], "Bearer");
+}

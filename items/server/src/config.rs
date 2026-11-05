@@ -275,6 +275,19 @@ config_tree! {
             /// How old a DPoP proof may be, in seconds.
             #[facet(default = 60)]
             pub dpop_max_age_seconds: u32,
+            /// Which clients must send a DPoP proof with every grant, on
+            /// top of those registered with `require_dpop`.
+            #[facet(default)]
+            pub require_dpop: #[derive(Default, Copy, Eq)] #[facet(rename_all = "snake_case")] pub enum DpopRequirement {
+                /// Only clients registered with `require_dpop`.
+                #[default]
+                None,
+                /// Every public client: the browser and native apps that
+                /// have no other proof of who they are.
+                PublicClients,
+                /// Every client.
+                All,
+            },
             /// A relying system's endpoint that userinfo asks for profile
             /// claims Konklav doesn't hold, such as `name`.
             pub claims_hook: Option<pub struct ClaimsHook {
