@@ -162,9 +162,11 @@ and reaches the control plane, so it's the most valuable token to steal.
   provider's endpoints and client tokens are left to `oidc_api`.
 - **`htu` behind a proxy.** The console reaches the control plane at
   `/control/v1/…`, which a proxy maps to `/v1/…`. `tokens.dpop_urls` lists
-  the base URLs clients use (the issuer by default), such as
-  `https://admin.example` and `https://admin.example/control`; a proof's
-  `htu` must be one of them followed by the path Konklav sees.
+  the base URLs clients use, such as `https://admin.example` and
+  `https://admin.example/control`; a proof's `htu` must be one of them
+  followed by the path Konklav sees. By default it holds the issuer and
+  each allowed browser origin with and without `/control`, so upgrading
+  doesn't break a console served on its own origin.
 - **Requiring it.** `browser { require_dpop true }` refuses browser logins
   and federated sign-ins that bring no key.
 - **The console** creates its key with WebCrypto, keeps the `CryptoKey` in

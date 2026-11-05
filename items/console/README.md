@@ -99,9 +99,10 @@ does the routing (see `Trunk.toml`), and `config/dev.styx` allows
 The console's sessions are bound to a DPoP key (`r[item.console.dpop]`):
 a non-extractable WebCrypto P-256 key, kept in IndexedDB, that signs a
 proof for every request, so an access token taken from the page is useless
-elsewhere. Konklav checks each proof's URL against `tokens.dpop_urls`, so
-list the console's origin and its control-plane prefix there, such as
-`("https://admin.example" "https://admin.example/control")`.
+elsewhere. Konklav checks each proof's URL against `tokens.dpop_urls`,
+which by default holds every `browser.allowed_origins` entry with and
+without the `/control` prefix, so a console deployed as above needs no
+more configuration.
 `browser { require_dpop true }` then refuses unbound browser sessions.
 
 ## Running

@@ -172,17 +172,34 @@ const PROVIDER_ENDPOINTS: [&str; 3] = [
 ];
 
 /// The URLs a proof for `path` on Konklav's own surfaces may name: each
-/// configured base URL (the issuer by default) followed by the path.
+/// base URL followed by the path.
 // r[impl session.dpop.surfaces]
 fn own_urls(state: &AppState, path: &str) -> Vec<String> {
-    let bases = if state.auth.dpop_urls.is_empty() {
-        std::slice::from_ref(&state.auth.issuer)
-    } else {
-        state.auth.dpop_urls.as_slice()
-    };
-    bases
+    own_bases(state)
         .iter()
         .map(|base| format!("{}{path}", base.trim_end_matches('/')))
+        .collect()
+}
+
+/// The configured `tokens.dpop_urls`, or by default the issuer and each
+/// allowed browser origin, also with the `/control` prefix under which a
+/// console reaches the control plane (`r[item.console.same-origin]`), so a
+/// console works without more configuration.
+fn own_bases(state: &AppState) -> Vec<String> {
+    if !state.auth.dpop_urls.is_empty() {
+        return state.auth.dpop_urls.clone();
+    }
+    let origins = state
+        .auth
+        .browser
+        .iter()
+        .flat_map(|browser| &browser.allowed_origins)
+        .flat_map(|origin| {
+            let origin = origin.trim_end_matches('/');
+            [origin.to_owned(), format!("{origin}/control")]
+        });
+    std::iter::once(state.auth.issuer.clone())
+        .chain(origins)
         .collect()
 }
 

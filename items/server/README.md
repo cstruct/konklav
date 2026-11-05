@@ -92,7 +92,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - The file paths can also come from `KONKLAV_CONFIG` and `KONKLAV_SECRETS`.
 - Configuration: the contexts in `src/config.rs`:
   - `listen`, `database`, `log`
-  - `tokens`: issuer, audience, lifetimes, signing-key PEM files, and `dpop_urls`: the base URLs clients address the subject-facing and control-plane surfaces at, which DPoP proofs must name (the issuer by default; add any prefix a proxy mounts a surface under)
+  - `tokens`: issuer, audience, lifetimes, signing-key PEM files, and `dpop_urls`: the base URLs clients address the subject-facing and control-plane surfaces at, which DPoP proofs must name (by default the issuer and each allowed browser origin, with and without the console's `/control` prefix; set it to list other proxy prefixes)
   - `history`: `enabled` (default off) and `retention_days` (default 90). Applied at startup, so every instance on a database must agree; turning it off discards what was recorded
   - `browser`: allowed origins, cookie security, `require_dpop` (refuse browser sessions that aren't bound to a DPoP key), and the `passkeys` section (relying party ID and name, origins)
   - `oidc_provider`: the ID-token keys, login URL, claims hook, `dpop_max_age_seconds` (how old a DPoP proof may be, default 60) and `require_dpop` (`none`, `public_clients` or `all`: which clients need DPoP on top of those registered with `require_dpop`)

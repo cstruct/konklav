@@ -244,7 +244,9 @@ sender-constrained access tokens under the `DPoP` scheme with a valid proof,
 and refuse them under `Bearer` (`r[token.dpop.scheme]`). A proof's `htu`
 MUST be one of the configured base URLs at which clients address Konklav,
 followed by the request's path, so a reverse proxy that mounts a surface
-under a prefix can be described.
+under a prefix can be described. Unless configured, the base URLs MUST be
+the issuer and each allowed browser origin, with and without the
+console's `/control` prefix.
 
 r[session.client-kind]
 Whether a login returns cookies or body tokens MUST be decided by the

@@ -259,3 +259,44 @@ async fn impersonation_keeps_the_operators_binding() {
     assert_eq!(claims.sub.to_string(), target);
     assert_eq!(claims.cnf.unwrap().jkt, key.jkt());
 }
+
+// r[verify session.dpop.surfaces]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_console_on_an_allowed_origin_needs_no_dpop_urls() {
+    let app = TestApp::new().await;
+    let subject = app.human(EMAIL, PASSWORD).await;
+    app.control(
+        Method::POST,
+        &format!("/v1/subjects/{subject}/global-assignments"),
+        Some(json!({"role": "konklav.admin"})),
+    )
+    .await;
+    let key = DpopKey::new(1);
+    // The console signs for its own origin, not the issuer.
+    let proof = key.proof("POST", &format!("{ORIGIN}/v1/login/password"), None);
+    let login = app
+        .send(
+            Method::POST,
+            "/v1/login/password",
+            &[("dpop", &proof)],
+            Some(json!({"identifier": EMAIL, "password": PASSWORD})),
+        )
+        .await;
+    assert_eq!(login.status, StatusCode::OK, "{:?}", login.body);
+    let access = login.body["access_token"].as_str().unwrap();
+    let auth = format!("DPoP {access}");
+    let proof = key.proof(
+        "GET",
+        &format!("{ORIGIN}/control/v1/subjects"),
+        Some(access),
+    );
+    let listed = app
+        .send(
+            Method::GET,
+            "/v1/subjects",
+            &[("authorization", &auth), ("dpop", &proof)],
+            None,
+        )
+        .await;
+    assert_eq!(listed.status, StatusCode::OK, "{:?}", listed.body);
+}

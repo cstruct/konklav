@@ -259,7 +259,8 @@ config_tree! {
             /// proof must name one of them followed by the request's path.
             /// List each prefix a reverse proxy mounts a surface under,
             /// such as `https://admin.example/control`. Defaults to the
-            /// issuer.
+            /// issuer and each of `browser.allowed_origins`, with and
+            /// without the console's `/control` prefix.
             #[facet(default)]
             pub dpop_urls: Vec<String>,
         },
