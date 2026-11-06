@@ -26,6 +26,8 @@ and spec-first development with Tracey.
 
 ## Decisions
 
+![One konklav-server binary serves three surfaces over one Postgres database](diagrams/surfaces.svg)
+
 | Area | Decision | Note |
 |---|---|---|
 | Storage | Postgres owned by Konklav, accessed with Diesel (`diesel-async`) | [storage](storage.md) |
@@ -55,13 +57,17 @@ and spec-first development with Tracey.
 | `konklav-relying-client` | Native Rust host binding (reqwest + tokio) |
 | `konklav-py` | pyo3 host binding |
 | `konklav-py-control-plane` | Python control-plane client (`konklav-control-plane`), with types generated from the API document |
-| `konklav-cli` | Admin tooling and importers |
+| `konklav-bootstrap` | Reading bootstrap sets (CSV or Styx) for `konklav-server bootstrap` |
+| `konklav-console` | Browser UI for operators, calling the control plane (Leptos, WASM) |
 
-Dependencies point inward: `server` → `authn`/`authz`/`store` → `core`.
-`api` depends only on `core`; the server converts its models to `api`'s
+![Dependencies between Konklav's Rust crates](diagrams/items.svg)
+
+Dependencies point inward: `server` → `api`/`store` → `authz` → `token` →
+`core`, and `authn` depends only on `core`. `api` uses `authz` for the
+authorization model's types; the server converts its models to `api`'s
 transport types at the boundary.
 `relying` depends only on `core`, `token` and `authz` (for evaluation), and
-the bindings depend only on `relying`.
+the bindings depend on `relying` and the crates it builds on.
 
 The control-plane surface is authorized by built-in `konklav:`
 capabilities that operators hold through global roles:

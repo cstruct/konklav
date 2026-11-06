@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 840 372" width="840" height="372" role="img" aria-labelledby="title desc">
+  <title id="title">The change feed</title>
+  <desc id="desc">A writing transaction commits its state change and its event together; events get cursors in commit order. A NOTIFY wakes the server's LISTEN connection, with polling as the fallback. Each SSE stream replays from the consumer's cursor and then reads forward from the outbox; the batch endpoint reads after a given cursor. Relying SDKs consume the SSE stream and delivery workers the batch endpoint. Pruned events are below the feed watermark; resuming below it gets a reset event.</desc>
+  <style>
+    text{font-family:Inter,"Helvetica Neue",Arial,sans-serif;fill:#16161D}
+    .bg{fill:#FBFAF7;stroke:#E4E0D8}
+    .box{fill:#FFFFFF;stroke:#B9B5AD}
+    .alt{fill:#F1EEE7;stroke:#D6D1C7}
+    .key{fill:#FBEEEE;stroke:#B3202A}
+    .h{font-size:14px;font-weight:600}
+    .s{font-size:12px;fill:#5E5B66}
+    .m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+    .c{text-anchor:middle}
+    .cap{font-size:11px;font-weight:600;letter-spacing:.08em;fill:#5E5B66}
+    .ln{stroke:#6E6A75;stroke-width:1.5;fill:none}
+    .lk{stroke:#B3202A;stroke-width:1.5;fill:none}
+    .d{stroke-dasharray:5 4}
+    .ah{fill:#6E6A75}.ak{fill:#B3202A}.acc{fill:#B3202A}
+    @media (prefers-color-scheme:dark){
+      text{fill:#F4F1EA}
+      .bg{fill:#16161D;stroke:#2E2E38}
+      .box{fill:#1F1F28;stroke:#4A4954}
+      .alt{fill:#24242D;stroke:#3A3944}
+      .key{fill:#331A1E;stroke:#E0454E}
+      .s,.cap{fill:#A8A49C}
+      .ln{stroke:#A8A49C}.lk{stroke:#E0454E}
+      .ah{fill:#A8A49C}.ak{fill:#E0454E}.acc{fill:#E0454E}
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0 1L10 5L0 9z"/></marker>
+    <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ak" d="M0 1L10 5L0 9z"/></marker>
+  </defs>
+  <rect class="bg" x="0.5" y="0.5" width="839" height="371" rx="12"/>
+
+  <!-- writer -->
+  <rect class="box" x="24" y="96" width="170" height="96" rx="8"/>
+  <text class="h" x="40" y="120">Writing transaction</text>
+  <text class="s" x="40" y="142">state change and its event</text>
+  <text class="s" x="40" y="159">commit together; cursors</text>
+  <text class="s" x="40" y="176">follow commit order</text>
+  <path class="ln" d="M194 144H228" marker-end="url(#a)"/>
+
+  <!-- outbox -->
+  <rect class="alt" x="230" y="40" width="210" height="250" rx="10"/>
+  <text class="h" x="246" y="64">event outbox</text>
+  <text class="s" x="350" y="64">cursor, kind</text>
+  <text class="s" x="246" y="100">38 and 39 pruned</text>
+  <text class="s" x="246" y="118">40 rolled back</text>
+  <path class="lk d" d="M240 134H430"/>
+  <text class="s acc" x="430" y="150" text-anchor="end">feed_watermark = 39</text>
+  <text class="m" x="246" y="174">41  session.changed</text>
+  <text class="m" x="246" y="198">42  entitlements.changed</text>
+  <text class="m" x="246" y="222">43  delivery.requested</text>
+  <text class="m" x="246" y="246">44  share.changed</text>
+  <text class="s" x="246" y="274">gaps are harmless</text>
+
+  <!-- server -->
+  <rect class="alt" x="482" y="40" width="150" height="250" rx="10"/>
+  <text class="h" x="498" y="64">konklav-server</text>
+  <rect class="box" x="496" y="78" width="122" height="48" rx="8"/>
+  <text class="h" x="510" y="99">wake-up</text>
+  <text class="s" x="510" y="116">LISTEN, or poll</text>
+  <rect class="box" x="496" y="146" width="122" height="52" rx="8"/>
+  <text class="h" x="510" y="168">SSE stream</text>
+  <text class="s" x="510" y="186">replay, then follow</text>
+  <rect class="box" x="496" y="222" width="122" height="52" rx="8"/>
+  <text class="h" x="510" y="244">batch read</text>
+  <text class="s" x="510" y="262">after=cursor</text>
+  <path class="ln" d="M557 126V144" marker-end="url(#a)"/>
+
+  <path class="ln d" d="M440 102H494" marker-end="url(#a)"/>
+  <text class="s c" x="467" y="94">NOTIFY</text>
+  <path class="ln" d="M440 172H494" marker-end="url(#a)"/>
+  <path class="ln" d="M440 248H494" marker-end="url(#a)"/>
+
+  <!-- consumers -->
+  <rect class="box" x="672" y="140" width="144" height="64" rx="8"/>
+  <text class="h" x="688" y="164">Relying SDK</text>
+  <text class="s" x="688" y="183">resumes with</text>
+  <text class="s" x="688" y="198">Last-Event-ID</text>
+  <rect class="box" x="672" y="216" width="144" height="64" rx="8"/>
+  <text class="h" x="688" y="240">Delivery worker</text>
+  <text class="s" x="688" y="259">stores its cursor</text>
+  <text class="s" x="688" y="274">after sending</text>
+  <path class="ln" d="M618 172H670" marker-end="url(#a)"/>
+  <path class="ln" d="M618 248H670" marker-end="url(#a)"/>
+
+  <text class="s" x="24" y="320">Streams always read the outbox, so a missed NOTIFY only adds latency. A stream starts with a position event, or with a reset</text>
+  <text class="s" x="24" y="337">when its cursor is below the watermark or ahead of the head. Without a cursor it starts at the head.</text>
+</svg>

@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 820 436" width="820" height="436" role="img" aria-labelledby="title desc">
+  <title id="title">Konklav's three surfaces</title>
+  <desc id="desc">One konklav-server binary serves the subject-facing, relying and control-plane surfaces over one Postgres database. Browsers and apps use the subject-facing surface, relying systems the relying surface, and operators the control-plane surface. Relying systems also write tenants and registered scopes through the control plane as service principals.</desc>
+  <style>
+    text{font-family:Inter,"Helvetica Neue",Arial,sans-serif;fill:#16161D}
+    .bg{fill:#FBFAF7;stroke:#E4E0D8}
+    .box{fill:#FFFFFF;stroke:#B9B5AD}
+    .alt{fill:#F1EEE7;stroke:#D6D1C7}
+    .key{fill:#FBEEEE;stroke:#B3202A}
+    .h{font-size:14px;font-weight:600}
+    .s{font-size:12px;fill:#5E5B66}
+    .m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+    .c{text-anchor:middle}
+    .ln{stroke:#6E6A75;stroke-width:1.5;fill:none}
+    .lk{stroke:#B3202A;stroke-width:1.5;fill:none}
+    .d{stroke-dasharray:5 4}
+    .ah{fill:#6E6A75}.ak{fill:#B3202A}.acc{fill:#B3202A}
+    @media (prefers-color-scheme:dark){
+      text{fill:#F4F1EA}
+      .bg{fill:#16161D;stroke:#2E2E38}
+      .box{fill:#1F1F28;stroke:#4A4954}
+      .alt{fill:#24242D;stroke:#3A3944}
+      .key{fill:#331A1E;stroke:#E0454E}
+      .s{fill:#A8A49C}
+      .ln{stroke:#A8A49C}.lk{stroke:#E0454E}
+      .ah{fill:#A8A49C}.ak{fill:#E0454E}.acc{fill:#E0454E}
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0 1L10 5L0 9z"/></marker>
+  </defs>
+  <rect class="bg" x="0.5" y="0.5" width="819" height="435" rx="12"/>
+
+  <!-- callers -->
+  <rect class="box" x="24" y="82" width="190" height="62" rx="8"/>
+  <text class="h" x="40" y="108">Browsers and apps</text>
+  <text class="s" x="40" y="128">sign in, refresh, OIDC</text>
+
+  <rect class="box" x="24" y="174" width="190" height="62" rx="8"/>
+  <text class="h" x="40" y="200">Relying systems</text>
+  <text class="s" x="40" y="220">through the relying SDK</text>
+
+  <rect class="box" x="24" y="266" width="190" height="62" rx="8"/>
+  <text class="h" x="40" y="292">Operators</text>
+  <text class="s" x="40" y="312">console, control-plane client</text>
+
+  <!-- server -->
+  <rect class="alt" x="290" y="28" width="330" height="380" rx="10"/>
+  <text class="h" x="306" y="54">konklav-server</text>
+  <text class="s" x="420" y="54">one binary, axum</text>
+
+  <rect class="box" x="306" y="68" width="298" height="78" rx="8"/>
+  <text class="h" x="322" y="92">Subject-facing surface</text>
+  <text class="m" x="322" y="113">/v1/login/*  /v1/sessions  /v1/mfa</text>
+  <text class="m" x="322" y="131">/v1/oauth2/*  /.well-known/*</text>
+
+  <rect class="box" x="306" y="160" width="298" height="78" rx="8"/>
+  <text class="h" x="322" y="184">Relying surface</text>
+  <text class="m" x="322" y="205">/v1/check  /v1/entitlements/*</text>
+  <text class="m" x="322" y="223">/v1/events  /v1/registered-scopes/*</text>
+
+  <rect class="box" x="306" y="252" width="298" height="78" rx="8"/>
+  <text class="h" x="322" y="276">Control-plane surface</text>
+  <text class="m" x="322" y="297">/v1/subjects  /v1/tenants  /v1/batch</text>
+  <text class="m" x="322" y="315">/v1/oidc/clients  /v1/shares  …</text>
+
+  <rect class="box" x="306" y="344" width="298" height="48" rx="8"/>
+  <text class="h" x="322" y="365">Background workers</text>
+  <text class="s" x="322" y="382">sweeper · back-channel logout · peering</text>
+
+  <!-- caller arrows -->
+  <path class="ln" d="M214 113H304" marker-end="url(#a)"/>
+  <path class="ln" d="M214 205H304" marker-start="url(#a)" marker-end="url(#a)"/>
+  <path class="ln d" d="M214 224C258 224 260 291 304 291" marker-end="url(#a)"/>
+  <path class="ln" d="M214 309H304" marker-end="url(#a)"/>
+  <text class="s" x="259" y="196" text-anchor="middle">SSE</text>
+
+  <!-- postgres -->
+  <rect class="box" x="664" y="140" width="136" height="124" rx="8"/>
+  <text class="h" x="680" y="166">Postgres</text>
+  <text class="s" x="680" y="190">state tables</text>
+  <text class="s" x="680" y="210">event outbox</text>
+  <text class="s" x="680" y="230">challenges</text>
+  <text class="s" x="680" y="250">history (optional)</text>
+  <path class="ln" d="M620 188H662" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text class="s c" x="641" y="180">Diesel</text>
+  <path class="ln d" d="M662 222H622" marker-end="url(#a)"/>
+  <text class="s c" x="641" y="240">LISTEN</text>
+</svg>

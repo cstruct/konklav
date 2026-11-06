@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 844 508" width="844" height="508" role="img" aria-labelledby="title desc">
+  <title id="title">Konklav's Rust crates and their dependencies</title>
+  <desc id="desc">Every crate depends on konklav-core. In the server, konklav-server depends on bootstrap, authn, api and store; api and store depend on authz. Shared crates: authz depends on token. In relying systems, the Python and Rust bindings depend on konklav-relying, which depends on authz and token.</desc>
+  <style>
+    text{font-family:Inter,"Helvetica Neue",Arial,sans-serif;fill:#16161D}
+    .bg{fill:#FBFAF7;stroke:#E4E0D8}
+    .box{fill:#FFFFFF;stroke:#B9B5AD}
+    .alt{fill:#F1EEE7;stroke:#D6D1C7}
+    .key{fill:#FBEEEE;stroke:#B3202A}
+    .h{font-size:14px;font-weight:600}
+    .s{font-size:12px;fill:#5E5B66}
+    .m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+    .c{text-anchor:middle}
+    .cap{font-size:11px;font-weight:600;letter-spacing:.08em;fill:#5E5B66}
+    .ln{stroke:#6E6A75;stroke-width:1.5;fill:none}
+    .lk{stroke:#B3202A;stroke-width:1.5;fill:none}
+    .d{stroke-dasharray:5 4}
+    .ah{fill:#6E6A75}.ak{fill:#B3202A}.acc{fill:#B3202A}
+    @media (prefers-color-scheme:dark){
+      text{fill:#F4F1EA}
+      .bg{fill:#16161D;stroke:#2E2E38}
+      .box{fill:#1F1F28;stroke:#4A4954}
+      .alt{fill:#24242D;stroke:#3A3944}
+      .key{fill:#331A1E;stroke:#E0454E}
+      .s,.cap{fill:#A8A49C}
+      .ln{stroke:#A8A49C}.lk{stroke:#E0454E}
+      .ah{fill:#A8A49C}.ak{fill:#E0454E}.acc{fill:#E0454E}
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0 1L10 5L0 9z"/></marker>
+  </defs>
+  <rect class="bg" x="0.5" y="0.5" width="843" height="507" rx="12"/>
+
+  <!-- region labels -->
+  <rect class="alt" x="12" y="32" width="502" height="190" rx="10"/>
+  <text class="cap" x="28" y="54">IN THE KONKLAV SERVER</text>
+  <rect class="alt" x="548" y="230" width="152" height="170" rx="10"/>
+  <text class="cap" x="688" y="252" text-anchor="end">SHARED</text>
+  <rect class="alt" x="560" y="32" width="272" height="190" rx="10"/>
+  <text class="cap" x="576" y="54">IN RELYING SYSTEMS</text>
+
+  <!-- server side -->
+  <rect class="key" x="203" y="70" width="120" height="40" rx="8"/>
+  <text class="m c" x="263" y="95">server</text>
+  <rect class="box" x="24" y="160" width="112" height="40" rx="8"/>
+  <text class="m c" x="80" y="185">bootstrap</text>
+  <rect class="box" x="146" y="160" width="112" height="40" rx="8"/>
+  <text class="m c" x="202" y="185">authn</text>
+  <rect class="box" x="268" y="160" width="112" height="40" rx="8"/>
+  <text class="m c" x="324" y="185">api</text>
+  <rect class="box" x="390" y="160" width="112" height="40" rx="8"/>
+  <text class="m c" x="446" y="185">store</text>
+
+  <path class="ln" d="M240 110L84 158" marker-end="url(#a)"/>
+  <path class="ln" d="M252 110L206 158" marker-end="url(#a)"/>
+  <path class="ln" d="M274 110L320 158" marker-end="url(#a)"/>
+  <path class="ln" d="M286 110L442 158" marker-end="url(#a)"/>
+
+  <!-- shared -->
+  <rect class="box" x="568" y="266" width="112" height="40" rx="8"/>
+  <text class="m c" x="624" y="291">authz</text>
+  <rect class="box" x="568" y="346" width="112" height="40" rx="8"/>
+  <text class="m c" x="624" y="371">token</text>
+  <path class="ln" d="M624 306V344" marker-end="url(#a)"/>
+  <path class="ln" d="M330 200C350 260 470 286 566 286" marker-end="url(#a)"/>
+  <path class="ln" d="M452 200C470 240 580 226 596 264" marker-end="url(#a)"/>
+
+  <!-- relying side -->
+  <rect class="key" x="572" y="70" width="130" height="40" rx="8"/>
+  <text class="m c" x="637" y="95">relying-client</text>
+  <rect class="key" x="712" y="70" width="104" height="40" rx="8"/>
+  <text class="m c" x="764" y="95">py</text>
+  <rect class="box" x="704" y="160" width="112" height="40" rx="8"/>
+  <text class="m c" x="760" y="185">relying</text>
+  <path class="ln" d="M660 110L732 158" marker-end="url(#a)"/>
+  <path class="ln" d="M764 110L762 158" marker-end="url(#a)"/>
+  <path class="ln" d="M744 200L682 280" marker-end="url(#a)"/>
+  <path class="ln" d="M772 200C772 300 740 366 682 366" marker-end="url(#a)"/>
+
+  <!-- core -->
+  <rect class="box" x="24" y="416" width="796" height="40" rx="8"/>
+  <text class="m" x="40" y="441">core</text>
+  <text class="s" x="88" y="441">identifiers, nomenclature types, action names and selectors</text>
+
+  <text class="s" x="24" y="474">Crates are konklav-*; highlighted ones are binaries and host bindings. Edges to core are left out, as are the</text>
+  <text class="s" x="24" y="490">direct uses of authz and token by server and the bindings.</text>
+</svg>

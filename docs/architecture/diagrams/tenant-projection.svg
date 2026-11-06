@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 820 460" width="820" height="460" role="img" aria-labelledby="title desc">
+  <title id="title">Creating a tenant from a relying system</title>
+  <desc id="desc">1: The relying system picks a UUIDv7 id. 2: It inserts its projection row with state pending. 3: It calls PUT /v1/tenants/{id}, which is idempotent on the id. 4: It updates its row to the state Konklav returned. Later, a reconciler retries the PUT for rows still pending, and follows tenant.changed events to create projection rows or flag mismatches.</desc>
+  <style>
+    text{font-family:Inter,"Helvetica Neue",Arial,sans-serif;fill:#16161D}
+    .bg{fill:#FBFAF7;stroke:#E4E0D8}
+    .box{fill:#FFFFFF;stroke:#B9B5AD}
+    .alt{fill:#F1EEE7;stroke:#D6D1C7}
+    .key{fill:#FBEEEE;stroke:#B3202A}
+    .h{font-size:14px;font-weight:600}
+    .s{font-size:12px;fill:#5E5B66}
+    .m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+    .c{text-anchor:middle}
+    .cap{font-size:11px;font-weight:600;letter-spacing:.08em;fill:#5E5B66}
+    .ln{stroke:#6E6A75;stroke-width:1.5;fill:none}
+    .lk{stroke:#B3202A;stroke-width:1.5;fill:none}
+    .d{stroke-dasharray:5 4}
+    .ah{fill:#6E6A75}.ak{fill:#B3202A}.acc{fill:#B3202A}
+    @media (prefers-color-scheme:dark){
+      text{fill:#F4F1EA}
+      .bg{fill:#16161D;stroke:#2E2E38}
+      .box{fill:#1F1F28;stroke:#4A4954}
+      .alt{fill:#24242D;stroke:#3A3944}
+      .key{fill:#331A1E;stroke:#E0454E}
+      .s,.cap{fill:#A8A49C}
+      .ln{stroke:#A8A49C}.lk{stroke:#E0454E}
+      .ah{fill:#A8A49C}.ak{fill:#E0454E}.acc{fill:#E0454E}
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0 1L10 5L0 9z"/></marker>
+    <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ak" d="M0 1L10 5L0 9z"/></marker>
+  </defs>
+  <rect class="bg" x="0.5" y="0.5" width="819" height="459" rx="12"/>
+
+  <rect class="box" x="70" y="24" width="180" height="40" rx="8"/>
+  <text class="h c" x="160" y="49">Its database</text>
+  <rect class="box" x="320" y="24" width="180" height="40" rx="8"/>
+  <text class="h c" x="410" y="49">Relying system</text>
+  <rect class="key" x="570" y="24" width="180" height="40" rx="8"/>
+  <text class="h c" x="660" y="49">Konklav</text>
+  <path class="ln d" d="M160 64V440" opacity=".5"/>
+  <path class="ln d" d="M410 64V440" opacity=".5"/>
+  <path class="ln d" d="M660 64V440" opacity=".5"/>
+
+  <circle class="key" cx="34" cy="98" r="11"/><text class="h c acc" x="34" y="103">1</text>
+  <circle class="key" cx="34" cy="144" r="11"/><text class="h c acc" x="34" y="149">2</text>
+  <circle class="key" cx="34" cy="188" r="11"/><text class="h c acc" x="34" y="193">3</text>
+  <circle class="key" cx="34" cy="264" r="11"/><text class="h c acc" x="34" y="269">4</text>
+
+  <rect class="box" x="340" y="84" width="140" height="28" rx="6"/>
+  <text class="s c" x="410" y="103">pick a UUIDv7 id</text>
+
+  <path class="ln" d="M410 148H162" marker-end="url(#a)"/>
+  <text class="s c" x="285" y="141">insert, state = pending</text>
+
+  <path class="ln" d="M410 192H658" marker-end="url(#a)"/>
+  <text class="m c" x="535" y="185">PUT /v1/tenants/{id}</text>
+  <path class="ln d" d="M660 226H412" marker-end="url(#a)"/>
+  <text class="s c" x="535" y="219">state, usually active</text>
+
+  <path class="ln" d="M410 268H162" marker-end="url(#a)"/>
+  <text class="s c" x="285" y="261">update to that state</text>
+
+  <path class="ln" d="M24 304H796" opacity=".35"/>
+  <text class="cap" x="24" y="326">RECONCILER, LATER</text>
+
+  <path class="ln" d="M160 352H408" marker-end="url(#a)"/>
+  <text class="s c" x="285" y="345">rows still pending</text>
+  <path class="ln" d="M410 352H658" marker-end="url(#a)"/>
+  <text class="s c" x="535" y="345">retry the PUT</text>
+  <path class="ln d" d="M660 392H412" marker-end="url(#a)"/>
+  <text class="s c" x="535" y="385">tenant.changed</text>
+  <path class="ln" d="M410 422H162" marker-end="url(#a)"/>
+  <text class="s c" x="285" y="415">create, follow or flag</text>
+</svg>

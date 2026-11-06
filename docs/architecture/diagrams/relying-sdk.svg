@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 844 372" width="844" height="372" role="img" aria-labelledby="title desc">
+  <title id="title">Relying SDK layers</title>
+  <desc id="desc">The host app asks the host binding for decisions. The host binding performs all I/O against Konklav's relying surface: HTTP, the SSE stream, timers and tasks. It feeds the results into the sans-I/O core, konklav-relying, as inputs, and performs the work items the core returns, sleeping until the next wakeup.</desc>
+  <style>
+    text{font-family:Inter,"Helvetica Neue",Arial,sans-serif;fill:#16161D}
+    .bg{fill:#FBFAF7;stroke:#E4E0D8}
+    .box{fill:#FFFFFF;stroke:#B9B5AD}
+    .alt{fill:#F1EEE7;stroke:#D6D1C7}
+    .key{fill:#FBEEEE;stroke:#B3202A}
+    .h{font-size:14px;font-weight:600}
+    .s{font-size:12px;fill:#5E5B66}
+    .m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+    .c{text-anchor:middle}
+    .cap{font-size:11px;font-weight:600;letter-spacing:.08em;fill:#5E5B66}
+    .ln{stroke:#6E6A75;stroke-width:1.5;fill:none}
+    .lk{stroke:#B3202A;stroke-width:1.5;fill:none}
+    .d{stroke-dasharray:5 4}
+    .ah{fill:#6E6A75}.ak{fill:#B3202A}.acc{fill:#B3202A}
+    @media (prefers-color-scheme:dark){
+      text{fill:#F4F1EA}
+      .bg{fill:#16161D;stroke:#2E2E38}
+      .box{fill:#1F1F28;stroke:#4A4954}
+      .alt{fill:#24242D;stroke:#3A3944}
+      .key{fill:#331A1E;stroke:#E0454E}
+      .s,.cap{fill:#A8A49C}
+      .ln{stroke:#A8A49C}.lk{stroke:#E0454E}
+      .ah{fill:#A8A49C}.ak{fill:#E0454E}.acc{fill:#E0454E}
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0 1L10 5L0 9z"/></marker>
+    <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ak" d="M0 1L10 5L0 9z"/></marker>
+  </defs>
+  <rect class="bg" x="0.5" y="0.5" width="843" height="371" rx="12"/>
+
+  <rect class="box" x="214" y="24" width="200" height="64" rx="8"/>
+  <text class="h" x="230" y="48">Konklav</text>
+  <text class="s" x="230" y="68">relying surface</text>
+  <path class="ln" d="M314 88V138" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text class="s" x="322" y="118">HTTP, SSE</text>
+
+  <rect class="box" x="24" y="160" width="150" height="80" rx="8"/>
+  <text class="h" x="40" y="184">Host app</text>
+  <text class="s" x="40" y="204">framework adapter</text>
+  <text class="s" x="40" y="221">decides per request</text>
+  <path class="ln" d="M174 200H212" marker-start="url(#a)" marker-end="url(#a)"/>
+
+  <rect class="alt" x="214" y="140" width="200" height="160" rx="10"/>
+  <text class="h" x="230" y="164">Host binding</text>
+  <text class="s" x="230" y="186">HTTP, timers, tasks</text>
+  <text class="s" x="230" y="204">runs the work loop and</text>
+  <text class="s" x="230" y="221">sleeps until next_wakeup</text>
+  <text class="m" x="230" y="252">konklav-py</text>
+  <text class="m" x="230" y="270">konklav-relying-client</text>
+  <text class="s" x="230" y="288">later: wasm with TS I/O</text>
+
+  <path class="ln" d="M414 186H478" marker-end="url(#a)"/>
+  <text class="s c" x="446" y="178">inputs</text>
+  <path class="ln" d="M478 266H416" marker-end="url(#a)"/>
+  <text class="s c" x="446" y="258">work</text>
+
+  <rect class="key" x="480" y="24" width="340" height="324" rx="10"/>
+  <text class="h" x="496" y="48">konklav-relying</text>
+  <text class="s" x="496" y="67">sans-I/O core: no clock, no network</text>
+  <text class="cap" x="496" y="96">INPUTS</text>
+  <text class="m" x="496" y="117">now(t)  jwks(doc)  event(e)</text>
+  <text class="m" x="496" y="135">entitlements(key, set | error)</text>
+  <text class="m" x="496" y="153">registered_scope(record | unknown | error)</text>
+  <text class="m" x="496" y="171">feed_connected()  feed_lost()</text>
+  <text class="m" x="496" y="189">check_result(id, decision)</text>
+  <text class="cap" x="496" y="222">QUERIES</text>
+  <text class="m" x="496" y="243">decide(token, requirements, now)</text>
+  <text class="m" x="512" y="261">→ Decision | NeedsCheck(request)</text>
+  <text class="m" x="496" y="281">poll_work(now) → work, next_wakeup</text>
+  <text class="m" x="512" y="299">Fetch  FetchScope  RefreshJwks  Reconnect</text>
+  <text class="m" x="496" y="319">await_cursor(c) → Ready | Pending</text>
+</svg>

@@ -2,13 +2,7 @@
 
 ## Layers
 
-```
-           ┌──────────────────────────────────────────────┐
- host app ─▶ host binding (Python / Rust / later JS)       │  HTTP, timers, tasks
-           │   └─ konklav-relying (sans-I/O core)         │  verify, evaluate,
-           │        cache + feed state machine, scheduler  │  cache, fallback
-           └──────────────────────────────────────────────┘
-```
+![The host binding does the I/O; the sans-I/O core holds the rules](diagrams/relying-sdk.svg)
 
 The core is a state machine. Its inputs are:
 

@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 840 584" width="840" height="584" role="img" aria-labelledby="title desc">
+  <title id="title">OpenID provider login hand-off</title>
+  <desc id="desc">1: The OIDC client redirects the browser to Konklav's authorize endpoint, which keeps the request, sets a cookie and redirects to the login application. 2: The login application reads the login request and signs the subject in through the /v1 API. 3: It accepts the request with the session's access token and gets redirect_to with a one-time acceptance secret. 4: The browser follows redirect_to to the resume endpoint, where Konklav needs both the cookie and the acceptance secret, and redirects to the client with a code. 5: The client exchanges the code at the token endpoint for access, ID and refresh tokens.</desc>
+  <style>
+    text{font-family:Inter,"Helvetica Neue",Arial,sans-serif;fill:#16161D}
+    .bg{fill:#FBFAF7;stroke:#E4E0D8}
+    .box{fill:#FFFFFF;stroke:#B9B5AD}
+    .alt{fill:#F1EEE7;stroke:#D6D1C7}
+    .key{fill:#FBEEEE;stroke:#B3202A}
+    .h{font-size:14px;font-weight:600}
+    .s{font-size:12px;fill:#5E5B66}
+    .m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+    .c{text-anchor:middle}
+    .cap{font-size:11px;font-weight:600;letter-spacing:.08em;fill:#5E5B66}
+    .ln{stroke:#6E6A75;stroke-width:1.5;fill:none}
+    .lk{stroke:#B3202A;stroke-width:1.5;fill:none}
+    .d{stroke-dasharray:5 4}
+    .ah{fill:#6E6A75}.ak{fill:#B3202A}.acc{fill:#B3202A}
+    @media (prefers-color-scheme:dark){
+      text{fill:#F4F1EA}
+      .bg{fill:#16161D;stroke:#2E2E38}
+      .box{fill:#1F1F28;stroke:#4A4954}
+      .alt{fill:#24242D;stroke:#3A3944}
+      .key{fill:#331A1E;stroke:#E0454E}
+      .s,.cap{fill:#A8A49C}
+      .ln{stroke:#A8A49C}.lk{stroke:#E0454E}
+      .ah{fill:#A8A49C}.ak{fill:#E0454E}.acc{fill:#E0454E}
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0 1L10 5L0 9z"/></marker>
+    <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ak" d="M0 1L10 5L0 9z"/></marker>
+  </defs>
+  <rect class="bg" x="0.5" y="0.5" width="839" height="583" rx="12"/>
+
+  <!-- participants -->
+  <rect class="box" x="45" y="24" width="130" height="40" rx="8"/>
+  <text class="h c" x="110" y="49">OIDC client</text>
+  <rect class="box" x="245" y="24" width="130" height="40" rx="8"/>
+  <text class="h c" x="310" y="49">Browser</text>
+  <rect class="key" x="465" y="24" width="130" height="40" rx="8"/>
+  <text class="h c" x="530" y="49">Konklav</text>
+  <rect class="box" x="675" y="24" width="130" height="40" rx="8"/>
+  <text class="h c" x="740" y="49">Login app</text>
+  <path class="ln d" d="M110 64V564" opacity=".5"/>
+  <path class="ln d" d="M310 64V564" opacity=".5"/>
+  <path class="ln d" d="M530 64V564" opacity=".5"/>
+  <path class="ln d" d="M740 64V564" opacity=".5"/>
+
+  <!-- doc step numbers -->
+  <circle class="key" cx="28" cy="96" r="11"/><text class="h c acc" x="28" y="101">1</text>
+  <circle class="key" cx="28" cy="198" r="11"/><text class="h c acc" x="28" y="203">2</text>
+  <circle class="key" cx="28" cy="300" r="11"/><text class="h c acc" x="28" y="305">3</text>
+  <circle class="key" cx="28" cy="368" r="11"/><text class="h c acc" x="28" y="373">4</text>
+  <circle class="key" cx="28" cy="504" r="11"/><text class="h c acc" x="28" y="509">5</text>
+
+  <!-- 1 -->
+  <path class="ln" d="M110 100H308" marker-end="url(#a)"/>
+  <text class="s c" x="210" y="93">redirect to authorize, PKCE</text>
+  <path class="ln" d="M310 134H528" marker-end="url(#a)"/>
+  <text class="m c" x="420" y="127">GET /v1/oauth2/authorize</text>
+  <path class="ln d" d="M530 168H312" marker-end="url(#a)"/>
+  <text class="s c" x="420" y="161">cookie, redirect to login URL</text>
+
+  <!-- 2 -->
+  <path class="ln" d="M310 202H738" marker-end="url(#a)"/>
+  <text class="s c" x="420" y="195">login URL with login_request</text>
+  <path class="ln" d="M740 236H532" marker-end="url(#a)"/>
+  <text class="s c" x="635" y="229">read the login request</text>
+  <path class="ln" d="M740 270H532" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text class="s c" x="635" y="263">sign in via /v1: MFA, tenant</text>
+
+  <!-- 3 -->
+  <path class="ln" d="M740 304H532" marker-end="url(#a)"/>
+  <text class="s c" x="635" y="297">accept, with the session's token</text>
+  <path class="ln d" d="M530 338H738" marker-end="url(#a)"/>
+  <text class="s c" x="635" y="331">redirect_to, acceptance secret</text>
+
+  <!-- 4 -->
+  <path class="ln" d="M740 372H312" marker-end="url(#a)"/>
+  <text class="s c" x="420" y="365">follow redirect_to</text>
+  <path class="ln" d="M310 406H528" marker-end="url(#a)"/>
+  <text class="m c" x="420" y="399">GET …/authorize/resume</text>
+  <rect class="key" x="546" y="391" width="186" height="30" rx="6"/>
+  <text class="s" x="558" y="411">needs cookie and acceptance</text>
+  <path class="ln d" d="M530 440H312" marker-end="url(#a)"/>
+  <text class="s c" x="420" y="433">redirect: code, state, iss</text>
+  <path class="ln d" d="M310 474H112" marker-end="url(#a)"/>
+  <text class="s c" x="210" y="467">code</text>
+
+  <!-- 5 -->
+  <path class="ln" d="M110 508H528" marker-end="url(#a)"/>
+  <text class="m c" x="210" y="501">POST /v1/oauth2/token</text>
+  <text class="s c" x="420" y="501">code, verifier, DPoP proof</text>
+  <path class="ln d" d="M530 542H112" marker-end="url(#a)"/>
+  <text class="s c" x="210" y="535">access, ID and refresh tokens</text>
+</svg>

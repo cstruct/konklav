@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 820 336" width="820" height="336" role="img" aria-labelledby="title desc">
+  <title id="title">Operator federation across Konklav instances</title>
+  <desc id="desc">The operators' Konklav is an OpenID provider holding the operators and their global roles, with one OIDC client per environment. Dev, staging and each production region run their own Konklav, which trusts the operators' instance as an identity provider for operator sign-in and can optionally follow its peer feed. End-user data stays in each environment.</desc>
+  <style>
+    text{font-family:Inter,"Helvetica Neue",Arial,sans-serif;fill:#16161D}
+    .bg{fill:#FBFAF7;stroke:#E4E0D8}
+    .box{fill:#FFFFFF;stroke:#B9B5AD}
+    .alt{fill:#F1EEE7;stroke:#D6D1C7}
+    .key{fill:#FBEEEE;stroke:#B3202A}
+    .h{font-size:14px;font-weight:600}
+    .s{font-size:12px;fill:#5E5B66}
+    .m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+    .c{text-anchor:middle}
+    .cap{font-size:11px;font-weight:600;letter-spacing:.08em;fill:#5E5B66}
+    .ln{stroke:#6E6A75;stroke-width:1.5;fill:none}
+    .lk{stroke:#B3202A;stroke-width:1.5;fill:none}
+    .d{stroke-dasharray:5 4}
+    .ah{fill:#6E6A75}.ak{fill:#B3202A}.acc{fill:#B3202A}
+    @media (prefers-color-scheme:dark){
+      text{fill:#F4F1EA}
+      .bg{fill:#16161D;stroke:#2E2E38}
+      .box{fill:#1F1F28;stroke:#4A4954}
+      .alt{fill:#24242D;stroke:#3A3944}
+      .key{fill:#331A1E;stroke:#E0454E}
+      .s,.cap{fill:#A8A49C}
+      .ln{stroke:#A8A49C}.lk{stroke:#E0454E}
+      .ah{fill:#A8A49C}.ak{fill:#E0454E}.acc{fill:#E0454E}
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0 1L10 5L0 9z"/></marker>
+    <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ak" d="M0 1L10 5L0 9z"/></marker>
+  </defs>
+  <rect class="bg" x="0.5" y="0.5" width="819" height="335" rx="12"/>
+
+  <rect class="key" x="230" y="24" width="360" height="92" rx="10"/>
+  <text class="h" x="246" y="50">Operators' Konklav</text>
+  <text class="s" x="246" y="72">OpenID provider, one OIDC client per environment</text>
+  <text class="s" x="246" y="92">subjects: operators · global roles: sre, dev, …</text>
+
+  <path class="ln" d="M330 116L139 214" marker-end="url(#a)"/>
+  <path class="ln d" d="M350 116L165 214" marker-start="url(#a)"/>
+  <path class="ln" d="M400 116V214" marker-end="url(#a)"/>
+  <path class="ln d" d="M420 116V214" marker-start="url(#a)"/>
+  <path class="ln" d="M470 116L655 214" marker-end="url(#a)"/>
+  <path class="ln d" d="M490 116L681 214" marker-start="url(#a)"/>
+
+  <rect class="box" x="24" y="216" width="230" height="72" rx="8"/>
+  <text class="h" x="40" y="240">dev</text>
+  <text class="s" x="40" y="260">trusts the operators' instance</text>
+  <text class="s" x="40" y="277">end-user data stays here</text>
+
+  <rect class="box" x="295" y="216" width="230" height="72" rx="8"/>
+  <text class="h" x="311" y="240">staging</text>
+  <text class="s" x="311" y="260">trusts the operators' instance</text>
+  <text class="s" x="311" y="277">end-user data stays here</text>
+
+  <rect class="box" x="566" y="216" width="230" height="72" rx="8"/>
+  <text class="h" x="582" y="240">prod-eu, …</text>
+  <text class="s" x="582" y="260">trusts the operators' instance</text>
+  <text class="s" x="582" y="277">end-user data stays here</text>
+
+  <path class="ln" d="M24 316H56" marker-end="url(#a)"/>
+  <text class="s" x="64" y="320">OIDC sign-in, back-channel logout</text>
+  <path class="ln d" d="M300 316H332" marker-start="url(#a)"/>
+  <text class="s" x="340" y="320">optional peering: the downstream polls its client's peer feed</text>
+</svg>

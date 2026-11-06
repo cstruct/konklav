@@ -7,6 +7,8 @@ note describes the recommended pattern.
 
 ## Creating a tenant
 
+![Creating a tenant from a relying system, and reconciling later](diagrams/tenant-projection.svg)
+
 1. The relying system picks a UUIDv7 `id`.
 2. In its own transaction, it inserts its projection row with
    `state = pending` and its profile data.
