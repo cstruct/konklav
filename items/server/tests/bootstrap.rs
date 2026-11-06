@@ -449,6 +449,7 @@ fn read_dir(dir: &Path) -> std::collections::BTreeMap<String, String> {
 }
 
 // r[verify bootstrap.export]
+// r[verify bootstrap.export.registered]
 // r[verify bootstrap.format.export]
 #[tokio::test(flavor = "multi_thread")]
 async fn an_exported_set_bootstraps_an_empty_database_unchanged() {
@@ -521,6 +522,33 @@ async fn an_exported_set_bootstraps_an_empty_database_unchanged() {
     )
     .await;
 
+    // A registered scope a table can't hold as written, and a removed one.
+    let acme = konklav_bootstrap::derive(
+        NAMESPACE.parse().unwrap(),
+        konklav_bootstrap::Kind::Tenant,
+        "acme",
+    );
+    let recorded = app
+        .control(
+            Method::POST,
+            "/v1/registered-scopes",
+            Some(serde_json::json!({"changes": [
+                {"op": "record", "kind": "document", "id": " odd|id", "tenant": acme,
+                 "containers": [{"kind": "project", "id": "p|1"}]},
+                {"op": "record", "kind": "document", "id": "d-gone", "tenant": acme},
+            ]})),
+        )
+        .await;
+    assert!(recorded.status.is_success(), "{:?}", recorded.body);
+    let removed = app
+        .control(
+            Method::DELETE,
+            "/v1/registered-scopes/document/d-gone",
+            None,
+        )
+        .await;
+    assert!(removed.status.is_success(), "{:?}", removed.body);
+
     let dir = std::env::temp_dir().join(format!("konklav-export-{}", uuid::Uuid::now_v7()));
     let first =
         konklav_server::export::run(app.db.pool(), &app.state.auth.secrets, &dir.join("first"))
@@ -535,6 +563,19 @@ async fn an_exported_set_bootstraps_an_empty_database_unchanged() {
     assert!(
         files["mfa_factors.csv"].contains(&seed.to_base32()),
         "seeds are decrypted"
+    );
+    assert_eq!(first.written["registered scopes"], 3, "{first}");
+    assert_eq!(first.left_out["removed registered scopes"], 1, "{first}");
+    assert_eq!(
+        files["registered_scopes.csv"],
+        format!(
+            "kind,id,tenant,containers\ndocument,d-1,{acme},project:p-1\ndocument,d-2,{acme},\n"
+        )
+    );
+    assert!(
+        files["set.styx"].contains("registered_scopes")
+            && files["set.styx"].contains("\" odd|id\""),
+        "what a table can't hold goes in the document"
     );
     assert!(
         files["set.styx"].starts_with(&format!("format {}\n", konklav_bootstrap::FORMAT)),
@@ -587,6 +628,188 @@ async fn an_exported_set_bootstraps_an_empty_database_unchanged() {
         "never overwrites"
     );
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A scratch directory with `files` in it.
+fn scratch(name: &str, files: &[(&str, String)]) -> PathBuf {
+    let dir =
+        std::env::temp_dir().join(format!("konklav-bootstrap-{name}-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (file, text) in files {
+        std::fs::write(dir.join(file), text).unwrap();
+    }
+    dir
+}
+
+/// A catalog with a registered `patient` kind in `workspace`s, and two
+/// tenants, plus `registered_scopes.csv`.
+fn patients(name: &str, rows: &str) -> PathBuf {
+    let catalog = serde_json::json!({
+        "actions": [{"name": "patient:read"}],
+        "scope_kinds": [{"name": "workspace"}, {"name": "patient", "registered": true}],
+    });
+    scratch(
+        name,
+        &[
+            ("catalog.json", catalog.to_string()),
+            (
+                "set.styx",
+                format!(
+                    "id_namespace {NAMESPACE}\n\
+                     tenants ({{key clinic}} {{key personal}})\n"
+                ),
+            ),
+            (
+                "registered_scopes.csv",
+                format!("kind,id,tenant,containers\n{rows}"),
+            ),
+        ],
+    )
+}
+
+#[derive(diesel::QueryableByName)]
+struct Payload {
+    #[diesel(sql_type = diesel::sql_types::Jsonb)]
+    payload: serde_json::Value,
+}
+
+async fn scope_events(app: &TestApp) -> Vec<serde_json::Value> {
+    let mut conn = app.db.pool().get().await.unwrap();
+    diesel::sql_query("select payload from event where kind = 'scope.changed' order by cursor")
+        .load::<Payload>(&mut conn)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.payload)
+        .collect()
+}
+
+// r[verify bootstrap.registered.idempotent]
+// r[verify bootstrap.registered.events]
+// r[verify bootstrap.events]
+#[tokio::test(flavor = "multi_thread")]
+async fn registered_scopes_apply_in_one_event_and_then_skip() {
+    let app = TestApp::new().await;
+    // More than one control-plane batch holds.
+    let mut rows = String::new();
+    for i in 0..1500 {
+        let _ = std::fmt::Write::write_fmt(
+            &mut rows,
+            format_args!("patient,w-{i},clinic,workspace:w-{}|workspace:w-0\n", i % 3),
+        );
+    }
+    rows += "patient,personal-1,personal,\n";
+    let dir = patients("registered", &rows);
+    let first = apply(&app, std::slice::from_ref(&dir), Options::default()).await;
+    assert!(first.committed, "{first}");
+    assert_eq!(tally(&first, "registered scopes"), created(1501));
+    assert_eq!(count(&app, "registered_scope").await, 1501);
+    let events = scope_events(&app).await;
+    assert_eq!(events.len(), 1, "one event for the run");
+    assert_eq!(events[0]["scopes"].as_array().unwrap().len(), 1501);
+
+    // The containers are a set: order and repeats don't make them differ.
+    let reordered = rows.replace(
+        "patient,w-1,clinic,workspace:w-1|workspace:w-0",
+        "patient,w-1,clinic,workspace:w-0|workspace:w-1|workspace:w-0",
+    );
+    std::fs::write(
+        dir.join("registered_scopes.csv"),
+        format!("kind,id,tenant,containers\n{reordered}"),
+    )
+    .unwrap();
+    let again = apply(&app, std::slice::from_ref(&dir), Options::default()).await;
+    assert!(again.committed, "{again}");
+    assert_eq!(tally(&again, "registered scopes"), skipped(1501));
+    assert_eq!(scope_events(&app).await.len(), 1, "nothing changed");
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+// r[verify bootstrap.registered.validate]
+// r[verify bootstrap.registered.idempotent]
+// r[verify bootstrap.validate-first]
+// r[verify bootstrap.atomic]
+#[tokio::test(flavor = "multi_thread")]
+async fn registered_scope_problems_and_conflicts_are_all_reported() {
+    let app = TestApp::new().await;
+    let base = patients(
+        "registered-base",
+        "patient,p-1,clinic,workspace:w-1\npatient,p-2,clinic,\npatient,p-9,clinic,workspace:w-1\n",
+    );
+    let seeded = apply(&app, std::slice::from_ref(&base), Options::default()).await;
+    assert!(seeded.committed, "{seeded}");
+    let removed = app
+        .control(Method::DELETE, "/v1/registered-scopes/patient/p-2", None)
+        .await;
+    assert!(removed.status.is_success(), "{:?}", removed.body);
+    let events = scope_events(&app).await.len();
+
+    let dir = patients(
+        "registered-broken",
+        "patient,p-1,personal,workspace:w-1\n\
+         patient,p-2,clinic,\n\
+         patient,p-3,clinic,\n\
+         workspace,w-4,clinic,\n\
+         patient,p-5,clinic,patient:p-1\n\
+         patient,p-6,clinic,ward:u-1\n\
+         patient,p-7,nowhere,\n\
+         patient,p-3,clinic,\n\
+         patient,p-9,clinic,workspace:w-2\n",
+    );
+    let report = apply(&app, std::slice::from_ref(&dir), Options::default()).await;
+    assert!(!report.committed, "{report}");
+    let file = dir.join("registered_scopes.csv");
+    let at = |found: &[konklav_bootstrap::Problem], line: usize, text: &str| {
+        found.iter().any(|p| {
+            p.at.as_ref()
+                .is_some_and(|at| at.file == file && at.line == line)
+                && p.message.contains(text)
+        })
+    };
+    assert!(
+        at(&report.conflicts, 2, "its tenant can't change"),
+        "{report}"
+    );
+    assert!(at(&report.conflicts, 3, "was removed"), "{report}");
+    assert!(
+        at(
+            &report.problems,
+            5,
+            "`workspace` isn't a registered scope kind"
+        ),
+        "{report}"
+    );
+    assert!(
+        at(
+            &report.problems,
+            6,
+            "`patient` isn't a declared kind that isn't registered"
+        ),
+        "{report}"
+    );
+    assert!(
+        at(&report.problems, 7, "`ward` isn't a declared kind"),
+        "{report}"
+    );
+    assert!(at(&report.problems, 8, "doesn't exist"), "{report}");
+    assert!(at(&report.problems, 9, "more than once"), "{report}");
+    assert!(
+        at(&report.conflicts, 10, "other containing scopes"),
+        "{report}"
+    );
+    assert_eq!(report.conflicts.len(), 3, "{report}");
+    assert_eq!(report.problems.len(), 5, "{report}");
+
+    assert_eq!(
+        count(&app, "registered_scope").await,
+        3,
+        "nothing is written"
+    );
+    assert_eq!(scope_events(&app).await.len(), events);
+    for dir in [base, dir] {
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
 
 // r[verify bootstrap.format.released]

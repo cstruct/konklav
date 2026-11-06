@@ -130,7 +130,7 @@ cargo run -p konklav-server -- bootstrap --dry-run examples/bootstrap/nested/see
 cargo run -p konklav-server -- bootstrap examples/bootstrap/nested/seed.styx
 ```
 
-- **One transaction.** Every record is written in a savepoint of its own. The run reports each problem and conflict with its file and line, and commits only when there are none.
+- **One transaction.** Every record is written in a savepoint of its own, except registered scopes, which are checked together and written in batches, so a set can hold many thousands; they share one `scope.changed` event. The run reports each problem and conflict with its file and line, and commits only when there are none.
 - **Re-runnable.**
   - Records that exist with the same content are skipped, so a set can be applied again.
   - A record that exists with different content is a conflict.
@@ -141,7 +141,7 @@ cargo run -p konklav-server -- bootstrap examples/bootstrap/nested/seed.styx
 - **Format versions.** It reads sets of its own major [bootstrap format version](../bootstrap/README.md#format-versions) at any minor version up to its own, and refuses a newer or other one with a single problem at the set's `format` declaration.
 - **Exit codes:** 0 when the set applied or the dry run found nothing wrong, 1 for problems, 2 for conflicts.
 
-`export` does the reverse: it writes the database's catalog, templates, tenants, roles, subjects, credentials, MFA factors, memberships and role assignments as a bootstrap set, which `bootstrap` applies to an empty database unchanged.
+`export` does the reverse: it writes the database's catalog, templates, tenants, roles, subjects, credentials, MFA factors, memberships, role assignments and active registered scopes as a bootstrap set, which `bootstrap` applies to an empty database unchanged.
 
 ```sh
 cargo run -p konklav-server -- export --out seed
@@ -149,7 +149,7 @@ cargo run -p konklav-server -- export --out seed
 
 - **Sensitive.** It reads the database directly, so the set holds password and secret-key hashes and decrypted TOTP seeds, which the control plane never shows. Its files are readable by their owner only.
 - **Format.** `set.styx` declares the current bootstrap format version, so the set records what it was written in.
-- **What it leaves out:** sessions, signing keys, OIDC clients and the `client` credentials they bind, passkeys, revoked credentials, ended memberships, tenant states, and memberships and assignments an identity provider's claim mapping manages. It prints how many of each it left out.
+- **What it leaves out:** sessions, signing keys, OIDC clients and the `client` credentials they bind, passkeys, revoked credentials, ended memberships, tenant states, removed registered scopes (so a copy may record one again in another tenant), and memberships and assignments an identity provider's claim mapping manages. It prints how many of each it left out.
 - **One snapshot.** It reads in one read-only, repeatable-read transaction.
 - **Requirements:** the directory must be empty or not exist, migrations must be applied, and it needs the `mfa` keys to decrypt TOTP seeds.
 
@@ -174,7 +174,7 @@ mise run test
   - telemetry: spans, metrics and logs exported to a fake OTLP collector, trace propagation in and out, and nothing identifying in what's exported (`tests/telemetry.rs`)
   - retention: what the sweeper deletes and keeps, and its lock (`tests/retention.rs`)
   - history: decisions explained as of a past time, the history horizon, disabling, and sweeping old row versions (`tests/history.rs`)
-  - the bootstrap command, applying both example sets and every frozen set of a released format, re-runs, dry runs, conflicts and located problems, and an exported set bootstrapping an empty database unchanged (`tests/bootstrap.rs`)
+  - the bootstrap command, applying both example sets and every frozen set of a released format, re-runs, dry runs, conflicts and located problems, registered scopes in batches with one event, and an exported set bootstrapping an empty database unchanged (`tests/bootstrap.rs`)
   - idempotent creates for credentials, password replacement, assignments and invites (`tests/idempotency.rs`)
   - batches: references to earlier creates, failures that leave no trace, per-operation capabilities, limits, bulk endpoints inside a batch, a batch cut off by the request timeout, and idempotency keys with their secrets and lifetimes (`tests/batch.rs`). The test harness also checks each batch result against its own operation's schema.
 - Indirect coverage: none yet.

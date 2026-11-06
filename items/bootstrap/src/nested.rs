@@ -15,8 +15,9 @@ use uuid::Uuid;
 use crate::format::FormatVersion;
 use crate::model::{
     Assignment, AssignmentTarget, BootstrapSet, Credential, CredentialMaterial, Effect, FactValue,
-    Factor, FactorMaterial, Facts, Id, Located, Location, Membership, MembershipRef, Policy, Role,
-    SecretSlot, Subject, SubjectKind, SubjectRef, SubjectState, Template, Tenant, TenantRef,
+    Factor, FactorMaterial, Facts, Id, Located, Location, Membership, MembershipRef, Policy,
+    RegisteredScope, Role, SecretSlot, Subject, SubjectKind, SubjectRef, SubjectState, Template,
+    Tenant, TenantRef,
 };
 use crate::{Problem, line_of};
 
@@ -42,6 +43,26 @@ pub(crate) struct Document {
     global_roles: Option<Vec<Spanned<RoleDoc>>>,
     tenants: Option<Vec<Spanned<TenantDoc>>>,
     subjects: Option<Vec<Spanned<SubjectDoc>>>,
+    /// Registered scopes, each naming its tenant.
+    registered_scopes: Option<Vec<Spanned<RegisteredScopeDoc>>>,
+}
+
+#[derive(Debug, Facet)]
+#[facet(deny_unknown_fields)]
+struct ScopeDoc {
+    kind: String,
+    id: String,
+}
+
+#[derive(Debug, Facet)]
+#[facet(deny_unknown_fields)]
+struct RegisteredScopeDoc {
+    kind: String,
+    id: String,
+    /// A tenant id, key or `root`; only outside a tenant, whose scopes
+    /// belong to it.
+    tenant: Option<String>,
+    containers: Option<Vec<ScopeDoc>>,
 }
 
 #[derive(Debug, Facet)]
@@ -85,6 +106,7 @@ struct TenantDoc {
     roles: Option<Vec<Spanned<RoleDoc>>>,
     children: Option<Vec<Spanned<TenantDoc>>>,
     members: Option<Vec<Spanned<MemberDoc>>>,
+    registered_scopes: Option<Vec<Spanned<RegisteredScopeDoc>>>,
 }
 
 #[derive(Debug, Facet)]
@@ -349,6 +371,45 @@ impl Reader<'_> {
             let at = self.at(&subject);
             self.subject(&at, subject.value);
         }
+        for scope in document.registered_scopes.unwrap_or_default() {
+            self.registered_scope(None, scope);
+        }
+    }
+
+    // r[impl bootstrap.registered.shape]
+    fn registered_scope(
+        &mut self,
+        enclosing: Option<&TenantRef>,
+        scope: Spanned<RegisteredScopeDoc>,
+    ) {
+        let at = self.at(&scope);
+        let doc = scope.value;
+        let tenant = match (enclosing, doc.tenant) {
+            (Some(enclosing), None) => enclosing.clone(),
+            (None, Some(tenant)) => TenantRef::parse(&tenant),
+            (None, None) => {
+                self.problem(&at, "a registered scope outside a tenant needs a `tenant`");
+                return;
+            }
+            (Some(_), Some(_)) => {
+                self.problem(&at, "a registered scope's tenant is the tenant it is in");
+                return;
+            }
+        };
+        self.set.registered_scopes.push(Located {
+            value: RegisteredScope {
+                kind: doc.kind,
+                id: doc.id,
+                tenant,
+                containers: doc
+                    .containers
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|c| (c.kind, c.id))
+                    .collect(),
+            },
+            at,
+        });
     }
 
     fn policies(&mut self, at: &Location, policies: Option<Vec<PolicyDoc>>) -> Vec<Policy> {
@@ -474,6 +535,9 @@ impl Reader<'_> {
         }
         for child in doc.children.unwrap_or_default() {
             self.tenant(Some(here.clone()), child);
+        }
+        for scope in doc.registered_scopes.unwrap_or_default() {
+            self.registered_scope(Some(&here), scope);
         }
         for member in doc.members.unwrap_or_default() {
             let at = self.at(&member);

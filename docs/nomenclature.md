@@ -517,7 +517,7 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `bootstrap set`
   - Everything one run of the `bootstrap` command reads from its files:
     catalog, templates, tenants, subjects, credentials, MFA factors,
-    memberships, role assignments and sessions.
+    memberships, role assignments, registered scopes and sessions.
   - It can be written as flat tables (CSV, one file per kind of record,
     referring to each other by id) or as nested documents (Styx, with
     records inside the ones they belong to), or a mix of both.

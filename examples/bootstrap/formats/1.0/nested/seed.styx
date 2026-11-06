@@ -55,9 +55,12 @@ tenants (
                 global_roles (support)
             }
         )
+        registered_scopes ({kind document, id d-1, containers ({kind project, id p-1} {kind project, id p-2})})
     }
     {id 0193b6a0-0000-7000-8000-000000000004, parent root}
 )
+
+registered_scopes ({kind document, id d-2, tenant 0193b6a0-0000-7000-8000-000000000004})
 
 subjects (
     {

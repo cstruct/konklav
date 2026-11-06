@@ -369,16 +369,19 @@ The `export` command MUST declare the current format version in the set it
 writes.
 
 r[bootstrap.format.released]
-Every released format version MUST keep a frozen set that the command
-still reads and applies. A change to the tables, columns or keys MUST be
-checked against the latest released format version, so that the current
-version is that version bumped as the change needs: unchanged, the next
-minor version or the next major version.
+A format version is released once a Konklav release ships it, and MUST
+NOT change after that. Until then it is pending, and changes to it need no
+new version. Every released format version MUST keep a frozen set that the
+command still reads and applies. A change to the tables, columns or keys
+MUST be checked against the latest released format version, so that the
+current version is that version bumped as the change needs: unchanged, the
+next minor version or the next major version. While no format version is
+released, the current version MUST be 1.0.
 
 r[bootstrap.contents]
 A bootstrap set MAY contain the action catalog, templates, tenants,
 subjects, credentials (federated ones included), MFA factors, memberships,
-membership and global role assignments, and sessions.
+membership and global role assignments, registered scopes, and sessions.
 
 r[bootstrap.metadata]
 Templates and roles in a bootstrap set MAY carry metadata, a JSON object.
@@ -417,6 +420,33 @@ new entries are added, and an entry it declares differently from the
 stored one is a conflict. Applying MUST NOT delete or change anything the
 set doesn't name.
 
+r[bootstrap.registered.shape]
+A registered scope in a bootstrap set MUST name its kind, its opaque id,
+its owner tenant and a possibly empty list of containing scopes, each by
+kind and id, as `authz.registered.shape` describes. Its kind and ids MUST
+be used as written: they are not identifiers the set resolves.
+
+r[bootstrap.registered.validate]
+A run MUST report as a problem a registered scope:
+- whose kind isn't declared registered in the catalog, in the set or stored
+- with a containing scope whose kind isn't declared, or is registered
+- whose tenant is neither in the set nor stored
+- that the set names more than once
+
+A scope already recorded in another tenant, active or removed, MUST be
+reported as a conflict, as `authz.registered.tenant-fixed` requires.
+
+r[bootstrap.registered.idempotent]
+A registered scope recorded and active in the same tenant, with the same
+containing scopes in any order, MUST be skipped. One recorded with other
+containing scopes, or removed, MUST be reported as a conflict: a bootstrap
+set doesn't move or restore registered scopes, the control plane does.
+
+r[bootstrap.registered.events]
+The registered scopes a run records MUST be named in a single
+`scope.changed` event, as `authz.registered.events` describes for one
+control-plane transaction.
+
 r[bootstrap.validate-first]
 Before writing anything, the command MUST read every file, resolve every
 identifier and reference, check the set against the catalog (in the set or
@@ -440,12 +470,18 @@ stored. TOTP seeds MUST be encrypted on arrival, as `import.mfa` describes.
 
 r[bootstrap.export]
 An `export` command MUST write the database's catalog, templates, tenants,
-roles, subjects, credentials with their hashes, MFA factors, memberships
-and role assignments as a bootstrap set that `bootstrap` applies to an
-empty database without problems or conflicts, so that exporting that
-database writes the same set. It MUST read the database directly, never
+roles, subjects, credentials with their hashes, MFA factors, memberships,
+role assignments and active registered scopes as a bootstrap set that
+`bootstrap` applies to an empty database without problems or conflicts, so
+that exporting that database writes the same set. It MUST read the database directly, never
 the control plane, and MUST NOT write sessions or signing keys. It MUST
 report what it left out because a bootstrap set can't hold it.
+
+r[bootstrap.export.registered]
+Export MUST write every active registered scope with its tenant and
+containing scopes, and MUST leave out removed ones and report how many it
+left out. A database bootstrapped from the export therefore doesn't know
+the removed scopes, and may record one of them again in any tenant.
 
 r[bootstrap.events]
 Applying a bootstrap set MUST emit the same events as the equivalent

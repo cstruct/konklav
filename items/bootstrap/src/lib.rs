@@ -54,13 +54,14 @@ impl fmt::Display for Problem {
 }
 
 /// The flat tables a directory may hold, by file name.
-pub const TABLES: [&str; 7] = [
+pub const TABLES: [&str; 8] = [
     "tenants.csv",
     "subjects.csv",
     "credentials.csv",
     "mfa_factors.csv",
     "memberships.csv",
     "assignments.csv",
+    "registered_scopes.csv",
     "sessions.csv",
 ];
 

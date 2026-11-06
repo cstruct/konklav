@@ -2,16 +2,21 @@
 //!
 //! It snapshots the format as the readers define it: every table and its
 //! columns from `table::columns`, and every key of the Styx documents by
-//! reflecting on `nested::Document`. It compares that with the frozen
-//! snapshot of the latest released format, in
-//! `examples/bootstrap/formats/<version>/format.snapshot`, classifies each
-//! difference as needing a minor or a major bump, and checks that
-//! [`FORMAT`] is that format bumped accordingly. Comparing with the
-//! released format rather than the committed snapshot lets several changes
-//! before a release share one bump.
+//! reflecting on `nested::Document`. Each format version has a directory,
+//! `examples/bootstrap/formats/<version>/`, with its snapshot in
+//! `format.snapshot` and at least one set that uses it.
 //!
-//! The committed `src/format.snapshot` must then match what the readers
-//! define, so a pull request that changes the format shows the change.
+//! A format is pending until a release ships it: `mise run release:bump`
+//! stamps the snapshot of every pending format with `released in
+//! <version>`, and from then on the directory is frozen. The check
+//! compares the readers with the latest released format, classifies each
+//! difference as needing a minor or a major bump, and checks that
+//! [`FORMAT`] is that format bumped accordingly, or 1.0 while nothing is
+//! released. Comparing with the released format, not the pending one, lets
+//! every change between two releases share one bump.
+//!
+//! The pending format's snapshot must then match what the readers define,
+//! so a pull request that changes the format shows the change.
 //! `UPDATE_FORMAT_SNAPSHOT=1 cargo test -p konklav-bootstrap format`
 //! rewrites it once the version is right.
 //!
@@ -27,7 +32,7 @@ use std::path::{Path, PathBuf};
 
 use facet::{Def, Facet, Shape, Type, UserType};
 
-use super::{FORMAT, FormatVersion};
+use super::{FORMAT, FormatVersion, UNDECLARED};
 use crate::TABLES;
 use crate::nested::Document;
 use crate::table::columns;
@@ -145,12 +150,26 @@ fn unspanned(shape: &'static Shape) -> &'static Shape {
         .map_or(shape, |field| field.shape())
 }
 
-fn render(version: FormatVersion, entries: &Entries) -> String {
+/// One format version's snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Snapshot {
+    version: FormatVersion,
+    /// The Konklav release that shipped it; `None` while it is pending.
+    released: Option<String>,
+    entries: Entries,
+}
+
+fn render(snapshot: &Snapshot) -> String {
     let mut text = String::from(
         "# The bootstrap format's tables, columns and keys, generated from the\n\
          # readers by items/bootstrap/src/format/check.rs. Don't edit it by hand.\n",
     );
-    let _ = writeln!(text, "format {version}\n");
+    let _ = writeln!(text, "format {}", snapshot.version);
+    if let Some(release) = &snapshot.released {
+        let _ = writeln!(text, "released in {release}");
+    }
+    text.push('\n');
+    let entries = &snapshot.entries;
     for (path, entry) in entries {
         let required = if entry.required {
             "required"
@@ -162,10 +181,11 @@ fn render(version: FormatVersion, entries: &Entries) -> String {
     text
 }
 
-fn parse(file: &Path) -> (FormatVersion, Entries) {
+fn parse(file: &Path) -> Snapshot {
     let text =
         std::fs::read_to_string(file).unwrap_or_else(|error| panic!("{}: {error}", file.display()));
     let mut version = None;
+    let mut released = None;
     let mut entries = Entries::new();
     for line in text.lines() {
         let line = line.trim();
@@ -174,6 +194,10 @@ fn parse(file: &Path) -> (FormatVersion, Entries) {
         }
         if let Some(declared) = line.strip_prefix("format ") {
             version = Some(declared.parse().expect("a format version"));
+            continue;
+        }
+        if let Some(release) = line.strip_prefix("released in ") {
+            released = Some(release.to_owned());
             continue;
         }
         let (path, entry) = line
@@ -195,7 +219,11 @@ fn parse(file: &Path) -> (FormatVersion, Entries) {
         entries.insert(path.to_owned(), entry);
     }
     let version = version.unwrap_or_else(|| panic!("{} has no format line", file.display()));
-    (version, entries)
+    Snapshot {
+        version,
+        released,
+        entries,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -278,10 +306,14 @@ fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Every frozen format's version and snapshot, oldest first.
-fn frozen() -> Vec<(FormatVersion, Entries)> {
-    let formats = manifest_dir().join("../../examples/bootstrap/formats");
-    let mut frozen: Vec<_> = std::fs::read_dir(&formats)
+fn formats_dir() -> PathBuf {
+    manifest_dir().join("../../examples/bootstrap/formats")
+}
+
+/// Every format's snapshot, oldest first.
+fn formats() -> Vec<Snapshot> {
+    let formats = formats_dir();
+    let mut found: Vec<_> = std::fs::read_dir(&formats)
         .unwrap_or_else(|error| panic!("{}: {error}", formats.display()))
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.is_dir())
@@ -291,18 +323,36 @@ fn frozen() -> Vec<(FormatVersion, Entries)> {
                 .and_then(|name| name.to_str())
                 .and_then(|name| name.parse().ok())
                 .unwrap_or_else(|| panic!("{} is not named by a format version", dir.display()));
-            let (version, entries) = parse(&dir.join("format.snapshot"));
+            let snapshot = parse(&dir.join("format.snapshot"));
             assert_eq!(
-                version,
+                snapshot.version,
                 name,
                 "{} holds another version's snapshot",
                 dir.display()
             );
-            (version, entries)
+            snapshot
         })
         .collect();
-    frozen.sort_by_key(|(version, _)| *version);
-    frozen
+    found.sort_by_key(|snapshot| snapshot.version);
+    found
+}
+
+/// The version the readers' format must have: the latest released one
+/// bumped as `current` needs, or 1.0 while nothing is released.
+fn expected(formats: &[Snapshot], current: &Entries) -> (FormatVersion, String) {
+    let Some(released) = formats.iter().rev().find(|s| s.released.is_some()) else {
+        return (UNDECLARED, "no format is released yet".into());
+    };
+    let changes = changes(&released.entries, current);
+    let needed = changes.iter().map(|c| c.bump).max().unwrap_or(Bump::None);
+    let mut listed = format!(
+        "the format changed since released format {}:",
+        released.version
+    );
+    for c in &changes {
+        let _ = write!(listed, "\n  {:?}: {} {}", c.bump, c.path, c.what);
+    }
+    (needed.of(released.version), listed)
 }
 
 // r[verify bootstrap.format.released]
@@ -310,44 +360,81 @@ fn frozen() -> Vec<(FormatVersion, Entries)> {
 #[test]
 fn the_format_version_is_the_released_one_bumped_as_its_changes_need() {
     let current = current();
-    let (released, snapshot) = frozen().pop().expect("a frozen format");
-    let changes = changes(&snapshot, &current);
-    let needed = changes.iter().map(|c| c.bump).max().unwrap_or(Bump::None);
-    let expected = needed.of(released);
-    let mut listed = String::new();
-    for c in &changes {
-        let _ = write!(listed, "\n  {:?}: {} {}", c.bump, c.path, c.what);
-    }
-    assert_eq!(
-        FORMAT, expected,
-        "the format changed since released format {released}, so FORMAT must be \
-         {expected}:{listed}"
-    );
+    let formats = formats();
+    let (expected, why) = expected(&formats, &current);
+    assert_eq!(FORMAT, expected, "FORMAT must be {expected}: {why}");
 
-    let file = manifest_dir().join("src/format.snapshot");
-    let rendered = render(FORMAT, &current);
-    let committed = std::fs::read_to_string(&file).unwrap_or_default();
-    if committed != rendered {
-        if std::env::var_os("UPDATE_FORMAT_SNAPSHOT").is_some() {
-            std::fs::write(&file, rendered).unwrap();
-        } else {
-            panic!(
-                "{} is out of date; rewrite it with \
-                 UPDATE_FORMAT_SNAPSHOT=1 cargo test -p konklav-bootstrap format",
-                file.display()
-            );
+    let file = formats_dir()
+        .join(FORMAT.to_string())
+        .join("format.snapshot");
+    let snapshot = Snapshot {
+        version: FORMAT,
+        released: None,
+        entries: current,
+    };
+    match formats.iter().find(|s| s.version == FORMAT) {
+        // Released and unchanged: the bump check above saw no change.
+        Some(own) if own.released.is_some() => {}
+        Some(own) if *own == snapshot => {}
+        _ if std::env::var_os("UPDATE_FORMAT_SNAPSHOT").is_some() => {
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(&file, render(&snapshot)).unwrap();
         }
+        _ => panic!(
+            "{} is out of date; rewrite it with \
+             UPDATE_FORMAT_SNAPSHOT=1 cargo test -p konklav-bootstrap format, \
+             and give the format a set that uses what changed",
+            file.display()
+        ),
     }
 }
 
 #[test]
-fn frozen_formats_are_older_than_the_current_one_or_it() {
-    for (version, _) in frozen() {
+fn only_the_current_format_is_pending() {
+    for snapshot in formats() {
         assert!(
-            version <= FORMAT,
-            "format {version} is frozen but FORMAT is {FORMAT}"
+            snapshot.version <= FORMAT,
+            "format {} exists but FORMAT is {FORMAT}",
+            snapshot.version
+        );
+        assert!(
+            snapshot.released.is_some() || snapshot.version == FORMAT,
+            "format {} was never released, but FORMAT is {FORMAT}",
+            snapshot.version
         );
     }
+}
+
+#[test]
+fn only_changes_since_the_last_release_need_a_bump() {
+    let snapshot = |version, released: Option<&str>, lines: &[(&str, bool, &str)]| Snapshot {
+        version,
+        released: released.map(str::to_owned),
+        entries: entries(lines),
+    };
+    let table = with(&[("csv/u.csv", false, "table")]);
+    let v1_0 = FormatVersion::new(1, 0);
+    let pending = [snapshot(v1_0, None, &BASE)];
+    assert_eq!(
+        expected(&pending, &entries(&table)).0,
+        v1_0,
+        "an unreleased format takes changes as they are"
+    );
+    let released = [snapshot(v1_0, Some("1.5.0"), &BASE)];
+    assert_eq!(
+        expected(&released, &entries(&table)).0,
+        FormatVersion::new(1, 1)
+    );
+    let both = [
+        snapshot(v1_0, Some("1.5.0"), &BASE),
+        snapshot(FormatVersion::new(1, 1), None, &table),
+    ];
+    let more = [table.clone(), vec![("csv/v.csv", false, "table")]].concat();
+    assert_eq!(
+        expected(&both, &entries(&more)).0,
+        FormatVersion::new(1, 1),
+        "changes before a release share one bump"
+    );
 }
 
 #[test]
@@ -453,9 +540,15 @@ fn bumps_reset_the_minor_version_on_a_major_one() {
 
 #[test]
 fn snapshots_read_back_as_rendered() {
-    let entries = entries(&BASE);
     let file = std::env::temp_dir().join(format!("konklav-format-{}.snapshot", std::process::id()));
-    std::fs::write(&file, render(FormatVersion::new(3, 1), &entries)).unwrap();
-    assert_eq!(parse(&file), (FormatVersion::new(3, 1), entries));
+    for released in [None, Some("1.5.0".to_owned())] {
+        let snapshot = Snapshot {
+            version: FormatVersion::new(3, 1),
+            released,
+            entries: entries(&BASE),
+        };
+        std::fs::write(&file, render(&snapshot)).unwrap();
+        assert_eq!(parse(&file), snapshot);
+    }
     let _ = std::fs::remove_file(file);
 }

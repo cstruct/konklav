@@ -2,8 +2,12 @@
 //! it with what is stored, and writing it through the shared import
 //! functions when it is new.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use chrono::{DateTime, Utc};
 use konklav_authn::PasswordCheck;
+use konklav_authz::Scope;
+use konklav_bootstrap::Location;
 use konklav_bootstrap::{
     AssignmentTarget, CredentialMaterial, FactorMaterial, Id, Kind, Located, MembershipRef,
     SubjectRef, TenantRef,
@@ -16,6 +20,7 @@ use konklav_store::credentials::{
     SecretKeyData, SecretSlotData,
 };
 use konklav_store::mfa::{self, FactorData};
+use konklav_store::registered_scopes::{self, Change, RegisteredState};
 use konklav_store::roles::{self, RoleDefinition};
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
 use konklav_store::{StoreError, memberships, templates, tenants};
@@ -634,4 +639,150 @@ pub(super) async fn session(
         serde_json::from_value(record).map_err(|error| invalid(error.to_string()))?;
     conn.transaction::<_, ApiError, _>(async |conn| import::session(conn, record).await)
         .await
+}
+
+/// Registered scopes, checked together and written in batches rather than
+/// each in a savepoint, since a set may hold many thousands. Returns each
+/// scope's outcome; only those that pass every check are written, and all
+/// in this transaction, so they share one `scope.changed` event.
+// r[impl bootstrap.registered.validate]
+// r[impl bootstrap.registered.idempotent]
+// r[impl bootstrap.registered.events]
+pub(super) async fn registered_scopes<'a>(
+    conn: &mut Connection,
+    context: &Context<'_>,
+    catalog: &CatalogDocument,
+    scopes: &'a [Located<konklav_bootstrap::RegisteredScope>],
+) -> Result<Vec<(&'a Location, Result<Outcome, ApiError>)>, ApiError> {
+    let kinds: BTreeMap<&str, bool> = catalog
+        .scope_kinds
+        .iter()
+        .map(|kind| (kind.name.as_str(), kind.registered))
+        .collect();
+    let mut outcomes: Vec<(&Location, Result<Outcome, ApiError>)> = Vec::new();
+    // The scopes that pass the checks that need nothing stored.
+    let mut candidates: Vec<(usize, Scope, TenantId, Vec<Scope>)> = Vec::new();
+    let mut seen = BTreeSet::new();
+    for scope in scopes {
+        let checked = check_registered(context, &kinds, &mut seen, &scope.value);
+        match checked {
+            Ok((key, tenant, containers)) => {
+                candidates.push((outcomes.len(), key, tenant, containers));
+                outcomes.push((&scope.at, Ok(Outcome::Created)));
+            }
+            Err(error) => outcomes.push((&scope.at, Err(error))),
+        }
+    }
+
+    let mut changes = Vec::new();
+    for chunk in candidates.chunks(registered_scopes::MAX_BATCH) {
+        let keys: Vec<Scope> = chunk.iter().map(|(_, key, _, _)| key.clone()).collect();
+        let tenant_ids: Vec<uuid::Uuid> = chunk
+            .iter()
+            .map(|(_, _, tenant, _)| *tenant.as_uuid())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let known = tenants::existing(conn, &tenant_ids).await?;
+        let stored = registered_scopes::get_many(conn, &keys).await?;
+        for (index, key, tenant, containers) in chunk {
+            let outcome = if known.contains(tenant.as_uuid()) {
+                compare_registered(stored.get(key), key, *tenant, containers)
+            } else {
+                Err(invalid(format!("tenant {tenant} doesn't exist")))
+            };
+            if matches!(outcome, Ok(Outcome::Created)) {
+                changes.push(Change::Record {
+                    kind: key.kind.clone(),
+                    id: key.id.clone(),
+                    tenant: *tenant,
+                    containers: containers.clone(),
+                });
+            }
+            outcomes[*index].1 = outcome;
+        }
+    }
+    let failed = outcomes.iter().any(|(_, outcome)| outcome.is_err());
+    if !failed {
+        for chunk in changes.chunks(registered_scopes::MAX_BATCH) {
+            registered_scopes::apply(conn, chunk).await?;
+        }
+    }
+    Ok(outcomes)
+}
+
+/// A registered scope's checks that need nothing stored: its scope, tenant
+/// and containing scopes as a set.
+fn check_registered(
+    context: &Context<'_>,
+    kinds: &BTreeMap<&str, bool>,
+    seen: &mut BTreeSet<Scope>,
+    record: &konklav_bootstrap::RegisteredScope,
+) -> Result<(Scope, TenantId, Vec<Scope>), ApiError> {
+    let key = Scope {
+        kind: record.kind.clone(),
+        id: record.id.clone(),
+    };
+    if !seen.insert(key.clone()) {
+        return Err(invalid(
+            "the set names this registered scope more than once",
+        ));
+    }
+    if kinds.get(record.kind.as_str()) != Some(&true) {
+        return Err(invalid(format!(
+            "`{}` isn't a registered scope kind in the catalog",
+            record.kind
+        )));
+    }
+    if let Some((kind, _)) = record
+        .containers
+        .iter()
+        .find(|(kind, _)| kinds.get(kind.as_str()) != Some(&false))
+    {
+        return Err(invalid(format!(
+            "containing scope kind `{kind}` isn't a declared kind that isn't registered"
+        )));
+    }
+    let containers: BTreeSet<Scope> = record
+        .containers
+        .iter()
+        .map(|(kind, id)| Scope {
+            kind: kind.clone(),
+            id: id.clone(),
+        })
+        .collect();
+    Ok((
+        key,
+        context.tenant(&record.tenant)?,
+        containers.into_iter().collect(),
+    ))
+}
+
+/// Whether a registered scope is new, the same as `stored`, or in
+/// conflict with it.
+fn compare_registered(
+    stored: Option<&registered_scopes::RegisteredScope>,
+    key: &Scope,
+    tenant: TenantId,
+    containers: &[Scope],
+) -> Result<Outcome, ApiError> {
+    let Some(stored) = stored else {
+        return Ok(Outcome::Created);
+    };
+    if stored.tenant != tenant {
+        return Err(conflict(format!(
+            "{}/{} is registered in tenant {}, and its tenant can't change",
+            key.kind, key.id, stored.tenant
+        )));
+    }
+    if stored.state == RegisteredState::Removed {
+        return Err(conflict(format!("{}/{} was removed", key.kind, key.id)));
+    }
+    if stored.containers != containers {
+        return Err(conflict(format!(
+            "{}/{} is registered with other containing scopes",
+            key.kind, key.id
+        )));
+    }
+    Ok(Outcome::Skipped)
 }

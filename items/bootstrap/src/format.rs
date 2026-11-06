@@ -7,10 +7,10 @@
 //! memory to the current model in [`readable`]'s caller, so applying sees
 //! one shape; 1 is the first major, so there are none yet.
 //!
-//! `format.snapshot`, next to this file, records the tables, columns and
-//! keys of [`FORMAT`] as the readers define them. A test regenerates it and
-//! checks the version against the latest released format's frozen snapshot
-//! in `examples/bootstrap/formats/`; see the crate's README.
+//! `examples/bootstrap/formats/<version>/format.snapshot` records each
+//! format's tables, columns and keys. A test regenerates [`FORMAT`]'s from
+//! the readers while it is pending, and checks the version against the
+//! latest format a release has shipped; see the crate's README.
 
 use std::fmt;
 use std::str::FromStr;

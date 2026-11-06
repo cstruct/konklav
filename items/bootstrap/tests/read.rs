@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use konklav_bootstrap::{
     AssignmentTarget, CredentialMaterial, FORMAT, FactValue, FormatVersion, Id, Kind,
-    MembershipRef, Problem, SubjectRef, TenantRef, derive, read,
+    MembershipRef, Problem, RegisteredScope, SubjectRef, TenantRef, derive, read,
 };
 
 fn examples() -> PathBuf {
@@ -192,6 +192,116 @@ fn a_subject_without_an_id_needs_something_to_be_found_by() {
         problems[0].message.contains("needs an email"),
         "{problems:?}"
     );
+}
+
+// r[verify bootstrap.registered.shape]
+// r[verify bootstrap.contents]
+#[test]
+fn registered_scopes_read_from_both_formats() {
+    let nested = read(&[examples().join("nested/seed.styx")]).unwrap();
+    let scopes: Vec<_> = nested.registered_scopes.iter().map(|s| &s.value).collect();
+    assert_eq!(scopes.len(), 2);
+    assert_eq!(
+        *scopes[0],
+        RegisteredScope {
+            kind: "document".into(),
+            id: "d-1".into(),
+            tenant: TenantRef::Id(Id::External("acme".into())),
+            containers: vec![("project".into(), "p-1".into())],
+        },
+        "a tenant's scopes belong to it"
+    );
+    assert_eq!(scopes[1].containers, Vec::<(String, String)>::new());
+
+    let flat = read(&[examples().join("flat")]).unwrap();
+    let scopes: Vec<_> = flat.registered_scopes.iter().map(|s| &s.value).collect();
+    assert_eq!(
+        scopes[0].containers,
+        vec![
+            ("project".into(), "p-1".into()),
+            ("project".into(), "p-2".into())
+        ]
+    );
+    assert_eq!(
+        scopes[0].tenant,
+        TenantRef::Id(Id::External("org-1".into()))
+    );
+    assert_eq!(
+        scopes[1].containers,
+        Vec::<(String, String)>::new(),
+        "an empty cell is none"
+    );
+    assert_eq!(flat.registered_scopes[1].at.line, 3);
+
+    // A container's id is split from its kind at the first `:`, and ids
+    // are used as written, never resolved.
+    let dir = scratch(
+        "registered",
+        &[
+            (
+                "registered_scopes.csv",
+                "kind,id,tenant,containers\npatient,p:1,root,workspace:w:1\n",
+            ),
+            (
+                "seed.styx",
+                "registered_scopes ({kind patient, id \"a|b\", tenant root, containers ({kind \"x:y\", id \"1|2\"})})\n",
+            ),
+        ],
+    );
+    let set = read(&[dir]).unwrap();
+    assert_eq!(
+        set.registered_scopes[0].value,
+        RegisteredScope {
+            kind: "patient".into(),
+            id: "p:1".into(),
+            tenant: TenantRef::Root,
+            containers: vec![("workspace".into(), "w:1".into())],
+        }
+    );
+    assert_eq!(
+        set.registered_scopes[1].value.containers,
+        vec![("x:y".into(), "1|2".into())],
+        "a document holds what a table can't"
+    );
+}
+
+// r[verify bootstrap.registered.shape]
+// r[verify bootstrap.validate-first]
+#[test]
+fn malformed_registered_scopes_are_reported_with_their_place() {
+    let dir = scratch(
+        "registered-problems",
+        &[
+            (
+                "registered_scopes.csv",
+                "kind,id,tenant,containers\npatient,,root,\npatient,p-1,root,workspace\n",
+            ),
+            (
+                "seed.styx",
+                "registered_scopes ({kind patient, id p-2})\n\
+                 tenants ({id 0195f0c4-0000-7000-8000-000000000001, registered_scopes ({kind patient, id p-3, tenant root})})\n",
+            ),
+        ],
+    );
+    let problems = read(std::slice::from_ref(&dir)).unwrap_err();
+    let has = |file: &str, line: usize, text: &str| {
+        problems.iter().any(|p| {
+            p.at.as_ref()
+                .is_some_and(|at| at.file == dir.join(file) && at.line == line)
+                && p.message.contains(text)
+        })
+    };
+    let rendered: Vec<String> = problems.iter().map(ToString::to_string).collect();
+    assert!(
+        has("registered_scopes.csv", 2, "`id` is empty"),
+        "{rendered:#?}"
+    );
+    assert!(
+        has("registered_scopes.csv", 3, "`<kind>:<id>`, not `workspace`"),
+        "{rendered:#?}"
+    );
+    assert!(has("seed.styx", 1, "needs a `tenant`"), "{rendered:#?}");
+    assert!(has("seed.styx", 2, "the tenant it is in"), "{rendered:#?}");
 }
 
 /// Every set frozen for a released format: a directory under

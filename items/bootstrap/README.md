@@ -50,9 +50,12 @@ tenants ({
         scoped_roles ({role editor, scope_kind project, scope_id p-1})
         facts {member_type professional}
     })
+    registered_scopes ({kind document, id d-1, containers ({kind project, id p-1})})
 })
 
 subjects ({email ops@example.com, password_hash "$argon2id$…", global_roles (konklav.admin)})
+
+registered_scopes ({kind patient, id p-1, tenant acme, containers ({kind workspace, id w-1})})
 ```
 
 - **Members and subjects** take:
@@ -62,6 +65,7 @@ subjects ({email ops@example.com, password_hash "$argon2id$…", global_roles (k
 - **Members also take** `membership` (its id), `facts`, `roles` and `scoped_roles`.
 - **Credentials** have a `kind`: `password`, `secret_key` (slots `a` and `b`), `email_link`, `phone_otp` or `federated` (with `provider` and `provider_subject`). `session_flags` lists restrictive catalog flags every session started with the credential carries.
 - **Factors** are `kind totp` with `seed_base32`, or `kind email_code` with `email`.
+- **Registered scopes** take `kind`, `id` and `containers` (each a `kind` and an `id`, possibly none). Inside a tenant they belong to it; at the top level they name a `tenant` (an id, a key or `root`). Kinds and ids are opaque and used as written, never resolved.
 - **Templates and roles** take `metadata`, an object stored as the control plane's `metadata`. Styx scalars are text, so its values become JSON strings, and sequences and objects become arrays and objects.
 - **Unknown keys** are errors.
 
@@ -77,7 +81,10 @@ Every table has a header row. Rows name other records by id. An empty cell is an
 | `mfa_factors.csv` | `id`, `subject`, `kind` | `seed_base32`, `email`, `active` |
 | `memberships.csv` | `id`, `subject`, `tenant` | `fact.*` |
 | `assignments.csv` | `role` | `membership` or `subject` (a global role), `scope_kind`, `scope_id` |
+| `registered_scopes.csv` | `kind`, `id`, `tenant` | `containers` |
 | `sessions.csv` | `id`, `subject`, `credential`, `stage`, `auth_time`, `version`, `refresh_hash`, `expires_at` | `tenant`, `membership`, `client_kind`, `amr`, `flags`, `impersonator`, `revoked_at` |
+
+In `registered_scopes.csv`, `kind` and `id` are the scope's own, used as written, and `containers` lists its containing scopes as `<kind>:<id>`, split at the first `:`, for example `workspace:w-1|workspace:w-2`. A container whose kind holds `:` or `|`, or whose id holds `|`, and any kind or id with surrounding spaces, can only be written in a Styx document.
 
 CSV can't declare an id namespace, templates or roles. Put those in a `.styx` file next to the tables, as `examples/bootstrap/flat/set.styx` does.
 
@@ -96,23 +103,23 @@ Before reading any records, `read` checks the version: it reads its own major at
 
 #### Changing the format
 
-`src/format.snapshot` records every table, column and key the readers accept, generated from `table::columns` and by reflecting on the Styx document types. Each line is `<path>: <required|optional> <kind>`, such as `csv/subjects.csv/state: optional column` or `styx/tenants/members/roles: optional list of text`; a record's keys sit under its key's path. A test (`src/format/check.rs`) regenerates it and compares it with the snapshot of the latest released format in `examples/bootstrap/formats/<version>/format.snapshot`:
+Each format version has a directory, `examples/bootstrap/formats/<version>/`, holding its `format.snapshot` and at least one set, in a directory of its own, that uses what the version has, with any `catalog.json` it names. The snapshot records every table, column and key the readers accept, generated from `table::columns` and by reflecting on the Styx document types. Each line is `<path>: <required|optional> <kind>`, such as `csv/subjects.csv/state: optional column` or `styx/tenants/members/roles: optional list of text`; a record's keys sit under its key's path.
+
+A format is **pending** until a release ships it. `mise run release:bump` then stamps its snapshot with `released in <version>`, and from then on the format is **frozen**: its directory never changes. A test (`src/format/check.rs`) compares the readers with the latest released format's snapshot:
 
 - **Minor:** an added optional entry, an added entry inside one that is itself added (such as a new table's required columns), or a required entry made optional.
 - **Major:** a removed (or renamed) entry, an added required entry in something that exists, an entry made required, or a changed kind.
 - **None:** no difference.
 
-`FORMAT` must be the released version bumped by the biggest of these, so changes before a release share one bump. Then the committed snapshot must match; rewrite it with:
+`FORMAT` must be the released version bumped by the biggest of these, or 1.0 while nothing is released, so every change between two releases shares one bump. The pending format's snapshot must then match the readers; create or rewrite it with:
 
 ```sh
 UPDATE_FORMAT_SNAPSHOT=1 cargo test -p konklav-bootstrap format
 ```
 
+and add a set to its directory, or extend the pending one, that uses what changed. Only the current format may be pending.
+
 The snapshot can't see what values mean, such as a new credential kind or a changed default; decide those bumps by hand. The frozen sets catch what a change breaks.
-
-#### Releasing a format
-
-A release that ships a new format version freezes it: add `examples/bootstrap/formats/<version>/` with a copy of `src/format.snapshot` as `format.snapshot` and at least one set in a directory of its own that uses what the version added, with any `catalog.json` it names. Frozen sets are never changed. The tests read every one of them, and the server's tests apply them to a database.
 
 ### Identifiers and natural keys
 
