@@ -43,6 +43,30 @@ async fn portable_facts(
     Ok(facts)
 }
 
+/// Refuses `tenant` for a session carrying `flags` when the tenant's
+/// facts don't match the confinement of one of them.
+// r[impl session.flags.confine.tenant]
+pub(crate) async fn check_confinement(
+    conn: &mut Connection,
+    flags: &[String],
+    tenant: &tenants::Tenant,
+) -> Result<(), ApiError> {
+    if flags.is_empty() {
+        return Ok(());
+    }
+    let confinements = catalog::load(conn).await?.confinements(&tenant.facts);
+    match confinements.violated(flags, true) {
+        Some(flag) => Err(ApiError::new(
+            ErrorCode::Forbidden,
+            format!(
+                "session flag `{flag}` confines the session to tenants where {}",
+                confinements.flags[flag].describe()
+            ),
+        )),
+        None => Ok(()),
+    }
+}
+
 /// Signs an access token for the session's current state.
 ///
 /// Issuance stops while the configured signing key is revoked.
@@ -61,6 +85,15 @@ pub async fn access_token(
             ErrorCode::SigningKeyUnavailable,
             "no signing key is available",
         ));
+    }
+
+    // However the token is asked for, a confined session gets none for a
+    // tenant outside its confinement.
+    if let (Stage::Tenant, Some(tenant), false) =
+        (session.stage, session.tenant_id, session.flags.is_empty())
+    {
+        let tenant = tenants::get(conn, tenant).await?;
+        check_confinement(conn, &session.flags, &tenant).await?;
     }
 
     let now = Utc::now();

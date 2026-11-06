@@ -9,7 +9,7 @@ use axum::extract::{Path, State};
 use chrono::{DateTime, SecondsFormat, Utc};
 use konklav_api::ExplainDecision;
 use konklav_authz::{Check, DecisionExplanation, ExplainInput, Requirements, SessionContext};
-use konklav_core::{SubjectId, TenantId};
+use konklav_core::{SessionId, SubjectId, TenantId};
 use konklav_store::compile_input::{self, CompileInput};
 use konklav_store::sessions::{self, Stage};
 use konklav_store::subjects::{self, SubjectState};
@@ -166,6 +166,34 @@ async fn check_reach(
     Ok(())
 }
 
+/// The subject's session `id`, which fixes the tenant when none was given
+/// and must agree with it otherwise.
+async fn session_for(
+    conn: &mut Connection,
+    id: SessionId,
+    subject: SubjectId,
+    tenant: &mut Option<TenantId>,
+) -> Result<sessions::Session, ApiError> {
+    let session = sessions::get(conn, id)
+        .await
+        .map_err(not_found_as("session"))?;
+    if session.subject_id != subject {
+        return Err(ApiError::invalid_request(
+            "the session belongs to another subject",
+        ));
+    }
+    match (*tenant, session.tenant_id) {
+        (None, selected) => *tenant = selected,
+        (Some(asked), selected) if Some(asked) != selected => {
+            return Err(ApiError::invalid_request(
+                "the session is for another tenant than the one given",
+            ));
+        }
+        _ => {}
+    }
+    Ok(session)
+}
+
 /// Explains an authorization decision.
 ///
 /// Evaluates requirements for the subject as a relying system would, and
@@ -199,26 +227,7 @@ async fn explain_decision(
     let mut conn = db.get().await?;
     let now = Utc::now();
     let session = match body.session {
-        Some(id) => {
-            let session = sessions::get(&mut conn, id)
-                .await
-                .map_err(not_found_as("session"))?;
-            if session.subject_id != subject {
-                return Err(ApiError::invalid_request(
-                    "the session belongs to another subject",
-                ));
-            }
-            match (tenant, session.tenant_id) {
-                (None, selected) => tenant = selected,
-                (Some(asked), selected) if Some(asked) != selected => {
-                    return Err(ApiError::invalid_request(
-                        "the session is for another tenant than the one given",
-                    ));
-                }
-                _ => {}
-            }
-            Some(session)
-        }
+        Some(id) => Some(session_for(&mut conn, id, subject, &mut tenant).await?),
         None => None,
     };
 
@@ -259,6 +268,7 @@ async fn explain_decision(
         }
     };
     let restrictive_flags = input.document.restrictive_flags();
+    let confinements = input.confinements();
     let claims = session.as_ref().map(|session| claims_of(&state, session));
     let context = session
         .as_ref()
@@ -266,6 +276,7 @@ async fn explain_decision(
         .map(|(session, claims)| SessionContext {
             claims,
             restrictive_flags: &restrictive_flags,
+            confinements: &confinements,
             current: session.is_active_at(now),
         });
     Ok(Json(konklav_authz::explain_decision(

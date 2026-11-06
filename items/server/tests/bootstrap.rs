@@ -258,6 +258,56 @@ async fn template_and_role_metadata_is_stored_and_compared() {
     assert_eq!(report.conflicts.len(), 1, "{report}");
 }
 
+/// A directory holding only `catalog`, as a bootstrap set.
+fn catalog_only(name: &str, catalog: &serde_json::Value) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("konklav-bootstrap-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("catalog.json"), catalog.to_string()).unwrap();
+    dir
+}
+
+// r[verify authz.catalog.flag-confinement]
+// r[verify session.flags.confine.facts]
+// r[verify bootstrap.contents]
+#[tokio::test(flavor = "multi_thread")]
+async fn bootstrap_sets_can_confine_flags() {
+    let app = TestApp::new().await;
+    let report = apply(
+        &app,
+        &[examples().join("nested/seed.styx")],
+        Options::default(),
+    )
+    .await;
+    assert!(report.committed, "{report}");
+    let catalog = app.control(Method::GET, "/v1/catalog", None).await;
+    let personal_only = catalog.body["session_flags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|flag| flag["name"] == "personal_only")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        personal_only["confine"],
+        serde_json::json!({"tenant": {"tenant_type": ["personal"]}})
+    );
+
+    // A confinement on a fact that tokens never carry is refused.
+    let app = TestApp::new().await;
+    let unsound = catalog_only(
+        "unsound-confinement",
+        &serde_json::json!({
+            "facts": [{"key": "seats", "target": "tenant", "type": "integer"}],
+            "session_flags": [{"name": "personal_only", "kind": "restrictive",
+                               "confine": {"tenant": {"seats": [1]}}}],
+        }),
+    );
+    let report = apply(&app, &[unsound], Options::default()).await;
+    assert!(!report.committed, "{report}");
+    assert!(report.to_string().contains("not portable"), "{report}");
+}
+
 // r[verify bootstrap.atomic]
 // r[verify bootstrap.idempotent]
 #[tokio::test(flavor = "multi_thread")]
@@ -400,6 +450,7 @@ fn read_dir(dir: &Path) -> std::collections::BTreeMap<String, String> {
 
 // r[verify bootstrap.export]
 // r[verify bootstrap.export.registered]
+// r[verify bootstrap.format.export]
 #[tokio::test(flavor = "multi_thread")]
 async fn an_exported_set_bootstraps_an_empty_database_unchanged() {
     let app = TestApp::new().await;
@@ -525,6 +576,10 @@ async fn an_exported_set_bootstraps_an_empty_database_unchanged() {
         files["set.styx"].contains("registered_scopes")
             && files["set.styx"].contains("\" odd|id\""),
         "what a table can't hold goes in the document"
+    );
+    assert!(
+        files["set.styx"].starts_with(&format!("format {}\n", konklav_bootstrap::FORMAT)),
+        "declares the current format"
     );
 
     let copy = TestApp::new().await;
@@ -754,5 +809,34 @@ async fn registered_scope_problems_and_conflicts_are_all_reported() {
     assert_eq!(scope_events(&app).await.len(), events);
     for dir in [base, dir] {
         std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+// r[verify bootstrap.format.released]
+#[tokio::test(flavor = "multi_thread")]
+async fn every_frozen_set_of_a_released_format_still_applies() {
+    let mut sets = Vec::new();
+    for format in std::fs::read_dir(examples().join("formats")).unwrap() {
+        for set in std::fs::read_dir(format.unwrap().path()).unwrap() {
+            let set = set.unwrap().path();
+            if set.is_dir() {
+                sets.push(set);
+            }
+        }
+    }
+    sets.sort();
+    assert_ne!(sets, Vec::<PathBuf>::new(), "a frozen set");
+    for set in sets {
+        let app = TestApp::new().await;
+        let paths = std::slice::from_ref(&set);
+        let applied = apply(&app, paths, Options::default()).await;
+        assert!(applied.committed, "{}: {applied}", set.display());
+        assert!(applied.conflicts.is_empty(), "{}: {applied}", set.display());
+        let again = apply(&app, paths, Options::default()).await;
+        assert!(
+            again.committed && again.conflicts.is_empty(),
+            "{}: {again}",
+            set.display()
+        );
     }
 }

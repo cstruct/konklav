@@ -13,7 +13,7 @@ use crate::model::{
 use crate::{Problem, line_of};
 
 /// The columns each table accepts, required ones first. Facts come on top.
-fn columns(table: &str) -> (&'static [&'static str], &'static [&'static str], bool) {
+pub(crate) fn columns(table: &str) -> (&'static [&'static str], &'static [&'static str], bool) {
     match table {
         "tenants.csv" => (&["id"], &["parent", "templates"], true),
         "subjects.csv" => (&["id"], &["kind", "state"], false),

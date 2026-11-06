@@ -56,6 +56,7 @@ pub(crate) fn catalog(document: CatalogDocument) -> api::CatalogDocument {
                 },
                 requestable: flag.requestable,
                 description: flag.description,
+                confine: flag.confine,
             })
             .collect(),
     }
@@ -111,6 +112,7 @@ pub(crate) fn store_catalog(document: api::CatalogDocument) -> CatalogDocument {
                 },
                 requestable: flag.requestable,
                 description: flag.description,
+                confine: flag.confine,
             })
             .collect(),
     }
@@ -167,8 +169,14 @@ mod tests {
                 {"name": "readers", "actions": ["document:read"]},
             ],
             "scope_kinds": [{"name": "project"}, {"name": "document", "registered": true}],
-            "facts": [{"key": "period", "target": "share", "type": "date_range", "portable": true}],
-            "session_flags": [{"name": "personal_only", "kind": "restrictive", "requestable": true}],
+            "facts": [
+                {"key": "period", "target": "share", "type": "date_range"},
+                {"key": "tenant_type", "target": "tenant", "type": "string", "portable": true},
+            ],
+            "session_flags": [{
+                "name": "personal_only", "kind": "restrictive", "requestable": true,
+                "confine": {"tenant": {"tenant_type": ["personal"]}},
+            }],
         }))
         .unwrap();
         let stored = serde_json::to_value(&document).unwrap();

@@ -3,7 +3,16 @@
   "scope_kinds": [{"name": "project"}, {"name": "document", "registered": true}],
   "facts": [
     {"key": "member_type", "target": "membership", "type": "string", "portable": true},
-    {"key": "seats", "target": "tenant", "type": "integer"}
+    {"key": "seats", "target": "tenant", "type": "integer"},
+    {"key": "tenant_type", "target": "tenant", "type": "string", "portable": true}
   ],
-  "session_flags": [{"name": "passwordless", "kind": "restrictive", "requestable": false}]
+  "session_flags": [
+    {"name": "passwordless", "kind": "restrictive", "requestable": false},
+    {
+      "name": "personal_only",
+      "kind": "restrictive",
+      "requestable": true,
+      "confine": {"tenant": {"tenant_type": ["personal"]}}
+    }
+  ]
 }

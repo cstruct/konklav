@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use crate::compile::{Placement, beats, effective_policies};
 use crate::evaluate::step_up_satisfied;
 use crate::{
-    Assignment, Catalog, Decision, DenyReason, Effect, Entitlements, RegisteredScopes,
-    Registration, Requirements, Scope, Share, compile, evaluate, shared,
+    Assignment, Catalog, Confinements, Decision, DenyReason, Effect, Entitlements,
+    RegisteredScopes, Registration, Requirements, Scope, Share, compile, evaluate, shared,
 };
 
 /// One policy that bears on an action, and where it lands.
@@ -321,6 +321,9 @@ pub struct SessionContext<'a> {
     pub claims: &'a AccessClaims,
     /// Restrictive session flags from the catalog.
     pub restrictive_flags: &'a BTreeSet<String>,
+    /// The catalog's confinements, with the facts of the session's tenant
+    /// they name.
+    pub confinements: &'a Confinements,
     /// Whether the session is current; otherwise every decision is
     /// `invalid_token`.
     pub current: bool,
@@ -564,6 +567,9 @@ fn session_checks(
             )
         },
     ));
+    if let Some(check) = confinement_check(session) {
+        checks.push(check);
+    }
     let missing: Vec<&String> = requirements
         .require_flags
         .iter()
@@ -607,6 +613,60 @@ fn session_checks(
         },
     ));
     checks
+}
+
+/// Whether the session's tenant matches the confinement of each confined
+/// flag it carries, naming each confinement and the tenant's facts; `None`
+/// when it carries no confined flag.
+// r[impl authz.explain.confinement]
+fn confinement_check(session: &SessionContext<'_>) -> Option<Check> {
+    let claims = session.claims;
+    let confinements = session.confinements;
+    let confined: Vec<_> = confinements.of(&claims.sfl).collect();
+    if confined.is_empty() {
+        return None;
+    }
+    let mut message = String::new();
+    let mut passed = true;
+    for (flag, confinement) in confined {
+        if !message.is_empty() {
+            message.push(' ');
+        }
+        let rule = confinement.describe();
+        if claims.tid.is_none() {
+            passed = false;
+            let _ = write!(
+                message,
+                "`{flag}` confines the session to tenants where {rule}, and the decision is for no tenant."
+            );
+            continue;
+        }
+        let facts: Vec<String> = confinement
+            .tenant
+            .keys()
+            .map(|key| match confinements.tenant_facts.get(key) {
+                Some(value) => format!("`{key}` is `{value}`"),
+                None => format!("`{key}` is not set"),
+            })
+            .collect();
+        let facts = facts.join(", ");
+        match confinement.failing(&confinements.tenant_facts) {
+            Some(key) => {
+                passed = false;
+                let _ = write!(
+                    message,
+                    "`{flag}` confines the session to tenants where {rule}; the tenant fails on `{key}` ({facts})."
+                );
+            }
+            None => {
+                let _ = write!(
+                    message,
+                    "`{flag}` confines the session to tenants where {rule}, and the tenant matches ({facts})."
+                );
+            }
+        }
+    }
+    Some(Check::new("confinement", passed, message))
 }
 
 /// The session and tenant checks a decision makes, after `checks`.
@@ -859,6 +919,7 @@ pub fn explain_decision(input: &ExplainInput<'_>, checks: Vec<Check>) -> Decisio
                 requirements,
                 session.claims,
                 session.restrictive_flags,
+                session.confinements,
                 &compiled,
                 input.registered,
                 input.now,

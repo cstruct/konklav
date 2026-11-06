@@ -3479,6 +3479,23 @@
           "native"
         ]
       },
+      "Confinement": {
+        "type": "object",
+        "description": "A restrictive flag's confinement: the tenants a session carrying the\nflag may act in, as fact predicates that must all hold.\n\nUnknown members are refused rather than ignored, since ignoring one\nwould loosen the confinement.",
+        "properties": {
+          "tenant": {
+            "type": "object",
+            "description": "Tenant fact keys, each with the values the fact may have.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {}
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "Contribution": {
         "type": "object",
         "description": "One policy that bears on an action, and where it lands.",
@@ -4104,6 +4121,28 @@
               "restricted_session": {
                 "type": "object",
                 "description": "The session carries a restrictive flag the operation doesn't admit.",
+                "required": [
+                  "flag"
+                ],
+                "properties": {
+                  "flag": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "title": "DenyReasonConfinedSession",
+            "description": "The session carries a confined flag, and the token targets no tenant\nor one whose facts don't match the flag's confinement.",
+            "required": [
+              "confined_session"
+            ],
+            "properties": {
+              "confined_session": {
+                "type": "object",
+                "description": "The session carries a confined flag, and the token targets no tenant\nor one whose facts don't match the flag's confinement.",
                 "required": [
                   "flag"
                 ],
@@ -6483,6 +6522,17 @@
           "kind"
         ],
         "properties": {
+          "confine": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Confinement",
+                "description": "Restrictive flags only: confines sessions carrying the flag to the\ntenants whose facts match, such as\n`{\"tenant\": {\"tenant_type\": [\"personal\"]}}`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "description": {
             "type": "string"
           },

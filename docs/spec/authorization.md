@@ -29,6 +29,15 @@ r[authz.catalog.removal]
 An action MUST NOT be removed from the catalog while any policy references
 it.
 
+r[authz.catalog.flag-confinement]
+A session flag entry MAY carry a confinement as `confine`, an object whose
+`tenant` member maps tenant fact keys to lists of allowed values, such as
+`{"tenant": {"tenant_type": ["personal"]}}` (see `session.flags.confine`).
+A catalog document is validated as a whole, so a change that stops
+declaring a fact a confinement names, or makes it non-portable or changes
+its type, MUST be rejected unless the same document changes the
+confinement too.
+
 ## Roles, templates and policies
 
 r[authz.template.blueprint]
@@ -161,6 +170,11 @@ Every entitlement set MUST carry the revision it was compiled at.
 r[authz.compile.registered-kinds]
 Every entitlement set MUST name the catalog's registered scope kinds, so a
 relying core knows which requirements need a registered scope's record.
+
+r[authz.compile.confinements]
+Every entitlement set MUST carry the catalog's confinements and the
+current values of the tenant facts they name (none for a set without a
+tenant), so a relying core can decide confinements without another lookup.
 
 ## Sharing
 
@@ -321,6 +335,12 @@ A decision explanation MUST also report each other check that decides the
 outcome: whether the subject, its membership and the tenant are active, and
 with a session, whether the session is current, and the token kind, session
 flag and step-up checks.
+
+r[authz.explain.confinement]
+With a session that carries a confined flag, a decision explanation MUST
+report a confinement check that names each such flag, its confinement and
+the tenant's values of the facts it names, and says which predicate fails
+when one does.
 
 r[authz.explain.at]
 With history enabled, the control plane MUST be able to explain a decision

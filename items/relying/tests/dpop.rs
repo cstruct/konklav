@@ -102,6 +102,7 @@ impl Fixture {
                 },
                 restrictive_flags: BTreeSet::new(),
                 registered_kinds: BTreeSet::new(),
+                confinements: konklav_authz::Confinements::default(),
             },
             T0,
         );

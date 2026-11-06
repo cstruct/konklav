@@ -8,7 +8,8 @@
 //! What it writes:
 //!
 //! - `catalog.json`
-//! - `set.styx`: templates, global roles, and tenants with their roles
+//! - `set.styx`: the format version, templates, global roles, and tenants
+//!   with their roles
 //! - `subjects.csv`, `credentials.csv`, `mfa_factors.csv`,
 //!   `memberships.csv`, `assignments.csv` and `registered_scopes.csv`
 //!   (with any scope a table can't hold as written in `set.styx`)
@@ -247,7 +248,8 @@ async fn document(
         "global roles",
         global_roles.iter().filter(|r| !r.builtin).count(),
     );
-    let mut document = String::new();
+    // r[impl bootstrap.format.export]
+    let mut document = format!("format {}\n", konklav_bootstrap::FORMAT);
     for (key, value) in [
         ("templates", Value::List(template_docs)),
         ("global_roles", roles_value(&global_roles)),

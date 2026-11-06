@@ -4,9 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use konklav_authz::{
-    Assignment, Catalog, Decision, DenyReason, Effect, Entitlements, ExplainInput, Level,
-    Obligation, Policy, RegisteredScopes, Registration, Requirements, Scope, ScopeRequirement,
-    SessionContext, Share, compile, evaluate, explain_decision, shared,
+    Assignment, Catalog, Confinements, Decision, DenyReason, Effect, Entitlements, ExplainInput,
+    Level, Obligation, Policy, RegisteredScopes, Registration, Requirements, Scope,
+    ScopeRequirement, SessionContext, Share, compile, evaluate, explain_decision, shared,
 };
 use konklav_core::{SessionId, ShareId, SubjectId, TenantId};
 use konklav_token::{AccessClaims, TokenKind};
@@ -116,6 +116,7 @@ fn decide(
         requirements,
         claims,
         &BTreeSet::new(),
+        &Confinements::default(),
         entitlements,
         registered,
         NOW,
@@ -319,6 +320,7 @@ fn another_tenant_gets_shares_of_the_scope_or_a_container_with_obligations() {
             &read("d-1", None),
             &claims,
             &BTreeSet::new(),
+            &Confinements::default(),
             &entitlements,
             &registered,
             NOW + 1,
@@ -443,6 +445,7 @@ fn explanations_agree_with_decisions_at_registered_scopes() {
                         session: Some(SessionContext {
                             claims: &claims,
                             restrictive_flags: &flags,
+                            confinements: &Confinements::default(),
                             current: true,
                         }),
                         now: NOW,

@@ -11,6 +11,7 @@ Library crate that reads bootstrap sets: the tenants, people, credentials and gr
 - Keeping identifiers as written. `Id::resolve` turns them into UUIDs: a UUID as given, or an external id as UUID v5 of the set's id namespace and `<kind>:<external id>`.
 - Carrying the natural keys of nested records that have no ids.
 - Reporting every problem in every file together, each with its file and line.
+- Checking the set's format version before reading its records.
 
 Out of scope: anything that needs the database, such as finding natural keys, comparing records with stored ones and writing them. That is `konklav-server`'s `bootstrap` module. Reading is pure, apart from reading the files it is given.
 
@@ -19,6 +20,7 @@ Out of scope: anything that needs the database, such as finding natural keys, co
 - `read(paths)`: reads files and directories into a `BootstrapSet`, or returns every `Problem` found.
   - A directory contributes its `.csv` tables, its `.styx` documents and `catalog.json`.
 - The model: `BootstrapSet` and its records, each a `Located<T>` with the `Location` it was read from.
+- `FORMAT`, the newest bootstrap format version it reads and the one `export` declares, and `FormatVersion`.
 - `Id`, `Kind` and `derive`, for working out the UUID an external id becomes. A relying system can use `derive` to compute Konklav ids from its own.
 
 ## File formats
@@ -28,6 +30,7 @@ Out of scope: anything that needs the database, such as finding natural keys, co
 ### Nested (Styx)
 
 ```styx
+format 1.0                                          // the bootstrap format version; see below
 id_namespace 3f1c9a52-6a1e-4d0b-9a0e-6c1d8f0b2e11   // needed for external ids and tenant keys
 catalog_file "catalog.json"                         // relative to this file
 
@@ -81,9 +84,42 @@ Every table has a header row. Rows name other records by id. An empty cell is an
 | `registered_scopes.csv` | `kind`, `id`, `tenant` | `containers` |
 | `sessions.csv` | `id`, `subject`, `credential`, `stage`, `auth_time`, `version`, `refresh_hash`, `expires_at` | `tenant`, `membership`, `client_kind`, `amr`, `flags`, `impersonator`, `revoked_at` |
 
-In `registered_scopes.csv`, `kind` and `id` are the scope's own, used as written, and `containers` lists its containing scopes as `<kind>:<id>`, split at the first `:`, for example `workspace:w-1|workspace:w-2`. A container whose kind holds `:` or `|`, or whose id holds `|`, and any kind or id with surrounding spaces, can only be written in a Styx document.
+Registered scopes (`registered_scopes.csv` and the Styx `registered_scopes` keys) are new in format 1.1. In `registered_scopes.csv`, `kind` and `id` are the scope's own, used as written, and `containers` lists its containing scopes as `<kind>:<id>`, split at the first `:`, for example `workspace:w-1|workspace:w-2`. A container whose kind holds `:` or `|`, or whose id holds `|`, and any kind or id with surrounding spaces, can only be written in a Styx document.
 
 CSV can't declare an id namespace, templates or roles. Put those in a `.styx` file next to the tables, as `examples/bootstrap/flat/set.styx` does.
+
+### Format versions
+
+The tables, columns and keys above are bootstrap format 1.0. The format has its own `major.minor` version, apart from Konklav's release version:
+
+- **A minor version** only adds: a new optional table, column or key. Every set of an older minor version is still a valid set of the newer one.
+- **A major version** is anything else: removing or renaming a table, column or key, making one required, or changing what a value means.
+
+A set declares its version with a top-level `format` key in any of its `.styx` documents (`format 1.0`, or quoted, `format "1.0"`). CSV can't declare one, like the id namespace. Declarations that differ are a problem, and a set that declares none is format 1.0. `export` declares the current version in `set.styx`.
+
+Before reading any records, `read` checks the version: it reads its own major at any minor up to `FORMAT`, and refuses anything else with one problem at the declaration, such as `this set needs format 1.2; this server reads format 1.0 up to 1.1`, rather than one for every key it doesn't know. A future major can upgrade sets of an older one in memory after reading them, so the server applies one shape; there are none yet.
+
+`catalog.json` is the control plane's catalog document and changes with the control plane, not with this version.
+
+#### Changing the format
+
+`src/format.snapshot` records every table, column and key the readers accept, generated from `table::columns` and by reflecting on the Styx document types. Each line is `<path>: <required|optional> <kind>`, such as `csv/subjects.csv/state: optional column` or `styx/tenants/members/roles: optional list of text`; a record's keys sit under its key's path. A test (`src/format/check.rs`) regenerates it and compares it with the snapshot of the latest released format in `examples/bootstrap/formats/<version>/format.snapshot`:
+
+- **Minor:** an added optional entry, an added entry inside one that is itself added (such as a new table's required columns), or a required entry made optional.
+- **Major:** a removed (or renamed) entry, an added required entry in something that exists, an entry made required, or a changed kind.
+- **None:** no difference.
+
+`FORMAT` must be the released version bumped by the biggest of these, so changes before a release share one bump. Then the committed snapshot must match; rewrite it with:
+
+```sh
+UPDATE_FORMAT_SNAPSHOT=1 cargo test -p konklav-bootstrap format
+```
+
+The snapshot can't see what values mean, such as a new credential kind or a changed default; decide those bumps by hand. The frozen sets catch what a change breaks.
+
+#### Releasing a format
+
+A release that ships a new format version freezes it: add `examples/bootstrap/formats/<version>/` with a copy of `src/format.snapshot` as `format.snapshot` and at least one set in a directory of its own that uses what the version added, with any `catalog.json` it names. Frozen sets are never changed. The tests read every one of them, and the server's tests apply them to a database.
 
 ### Identifiers and natural keys
 
@@ -112,10 +148,10 @@ This is a library. Run it through `konklav-server bootstrap` (see [the server's 
 cargo test -p konklav-bootstrap
 ```
 
-- **Direct coverage:** both examples, external-id derivation, and located problems for broken tables and documents.
-- **Indirect coverage:** `items/server/tests/bootstrap.rs` applies the examples to a database.
+- **Direct coverage:** both examples, every frozen set, format declarations and refusals, the format bump check, external-id derivation, and located problems for broken tables and documents.
+- **Indirect coverage:** `items/server/tests/bootstrap.rs` applies the examples and every frozen set to a database.
 
 ## Traceability and related docs
 
 - `bootstrap.*` in [the platform spec](../../docs/spec/platform.md)
-- The terms `bootstrap set`, `external id`, `id namespace` and `natural key` in the [nomenclature](../../docs/nomenclature.md)
+- The terms `bootstrap set`, `bootstrap format version`, `external id`, `id namespace` and `natural key` in the [nomenclature](../../docs/nomenclature.md)
