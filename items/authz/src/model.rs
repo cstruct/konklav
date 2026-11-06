@@ -74,6 +74,112 @@ impl RegisteredScopes {
     }
 }
 
+/// A restrictive flag's confinement: the tenants a session carrying the
+/// flag may act in, as fact predicates that must all hold.
+// r[impl session.flags.confine]
+///
+/// Unknown members are refused rather than ignored, since ignoring one
+/// would loosen the confinement.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(from = "StrictConfinement")]
+pub struct Confinement {
+    /// Tenant fact keys, each with the values the fact may have.
+    #[serde(default)]
+    pub tenant: BTreeMap<String, Vec<serde_json::Value>>,
+}
+
+/// [`Confinement`] as read, refusing unknown members.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrictConfinement {
+    #[serde(default)]
+    tenant: BTreeMap<String, Vec<serde_json::Value>>,
+}
+
+impl From<StrictConfinement> for Confinement {
+    fn from(read: StrictConfinement) -> Self {
+        Self {
+            tenant: read.tenant,
+        }
+    }
+}
+
+impl Confinement {
+    /// The first predicate (by fact key) that `tenant_facts` fails, if any:
+    /// the fact is missing, or its value isn't one of those allowed.
+    #[must_use]
+    pub fn failing(&self, tenant_facts: &BTreeMap<String, serde_json::Value>) -> Option<&str> {
+        self.tenant
+            .iter()
+            .find(|(key, allowed)| {
+                tenant_facts
+                    .get(*key)
+                    .is_none_or(|value| !allowed.contains(value))
+            })
+            .map(|(key, _)| key.as_str())
+    }
+
+    /// Such as "`tenant_type` is one of `\"personal\"`".
+    #[must_use]
+    pub fn describe(&self) -> String {
+        self.tenant
+            .iter()
+            .map(|(key, allowed)| {
+                let values: Vec<String> = allowed.iter().map(|v| format!("`{v}`")).collect();
+                format!("`{key}` is one of {}", values.join(", "))
+            })
+            .collect::<Vec<_>>()
+            .join(" and ")
+    }
+}
+
+/// What deciding confinements needs: the catalog's confinements by flag,
+/// and the current values of the tenant facts they name.
+// r[impl authz.compile.confinements]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct Confinements {
+    /// Confinements by the restrictive flag they belong to.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub flags: BTreeMap<String, Confinement>,
+    /// The tenant's values of the facts any confinement names; empty
+    /// without a tenant.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
+    pub tenant_facts: BTreeMap<String, serde_json::Value>,
+}
+
+impl Confinements {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.flags.is_empty() && self.tenant_facts.is_empty()
+    }
+
+    /// The confined flags among `flags`, with their confinements.
+    pub fn of<'a>(
+        &'a self,
+        flags: &'a [String],
+    ) -> impl Iterator<Item = (&'a str, &'a Confinement)> + 'a {
+        flags.iter().filter_map(|flag| {
+            self.flags
+                .get(flag)
+                .map(|confinement| (flag.as_str(), confinement))
+        })
+    }
+
+    /// The first of `flags` whose confinement a session acting in the
+    /// tenant (or in none, when `has_tenant` is false) violates.
+    #[must_use]
+    pub fn violated<'a>(&'a self, flags: &'a [String], has_tenant: bool) -> Option<&'a str> {
+        self.of(flags)
+            .find(|(_, confinement)| {
+                !has_tenant || confinement.failing(&self.tenant_facts).is_some()
+            })
+            .map(|(flag, _)| flag)
+    }
+}
+
 /// How an action group expands.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -246,6 +352,10 @@ pub struct EntitlementSet {
     // r[impl authz.compile.registered-kinds]
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub registered_kinds: BTreeSet<String>,
+    /// The catalog's confinements and the tenant's facts they name, so
+    /// confinements can be decided without another lookup.
+    #[serde(default, skip_serializing_if = "Confinements::is_empty")]
+    pub confinements: Confinements,
 }
 
 /// Scoped entitlements serialize as a list, since JSON keys must be strings.

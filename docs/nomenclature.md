@@ -265,6 +265,12 @@ Terms are introduced in dependency order: each definition only uses terms define
     - A `restrictive flag` denies the session everywhere except operations that explicitly admit the flag. Example: a session limited to a subject's personal tenant.
     - An `assertive flag` is a positive statement that an operation can require. Example: `device_bound` after a hardware-key login.
 
+- `confinement`
+  - A restrictive flag's limit on where a session carrying it may act, declared with the flag in the action catalog: the tenants whose portable facts match.
+  - It is a conjunction of `fact predicates`, each naming a tenant fact and the values it may have. Example: `personal_only` confined to tenants whose `tenant_type` is `personal`.
+  - A flag with a confinement is a `confined flag`, and a session carrying one is a `confined session`. A confined session can't enter a tenant outside the confinement, and decisions for it deny whenever its tenant is outside it.
+  - Confinements are deliberately not a policy language: no operators beyond "one of these values", no disjunction across facts, no references to the operation.
+
 - `step-up`
   - A requirement for stronger or more recent authentication than the session currently has, such as two authentication methods, or an `auth_time` within the last five minutes.
   - An unmet step-up requirement yields a demand to re-authenticate, not a plain denial.

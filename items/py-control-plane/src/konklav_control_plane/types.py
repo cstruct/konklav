@@ -81,6 +81,21 @@ Whether the session's refresh token travels in a cookie or in bodies.
 """
 
 
+class Confinement(TypedDict):
+    """
+    A restrictive flag's confinement: the tenants a session carrying the
+    flag may act in, as fact predicates that must all hold.
+
+    Unknown members are refused rather than ignored, since ignoring one
+    would loosen the confinement.
+    """
+
+    tenant: NotRequired[dict[str, list[Any]]]
+    """
+    Tenant fact keys, each with the values the fact may have.
+    """
+
+
 class CreateTenant(TypedDict):
     facts: NotRequired[dict[str, Any]]
     parent: NotRequired[str | None]
@@ -169,6 +184,28 @@ class DenyReasonRestrictedSession(TypedDict):
     """
 
 
+class ConfinedSession(TypedDict):
+    """
+    The session carries a confined flag, and the token targets no tenant
+    or one whose facts don't match the flag's confinement.
+    """
+
+    flag: str
+
+
+class DenyReasonConfinedSession(TypedDict):
+    """
+    The session carries a confined flag, and the token targets no tenant
+    or one whose facts don't match the flag's confinement.
+    """
+
+    confined_session: ConfinedSession
+    """
+    The session carries a confined flag, and the token targets no tenant
+    or one whose facts don't match the flag's confinement.
+    """
+
+
 class MissingFlag(TypedDict):
     """
     The session lacks an assertive flag the operation requires.
@@ -225,7 +262,7 @@ class DenyReasonMissingActions(TypedDict):
     missing_actions: MissingActions
 
 
-type DenyReason = DenyReasonInvalidToken | DenyReasonInvalidDpopProof | DenyReasonTokenKind | DenyReasonRestrictedSession | DenyReasonMissingFlag | DenyReasonNoTenant | DenyReasonUnknownScope | DenyReasonMissingActions
+type DenyReason = DenyReasonInvalidToken | DenyReasonInvalidDpopProof | DenyReasonTokenKind | DenyReasonRestrictedSession | DenyReasonConfinedSession | DenyReasonMissingFlag | DenyReasonNoTenant | DenyReasonUnknownScope | DenyReasonMissingActions
 
 
 type Effect = Literal['allow', 'deny']
@@ -641,6 +678,7 @@ class SessionFlagEntry(TypedDict):
     A declared session flag.
     """
 
+    confine: NotRequired[Confinement | None]
     description: NotRequired[str]
     kind: FlagKind
     name: str

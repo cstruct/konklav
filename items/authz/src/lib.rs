@@ -20,6 +20,6 @@ pub use explain::{
     SessionContext, explain, explain_decision,
 };
 pub use model::{
-    Assignment, Catalog, Effect, EntitlementSet, Entitlements, Group, Level, Policy,
-    RegisteredScopes, Registration, Scope, Share, Shared,
+    Assignment, Catalog, Confinement, Confinements, Effect, EntitlementSet, Entitlements, Group,
+    Level, Policy, RegisteredScopes, Registration, Scope, Share, Shared,
 };

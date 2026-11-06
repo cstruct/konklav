@@ -103,6 +103,37 @@ A flag is set only by:
 
 Relying systems never set or clear flags on existing sessions.
 
+### Confinements
+
+A restrictive flag can carry a confinement in the catalog: the tenants a
+session carrying it may act in, given as allowed values of portable tenant
+facts.
+
+```json
+{"name": "personal_only", "kind": "restrictive", "requestable": true,
+ "confine": {"tenant": {"tenant_type": ["personal"]}}}
+```
+
+Admitting the flag lets an operation run for the session; the confinement
+says where. Konklav enforces it in two places:
+
+- **Entering a tenant:** `login/tenant` refuses a non-matching tenant, and
+  no tenant token is issued (on refresh, or to an OpenID Connect client)
+  while the session's tenant doesn't match. A refused refresh rotates
+  nothing, so the session recovers if the tenant matches again.
+- **Deciding:** a decision for a confined session denies with
+  `confined_session` when its tenant doesn't match now, or when the token
+  targets no tenant. Global actions don't lift that deny. Entitlement sets
+  carry the confinements and the tenant's values of the facts they name,
+  and changing a tenant's facts emits `entitlements.changed` for the tenant,
+  so a relying core decides from current facts rather than the token's.
+
+Confinements are deliberately small: each predicate matches one string,
+integer or boolean fact against a list of values, and all must hold. A
+general policy language (CEL, Cedar, Starlark) would break what Konklav
+relies on: compiled entitlement sets, decision explanations that name the
+rule, escalation checks and change-feed invalidation.
+
 ## Browser clients
 
 - The refresh token is a cookie named `__Host-konklav_refresh` with these

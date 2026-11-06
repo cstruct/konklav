@@ -6,9 +6,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use konklav_authz::{
-    Assignment, Catalog, Check, Decision, DecisionExplanation, Effect, ExplainInput, Level, Policy,
-    Reason, RegisteredScopes, Requirements, Scope, ScopeRequirement, SessionContext, Share, StepUp,
-    explain_decision,
+    Assignment, Catalog, Check, Confinements, Decision, DecisionExplanation, Effect, ExplainInput,
+    Level, Policy, Reason, RegisteredScopes, Requirements, Scope, ScopeRequirement, SessionContext,
+    Share, StepUp, explain_decision,
 };
 use konklav_core::{SessionId, ShareId, SubjectId, TenantId};
 use konklav_token::{AccessClaims, TokenKind};
@@ -238,6 +238,7 @@ fn session_checks_explain_authentication() {
             session: Some(SessionContext {
                 claims: &claims,
                 restrictive_flags: &flags,
+                confinements: &Confinements::default(),
                 current: true,
             }),
             now: NOW,
@@ -437,6 +438,7 @@ fn explanations_agree_with_decisions() {
                     session: Some(SessionContext {
                         claims: &claims,
                         restrictive_flags: &flags,
+                        confinements: &Confinements::default(),
                         current: true,
                     }),
                     now: NOW,

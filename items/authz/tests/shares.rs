@@ -4,9 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use konklav_authz::{
-    Assignment, Catalog, Decision, DenyReason, Effect, Entitlements, Group, Level, Obligation,
-    Policy, RegisteredScopes, Requirements, Scope, ScopeRequirement, Share, compile, evaluate,
-    shared,
+    Assignment, Catalog, Confinements, Decision, DenyReason, Effect, Entitlements, Group, Level,
+    Obligation, Policy, RegisteredScopes, Requirements, Scope, ScopeRequirement, Share, compile,
+    evaluate, shared,
 };
 use konklav_core::{SessionId, ShareId, SubjectId, TenantId};
 use konklav_token::{AccessClaims, TokenKind};
@@ -163,6 +163,7 @@ fn shared_scopes_are_decided_through_shares_with_obligations() {
             requirements,
             &claims,
             &BTreeSet::new(),
+            &Confinements::default(),
             &entitlements,
             &RegisteredScopes::default(),
             NOW,
@@ -246,6 +247,7 @@ fn shares_grant_only_while_valid() {
             &requirements,
             &claims,
             &BTreeSet::new(),
+            &Confinements::default(),
             &entitlements,
             &RegisteredScopes::default(),
             NOW,
