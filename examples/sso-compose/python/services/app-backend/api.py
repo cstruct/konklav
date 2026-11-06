@@ -16,15 +16,22 @@ from collections import deque
 from typing import Any
 
 import uvicorn
+from fastapi import APIRouter, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.requests import HTTPConnection
+from fastapi.responses import JSONResponse
+from konklav_fastapi import (
+    Forbidden,
+    IdentityToken,
+    KonklavDenied,
+    KonklavRoutes,
+    KonklavUnavailable,
+    RoutePolicy,
+    Unauthenticated,
+)
 from konklav_relying import KonklavError, RelyingClient
-from starlette.applications import Starlette
-from starlette.middleware import Middleware
-from starlette.middleware.cors import CORSMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.routing import Route
 
-from example import claims_of, secrets, split_key
+from example import secrets, split_key
 
 PUBLIC_URL = os.environ["PUBLIC_URL"]
 ACTIONS = ["notes:read", "notes:write"]
@@ -40,96 +47,41 @@ konklav = RelyingClient(
     audience="app-api",
 )
 
+
+def public_url(connection: HTTPConnection) -> str:
+    """The URL the browser addressed: the proof's `htu` names this public
+    URL, not the container's."""
+    return f"{PUBLIC_URL}{connection.url.path}"
+
+
+routes = KonklavRoutes(client=konklav, public_url=public_url)
+
 notes: deque[dict[str, Any]] = deque(
     [{"text": "Welcome! Editors can add notes.", "author": "the example", "at": time.time() * 1000}],
     maxlen=50,
 )
 
-
-class Refused(Exception):
-    def __init__(self, status: int, message: str, challenge: str | None = None) -> None:
-        self.status, self.message, self.challenge = status, message, challenge
+# The app's sign-in gives identity tokens: it selects no tenant.
+notes_api = APIRouter(dependencies=[RoutePolicy(token_kinds={"identity"})])
 
 
-def presented(request: Request) -> dict[str, Any]:
-    """The raw headers and the URL the browser addressed: the proof's
-    `htu` names this public URL, not the container's."""
-    authorization = request.headers.get("authorization")
-    if not authorization:
-        raise Refused(401, "sign in first", 'DPoP algs="ES256"')
-    return {
-        "authorization": authorization,
-        "dpop": request.headers.get("dpop"),
-        "method": request.method,
-        "url": f"{PUBLIC_URL}{request.url.path}",
-    }
+@notes_api.get("/api/notes", dependencies=[RoutePolicy(global_actions={"notes:read"})])
+async def list_notes() -> dict[str, Any]:
+    return {"notes": list(reversed(notes))}
 
 
-async def decide(request: Request, action: str) -> dict[str, Any]:
-    """Allows the request if its token holds `action`, or raises."""
-    try:
-        decision = await konklav.decide_request(
-            **presented(request),
-            requirements={"global": [action], "token_kinds": ["identity"]},
-        )
-    except KonklavError:
-        # Konklav couldn't be reached and the caches can't be trusted: deny.
-        raise Refused(503, "authorization is unavailable; try again") from None
-    if decision["decision"] == "allow":
-        return decision
-    reason = decision.get("reason")
-    if reason == "invalid_dpop_proof":
-        raise Refused(401, "the DPoP proof is missing, invalid or replayed", 'DPoP error="invalid_dpop_proof"')
-    if reason == "invalid_token":
-        raise Refused(401, "the token is invalid or its session has ended", 'DPoP error="invalid_token"')
-    raise Refused(403, f"your roles don't grant {action}")
-
-
-async def can(request: Request) -> JSONResponse:
-    """Whether the caller holds one of the app's actions. One per request,
-    since a proof is accepted only once."""
-    action = request.path_params["action"]
-    if action not in ACTIONS:
-        raise Refused(404, f"no action {action}")
-    try:
-        await decide(request, action)
-    except Refused as refused:
-        if refused.status != 403:
-            raise
-        return JSONResponse({"action": action, "allowed": False})
-    return JSONResponse({"action": action, "allowed": True})
-
-
-async def list_notes(request: Request) -> JSONResponse:
-    await decide(request, "notes:read")
-    return JSONResponse({"notes": list(reversed(notes))})
-
-
-async def add_note(request: Request) -> JSONResponse:
-    await decide(request, "notes:write")
-    # The relying core verified the token above; read who it names.
-
-    subject = claims_of(request.headers["authorization"].partition(" ")[2])["sub"]
+@notes_api.post("/api/notes", status_code=201, dependencies=[RoutePolicy(global_actions={"notes:write"})])
+async def add_note(request: Request, token: IdentityToken) -> Any:
+    # `token` is the token the relying core verified for this request.
     text = str((await request.json()).get("text", "")).strip()[:200]
     if not text:
         return JSONResponse({"message": "a note needs text"}, status_code=400)
-    notes.append({"text": text, "author": subject[:8], "at": time.time() * 1000})
-    return JSONResponse({"ok": True}, status_code=201)
-
-
-def handle(endpoint):
-    async def wrapped(request: Request) -> JSONResponse:
-        try:
-            return await endpoint(request)
-        except Refused as refused:
-            headers = {"www-authenticate": refused.challenge} if refused.challenge else None
-            return JSONResponse({"message": refused.message}, status_code=refused.status, headers=headers)
-
-    return wrapped
+    notes.append({"text": text, "author": token.sub[:8], "at": time.time() * 1000})
+    return {"ok": True}
 
 
 @contextlib.asynccontextmanager
-async def lifespan(_: Starlette):
+async def lifespan(_: FastAPI):
     await konklav.start()
     for _ in range(300):
         if konklav.is_trusted():
@@ -140,25 +92,66 @@ async def lifespan(_: Starlette):
     await konklav.stop()
 
 
-app = Starlette(
-    routes=[
-        Route("/api/can/{action}", handle(can)),
-        Route("/api/notes", handle(list_notes), methods=["GET"]),
-        Route("/api/notes", handle(add_note), methods=["POST"]),
-    ],
-    middleware=[
-        Middleware(
-            CORSMiddleware,
-            allow_origins=[os.environ["FRONTEND_ORIGIN"]],
-            allow_methods=["GET", "POST"],
-            allow_headers=["authorization", "dpop", "content-type"],
-            expose_headers=["www-authenticate"],
-            # No cookies: the token and proof are the only credentials.
-            allow_credentials=False,
+app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/api/can/{action}", dependencies=[RoutePolicy.public()])
+async def can(action: str, request: Request) -> Any:
+    """Whether the caller holds one of the app's actions. The action comes
+    from the path, so no route policy can name it: the route is public and
+    decides itself. One per request, since a proof is accepted only once."""
+    if action not in ACTIONS:
+        return JSONResponse({"message": f"no action {action}"}, status_code=404)
+    authorization = request.headers.get("authorization")
+    if not authorization:
+        raise Unauthenticated("missing_token")
+    try:
+        decision = await konklav.decide_request_typed(
+            authorization=authorization,
+            dpop=request.headers.get("dpop"),
+            method=request.method,
+            url=public_url(request),
+            requirements={"global": [action], "token_kinds": ["identity"]},
         )
-    ],
-    lifespan=lifespan,
+    except KonklavError:
+        raise KonklavUnavailable() from None
+    if decision.reason is not None and decision.reason.code in ("invalid_token", "invalid_dpop_proof"):
+        raise Unauthenticated(decision.reason.code)
+    return {"action": action, "allowed": decision.decision == "allow"}
+
+
+MESSAGES = {
+    "missing_token": "sign in first",
+    "invalid_token": "the token is invalid or its session has ended",
+    "invalid_dpop_proof": "the DPoP proof is missing, invalid or replayed",
+    "konklav_unavailable": "authorization is unavailable; try again",
+}
+
+
+async def denied(_: Request, error: Exception) -> JSONResponse:
+    """Answers refusals as the app's page reads errors: with a `message`."""
+    assert isinstance(error, KonklavDenied)
+    if isinstance(error, Forbidden) and error.reason.actions:
+        message = f"your roles don't grant {', '.join(sorted(error.reason.actions))}"
+    else:
+        message = MESSAGES.get(error.code, error.code)
+    return JSONResponse({"message": message}, status_code=error.status_code, headers=error.headers)
+
+
+app.include_router(notes_api)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[os.environ["FRONTEND_ORIGIN"]],
+    allow_methods=["GET", "POST"],
+    allow_headers=["authorization", "dpop", "content-type"],
+    expose_headers=["www-authenticate"],
+    # No cookies: the token and proof are the only credentials.
+    allow_credentials=False,
 )
+# Checks every route's policy at startup, and decides each request.
+routes.install(app)
+# After `install`, so it replaces the package's handler.
+app.add_exception_handler(KonklavDenied, denied)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=3001)
