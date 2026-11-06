@@ -13,12 +13,13 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/items/py/target \
     uv build --wheel --python 3.12 --out-dir /wheels items/py \
- && uv build --wheel --python 3.12 --out-dir /wheels items/py-control-plane
+ && uv build --wheel --python 3.12 --out-dir /wheels items/py-control-plane \
+ && uv build --wheel --python 3.12 --out-dir /wheels items/py-fastapi
 
 FROM python:3.12-slim-bookworm
 COPY --from=wheels /wheels /wheels
 RUN pip install --no-cache-dir /wheels/*.whl \
-        starlette==0.46.2 uvicorn==0.34.3 httpx==0.28.1 cryptography==45.0.4
+        fastapi==0.162.0 uvicorn==0.34.3 httpx==0.28.1 cryptography==45.0.4
 COPY examples/sso-compose/python/services /app
 COPY examples/sso-compose/web /app/web
 # Empty named volumes take these owners: Konklav's distroless image runs as

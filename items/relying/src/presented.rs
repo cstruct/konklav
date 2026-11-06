@@ -4,6 +4,7 @@
 //! (`r[item.relying.raw-headers]`).
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use konklav_token::{Proof, ProofRequest};
 use serde::{Deserialize, Serialize};
@@ -126,6 +127,11 @@ pub(crate) fn token<'a>(
 }
 
 impl Accepted {
+    /// Milliseconds; when the proof can no longer pass the freshness check.
+    pub(crate) fn until(&self) -> u64 {
+        self.until
+    }
+
     fn of(proof: &Proof, settings: &ProofSettings) -> Self {
         let until = proof
             .replayable_until(settings.max_age_seconds)
@@ -161,5 +167,79 @@ impl Replays {
         }
         self.seen.insert(accepted.key, accepted.until);
         true
+    }
+}
+
+/// Identifies a presentation the core accepted, for one decision with
+/// [`crate::Relying::decide_accepted`]. It names the core that issued it, so
+/// no other core in the process takes it for one of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct PresentationId {
+    core: u64,
+    seq: u64,
+}
+
+/// Numbers each core's held presentations apart from every other core's.
+static CORES: AtomicU64 = AtomicU64::new(1);
+
+/// Presentations accepted for a decision, until they are answered or
+/// their proof could no longer pass the freshness check. Bounded like
+/// [`Replays`]: when full of live entries it holds no more.
+// r[impl relying.verify.accepted-presentation]
+#[derive(Clone, Debug)]
+pub(crate) struct Held {
+    core: u64,
+    next: u64,
+    tokens: BTreeMap<u64, (String, u64)>,
+}
+
+impl Default for Held {
+    fn default() -> Self {
+        Self {
+            core: CORES.fetch_add(1, Ordering::Relaxed),
+            next: 0,
+            tokens: BTreeMap::new(),
+        }
+    }
+}
+
+impl Held {
+    /// Holds `token` until `until`. Returns `None` if there is no room.
+    pub(crate) fn hold(
+        &mut self,
+        token: &str,
+        until: u64,
+        capacity: usize,
+        now: u64,
+    ) -> Option<PresentationId> {
+        if self.tokens.len() >= capacity {
+            self.tokens.retain(|_, (_, held_until)| *held_until > now);
+        }
+        if self.tokens.len() >= capacity {
+            return None;
+        }
+        self.next += 1;
+        self.tokens.insert(self.next, (token.to_owned(), until));
+        Some(PresentationId {
+            core: self.core,
+            seq: self.next,
+        })
+    }
+
+    /// The token of a live presentation this core holds.
+    pub(crate) fn token(&self, id: PresentationId, now: u64) -> Option<String> {
+        if id.core != self.core {
+            return None;
+        }
+        self.tokens
+            .get(&id.seq)
+            .filter(|(_, until)| *until > now)
+            .map(|(token, _)| token.clone())
+    }
+
+    pub(crate) fn release(&mut self, id: PresentationId) {
+        if id.core == self.core {
+            self.tokens.remove(&id.seq);
+        }
     }
 }

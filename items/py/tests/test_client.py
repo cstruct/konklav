@@ -145,6 +145,49 @@ def test_decides_and_verifies_requests_with_dpop_proofs() -> None:
     asyncio.run(scenario())
 
 
+# r[verify item.py.accepted-request]
+# r[verify relying.verify.accepted-presentation]
+def test_accepted_requests_are_decided_once_with_their_one_proof() -> None:
+    async def scenario() -> None:
+        keys = Keys()
+        key = DpopKey()
+        subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
+        fake = FakeKonklav(keys, subject, tenant, session)
+        client = client_for(fake)
+        token = keys.token(subject=subject, session=session, tenant=tenant, jkt=key.jkt())
+        url = "https://api.example/projects/1"
+        reading = {"tenant": ["project:read"]}
+
+        def headers() -> dict[str, str]:
+            return {"authorization": f"DPoP {token}", "dpop": key.proof("GET", url, token), "method": "GET", "url": url}
+
+        # Before the feed is up, the check API verifies and decides.
+        accepted = await client.accept_request(**headers())
+        assert accepted is not None and accepted.token.sid == session
+        assert await client.decide_accepted(accepted, reading) == {"decision": "allow"}
+        assert fake.calls.count("/v1/check") == 2
+
+        await client.start()
+        try:
+            await until_trusted(client)
+            fake.calls.clear()
+            once = headers()
+            accepted = await client.accept_request(**once)
+            assert accepted is not None and accepted.token.cnf is not None
+            decision = await client.decide_accepted_typed(accepted, reading)
+            assert decision.allowed and "/v1/check" not in fake.calls
+            # Once decided, neither the presentation nor its proof works again.
+            assert await client.decide_accepted(accepted, reading) == {"decision": "deny", "reason": "invalid_token"}
+            with pytest.raises(InvalidDpopProof):
+                await client.accept_request(**once)
+            stranger = Keys().token(subject=subject, session=session, tenant=tenant)
+            assert await client.accept_request(authorization=f"Bearer {stranger}", dpop=None, method="GET", url=url) is None
+        finally:
+            await client.stop()
+
+    asyncio.run(scenario())
+
+
 # r[verify item.py.typed.compatible]
 # r[verify authz.decision.tenant-facts]
 # r[verify relying.fallback.equivalence]

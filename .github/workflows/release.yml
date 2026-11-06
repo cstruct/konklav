@@ -29,7 +29,8 @@ jobs:
 
       # The Python binding is its own Cargo workspace, and maturin takes the
       # Python package's version from it, so both must match the tag, as
-      # must the Python control-plane client's.
+      # must the Python control-plane client's and the FastAPI integration's,
+      # whose requirement on the binding is exact.
       - name: Check tag and dependencies against Cargo.toml
         id: version
         env:
@@ -52,6 +53,12 @@ jobs:
               client_version = tomllib.load(manifest)["project"]["version"]
           if client_version != version:
               raise SystemExit(f"items/py-control-plane/pyproject.toml has version {client_version}, not the workspace version {version}")
+          with open("items/py-fastapi/pyproject.toml", "rb") as manifest:
+              fastapi_project = tomllib.load(manifest)["project"]
+          if fastapi_project["version"] != version:
+              raise SystemExit(f"items/py-fastapi/pyproject.toml has version {fastapi_project['version']}, not the workspace version {version}")
+          if f"konklav-relying=={version}" not in fastapi_project["dependencies"]:
+              raise SystemExit(f"items/py-fastapi/pyproject.toml must require konklav-relying=={version}")
           # The published crates require each other at exactly this version.
           with open("Cargo.toml", "rb") as manifest:
               dependencies = tomllib.load(manifest)["workspace"]["dependencies"]
@@ -213,6 +220,12 @@ jobs:
           name: control-plane-python
           path: dist
 
+      - name: Download the FastAPI integration
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: fastapi-python
+          path: dist
+
       - name: Publish
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
@@ -311,6 +324,6 @@ jobs:
           if [[ "$PRERELEASE" == 'true' ]]; then
             flags+=(--prerelease)
           fi
-          notes="Docker image: \`$IMAGE:${TAG_NAME#v}\`, for linux/amd64 and linux/arm64. The Linux binaries need glibc 2.35 and OpenSSL 3 or later. Python packages: [\`konklav-relying\`](https://pypi.org/project/konklav-relying/) and the Python control-plane client [\`konklav-control-plane\`](https://pypi.org/project/konklav-control-plane/) on PyPI. Rust crates: [\`konklav-relying\`](https://crates.io/crates/konklav-relying), [\`konklav-relying-client\`](https://crates.io/crates/konklav-relying-client) and [\`konklav-authz\`](https://crates.io/crates/konklav-authz) on crates.io."
+          notes="Docker image: \`$IMAGE:${TAG_NAME#v}\`, for linux/amd64 and linux/arm64. The Linux binaries need glibc 2.35 and OpenSSL 3 or later. Python packages: [\`konklav-relying\`](https://pypi.org/project/konklav-relying/), the Python control-plane client [\`konklav-control-plane\`](https://pypi.org/project/konklav-control-plane/) and the FastAPI integration [\`konklav-fastapi\`](https://pypi.org/project/konklav-fastapi/) on PyPI. Rust crates: [\`konklav-relying\`](https://crates.io/crates/konklav-relying), [\`konklav-relying-client\`](https://crates.io/crates/konklav-relying-client) and [\`konklav-authz\`](https://crates.io/crates/konklav-authz) on crates.io."
           gh release create "$TAG_NAME" dist/* \
             --verify-tag --generate-notes --notes "$notes" --title "$TAG_NAME" "${flags[@]}"

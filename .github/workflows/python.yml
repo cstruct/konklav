@@ -1,10 +1,11 @@
 name: Python
 
-# Builds the Python relying binding's wheels and sdist, and the Python
-# control-plane client's wheel and sdist, and runs each package's tests
-# against each one installed. Pull requests and runs started by hand only
-# build and test; the release workflow calls this, publishes the relying
-# binding to PyPI and attaches both packages to the GitHub release.
+# Builds the Python relying binding's wheels and sdist, and the wheel and
+# sdist of the Python control-plane client and of the FastAPI integration,
+# and runs each package's tests against each one installed. Pull requests
+# and runs started by hand only build and test; the release workflow calls
+# this, publishes the packages to PyPI and attaches them to the GitHub
+# release.
 on:
   pull_request:
   workflow_dispatch:
@@ -168,8 +169,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # Pure Python, so one wheel covers every platform. Its artifact isn't
-  # named `python-*`, so the release doesn't publish it to PyPI yet.
+  # Pure Python, so one wheel covers every platform.
   control-plane:
     name: Control-plane client
     runs-on: ubuntu-24.04
@@ -206,5 +206,59 @@ jobs:
           path: |
             items/py-control-plane/dist/*.whl
             items/py-control-plane/dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  # Pure Python too. It requires the relying binding of its own version,
+  # so its tests run against the manylinux wheel built above, and against
+  # the lowest and highest FastAPI it supports (its pyproject's range).
+  fastapi:
+    name: FastAPI integration
+    needs: wheels
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          install_args: uv
+
+      - name: Download the relying binding's wheel
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: python-manylinux-x86_64
+          path: relying
+
+      - name: Build wheel and sdist
+        working-directory: items/py-fastapi
+        run: uv build --out-dir dist
+
+      # The locked test dependencies, without building the binding from
+      # source, then the binding's wheel and each distribution in place of
+      # the project. The integration tests, which need a server, run in CI's
+      # `mise run test`.
+      - name: Test the wheel and the sdist
+        working-directory: items/py-fastapi
+        run: |
+          uv sync --locked --no-install-project --no-install-package konklav-relying --python 3.12
+          uv pip install --python .venv --no-deps ../../relying/*.whl
+          lowest=$(sed -n 's/.*"fastapi>=\([0-9.]*\),.*/\1/p' pyproject.toml)
+          for dist in dist/*.whl dist/*.tar.gz; do
+            uv pip install --python .venv --no-deps --reinstall "$dist"
+            uv run --no-sync --python 3.12 pytest -q tests --ignore=tests/integration
+            uv run --no-sync --python 3.12 --with "fastapi==$lowest.0" pytest -q tests --ignore=tests/integration
+          done
+
+      - name: Upload wheel and sdist
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fastapi-python
+          path: |
+            items/py-fastapi/dist/*.whl
+            items/py-fastapi/dist/*.tar.gz
           if-no-files-found: error
           retention-days: 7

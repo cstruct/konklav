@@ -59,7 +59,7 @@ run = "cargo build --workspace"
 
 [tasks.test]
 description = "Run every test; database tests use isolated databases on the local Postgres"
-depends = ["db:up", "py:test", "py-control-plane:test", "py-control-plane:integration", "example:python", "console:smoke"]
+depends = ["db:up", "py:test", "py-control-plane:test", "py-control-plane:integration", "py-fastapi:test", "example:python", "console:smoke"]
 run = "cargo test --workspace"
 
 [tasks.deny]
@@ -105,6 +105,24 @@ description = "Build the Python control-plane client's sdist and wheel into item
 dir = "items/py-control-plane"
 run = ["rm -rf dist", "uv build -q --out-dir dist"]
 
+[tasks."py-fastapi:test"]
+description = "Run the FastAPI integration's tests, the integration tests against servers on fresh databases"
+depends = ["db:up"]
+dir = "items/py-fastapi"
+env = { KONKLAV_TEST_SERVER = "{{config_root}}/target/debug/test-server" }
+run = [
+    # test-server starts the konklav-server binary next to it.
+    "cargo build -q -p konklav-server --bin konklav-server -p konklav-examples --bin test-server",
+    # --refresh-package rebuilds the Rust extension, as in py:test.
+    "uv sync -q --locked --refresh-package konklav-relying --reinstall-package konklav-relying --reinstall-package konklav-control-plane",
+    "uv run -q pytest -q tests",
+]
+
+[tasks."py-fastapi:build"]
+description = "Build the FastAPI integration's sdist and wheel into items/py-fastapi/dist"
+dir = "items/py-fastapi"
+run = ["rm -rf dist", "uv build -q --out-dir dist"]
+
 [tasks."example:python"]
 description = "Run the Python examples in examples/python against servers on fresh databases"
 depends = ["db:up"]
@@ -138,16 +156,20 @@ if test "$current" = main; then
   git switch -q -c "$branch"
 fi
 # The workspace version, the Python binding's, which maturin also uses for
-# the Python package, and the Python control-plane client's.
-for manifest in Cargo.toml items/py/Cargo.toml items/py-control-plane/pyproject.toml; do
+# the Python package, the Python control-plane client's and the FastAPI
+# integration's.
+for manifest in Cargo.toml items/py/Cargo.toml items/py-control-plane/pyproject.toml items/py-fastapi/pyproject.toml; do
   test "$(grep -c '^version = ' "$manifest")" = 1
   perl -pi -e "s/^version = \\"[^\\"]*\\"/version = \\"$version\\"/" "$manifest"
 done
+# The FastAPI integration requires the relying binding of its own version.
+perl -pi -e "s/\\"konklav-relying==[^\\"]*\\"/\\"konklav-relying==$version\\"/" items/py-fastapi/pyproject.toml
 # The published crates' requirements on each other.
 perl -pi -e "s/^(konklav-[a-z-]+ = \\{ version = \\")=[^\\"]*/\\1=$version/" Cargo.toml
 cargo update -q --workspace
 cargo update -q --workspace --manifest-path items/py/Cargo.toml
 (cd items/py-control-plane && uv lock -q)
+(cd items/py-fastapi && uv lock -q)
 (cd examples/python && uv lock -q)
 # The API document records the version too; its test rewrites it.
 KONKLAV_UPDATE_OPENAPI=1 cargo test -q -p konklav-server --lib openapi::tests::committed_document_is_current
@@ -194,6 +216,7 @@ run = [
     "PYO3_PYTHON=$(cd items/py && uv python find) cargo clippy --manifest-path items/py/Cargo.toml -- -D warnings",
     "cd items/py-control-plane && uv run -q --locked python tools/generate.py --check",
     "cd items/py-control-plane && uv run -q --locked mypy",
+    "cd items/py-fastapi && uv run -q --locked mypy",
     "cargo deny --locked check",
     "actionlint",
     "tracey query validate",

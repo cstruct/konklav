@@ -12,3 +12,5 @@ __pycache__/
 items/py-control-plane/.venv/
 items/py-control-plane/dist/
 examples/python/.venv/
+items/py-fastapi/.venv/
+items/py-fastapi/dist/

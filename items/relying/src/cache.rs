@@ -12,7 +12,7 @@ use konklav_token::{AccessClaims, JwkSet, VerifyOptions};
 use serde::{Deserialize, Serialize};
 
 use crate::Config;
-use crate::presented::{self, Presented, ProofSettings, Refused, Replays};
+use crate::presented::{self, Held, PresentationId, Presented, ProofSettings, Refused, Replays};
 
 /// Which entitlement set: a subject in a tenant, or its global-only set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -69,6 +69,27 @@ pub enum Verification {
     /// under the `DPoP` scheme. Answer with a `WWW-Authenticate: DPoP`
     /// challenge.
     // r[impl relying.verify.dpop-challenge]
+    InvalidProof,
+    /// Provide these, then ask again.
+    Need { needs: Vec<Need> },
+}
+
+/// The answer to [`Relying::accept_presented`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum Acceptance {
+    /// The token verifies, its session is current and any proof is
+    /// accepted: decide with [`Relying::decide_accepted`] and `presentation`.
+    Accepted {
+        claims: Box<konklav_token::AccessClaims>,
+        presentation: PresentationId,
+    },
+    /// Any proof is accepted, but the caches can't be trusted: verify the
+    /// token with the check API, then decide with `presentation`.
+    Check { presentation: PresentationId },
+    /// As [`Verification::Invalid`].
+    Invalid,
+    /// As [`Verification::InvalidProof`].
     InvalidProof,
     /// Provide these, then ask again.
     Need { needs: Vec<Need> },
@@ -183,6 +204,8 @@ pub struct Relying {
     awaited: Option<Cursor>,
     /// DPoP proofs accepted recently, so none is accepted twice.
     replays: Replays,
+    /// Presentations accepted for one decision.
+    held: Held,
 }
 
 impl Relying {
@@ -201,6 +224,7 @@ impl Relying {
             feed: Feed::default(),
             awaited: None,
             replays: Replays::default(),
+            held: Held::default(),
         }
     }
 
@@ -256,6 +280,92 @@ impl Relying {
             return Verification::InvalidProof;
         }
         verification
+    }
+
+    /// [`Relying::verify_presented`] for a host that decides afterwards:
+    /// accepts the presentation once, remembering its proof, and holds it
+    /// for one [`Relying::decide_accepted`], which doesn't check the proof
+    /// again.
+    // r[impl relying.verify.accepted-presentation]
+    pub fn accept_presented(&mut self, presented: &Presented, now: u64) -> Acceptance {
+        let (token, accepted) =
+            match presented::token(presented, &self.replays, &self.proof_settings(), now) {
+                Ok(found) => found,
+                Err(Refused::Token) => return Acceptance::Invalid,
+                Err(Refused::Proof) => return Acceptance::InvalidProof,
+            };
+        // A bearer token is held as long as a proof would be.
+        let until = accepted.as_ref().map_or_else(
+            || {
+                let seconds = self.config.dpop_max_age_seconds + self.config.leeway_seconds;
+                now.saturating_add(u64::try_from(seconds).unwrap_or(0).saturating_mul(1000))
+            },
+            presented::Accepted::until,
+        );
+        // Verified claims, or `None` for a hand-off to the check API.
+        let verified = match self.check_token(token, now) {
+            Ok((claims, needs)) if needs.is_empty() => Some(claims),
+            Ok((_, needs)) | Err(Outcome::Need { needs }) => {
+                if !needs.contains(&Need::Check) {
+                    // Not answered: the host asks again with the same proof.
+                    return Acceptance::Need { needs };
+                }
+                None
+            }
+            Err(Outcome::Decided { .. }) => {
+                // Answered, so the proof is used.
+                return if self.remember(accepted, now) {
+                    Acceptance::Invalid
+                } else {
+                    Acceptance::InvalidProof
+                };
+            }
+        };
+        if !self.remember(accepted, now) {
+            return Acceptance::InvalidProof;
+        }
+        let capacity = self.config.dpop_replay_capacity;
+        let Some(presentation) = self.held.hold(token, until, capacity, now) else {
+            return Acceptance::InvalidProof;
+        };
+        match verified {
+            Some(claims) => Acceptance::Accepted {
+                claims: Box::new(claims),
+                presentation,
+            },
+            None => Acceptance::Check { presentation },
+        }
+    }
+
+    /// Decides `requirements` for a presentation [`Relying::accept_presented`]
+    /// accepted, without checking its proof again; the token and its session
+    /// are checked as [`Relying::decide`] checks them. Once answered (a
+    /// decision, or a hand-off to the check API), the presentation is gone.
+    /// An unknown, answered or expired one is denied as `invalid_token`.
+    // r[impl relying.verify.accepted-presentation]
+    pub fn decide_accepted(
+        &mut self,
+        presentation: PresentationId,
+        requirements: &Requirements,
+        now: u64,
+    ) -> Outcome {
+        let Some(token) = self.held.token(presentation, now) else {
+            self.held.release(presentation);
+            return Outcome::Decided {
+                decision: Decision::Deny {
+                    reason: DenyReason::InvalidToken,
+                },
+            };
+        };
+        let outcome = self.decide_token(&token, requirements, now);
+        let answered = match &outcome {
+            Outcome::Need { needs } => needs.contains(&Need::Check),
+            Outcome::Decided { .. } => true,
+        };
+        if answered {
+            self.held.release(presentation);
+        }
+        outcome
     }
 
     fn proof_settings(&self) -> ProofSettings {

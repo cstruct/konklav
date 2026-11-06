@@ -39,6 +39,7 @@ with the [README](README.md).
   - `relying-client`: the native Rust host
   - `py`: the Python binding (maturin)
   - `py-control-plane`: the Python control-plane client (pure Python)
+  - `py-fastapi`: route policies for FastAPI (pure Python)
   - `console`: the operators' web UI (Leptos, WASM)
   - `test-support`: shared test helpers
 - `config/`: development configuration.
@@ -106,8 +107,9 @@ and that the Python packages' wheels and sdists build and pass their tests
 ## Releases
 
 Every release has one version, shared by the server, the console, the
-Docker image, the Python packages (`konklav-relying` and the control-plane
-client `konklav-control-plane`, both on PyPI) and the Rust crates on crates.io, and is made from one
+Docker image, the Python packages (`konklav-relying`, the control-plane
+client `konklav-control-plane` and the FastAPI integration
+`konklav-fastapi`, all on PyPI) and the Rust crates on crates.io, and is made from one
 `v<version>` tag. Konklav's clients are supported only against a server of
 the same version. With a clean working tree, run
 `mise run release:bump <version>`. It refuses to run with uncommitted
@@ -115,7 +117,9 @@ changes, then:
 
 1. Sets `version` under `[workspace.package]` in `Cargo.toml`, in
    `items/py/Cargo.toml` (which maturin also uses for the Python package)
-   and in `items/py-control-plane/pyproject.toml`,
+   and in `items/py-control-plane/pyproject.toml` and
+   `items/py-fastapi/pyproject.toml` (with its exact requirement on
+   `konklav-relying`),
    and the published crates' exact requirements on each other under
    `[workspace.dependencies]`, refreshes the lockfiles and regenerates the
    API document `items/server/openapi/control-plane.json`, which records the
@@ -139,20 +143,23 @@ is merged), then tags the commit `v<version>` with an annotated tag
 
 The release workflow then:
 
-1. Checks the tag against the three manifests and the crates' requirements
-   on each other, and runs CI again.
+1. Checks the tag against the four manifests, the crates' requirements on
+   each other and the FastAPI integration's on `konklav-relying`, and runs
+   CI again.
 2. Builds `konklav-server` for x86_64 and aarch64 Linux and aarch64 macOS,
    and the console as a static bundle.
 3. Builds the Python wheels (abi3, for Python 3.12 and later) for x86_64 and
    aarch64 Linux (manylinux_2_28 and musllinux_1_2) and aarch64 macOS, and
    an sdist, and runs the binding's tests against each, the musllinux ones
-   on Alpine. Builds the control-plane client's wheel (pure Python) and
-   sdist and runs its tests against each.
+   on Alpine. Builds the control-plane client's and the FastAPI
+   integration's wheels (pure Python) and sdists and runs their tests
+   against each, the FastAPI integration's against the lowest and highest
+   FastAPI it supports.
 4. Pushes a linux/amd64 and linux/arm64 image to Docker Hub. The repository is
    the `DOCKERHUB_IMAGE` variable; the `deploy` environment holds
    `DOCKERHUB_USERNAME` and the `DOCKERHUB_TOKEN` secret.
-5. Once everything has built, publishes `konklav-relying` and
-   `konklav-control-plane` to PyPI through
+5. Once everything has built, publishes `konklav-relying`,
+   `konklav-control-plane` and `konklav-fastapi` to PyPI through
    trusted publishing from the `pypi` environment, so no PyPI token is
    stored.
 6. Publishes the crates with `publish = true` to crates.io, also through
@@ -186,10 +193,12 @@ up before a release.
 A new PyPI project is published through a pending trusted publisher
 registered for it on PyPI (repository `cstruct/konklav`, workflow
 `release.yml`, environment `pypi`); `konklav-control-plane` was set up
-that way.
+that way, and `konklav-fastapi` needs one before the first release that
+includes it.
 
 `mise run py:build` builds the sdist and a wheel for this machine into
 `items/py/dist` to check the packaging locally, and `mise run
-py-control-plane:build` does the same for the control-plane client in
-`items/py-control-plane/dist`. Pull requests build and test
+py-control-plane:build` and `mise run py-fastapi:build` do the same for the
+control-plane client and the FastAPI integration in their `dist`
+directories. Pull requests build and test
 every wheel and the sdist (`.github/workflows/python.yml`).

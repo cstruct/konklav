@@ -57,6 +57,7 @@ and spec-first development with Tracey.
 | `konklav-relying-client` | Native Rust host binding (reqwest + tokio) |
 | `konklav-py` | pyo3 host binding |
 | `konklav-py-control-plane` | Python control-plane client (`konklav-control-plane`), with types generated from the API document |
+| `konklav-py-fastapi` | FastAPI integration of the Python binding's route policies (`konklav-fastapi`) |
 | `konklav-bootstrap` | Reading bootstrap sets (CSV or Styx) for `konklav-server bootstrap` |
 | `konklav-console` | Browser UI for operators, calling the control plane (Leptos, WASM) |
 

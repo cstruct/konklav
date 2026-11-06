@@ -44,6 +44,26 @@ When the relying SDK refuses an access token for its DPoP proof or scheme,
 it MUST report that reason, so the relying system can answer with a
 `WWW-Authenticate: DPoP` challenge.
 
+r[relying.verify.accepted-presentation]
+A relying system that needs a request's verified claims before it can state
+the requirements, such as to find a scope from the token's tenant, gets
+them without spending the request's one DPoP proof twice. The relying SDK
+MUST be able to accept a request's presentation: verify the token, its
+session and any DPoP proof, remember the proof as `relying.verify.dpop-replay`
+requires, and return the claims with a handle for the accepted
+presentation. Deciding with that handle MUST NOT check the proof again. It
+MUST check the token and its session as any decision does, so a session
+that ended in between is denied. A handle:
+
+- is kept only in the memory of the relying core that issued it, and no
+  other relying core knows it;
+- answers at most one decision, as a proof does;
+- expires once its proof could no longer pass the freshness check, or for
+  a bearer token, after the same time.
+
+A decision with a handle that is unknown, already answered or expired MUST
+deny with `invalid_token`.
+
 ## Decisions
 
 r[relying.decision.local]

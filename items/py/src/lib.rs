@@ -7,7 +7,7 @@
 use konklav_authz::{EntitlementSet, Requirements};
 use konklav_core::Cursor;
 use konklav_core::feed::{FeedEvent, SessionChanged};
-use konklav_relying::{Config, Key, Need, Presented, Relying, ScopeRecord};
+use konklav_relying::{Config, Key, Need, PresentationId, Presented, Relying, ScopeRecord};
 use konklav_token::JwkSet;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -68,6 +68,29 @@ impl Core {
     fn verify_presented(&mut self, presented: &str, now: u64) -> PyResult<String> {
         let presented: Presented = parse(presented, "presented token")?;
         dump(&self.inner.verify_presented(&presented, now))
+    }
+
+    /// Accepts a request's presentation once, for one decision with
+    /// [`Core::decide_accepted`]: `{"outcome": "accepted", "claims": ...,
+    /// "presentation": ...}`, `{"outcome": "check", "presentation": ...}`, `{"outcome": "invalid"}`, `{"outcome": "invalid_proof"}` or
+    /// `{"outcome": "need", "needs": [...]}`.
+    fn accept_presented(&mut self, presented: &str, now: u64) -> PyResult<String> {
+        let presented: Presented = parse(presented, "presented token")?;
+        dump(&self.inner.accept_presented(&presented, now))
+    }
+
+    /// Decides `requirements` for an accepted presentation (its
+    /// `presentation` JSON, as accepting returned it), without checking its
+    /// proof again; an outcome as [`Core::decide`] returns.
+    fn decide_accepted(
+        &mut self,
+        presentation: &str,
+        requirements: &str,
+        now: u64,
+    ) -> PyResult<String> {
+        let presentation: PresentationId = parse(presentation, "presentation")?;
+        let requirements: Requirements = parse(requirements, "requirements")?;
+        dump(&self.inner.decide_accepted(presentation, &requirements, now))
     }
 
     /// Returns `{"outcome": "ready", "set": ...}` or `{"outcome": "need",

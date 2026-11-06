@@ -14,8 +14,8 @@ docker compose -f examples/sso-compose/python/compose.yaml up --build
 docker compose -f examples/sso-compose/rust/compose.yaml up --build
 ```
 
-- **Python** uses the `konklav-relying` and `konklav-control-plane` packages, with Starlette.
-- **Rust** uses the `konklav-relying-client` crate, with axum and reqwest.
+- **Python** uses the `konklav-relying`, `konklav-fastapi` and `konklav-control-plane` packages. The app backend is a FastAPI app with route policies; the other services use Starlette.
+- **Rust** uses the `konklav-relying-client` crate, with axum and reqwest. Konklav has no axum integration, so its app backend decides each request itself.
 
 Both run the same browser code, from [`web/`](web), since DPoP keys have to be made in the page with WebCrypto. They use the same ports, so run one at a time. Each keeps its own volumes.
 
@@ -70,12 +70,14 @@ Sign in as `ada@example.com` / `correct horse battery`, an admin and editor, or 
 5. The app exchanges the code with a proof, so Konklav returns `token_type: DPoP` tokens with `cnf.jkt`.
 6. It calls its API with the token and a fresh proof.
 
-**Calling the API.** Each request carries `Authorization: DPoP <token>` and a proof for its method and URL. The backend passes the raw headers and its public URL to the relying client's `decide_request`, which:
+**Calling the API.** Each request carries `Authorization: DPoP <token>` and a proof for its method and URL. The backend passes the raw headers and its public URL to the relying client, which:
 - checks the proof, and refuses a replayed one
 - verifies the token offline
 - decides `notes:read` or `notes:write` from entitlements it keeps current from Konklav's change feed
 
-A proof is accepted once, so each decision is its own request: the app asks `/api/can/notes:read` and `/api/can/notes:write` separately.
+In Python, each notes route declares its action as a `RoutePolicy`, and `konklav-fastapi` makes the decision before the route runs. In Rust, each route calls `decide_request` itself.
+
+A proof is accepted once, so each decision is its own request: the app asks `/api/can/notes:read` and `/api/can/notes:write` separately. The action comes from the path there, so that route is public and decides itself.
 
 **The admin page.** The admin backend runs the same code flow, but server side:
 - It authenticates with its client secret, binds the tokens to a key only it holds, and refreshes them with that key.
