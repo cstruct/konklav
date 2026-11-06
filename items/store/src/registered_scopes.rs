@@ -141,6 +141,35 @@ pub async fn get(conn: &mut AsyncPgConnection, scope: &Scope) -> StoreResult<Reg
         .into_scope()
 }
 
+/// Up to `limit` records, active and removed, after `after` in kind and
+/// id order.
+pub async fn list(
+    conn: &mut AsyncPgConnection,
+    after: Option<&Scope>,
+    limit: i64,
+) -> StoreResult<Vec<RegisteredScope>> {
+    let mut query = registered_scope::table
+        .select(Row::as_select())
+        .order((registered_scope::kind, registered_scope::id))
+        .limit(limit)
+        .into_boxed();
+    if let Some(after) = after {
+        query = query.filter(
+            registered_scope::kind
+                .gt(after.kind.clone())
+                .or(registered_scope::kind
+                    .eq(after.kind.clone())
+                    .and(registered_scope::id.gt(after.id.clone()))),
+        );
+    }
+    query
+        .load(conn)
+        .await?
+        .into_iter()
+        .map(Row::into_scope)
+        .collect()
+}
+
 /// The records of `scopes` that exist, active or removed.
 pub async fn get_many(
     conn: &mut AsyncPgConnection,

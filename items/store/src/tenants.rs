@@ -97,6 +97,20 @@ pub async fn get(conn: &mut AsyncPgConnection, id: TenantId) -> StoreResult<Tena
         .ok_or(StoreError::NotFound)
 }
 
+/// The tenants among `ids` that exist.
+pub async fn existing(
+    conn: &mut AsyncPgConnection,
+    ids: &[uuid::Uuid],
+) -> StoreResult<std::collections::BTreeSet<uuid::Uuid>> {
+    Ok(tenant::table
+        .filter(tenant::id.eq_any(ids))
+        .select(tenant::id)
+        .load(conn)
+        .await?
+        .into_iter()
+        .collect())
+}
+
 /// Creates a tenant under `parent` with a caller-supplied id. Repeating the
 /// call with the same parent returns the existing tenant; a different parent
 /// is a conflict. Returns the tenant and whether it was created.

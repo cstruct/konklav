@@ -7,8 +7,8 @@ use std::path::Path;
 
 use crate::model::{
     Assignment, AssignmentTarget, BootstrapSet, Credential, CredentialMaterial, FactValue, Factor,
-    FactorMaterial, Facts, Id, Located, Location, Membership, MembershipRef, SecretSlot, Session,
-    Subject, SubjectKind, SubjectRef, SubjectState, Tenant, TenantRef,
+    FactorMaterial, Facts, Id, Located, Location, Membership, MembershipRef, RegisteredScope,
+    SecretSlot, Session, Subject, SubjectKind, SubjectRef, SubjectState, Tenant, TenantRef,
 };
 use crate::{Problem, line_of};
 
@@ -47,6 +47,7 @@ fn columns(table: &str) -> (&'static [&'static str], &'static [&'static str], bo
             &["membership", "subject", "scope_kind", "scope_id"],
             false,
         ),
+        "registered_scopes.csv" => (&["kind", "id", "tenant"], &["containers"], false),
         "sessions.csv" => (
             &[
                 "id",
@@ -328,28 +329,37 @@ fn add_row(
                 });
             }
         }
+        "registered_scopes.csv" => {
+            if let Some(scope) = registered_scope(row) {
+                set.registered_scopes.push(Located { value: scope, at });
+            }
+        }
         "sessions.csv" => {
-            let version = row.parsed::<i64>("version", "a whole number").unwrap_or(1);
-            let session = Session {
-                id: row.id("id"),
-                subject: row.id("subject"),
-                credential: row.id("credential"),
-                tenant: row.optional_id("tenant"),
-                membership: row.optional_id("membership"),
-                stage: row.required("stage"),
-                client_kind: row.get("client_kind").map(str::to_owned),
-                amr: row.list("amr"),
-                flags: row.list("flags"),
-                impersonator: row.optional_id("impersonator"),
-                auth_time: row.required("auth_time"),
-                version,
-                refresh_hash: row.required("refresh_hash"),
-                expires_at: row.required("expires_at"),
-                revoked_at: row.get("revoked_at").map(str::to_owned),
-            };
+            let session = session(row);
             set.sessions.push(Located { value: session, at });
         }
         _ => {}
+    }
+}
+
+fn session(row: &mut Row<'_>) -> Session {
+    let version = row.parsed::<i64>("version", "a whole number").unwrap_or(1);
+    Session {
+        id: row.id("id"),
+        subject: row.id("subject"),
+        credential: row.id("credential"),
+        tenant: row.optional_id("tenant"),
+        membership: row.optional_id("membership"),
+        stage: row.required("stage"),
+        client_kind: row.get("client_kind").map(str::to_owned),
+        amr: row.list("amr"),
+        flags: row.list("flags"),
+        impersonator: row.optional_id("impersonator"),
+        auth_time: row.required("auth_time"),
+        version,
+        refresh_hash: row.required("refresh_hash"),
+        expires_at: row.required("expires_at"),
+        revoked_at: row.get("revoked_at").map(str::to_owned),
     }
 }
 
@@ -411,6 +421,37 @@ fn assignment(row: &mut Row<'_>) -> Option<Assignment> {
         target,
         role: row.required("role"),
         scope,
+    })
+}
+
+/// A registered scope. Its containers are `<kind>:<id>` items, split at
+/// the first `:`, so a container's kind can't hold `:` here, nor its id
+/// `|`; a nested document can hold any.
+// r[impl bootstrap.registered.shape]
+fn registered_scope(row: &mut Row<'_>) -> Option<RegisteredScope> {
+    let kind = row.required("kind");
+    let id = row.required("id");
+    let tenant = TenantRef::parse(&row.required("tenant"));
+    let mut containers = Vec::new();
+    for item in row.list("containers") {
+        match item.split_once(':') {
+            Some((kind, id)) if !kind.trim().is_empty() && !id.trim().is_empty() => {
+                containers.push((kind.trim().to_owned(), id.trim().to_owned()));
+            }
+            _ => {
+                row.problems.push(Problem::at(
+                    &row.at,
+                    format!("a containing scope is `<kind>:<id>`, not `{item}`"),
+                ));
+                return None;
+            }
+        }
+    }
+    (!kind.is_empty() && !id.is_empty()).then_some(RegisteredScope {
+        kind,
+        id,
+        tenant,
+        containers,
     })
 }
 

@@ -78,13 +78,13 @@ impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(
             f,
-            "{:<14} {:>8} {:>8} {:>8} {:>9}",
+            "{:<17} {:>8} {:>8} {:>8} {:>9}",
             "", "created", "skipped", "updated", "conflicts"
         )?;
         for (kind, tally) in &self.tallies {
             writeln!(
                 f,
-                "{kind:<14} {:>8} {:>8} {:>8} {:>9}",
+                "{kind:<17} {:>8} {:>8} {:>8} {:>9}",
                 tally.created, tally.skipped, tally.updated, tally.conflicts
             )?;
         }
@@ -234,6 +234,12 @@ async fn apply(
     for assignment in &set.assignments {
         let outcome = records::assignment(conn, context, assignment).await;
         report.record("assignments", &assignment.at, outcome);
+    }
+    let scopes =
+        records::registered_scopes(conn, context, &catalog_document, &set.registered_scopes)
+            .await?;
+    for (at, outcome) in scopes {
+        report.record("registered scopes", at, outcome);
     }
     for session in &set.sessions {
         let outcome = records::session(conn, context, session).await;

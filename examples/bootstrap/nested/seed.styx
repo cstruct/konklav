@@ -33,6 +33,11 @@ tenants ({
             roles (reader)
         }
     )
+    // Documents a relying system keeps, in the projects they sit in.
+    registered_scopes (
+        {kind document, id d-1, containers ({kind project, id p-1})}
+        {kind document, id d-2}
+    )
 })
 
 subjects ({
