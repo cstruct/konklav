@@ -38,6 +38,11 @@ csv/mfa_factors.csv/id: required column
 csv/mfa_factors.csv/kind: required column
 csv/mfa_factors.csv/seed_base32: optional column
 csv/mfa_factors.csv/subject: required column
+csv/registered_scopes.csv: optional table
+csv/registered_scopes.csv/containers: optional column
+csv/registered_scopes.csv/id: required column
+csv/registered_scopes.csv/kind: required column
+csv/registered_scopes.csv/tenant: required column
 csv/sessions.csv: optional table
 csv/sessions.csv/amr: optional column
 csv/sessions.csv/auth_time: required column
@@ -74,6 +79,13 @@ styx/global_roles/policies/scope_bound: optional bool
 styx/global_roles/priority: optional i32
 styx/global_roles/template: optional text
 styx/id_namespace: optional text
+styx/registered_scopes: optional list of record
+styx/registered_scopes/containers: optional list of record
+styx/registered_scopes/containers/id: required text
+styx/registered_scopes/containers/kind: required text
+styx/registered_scopes/id: required text
+styx/registered_scopes/kind: required text
+styx/registered_scopes/tenant: optional text
 styx/subjects: optional list of record
 styx/subjects/credentials: optional list of record
 styx/subjects/credentials/a: optional record
@@ -165,6 +177,13 @@ styx/tenants/members/scoped_roles/scope_id: required text
 styx/tenants/members/scoped_roles/scope_kind: required text
 styx/tenants/members/state: optional text
 styx/tenants/parent: optional text
+styx/tenants/registered_scopes: optional list of record
+styx/tenants/registered_scopes/containers: optional list of record
+styx/tenants/registered_scopes/containers/id: required text
+styx/tenants/registered_scopes/containers/kind: required text
+styx/tenants/registered_scopes/id: required text
+styx/tenants/registered_scopes/kind: required text
+styx/tenants/registered_scopes/tenant: optional text
 styx/tenants/roles: optional list of record
 styx/tenants/roles/key: required text
 styx/tenants/roles/metadata: optional map of value

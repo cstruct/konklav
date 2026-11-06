@@ -1,6 +1,6 @@
 // What the tables need besides rows: the namespace their external ids are
 // derived under, and the template the tenants are created with.
-format 1.1
+format 1.0
 id_namespace 3f1c9a52-6a1e-4d0b-9a0e-6c1d8f0b2e11
 catalog_file "../catalog.json"
 templates ({key reader, policies ({action project:read})})

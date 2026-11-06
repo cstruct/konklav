@@ -369,11 +369,14 @@ The `export` command MUST declare the current format version in the set it
 writes.
 
 r[bootstrap.format.released]
-Every released format version MUST keep a frozen set that the command
-still reads and applies. A change to the tables, columns or keys MUST be
-checked against the latest released format version, so that the current
-version is that version bumped as the change needs: unchanged, the next
-minor version or the next major version.
+A format version is released once a Konklav release ships it, and MUST
+NOT change after that. Until then it is pending, and changes to it need no
+new version. Every released format version MUST keep a frozen set that the
+command still reads and applies. A change to the tables, columns or keys
+MUST be checked against the latest released format version, so that the
+current version is that version bumped as the change needs: unchanged, the
+next minor version or the next major version. While no format version is
+released, the current version MUST be 1.0.
 
 r[bootstrap.contents]
 A bootstrap set MAY contain the action catalog, templates, tenants,
