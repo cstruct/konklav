@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 820 500" width="820" height="500" role="img" aria-labelledby="title desc">
+  <title id="title">How the relying SDK decides</title>
+  <desc id="desc">The relying SDK verifies the token against cached JWKS, checks the session version against session.changed events, looks up the cached entitlement set and any registered scopes the requirements name, then evaluates the requirements locally to allow or deny. Cache misses fetch from Konklav's relying surface, and the change feed invalidates the caches. While the cache is untrusted every decision goes to POST /v1/check, and without an answer from Konklav the decision is deny.</desc>
+  <style>
+    text{font-family:Inter,"Helvetica Neue",Arial,sans-serif;fill:#16161D}
+    .bg{fill:#FBFAF7;stroke:#E4E0D8}
+    .box{fill:#FFFFFF;stroke:#B9B5AD}
+    .alt{fill:#F1EEE7;stroke:#D6D1C7}
+    .key{fill:#FBEEEE;stroke:#B3202A}
+    .h{font-size:14px;font-weight:600}
+    .s{font-size:12px;fill:#5E5B66}
+    .m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+    .c{text-anchor:middle}
+    .cap{font-size:11px;font-weight:600;letter-spacing:.08em;fill:#5E5B66}
+    .ln{stroke:#6E6A75;stroke-width:1.5;fill:none}
+    .lk{stroke:#B3202A;stroke-width:1.5;fill:none}
+    .d{stroke-dasharray:5 4}
+    .ah{fill:#6E6A75}.ak{fill:#B3202A}.acc{fill:#B3202A}
+    @media (prefers-color-scheme:dark){
+      text{fill:#F4F1EA}
+      .bg{fill:#16161D;stroke:#2E2E38}
+      .box{fill:#1F1F28;stroke:#4A4954}
+      .alt{fill:#24242D;stroke:#3A3944}
+      .key{fill:#331A1E;stroke:#E0454E}
+      .s,.cap{fill:#A8A49C}
+      .ln{stroke:#A8A49C}.lk{stroke:#E0454E}
+      .ah{fill:#A8A49C}.ak{fill:#E0454E}.acc{fill:#E0454E}
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0 1L10 5L0 9z"/></marker>
+    <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ak" d="M0 1L10 5L0 9z"/></marker>
+  </defs>
+  <rect class="bg" x="0.5" y="0.5" width="819" height="499" rx="12"/>
+  <text class="cap" x="24" y="40">IN THE RELYING SYSTEM</text>
+
+  <!-- steps -->
+  <rect class="box" x="24" y="56" width="330" height="52" rx="8"/>
+  <text class="h" x="40" y="78">Verify the token</text>
+  <text class="s" x="40" y="97">signature against the cached JWKS</text>
+
+  <rect class="box" x="24" y="128" width="330" height="52" rx="8"/>
+  <text class="h" x="40" y="150">Check the session</text>
+  <text class="s" x="40" y="169">sid and sv against the cached session state</text>
+
+  <rect class="box" x="24" y="200" width="330" height="52" rx="8"/>
+  <text class="h" x="40" y="222">Look up the entitlement set</text>
+  <text class="s" x="40" y="241">cached per subject and tenant</text>
+
+  <rect class="box" x="24" y="272" width="330" height="52" rx="8"/>
+  <text class="h" x="40" y="294">Look up registered scopes</text>
+  <text class="s" x="40" y="313">only those the requirements name</text>
+
+  <rect class="key" x="24" y="344" width="330" height="52" rx="8"/>
+  <text class="h" x="40" y="366">Evaluate the requirements locally</text>
+  <text class="s" x="40" y="385">actions, token kind, flags, step-up</text>
+
+  <path class="ln" d="M189 108V126" marker-end="url(#a)"/>
+  <path class="ln" d="M189 180V198" marker-end="url(#a)"/>
+  <path class="ln" d="M189 252V270" marker-end="url(#a)"/>
+  <path class="ln" d="M189 324V342" marker-end="url(#a)"/>
+
+  <rect class="box" x="24" y="432" width="158" height="48" rx="8"/>
+  <text class="h" x="40" y="453">allow</text>
+  <text class="s" x="40" y="470">with any obligations</text>
+  <rect class="box" x="196" y="432" width="158" height="48" rx="8"/>
+  <text class="h" x="212" y="453">deny</text>
+  <text class="s" x="212" y="470">with a reason</text>
+  <path class="ln" d="M150 396L114 430" marker-end="url(#a)"/>
+  <path class="ln" d="M228 396L264 430" marker-end="url(#a)"/>
+
+  <!-- konklav -->
+  <rect class="alt" x="430" y="24" width="366" height="300" rx="10"/>
+  <text class="h" x="446" y="48">Konklav relying surface</text>
+  <text class="s" x="446" y="66">GET /v1/events (SSE) invalidates every cache</text>
+  <text class="m" x="446" y="88">GET /.well-known/jwks.json</text>
+  <text class="s" x="446" y="104">unknown kid, or signing_keys.changed</text>
+  <text class="m" x="446" y="160">GET /v1/session-states/{id}</text>
+  <text class="s" x="446" y="176">a session the cache hasn't seen</text>
+  <text class="m" x="446" y="232">GET /v1/entitlements/{subject}/{tenant}</text>
+  <text class="s" x="446" y="248">miss, or invalidated past the debounce</text>
+  <text class="m" x="446" y="304">GET /v1/registered-scopes/{kind}/{id}</text>
+  <text class="s" x="446" y="320">miss; unknown ids remembered briefly</text>
+
+  <path class="ln d" d="M354 82H428" marker-end="url(#a)"/>
+  <path class="ln d" d="M354 154H428" marker-end="url(#a)"/>
+  <path class="ln d" d="M354 226H428" marker-end="url(#a)"/>
+  <path class="ln d" d="M354 298H428" marker-end="url(#a)"/>
+
+  <rect class="key" x="430" y="344" width="366" height="64" rx="10"/>
+  <text class="m" x="446" y="368">POST /v1/check</text>
+  <text class="s" x="446" y="386">every decision while the feed lags or is lost</text>
+  <text class="s" x="446" y="401">no answer from Konklav: deny</text>
+  <path class="lk d" d="M354 370H428" marker-end="url(#k)"/>
+  <text class="s c acc" x="391" y="362">untrusted</text>
+</svg>

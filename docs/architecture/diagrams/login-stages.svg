@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 820 296" width="820" height="296" role="img" aria-labelledby="title desc">
+  <title id="title">Login stages of a session</title>
+  <desc id="desc">A first factor starts a session. If the credential requires MFA the session is partial until enough factors are proven; otherwise it goes straight to the identity stage, where the refresh token is issued. Selecting a tenant moves it to the tenant stage, and switching tenant stays there and bumps the version.</desc>
+  <style>
+    text{font-family:Inter,"Helvetica Neue",Arial,sans-serif;fill:#16161D}
+    .bg{fill:#FBFAF7;stroke:#E4E0D8}
+    .box{fill:#FFFFFF;stroke:#B9B5AD}
+    .alt{fill:#F1EEE7;stroke:#D6D1C7}
+    .key{fill:#FBEEEE;stroke:#B3202A}
+    .h{font-size:14px;font-weight:600}
+    .s{font-size:12px;fill:#5E5B66}
+    .m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+    .c{text-anchor:middle}
+    .cap{font-size:11px;font-weight:600;letter-spacing:.08em;fill:#5E5B66}
+    .ln{stroke:#6E6A75;stroke-width:1.5;fill:none}
+    .lk{stroke:#B3202A;stroke-width:1.5;fill:none}
+    .d{stroke-dasharray:5 4}
+    .ah{fill:#6E6A75}.ak{fill:#B3202A}.acc{fill:#B3202A}
+    @media (prefers-color-scheme:dark){
+      text{fill:#F4F1EA}
+      .bg{fill:#16161D;stroke:#2E2E38}
+      .box{fill:#1F1F28;stroke:#4A4954}
+      .alt{fill:#24242D;stroke:#3A3944}
+      .key{fill:#331A1E;stroke:#E0454E}
+      .s,.cap{fill:#A8A49C}
+      .ln{stroke:#A8A49C}.lk{stroke:#E0454E}
+      .ah{fill:#A8A49C}.ak{fill:#E0454E}.acc{fill:#E0454E}
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0 1L10 5L0 9z"/></marker>
+    <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ak" d="M0 1L10 5L0 9z"/></marker>
+  </defs>
+  <rect class="bg" x="0.5" y="0.5" width="819" height="295" rx="12"/>
+
+  <rect class="alt" x="24" y="110" width="136" height="56" rx="8"/>
+  <text class="h" x="38" y="134">First factor</text>
+  <text class="s" x="38" y="153">any credential kind</text>
+
+  <rect class="box" x="236" y="110" width="136" height="56" rx="8"/>
+  <text class="h" x="250" y="134">partial</text>
+  <text class="s" x="250" y="153">proves MFA factors</text>
+
+  <rect class="key" x="448" y="110" width="136" height="56" rx="8"/>
+  <text class="h" x="462" y="134">identity</text>
+  <text class="s" x="462" y="153">refresh token issued</text>
+
+  <rect class="box" x="660" y="110" width="136" height="56" rx="8"/>
+  <text class="h" x="674" y="134">tenant</text>
+  <text class="s" x="674" y="153">one membership</text>
+
+  <path class="ln" d="M160 138H234" marker-end="url(#a)"/>
+  <text class="s c" x="197" y="114">MFA</text>
+  <text class="s c" x="197" y="129">required</text>
+
+  <path class="ln" d="M372 138H446" marker-end="url(#a)"/>
+  <text class="s c" x="409" y="114">enough</text>
+  <text class="s c" x="409" y="129">factors</text>
+
+  <path class="ln" d="M584 138H658" marker-end="url(#a)"/>
+  <text class="s c" x="621" y="114">select</text>
+  <text class="s c" x="621" y="129">tenant</text>
+
+  <path class="ln" d="M92 108C92 44 516 44 516 108" marker-end="url(#a)"/>
+  <text class="s c" x="304" y="52">no MFA required</text>
+
+  <path class="ln" d="M706 166C706 222 750 222 750 168" marker-end="url(#a)"/>
+  <text class="s c" x="728" y="240">switch tenant</text>
+
+  <text class="s" x="24" y="272">Each step updates the one session record and bumps its version. An access token's kind is the stage it was issued at,</text>
+  <text class="s" x="24" y="288">so a token from an earlier stage only works for the next step.</text>
+</svg>

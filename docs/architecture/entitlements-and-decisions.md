@@ -161,21 +161,7 @@ projects, are left until a deployment needs them.
 
 ## Decision path in the relying SDK
 
-```
-token ──verify (JWKS)──▶ claims
-        │
-        ├─ session (sid, sv) ── cached state from `session.changed`
-        │
-        ├─ entitlements (sub, tid) ── cache ── miss/stale ─▶ GET /v1/entitlements
-        │
-        ├─ registered scopes named ── cache ── miss/stale ─▶ GET /v1/registered-scopes
-        │
-        └─ evaluate requirements locally
-              actions ⊆ granted per level and scope
-              token kind allowed
-              restrictive flags admitted, assertive flags present
-              step-up (amr count/set, auth_time age)
-```
+![How the relying SDK decides, and where it falls back to Konklav](diagrams/decision-path.svg)
 
 When the cache is untrusted (feed lagging or disconnected), every decision
 goes to `POST /v1/check`. Without Konklav, the result is deny.

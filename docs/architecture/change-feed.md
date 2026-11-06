@@ -10,6 +10,8 @@
 
 ## Server side
 
+![From the writing transaction through the outbox to consumers](diagrams/change-feed.svg)
+
 Every open stream:
 
 1. Replays events after the client's cursor from the outbox.

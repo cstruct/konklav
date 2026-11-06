@@ -23,18 +23,7 @@ out of scope" position.
 
 ## Topology for operators
 
-```
-              ┌──────────────────────────┐
-              │ operators' Konklav      │  OpenID provider
-              │ subjects: operators      │  clients: one per environment
-              │ global roles: sre, dev…  │
-              └──┬─────────┬─────────┬───┘
-       OIDC +    │         │         │     optional: change feed (peering)
-       feed      ▼         ▼         ▼
-            ┌───────┐ ┌─────────┐ ┌──────────────┐
-            │  dev  │ │ staging │ │ prod-eu, …   │  identity-provider clients
-            └───────┘ └─────────┘ └──────────────┘
-```
+![The operators' Konklav federates operators into each environment's Konklav](diagrams/operator-topology.svg)
 
 - Each environment registers the operators' instance as an identity
   provider. At the operators' instance, each environment is its own OIDC
@@ -146,6 +135,8 @@ New pieces:
 ### Login hand-off instead of a hosted page
 
 Konklav has no user interface, and `/v1/oauth2/authorize` doesn't add one:
+
+![The login hand-off between the OIDC client, the browser, Konklav and the login application](diagrams/login-handoff.svg)
 
 1. The client redirects to `/v1/oauth2/authorize`, with:
    - the authorization code response type

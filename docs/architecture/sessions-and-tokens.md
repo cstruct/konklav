@@ -2,11 +2,7 @@
 
 ## Login stages
 
-```
-credential ──▶ partial ──MFA──▶ identity ──select tenant──▶ tenant
-   (pwd/otp/link/secret key)        │                        │
-                                    └─── switch tenant ◀─────┘ (sv+1)
-```
+![Login stages: first factor, partial, identity, tenant](diagrams/login-stages.svg)
 
 Every stage transition updates one session record and increases its
 version. Tokens from earlier stages stop working for anything except the
