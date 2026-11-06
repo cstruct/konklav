@@ -32,6 +32,9 @@ pub struct CompileInput {
     /// Accepted shares with the tenant, when the subject is an active
     /// member of it.
     pub shares: Vec<konklav_authz::Share>,
+    /// The tenant's facts, whatever its state; an empty object without a
+    /// tenant.
+    pub tenant_facts: serde_json::Value,
     /// The newest event cursor in the snapshot the input was read from.
     pub revision: Cursor,
 }
@@ -43,6 +46,12 @@ impl CompileInput {
         let mut entitlements = konklav_authz::compile(&self.catalog, &self.assignments);
         entitlements.shared = konklav_authz::shared(&self.catalog, &entitlements, &self.shares);
         entitlements
+    }
+
+    /// The catalog's confinements, with the tenant's facts they name.
+    #[must_use]
+    pub fn confinements(&self) -> konklav_authz::Confinements {
+        self.document.confinements(&self.tenant_facts)
     }
 }
 
@@ -156,6 +165,16 @@ pub async fn read(
     let revision = events::head(conn).await?;
     let document = catalog::load(conn).await?;
     let catalog = document.compile_catalog();
+    let tenant_facts = match tenant_id {
+        Some(tenant_id) => tenant::table
+            .find(tenant_id.as_uuid())
+            .select(tenant::facts)
+            .first::<serde_json::Value>(conn)
+            .await
+            .optional()?
+            .unwrap_or_default(),
+        None => serde_json::Value::Object(serde_json::Map::new()),
+    };
     let active = subject::table
         .find(subject_id.as_uuid())
         .select(subject::state)
@@ -169,6 +188,7 @@ pub async fn read(
             document,
             assignments: Vec::new(),
             shares: Vec::new(),
+            tenant_facts,
             revision,
         });
     }
@@ -212,6 +232,7 @@ pub async fn read(
         document,
         assignments,
         shares,
+        tenant_facts,
         revision,
     })
 }

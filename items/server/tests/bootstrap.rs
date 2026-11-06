@@ -258,6 +258,56 @@ async fn template_and_role_metadata_is_stored_and_compared() {
     assert_eq!(report.conflicts.len(), 1, "{report}");
 }
 
+/// A directory holding only `catalog`, as a bootstrap set.
+fn catalog_only(name: &str, catalog: &serde_json::Value) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("konklav-bootstrap-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("catalog.json"), catalog.to_string()).unwrap();
+    dir
+}
+
+// r[verify authz.catalog.flag-confinement]
+// r[verify session.flags.confine.facts]
+// r[verify bootstrap.contents]
+#[tokio::test(flavor = "multi_thread")]
+async fn bootstrap_sets_can_confine_flags() {
+    let app = TestApp::new().await;
+    let report = apply(
+        &app,
+        &[examples().join("nested/seed.styx")],
+        Options::default(),
+    )
+    .await;
+    assert!(report.committed, "{report}");
+    let catalog = app.control(Method::GET, "/v1/catalog", None).await;
+    let personal_only = catalog.body["session_flags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|flag| flag["name"] == "personal_only")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        personal_only["confine"],
+        serde_json::json!({"tenant": {"tenant_type": ["personal"]}})
+    );
+
+    // A confinement on a fact that tokens never carry is refused.
+    let app = TestApp::new().await;
+    let unsound = catalog_only(
+        "unsound-confinement",
+        &serde_json::json!({
+            "facts": [{"key": "seats", "target": "tenant", "type": "integer"}],
+            "session_flags": [{"name": "personal_only", "kind": "restrictive",
+                               "confine": {"tenant": {"seats": [1]}}}],
+        }),
+    );
+    let report = apply(&app, &[unsound], Options::default()).await;
+    assert!(!report.committed, "{report}");
+    assert!(report.to_string().contains("not portable"), "{report}");
+}
+
 // r[verify bootstrap.atomic]
 // r[verify bootstrap.idempotent]
 #[tokio::test(flavor = "multi_thread")]

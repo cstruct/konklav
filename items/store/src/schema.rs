@@ -65,6 +65,7 @@ diesel::table! {
         kind -> Text,
         requestable -> Bool,
         description -> Text,
+        confine -> Nullable<Jsonb>,
     }
 }
 

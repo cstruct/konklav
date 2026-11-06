@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use diesel::prelude::*;
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
-use konklav_authz::Group;
+use konklav_authz::{Confinement, Confinements, Group};
 use serde::{Deserialize, Serialize};
 
 use crate::schema::{catalog_action, catalog_fact, catalog_scope_kind, catalog_session_flag};
@@ -155,6 +155,11 @@ pub struct SessionFlagEntry {
     pub requestable: bool,
     #[serde(default)]
     pub description: String,
+    /// Restrictive flags only: the tenants a session carrying it may act
+    /// in.
+    // r[impl authz.catalog.flag-confinement]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confine: Option<Confinement>,
 }
 
 /// The whole catalog.
@@ -207,6 +212,26 @@ impl CatalogDocument {
             .collect()
     }
 
+    /// The confinements by flag, with the values in `tenant_facts` of the
+    /// portable facts they name.
+    #[must_use]
+    pub fn confinements(&self, tenant_facts: &serde_json::Value) -> Confinements {
+        let flags: BTreeMap<String, Confinement> = self
+            .session_flags
+            .iter()
+            .filter_map(|flag| Some((flag.name.clone(), flag.confine.clone()?)))
+            .collect();
+        let named: BTreeSet<&String> = flags.values().flat_map(|c| c.tenant.keys()).collect();
+        let tenant_facts = portable_facts(self, FactTarget::Tenant, tenant_facts)
+            .into_iter()
+            .filter(|(key, _)| named.contains(key))
+            .collect();
+        Confinements {
+            flags,
+            tenant_facts,
+        }
+    }
+
     #[must_use]
     pub fn fact(&self, target: FactTarget, key: &str) -> Option<&FactEntry> {
         self.facts
@@ -252,6 +277,57 @@ impl CatalogDocument {
         Ok(())
     }
 
+    /// Checks a flag's confinement: restrictive flags only, and every
+    /// predicate on a declared, portable, scalar tenant fact with values of
+    /// its type.
+    // r[impl session.flags.confine.facts]
+    fn validate_confinement(
+        &self,
+        flag: &SessionFlagEntry,
+        confinement: &Confinement,
+    ) -> Result<(), String> {
+        let name = &flag.name;
+        if flag.kind != FlagKind::Restrictive {
+            return Err(format!("only restrictive flags can be confined (`{name}`)"));
+        }
+        if confinement.tenant.is_empty() {
+            return Err(format!("the confinement of `{name}` names no fact"));
+        }
+        for (key, allowed) in &confinement.tenant {
+            let Some(fact) = self.fact(FactTarget::Tenant, key) else {
+                return Err(format!(
+                    "the confinement of `{name}` names `{key}`, which is not a declared tenant fact"
+                ));
+            };
+            if !fact.portable {
+                return Err(format!(
+                    "the confinement of `{name}` names `{key}`, which is not portable"
+                ));
+            }
+            if !matches!(
+                fact.value_type,
+                FactType::String | FactType::Integer | FactType::Boolean
+            ) {
+                return Err(format!(
+                    "the confinement of `{name}` names `{key}`, a {}: only string, integer and boolean facts can be matched",
+                    fact.value_type.as_str()
+                ));
+            }
+            if allowed.is_empty() {
+                return Err(format!(
+                    "the confinement of `{name}` lists no value for `{key}`"
+                ));
+            }
+            if let Some(value) = allowed.iter().find(|v| !fact.value_type.matches(v)) {
+                return Err(format!(
+                    "the confinement of `{name}` lists `{value}` for `{key}`, which must be a {}",
+                    fact.value_type.as_str()
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Checks the document for problems the database can't express.
     pub fn validate(&self) -> Result<(), String> {
         let mut names = BTreeSet::new();
@@ -290,6 +366,9 @@ impl CatalogDocument {
                     "only restrictive flags can be requestable (`{}`)",
                     flag.name
                 ));
+            }
+            if let Some(confinement) = &flag.confine {
+                self.validate_confinement(flag, confinement)?;
             }
         }
         for group in &self.groups {
@@ -390,21 +469,28 @@ pub async fn load(conn: &mut AsyncPgConnection) -> StoreResult<CatalogDocument> 
             catalog_session_flag::kind,
             catalog_session_flag::requestable,
             catalog_session_flag::description,
+            catalog_session_flag::confine,
         ))
-        .load::<(String, String, bool, String)>(conn)
+        .load::<(String, String, bool, String, Option<serde_json::Value>)>(conn)
         .await?
         .into_iter()
-        .map(|(name, kind, requestable, description)| SessionFlagEntry {
-            name,
-            kind: if kind == "assertive" {
-                FlagKind::Assertive
-            } else {
-                FlagKind::Restrictive
-            },
-            requestable,
-            description,
+        .map(|(name, kind, requestable, description, confine)| {
+            Ok(SessionFlagEntry {
+                name,
+                kind: if kind == "assertive" {
+                    FlagKind::Assertive
+                } else {
+                    FlagKind::Restrictive
+                },
+                requestable,
+                description,
+                confine: confine
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(|e| diesel::result::Error::DeserializationError(Box::new(e)))?,
+            })
         })
-        .collect();
+        .collect::<Result<_, diesel::result::Error>>()?;
     Ok(document)
 }
 
@@ -544,6 +630,12 @@ async fn replace_session_flags(
         .execute(conn)
         .await?;
     for flag in &document.session_flags {
+        let confine = flag
+            .confine
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| StoreError::Conflict(e.to_string()))?;
         diesel::insert_into(catalog_session_flag::table)
             .values((
                 catalog_session_flag::name.eq(&flag.name),
@@ -553,6 +645,7 @@ async fn replace_session_flags(
                 }),
                 catalog_session_flag::requestable.eq(flag.requestable),
                 catalog_session_flag::description.eq(&flag.description),
+                catalog_session_flag::confine.eq(confine),
             ))
             .execute(conn)
             .await

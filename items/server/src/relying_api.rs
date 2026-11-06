@@ -57,6 +57,7 @@ async fn compile_for(
         entitlements: input.compile(),
         restrictive_flags: input.document.restrictive_flags(),
         registered_kinds: input.document.registered_kinds(),
+        confinements: input.confinements(),
     })
 }
 
@@ -151,6 +152,7 @@ async fn check(
         &body.requirements,
         &claims,
         &set.restrictive_flags,
+        &set.confinements,
         &set.entitlements,
         &registered,
         Utc::now().timestamp(),
