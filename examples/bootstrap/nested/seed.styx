@@ -1,6 +1,7 @@
 // A hand-written seed: a tenant tree, its roles and members, and an
 // operator. Records without ids are found by their natural keys, so this
 // file can be applied again without creating anything twice.
+format 1.0
 id_namespace 3f1c9a52-6a1e-4d0b-9a0e-6c1d8f0b2e11
 catalog_file "../catalog.json"
 
@@ -32,6 +33,11 @@ tenants ({
             email_link true
             roles (reader)
         }
+    )
+    // Documents a relying system keeps, in the projects they sit in.
+    registered_scopes (
+        {kind document, id d-1, containers ({kind project, id p-1})}
+        {kind document, id d-2}
     )
 })
 

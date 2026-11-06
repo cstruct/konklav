@@ -297,6 +297,17 @@ pub struct Assignment {
     pub scope: Option<(String, String)>,
 }
 
+/// A scope of a registered kind, with its owner tenant and the scopes it
+/// sits in. Its kind and ids are opaque and used as written.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegisteredScope {
+    pub kind: String,
+    pub id: String,
+    pub tenant: TenantRef,
+    /// `(scope kind, scope id)` of each containing scope.
+    pub containers: Vec<(String, String)>,
+}
+
 /// A live session carried over; flat tables only, with ids.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Session {
@@ -332,6 +343,7 @@ pub struct BootstrapSet {
     pub factors: Vec<Located<Factor>>,
     pub memberships: Vec<Located<Membership>>,
     pub assignments: Vec<Located<Assignment>>,
+    pub registered_scopes: Vec<Located<RegisteredScope>>,
     pub sessions: Vec<Located<Session>>,
 }
 
@@ -367,6 +379,7 @@ impl BootstrapSet {
         self.factors.extend(other.factors);
         self.memberships.extend(other.memberships);
         self.assignments.extend(other.assignments);
+        self.registered_scopes.extend(other.registered_scopes);
         self.sessions.extend(other.sessions);
     }
 
@@ -401,6 +414,10 @@ impl BootstrapSet {
                     tenant: t,
                 }) => subject(s) || tenant(t),
             })
+            || self
+                .registered_scopes
+                .iter()
+                .any(|r| tenant(&r.value.tenant))
             || self.sessions.iter().any(|s| {
                 let s = &s.value;
                 s.id.is_external()

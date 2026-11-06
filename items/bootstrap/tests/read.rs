@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use konklav_bootstrap::{
-    AssignmentTarget, CredentialMaterial, FactValue, Id, Kind, MembershipRef, SubjectRef,
-    TenantRef, derive, read,
+    AssignmentTarget, CredentialMaterial, FORMAT, FactValue, FormatVersion, Id, Kind,
+    MembershipRef, Problem, RegisteredScope, SubjectRef, TenantRef, derive, read,
 };
 
 fn examples() -> PathBuf {
@@ -53,7 +53,7 @@ fn the_nested_example_reads_into_records_with_natural_keys() {
     let ada = SubjectRef::Identifier("ada@acme.example".into());
     assert_eq!(set.subjects.len(), 3);
     assert_eq!(set.subjects[0].value.key, ada);
-    assert_eq!(set.subjects[0].at.line, 23, "where the member opens");
+    assert_eq!(set.subjects[0].at.line, 24, "where the member opens");
     assert!(matches!(
         set.credentials[0].value.material,
         CredentialMaterial::PasswordHash(_)
@@ -192,4 +192,261 @@ fn a_subject_without_an_id_needs_something_to_be_found_by() {
         problems[0].message.contains("needs an email"),
         "{problems:?}"
     );
+}
+
+// r[verify bootstrap.registered.shape]
+// r[verify bootstrap.contents]
+#[test]
+fn registered_scopes_read_from_both_formats() {
+    let nested = read(&[examples().join("nested/seed.styx")]).unwrap();
+    let scopes: Vec<_> = nested.registered_scopes.iter().map(|s| &s.value).collect();
+    assert_eq!(scopes.len(), 2);
+    assert_eq!(
+        *scopes[0],
+        RegisteredScope {
+            kind: "document".into(),
+            id: "d-1".into(),
+            tenant: TenantRef::Id(Id::External("acme".into())),
+            containers: vec![("project".into(), "p-1".into())],
+        },
+        "a tenant's scopes belong to it"
+    );
+    assert_eq!(scopes[1].containers, Vec::<(String, String)>::new());
+
+    let flat = read(&[examples().join("flat")]).unwrap();
+    let scopes: Vec<_> = flat.registered_scopes.iter().map(|s| &s.value).collect();
+    assert_eq!(
+        scopes[0].containers,
+        vec![
+            ("project".into(), "p-1".into()),
+            ("project".into(), "p-2".into())
+        ]
+    );
+    assert_eq!(
+        scopes[0].tenant,
+        TenantRef::Id(Id::External("org-1".into()))
+    );
+    assert_eq!(
+        scopes[1].containers,
+        Vec::<(String, String)>::new(),
+        "an empty cell is none"
+    );
+    assert_eq!(flat.registered_scopes[1].at.line, 3);
+
+    // A container's id is split from its kind at the first `:`, and ids
+    // are used as written, never resolved.
+    let dir = scratch(
+        "registered",
+        &[
+            (
+                "registered_scopes.csv",
+                "kind,id,tenant,containers\npatient,p:1,root,workspace:w:1\n",
+            ),
+            (
+                "seed.styx",
+                "registered_scopes ({kind patient, id \"a|b\", tenant root, containers ({kind \"x:y\", id \"1|2\"})})\n",
+            ),
+        ],
+    );
+    let set = read(&[dir]).unwrap();
+    assert_eq!(
+        set.registered_scopes[0].value,
+        RegisteredScope {
+            kind: "patient".into(),
+            id: "p:1".into(),
+            tenant: TenantRef::Root,
+            containers: vec![("workspace".into(), "w:1".into())],
+        }
+    );
+    assert_eq!(
+        set.registered_scopes[1].value.containers,
+        vec![("x:y".into(), "1|2".into())],
+        "a document holds what a table can't"
+    );
+}
+
+// r[verify bootstrap.registered.shape]
+// r[verify bootstrap.validate-first]
+#[test]
+fn malformed_registered_scopes_are_reported_with_their_place() {
+    let dir = scratch(
+        "registered-problems",
+        &[
+            (
+                "registered_scopes.csv",
+                "kind,id,tenant,containers\npatient,,root,\npatient,p-1,root,workspace\n",
+            ),
+            (
+                "seed.styx",
+                "registered_scopes ({kind patient, id p-2})\n\
+                 tenants ({id 0195f0c4-0000-7000-8000-000000000001, registered_scopes ({kind patient, id p-3, tenant root})})\n",
+            ),
+        ],
+    );
+    let problems = read(std::slice::from_ref(&dir)).unwrap_err();
+    let has = |file: &str, line: usize, text: &str| {
+        problems.iter().any(|p| {
+            p.at.as_ref()
+                .is_some_and(|at| at.file == dir.join(file) && at.line == line)
+                && p.message.contains(text)
+        })
+    };
+    let rendered: Vec<String> = problems.iter().map(ToString::to_string).collect();
+    assert!(
+        has("registered_scopes.csv", 2, "`id` is empty"),
+        "{rendered:#?}"
+    );
+    assert!(
+        has("registered_scopes.csv", 3, "`<kind>:<id>`, not `workspace`"),
+        "{rendered:#?}"
+    );
+    assert!(has("seed.styx", 1, "needs a `tenant`"), "{rendered:#?}");
+    assert!(has("seed.styx", 2, "the tenant it is in"), "{rendered:#?}");
+}
+
+/// Every set frozen for a released format: a directory under
+/// `formats/<version>/` holding one set.
+fn frozen_sets() -> Vec<(FormatVersion, PathBuf)> {
+    let mut sets = Vec::new();
+    for format in std::fs::read_dir(examples().join("formats")).unwrap() {
+        let format = format.unwrap().path();
+        let version: FormatVersion = format
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        for set in std::fs::read_dir(&format).unwrap() {
+            let set = set.unwrap().path();
+            if set.is_dir() {
+                sets.push((version, set));
+            }
+        }
+    }
+    sets.sort();
+    sets
+}
+
+// r[verify bootstrap.format.released]
+#[test]
+fn every_frozen_set_of_a_released_format_still_reads() {
+    let sets = frozen_sets();
+    assert!(
+        sets.iter()
+            .any(|(version, _)| *version == FormatVersion::new(1, 0))
+    );
+    for (version, set) in sets {
+        let read = read(std::slice::from_ref(&set));
+        assert!(
+            read.is_ok(),
+            "format {version}, {}: {read:#?}",
+            set.display()
+        );
+        let read = read.unwrap();
+        assert!(!read.subjects.is_empty() && !read.credentials.is_empty());
+    }
+}
+
+// r[verify bootstrap.format.declare]
+#[test]
+fn the_examples_declare_the_current_format() {
+    for example in ["flat/set.styx", "nested/seed.styx"] {
+        let text = std::fs::read_to_string(examples().join(example)).unwrap();
+        assert!(
+            text.lines().any(|line| line == format!("format {FORMAT}")),
+            "{example} declares format {FORMAT}"
+        );
+    }
+}
+
+fn problems_of(name: &str, files: &[(&str, &str)]) -> (PathBuf, Vec<Problem>) {
+    let dir = scratch(name, files);
+    let problems = read(std::slice::from_ref(&dir)).unwrap_err();
+    (dir, problems)
+}
+
+// r[verify bootstrap.format.declare]
+#[test]
+fn a_declaration_may_be_bare_or_quoted_and_repeated_alike() {
+    let declared =
+        format!("format {FORMAT}\nsubjects ({{email a@example.com, email_link true}})\n");
+    let quoted = format!("format \"{FORMAT}\"\n");
+    let dir = scratch("declared", &[("a.styx", &declared), ("b.styx", &quoted)]);
+    let set = read(&[dir]).unwrap();
+    assert_eq!(set.subjects.len(), 1);
+}
+
+// r[verify bootstrap.format.declare]
+#[test]
+fn declarations_that_differ_are_a_problem() {
+    let (dir, problems) = problems_of(
+        "differing",
+        &[
+            ("a.styx", "format 1.0\n"),
+            ("b.styx", "\nformat 1.00\n"),
+            ("c.styx", "format 0.9\n"),
+        ],
+    );
+    assert_eq!(problems.len(), 1, "{problems:#?}");
+    let differs = &problems[0];
+    let at = differs.at.as_ref().unwrap();
+    assert_eq!((at.file.clone(), at.line), (dir.join("c.styx"), 1));
+    assert!(
+        differs
+            .message
+            .starts_with("format 0.9 differs from 1.0 declared at ")
+            && differs.message.ends_with("a.styx:1"),
+        "1.00 is 1.0: {problems:#?}"
+    );
+}
+
+#[test]
+fn a_declaration_must_be_a_version() {
+    let (dir, problems) = problems_of("malformed", &[("a.styx", "format latest\n")]);
+    assert_eq!(problems.len(), 1, "{problems:#?}");
+    assert_eq!(problems[0].at.as_ref().unwrap().file, dir.join("a.styx"));
+    assert!(
+        problems[0].message.contains("not `latest`"),
+        "{problems:#?}"
+    );
+}
+
+// r[verify bootstrap.format.read]
+#[test]
+fn a_set_of_a_newer_or_other_format_gets_one_problem_at_its_declaration() {
+    let newer_minor = FormatVersion::new(FORMAT.major, FORMAT.minor + 1);
+    let newer_major = FormatVersion::new(FORMAT.major + 1, 0);
+    let older_major = FormatVersion::new(FORMAT.major - 1, 7);
+    for version in [newer_minor, newer_major, older_major] {
+        // Keys and tables this reader doesn't know aren't reported on top.
+        let document = format!("// a newer set\nformat {version}\ngroups ({{key a}})\n");
+        let (dir, problems) = problems_of(
+            "newer",
+            &[("set.styx", &document), ("groups.csv", "id\ng-1\n")],
+        );
+        assert_eq!(problems.len(), 1, "{problems:#?}");
+        let at = problems[0].at.as_ref().unwrap();
+        assert_eq!((at.file.clone(), at.line), (dir.join("set.styx"), 2));
+        assert_eq!(
+            problems[0].message,
+            format!(
+                "this set needs format {version}; this server reads format {}.0 up to {FORMAT}",
+                FORMAT.major
+            )
+        );
+    }
+}
+
+// r[verify bootstrap.format.read]
+#[test]
+fn a_set_of_an_older_minor_format_reads() {
+    for minor in 0..=FORMAT.minor {
+        let document = format!(
+            "format {}.{minor}\nsubjects ({{email a@example.com, email_link true}})\n",
+            FORMAT.major
+        );
+        let set = read(&[scratch("older", &[("set.styx", &document)])]).unwrap();
+        assert_eq!(set.subjects.len(), 1);
+    }
 }

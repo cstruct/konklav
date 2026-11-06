@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use konklav_token::{AccessClaims, TokenKind};
 use serde::{Deserialize, Serialize};
 
-use crate::{Entitlements, RegisteredScopes, Registration, Scope};
+use crate::{Confinements, Entitlements, RegisteredScopes, Registration, Scope};
 
 /// Actions required at one scope. The relying system resolves its own
 /// resources into scopes before asking, except registered scopes, which
@@ -86,6 +86,10 @@ pub enum DenyReason {
     /// The session carries a restrictive flag the operation doesn't admit.
     #[cfg_attr(feature = "openapi", schema(title = "DenyReasonRestrictedSession"))]
     RestrictedSession { flag: String },
+    /// The session carries a confined flag, and the token targets no tenant
+    /// or one whose facts don't match the flag's confinement.
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonConfinedSession"))]
+    ConfinedSession { flag: String },
     /// The session lacks an assertive flag the operation requires.
     #[cfg_attr(feature = "openapi", schema(title = "DenyReasonMissingFlag"))]
     MissingFlag { flag: String },
@@ -144,12 +148,14 @@ impl Decision {
 
 /// Evaluates `requirements` for a verified token whose session is known to
 /// be current, given the restrictive flags declared in the catalog, the
+/// confinements with the current facts of the token's tenant, the
 /// entitlement set for the token's subject and tenant, and the records of
 /// the registered scopes the requirements name.
 ///
 /// `now` is in Unix seconds.
 // r[impl session.flags.restrictive]
 // r[impl session.flags.assertive]
+// r[impl session.flags.confine.decision]
 // r[impl authn.step-up.demand]
 // r[impl item.authz.single-evaluator]
 #[must_use]
@@ -157,6 +163,7 @@ pub fn evaluate(
     requirements: &Requirements,
     claims: &AccessClaims,
     restrictive_flags: &BTreeSet<String>,
+    confinements: &Confinements,
     entitlements: &Entitlements,
     registered: &RegisteredScopes,
     now: i64,
@@ -177,6 +184,14 @@ pub fn evaluate(
                 reason: DenyReason::RestrictedSession { flag: flag.clone() },
             };
         }
+    }
+    // Before any action is considered, so global actions can't lift it.
+    if let Some(flag) = confinements.violated(&claims.sfl, claims.tid.is_some()) {
+        return Decision::Deny {
+            reason: DenyReason::ConfinedSession {
+                flag: flag.to_owned(),
+            },
+        };
     }
     for flag in &requirements.require_flags {
         if !claims.sfl.contains(flag) {

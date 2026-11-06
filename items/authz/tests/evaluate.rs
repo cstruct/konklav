@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use konklav_authz::{
-    Decision, DenyReason, Entitlements, RegisteredScopes, Requirements, Scope, ScopeRequirement,
-    StepUp, evaluate,
+    Confinements, Decision, DenyReason, Entitlements, RegisteredScopes, Requirements, Scope,
+    ScopeRequirement, StepUp, evaluate,
 };
 use konklav_core::{SessionId, SubjectId, TenantId};
 use konklav_token::{AccessClaims, TokenKind};
@@ -64,6 +64,7 @@ fn decide(requirements: &Requirements, claims: &AccessClaims) -> Decision {
         requirements,
         claims,
         &restrictive(),
+        &Confinements::default(),
         &entitlements(),
         &RegisteredScopes::default(),
         NOW,

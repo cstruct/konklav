@@ -1,0 +1,12 @@
+// A set as format 1.0 wrote it: no format declaration, so it is 1.0.
+// Frozen: it must keep reading and applying unchanged. Between them, this
+// set and nested/seed.styx use every table and most columns and keys.
+id_namespace 3f1c9a52-6a1e-4d0b-9a0e-6c1d8f0b2e11
+catalog_file "../catalog.json"
+templates ({
+    key reader
+    description "Reads projects"
+    metadata {label Reader}
+    policies ({action project:read})
+})
+global_roles ({key support, priority 5, policies ({action konklav:subject:impersonate})})

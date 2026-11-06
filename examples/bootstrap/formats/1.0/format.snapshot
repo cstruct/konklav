@@ -1,0 +1,196 @@
+# The bootstrap format's tables, columns and keys, generated from the
+# readers by items/bootstrap/src/format/check.rs. Don't edit it by hand.
+format 1.0
+
+catalog.json: optional catalog
+csv/assignments.csv: optional table
+csv/assignments.csv/membership: optional column
+csv/assignments.csv/role: required column
+csv/assignments.csv/scope_id: optional column
+csv/assignments.csv/scope_kind: optional column
+csv/assignments.csv/subject: optional column
+csv/credentials.csv: optional table
+csv/credentials.csv/a_created_at: optional column
+csv/credentials.csv/a_expires_at: optional column
+csv/credentials.csv/a_hash: optional column
+csv/credentials.csv/b_created_at: optional column
+csv/credentials.csv/b_expires_at: optional column
+csv/credentials.csv/b_hash: optional column
+csv/credentials.csv/id: required column
+csv/credentials.csv/identifier: optional column
+csv/credentials.csv/kind: required column
+csv/credentials.csv/mfa_factors_required: optional column
+csv/credentials.csv/password: optional column
+csv/credentials.csv/password_hash: optional column
+csv/credentials.csv/provider: optional column
+csv/credentials.csv/provider_subject: optional column
+csv/credentials.csv/session_flags: optional column
+csv/credentials.csv/subject: required column
+csv/memberships.csv: optional table
+csv/memberships.csv/fact.*: optional column
+csv/memberships.csv/id: required column
+csv/memberships.csv/subject: required column
+csv/memberships.csv/tenant: required column
+csv/mfa_factors.csv: optional table
+csv/mfa_factors.csv/active: optional column
+csv/mfa_factors.csv/email: optional column
+csv/mfa_factors.csv/id: required column
+csv/mfa_factors.csv/kind: required column
+csv/mfa_factors.csv/seed_base32: optional column
+csv/mfa_factors.csv/subject: required column
+csv/registered_scopes.csv: optional table
+csv/registered_scopes.csv/containers: optional column
+csv/registered_scopes.csv/id: required column
+csv/registered_scopes.csv/kind: required column
+csv/registered_scopes.csv/tenant: required column
+csv/sessions.csv: optional table
+csv/sessions.csv/amr: optional column
+csv/sessions.csv/auth_time: required column
+csv/sessions.csv/client_kind: optional column
+csv/sessions.csv/credential: required column
+csv/sessions.csv/expires_at: required column
+csv/sessions.csv/flags: optional column
+csv/sessions.csv/id: required column
+csv/sessions.csv/impersonator: optional column
+csv/sessions.csv/membership: optional column
+csv/sessions.csv/refresh_hash: required column
+csv/sessions.csv/revoked_at: optional column
+csv/sessions.csv/stage: required column
+csv/sessions.csv/subject: required column
+csv/sessions.csv/tenant: optional column
+csv/sessions.csv/version: required column
+csv/subjects.csv: optional table
+csv/subjects.csv/id: required column
+csv/subjects.csv/kind: optional column
+csv/subjects.csv/state: optional column
+csv/tenants.csv: optional table
+csv/tenants.csv/fact.*: optional column
+csv/tenants.csv/id: required column
+csv/tenants.csv/parent: optional column
+csv/tenants.csv/templates: optional column
+styx/catalog_file: optional text
+styx/global_roles: optional list of record
+styx/global_roles/key: required text
+styx/global_roles/metadata: optional map of value
+styx/global_roles/policies: optional list of record
+styx/global_roles/policies/action: required text
+styx/global_roles/policies/effect: optional text
+styx/global_roles/policies/scope_bound: optional bool
+styx/global_roles/priority: optional i32
+styx/global_roles/template: optional text
+styx/id_namespace: optional text
+styx/registered_scopes: optional list of record
+styx/registered_scopes/containers: optional list of record
+styx/registered_scopes/containers/id: required text
+styx/registered_scopes/containers/kind: required text
+styx/registered_scopes/id: required text
+styx/registered_scopes/kind: required text
+styx/registered_scopes/tenant: optional text
+styx/subjects: optional list of record
+styx/subjects/credentials: optional list of record
+styx/subjects/credentials/a: optional record
+styx/subjects/credentials/a/created_at: required text
+styx/subjects/credentials/a/expires_at: optional text
+styx/subjects/credentials/a/hash: required text
+styx/subjects/credentials/b: optional record
+styx/subjects/credentials/b/created_at: required text
+styx/subjects/credentials/b/expires_at: optional text
+styx/subjects/credentials/b/hash: required text
+styx/subjects/credentials/id: optional text
+styx/subjects/credentials/identifier: optional text
+styx/subjects/credentials/kind: required text
+styx/subjects/credentials/mfa_factors_required: optional i16
+styx/subjects/credentials/password: optional text
+styx/subjects/credentials/password_hash: optional text
+styx/subjects/credentials/provider: optional text
+styx/subjects/credentials/provider_subject: optional text
+styx/subjects/credentials/session_flags: optional list of text
+styx/subjects/email: optional text
+styx/subjects/email_link: optional bool
+styx/subjects/factors: optional list of record
+styx/subjects/factors/active: optional bool
+styx/subjects/factors/email: optional text
+styx/subjects/factors/id: optional text
+styx/subjects/factors/kind: required text
+styx/subjects/factors/seed_base32: optional text
+styx/subjects/global_roles: optional list of text
+styx/subjects/id: optional text
+styx/subjects/kind: optional text
+styx/subjects/mfa_factors_required: optional i16
+styx/subjects/password: optional text
+styx/subjects/password_hash: optional text
+styx/subjects/phone: optional text
+styx/subjects/state: optional text
+styx/templates: optional list of record
+styx/templates/description: optional text
+styx/templates/key: required text
+styx/templates/metadata: optional map of value
+styx/templates/policies: optional list of record
+styx/templates/policies/action: required text
+styx/templates/policies/effect: optional text
+styx/templates/policies/scope_bound: optional bool
+styx/tenants: optional list of record
+styx/tenants/children: optional list of record like styx/tenants
+styx/tenants/facts: optional map of value
+styx/tenants/id: optional text
+styx/tenants/key: optional text
+styx/tenants/members: optional list of record
+styx/tenants/members/credentials: optional list of record
+styx/tenants/members/credentials/a: optional record
+styx/tenants/members/credentials/a/created_at: required text
+styx/tenants/members/credentials/a/expires_at: optional text
+styx/tenants/members/credentials/a/hash: required text
+styx/tenants/members/credentials/b: optional record
+styx/tenants/members/credentials/b/created_at: required text
+styx/tenants/members/credentials/b/expires_at: optional text
+styx/tenants/members/credentials/b/hash: required text
+styx/tenants/members/credentials/id: optional text
+styx/tenants/members/credentials/identifier: optional text
+styx/tenants/members/credentials/kind: required text
+styx/tenants/members/credentials/mfa_factors_required: optional i16
+styx/tenants/members/credentials/password: optional text
+styx/tenants/members/credentials/password_hash: optional text
+styx/tenants/members/credentials/provider: optional text
+styx/tenants/members/credentials/provider_subject: optional text
+styx/tenants/members/credentials/session_flags: optional list of text
+styx/tenants/members/email: optional text
+styx/tenants/members/email_link: optional bool
+styx/tenants/members/factors: optional list of record
+styx/tenants/members/factors/active: optional bool
+styx/tenants/members/factors/email: optional text
+styx/tenants/members/factors/id: optional text
+styx/tenants/members/factors/kind: required text
+styx/tenants/members/factors/seed_base32: optional text
+styx/tenants/members/facts: optional map of value
+styx/tenants/members/global_roles: optional list of text
+styx/tenants/members/id: optional text
+styx/tenants/members/kind: optional text
+styx/tenants/members/membership: optional text
+styx/tenants/members/mfa_factors_required: optional i16
+styx/tenants/members/password: optional text
+styx/tenants/members/password_hash: optional text
+styx/tenants/members/phone: optional text
+styx/tenants/members/roles: optional list of text
+styx/tenants/members/scoped_roles: optional list of record
+styx/tenants/members/scoped_roles/role: required text
+styx/tenants/members/scoped_roles/scope_id: required text
+styx/tenants/members/scoped_roles/scope_kind: required text
+styx/tenants/members/state: optional text
+styx/tenants/parent: optional text
+styx/tenants/registered_scopes: optional list of record
+styx/tenants/registered_scopes/containers: optional list of record
+styx/tenants/registered_scopes/containers/id: required text
+styx/tenants/registered_scopes/containers/kind: required text
+styx/tenants/registered_scopes/id: required text
+styx/tenants/registered_scopes/kind: required text
+styx/tenants/registered_scopes/tenant: optional text
+styx/tenants/roles: optional list of record
+styx/tenants/roles/key: required text
+styx/tenants/roles/metadata: optional map of value
+styx/tenants/roles/policies: optional list of record
+styx/tenants/roles/policies/action: required text
+styx/tenants/roles/policies/effect: optional text
+styx/tenants/roles/policies/scope_bound: optional bool
+styx/tenants/roles/priority: optional i32
+styx/tenants/roles/template: optional text
+styx/tenants/templates: optional list of text

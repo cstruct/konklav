@@ -1,4 +1,4 @@
-use konklav_authz::Group;
+use konklav_authz::{Confinement, Group};
 use serde::{Deserialize, Serialize};
 
 /// A declared action.
@@ -87,6 +87,11 @@ pub struct SessionFlagEntry {
     pub requestable: bool,
     #[serde(default)]
     pub description: String,
+    /// Restrictive flags only: confines sessions carrying the flag to the
+    /// tenants whose facts match, such as
+    /// `{"tenant": {"tenant_type": ["personal"]}}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confine: Option<Confinement>,
 }
 
 /// The whole action catalog.

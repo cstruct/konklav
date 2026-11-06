@@ -98,6 +98,7 @@ impl Fixture {
             },
             restrictive_flags: BTreeSet::new(),
             registered_kinds: BTreeSet::new(),
+            confinements: konklav_authz::Confinements::default(),
         }
     }
 
@@ -410,6 +411,7 @@ fn wildcard_invalidations_sweep_in_batches() {
             entitlements: Entitlements::default(),
             restrictive_flags: BTreeSet::new(),
             registered_kinds: BTreeSet::new(),
+            confinements: konklav_authz::Confinements::default(),
         };
         core.on_entitlements(set, T0);
     }
@@ -785,4 +787,77 @@ fn the_registered_cache_is_bounded() {
         "the least recently used record went first"
     );
     assert_eq!(f.decide_document("d-3", T0 + 10), allowed());
+}
+
+/// `personal_only` confined to personal tenants, the tenant's type
+/// `tenant_type`, and `project:read` held there.
+fn confined_set(f: &Fixture, tenant_type: &str, revision: i64) -> EntitlementSet {
+    let mut set = f.set(&["project:read"], revision);
+    set.restrictive_flags = BTreeSet::from(["personal_only".to_owned()]);
+    set.confinements = serde_json::from_value(json!({
+        "flags": {"personal_only": {"tenant": {"tenant_type": ["personal"]}}},
+        "tenant_facts": {"tenant_type": tenant_type},
+    }))
+    .unwrap();
+    set
+}
+
+// r[verify session.flags.confine.decision]
+// r[verify session.flags.confine.invalidate]
+// r[verify authz.compile.confinements]
+#[test]
+fn confinements_are_decided_from_the_cached_tenant_facts() {
+    let mut f = Fixture::new();
+    f.core.on_session(f.session_state(1, false));
+    f.core.on_entitlements(confined_set(&f, "personal", 1), T0);
+    let now = i64::try_from(T0 / 1000).unwrap();
+    let token = f.signer.sign(&AccessClaims {
+        iss: "https://auth.example".into(),
+        aud: "api".into(),
+        sub: f.subject,
+        jti: "j".into(),
+        iat: now,
+        exp: now + 900,
+        knd: TokenKind::Tenant,
+        sid: f.session,
+        cid: None,
+        sv: 1,
+        amr: vec!["pwd".into()],
+        auth_time: now,
+        tid: Some(f.tenant),
+        mid: None,
+        sfl: vec!["personal_only".into()],
+        fct: BTreeMap::new(),
+        act: None,
+        cnf: None,
+    });
+    let admitted = Requirements {
+        admit_flags: BTreeSet::from(["personal_only".to_owned()]),
+        ..reading()
+    };
+    assert_eq!(f.core.decide(&token, &admitted, None, T0), allowed());
+
+    // The tenant's facts change: the set goes stale and is refetched.
+    f.event(
+        30,
+        "entitlements.changed",
+        json!({"all": true, "tenant": f.tenant}),
+        T0 + 1,
+    );
+    assert_eq!(
+        needs(&f.core.decide(&token, &admitted, None, T0 + 1_000)),
+        vec![Need::Entitlements { key: f.key() }]
+    );
+    f.core
+        .on_entitlements(confined_set(&f, "client", 30), T0 + 1_000);
+    assert_eq!(
+        f.core.decide(&token, &admitted, None, T0 + 1_001),
+        Outcome::Decided {
+            decision: Decision::Deny {
+                reason: DenyReason::ConfinedSession {
+                    flag: "personal_only".into()
+                }
+            }
+        }
+    );
 }

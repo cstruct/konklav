@@ -103,7 +103,7 @@ Last run with suite release v5.3.4, both plans had no failures, and the Basic OP
 - `src/scenario/`: the scenarios. The binaries in `src/bin/` and `items/server/tests/examples.rs` both call them.
 - `src/smtp_sink.rs`: a minimal SMTP server that keeps what it receives, for the tests.
 - `src/bin/test-server.rs`: starts one server for another language's tests, such as the Python control-plane client's integration tests. It prints the surfaces' URLs and the bootstrap token as one JSON line, and stops when its stdin closes.
-- `bootstrap/`: the example bootstrap sets, nested and flat.
+- `bootstrap/`: the example bootstrap sets, nested and flat, and under `bootstrap/formats/<version>/` the sets of each bootstrap format: a released one's are frozen and must keep reading and applying unchanged, and the pending one's grow with it until a release ships it.
 - `diagrams/`: the diagrams in this README.
 - `sso-compose/`: the Docker Compose example, with its own [README](sso-compose/README.md). Its Rust services are the `konklav-sso-example` crate.
 

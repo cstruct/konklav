@@ -126,6 +126,11 @@ changes, then:
    branch it commits there and pushes nothing, so the bump is released with
    the rest of that branch's pull request.
 
+`release:bump` also stamps every pending bootstrap format under
+`examples/bootstrap/formats/` with `released in <version>`, which freezes
+it, as [the bootstrap crate's README](items/bootstrap/README.md#changing-the-format)
+describes. The bootstrap format version is not the release version.
+
 Once the pull request with the bump is merged, run `mise run release:tag` on `main` with a
 clean working tree. It pulls `main`, reads the version from `Cargo.toml`,
 refuses if that version is already tagged (as it is until the pull request

@@ -8,14 +8,17 @@
 //! What it writes:
 //!
 //! - `catalog.json`
-//! - `set.styx`: templates, global roles, and tenants with their roles
+//! - `set.styx`: the format version, templates, global roles, and tenants
+//!   with their roles
 //! - `subjects.csv`, `credentials.csv`, `mfa_factors.csv`,
-//!   `memberships.csv` and `assignments.csv`
+//!   `memberships.csv`, `assignments.csv` and `registered_scopes.csv`
+//!   (with any scope a table can't hold as written in `set.styx`)
 //!
 //! What it leaves out, and reports: sessions, signing keys, OIDC clients and
 //! the `client` credentials they bind, passkeys (a bootstrap set can't hold
-//! them), revoked credentials, ended memberships, tenant states, and records
-//! an identity provider's claim mapping manages, which it makes again.
+//! them), revoked credentials, ended memberships, tenant states, removed
+//! registered scopes, and records an identity provider's claim mapping
+//! manages, which it makes again.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Write as _};
@@ -28,6 +31,7 @@ use konklav_core::TenantId;
 use konklav_store::credentials::{self, Credential, CredentialData, SecretSlotData};
 use konklav_store::memberships::{self, MembershipState};
 use konklav_store::mfa::{self, Factor, FactorData};
+use konklav_store::registered_scopes::{self, RegisteredScope, RegisteredState};
 use konklav_store::roles::{self, AssignmentTarget, Role, RoleAssignment};
 use konklav_store::subjects::{self, Subject, SubjectKind, SubjectState};
 use konklav_store::tenants::{self, ROOT, Tenant};
@@ -135,6 +139,15 @@ async fn read(conn: &mut Connection, secrets: &SecretBox) -> Result<Set, ExportE
     )
     .await?;
     report.wrote("role assignments", people.assignments.len());
+    let (scope_rows, scope_docs) = registered_scopes(conn, &mut report).await?;
+    let mut document = document;
+    if !scope_docs.is_empty() {
+        let _ = writeln!(
+            document,
+            "registered_scopes {}",
+            Value::List(scope_docs).styx(0)
+        );
+    }
 
     let slot_columns = ["a", "b"]
         .into_iter()
@@ -180,6 +193,10 @@ async fn read(conn: &mut Connection, secrets: &SecretBox) -> Result<Set, ExportE
                 &["membership", "subject", "role", "scope_kind", "scope_id"],
                 &people.assignments,
             ),
+        ),
+        (
+            "registered_scopes.csv",
+            table(&["kind", "id", "tenant", "containers"], &scope_rows),
         ),
     ];
     Ok(Set {
@@ -231,7 +248,8 @@ async fn document(
         "global roles",
         global_roles.iter().filter(|r| !r.builtin).count(),
     );
-    let mut document = String::new();
+    // r[impl bootstrap.format.export]
+    let mut document = format!("format {}\n", konklav_bootstrap::FORMAT);
     for (key, value) in [
         ("templates", Value::List(template_docs)),
         ("global_roles", roles_value(&global_roles)),
@@ -390,6 +408,66 @@ async fn all_tenants(conn: &mut Connection) -> Result<Vec<Tenant>, ExportError> 
         all.extend(page.into_iter().filter(|t| t.id != ROOT));
         if !full {
             return Ok(all);
+        }
+    }
+}
+
+/// Active registered scopes, as rows of `registered_scopes.csv` and, for
+/// those whose kinds or ids a table can't hold as written, entries of the
+/// document's `registered_scopes`.
+// r[impl bootstrap.export.registered]
+async fn registered_scopes(
+    conn: &mut Connection,
+    report: &mut Report,
+) -> Result<(Vec<Vec<String>>, Vec<Value>), ExportError> {
+    // Table cells are trimmed and containers are `|`-separated
+    // `<kind>:<id>` items.
+    let cell = |text: &str| !text.is_empty() && text.trim() == text;
+    let mut rows = Vec::new();
+    let mut docs = Vec::new();
+    let mut after = None;
+    loop {
+        let page = registered_scopes::list(conn, after.as_ref(), PAGE).await?;
+        let full = i64::try_from(page.len()) == Ok(PAGE);
+        after = page.last().map(RegisteredScope::scope);
+        for scope in page {
+            if scope.state == RegisteredState::Removed {
+                report.leave_out("removed registered scopes");
+                continue;
+            }
+            let tenant = tenant_reference(Some(scope.tenant));
+            let tabular = cell(&scope.kind)
+                && cell(&scope.id)
+                && scope.containers.iter().all(|c| {
+                    cell(&c.kind)
+                        && cell(&c.id)
+                        && !c.kind.contains([':', '|'])
+                        && !c.id.contains('|')
+                });
+            if tabular {
+                let containers: Vec<String> = scope
+                    .containers
+                    .iter()
+                    .map(|c| format!("{}:{}", c.kind, c.id))
+                    .collect();
+                rows.push(vec![scope.kind, scope.id, tenant, containers.join("|")]);
+            } else {
+                let containers = scope
+                    .containers
+                    .into_iter()
+                    .map(|c| Value::map([("kind", Value::text(c.kind)), ("id", Value::text(c.id))]))
+                    .collect();
+                docs.push(Value::map([
+                    ("kind", Value::text(scope.kind)),
+                    ("id", Value::text(scope.id)),
+                    ("tenant", Value::text(tenant)),
+                    ("containers", Value::List(containers)),
+                ]));
+            }
+        }
+        if !full {
+            report.wrote("registered scopes", rows.len() + docs.len());
+            return Ok((rows, docs));
         }
     }
 }

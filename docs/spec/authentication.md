@@ -204,6 +204,41 @@ r[session.flags.assertive]
 An operation MAY require assertive flags. A decision for a session missing a
 required assertive flag MUST deny.
 
+### Confinements
+
+r[session.flags.confine]
+The catalog MAY give a restrictive flag a confinement: a conjunction of
+fact predicates on tenant facts, each naming one fact and a non-empty list
+of values it may have. A tenant matches the confinement when, for every
+predicate, the tenant has the fact and its value equals one of the listed
+values. Konklav MUST NOT offer a more expressive form: no other operators,
+no disjunction across facts and no reference to the operation or the
+subject.
+
+r[session.flags.confine.facts]
+A catalog document MUST be rejected when a confinement is given to an
+assertive flag, is empty, or has a predicate that names a fact that isn't a
+declared, portable tenant fact of type string, integer or boolean, lists no
+values, or lists a value that isn't of the fact's type.
+
+r[session.flags.confine.tenant]
+A confined session MUST NOT be moved into a tenant that doesn't match each
+of its flags' confinements, and Konklav MUST NOT issue a tenant token for
+it while its tenant doesn't match, however the token is asked for
+(selecting a tenant, refreshing, or an OpenID Connect token request).
+
+r[session.flags.confine.decision]
+A decision for a token of a confined session MUST deny when the token
+targets no tenant, or when the tenant's current facts don't match one of
+its flags' confinements, whatever the operation admits or requires. The
+deny MUST name the flag. Global actions MUST NOT lift it: a confined
+session holds its global actions only while it acts in a matching tenant.
+
+r[session.flags.confine.invalidate]
+Changing a tenant's facts MUST emit an `entitlements.changed` event for all
+subjects in that tenant, so that a relying core refetches the facts its
+cached entitlement sets carry for confinements.
+
 ## Browser sessions
 
 r[session.browser.cookie]

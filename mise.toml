@@ -151,6 +151,11 @@ cargo update -q --workspace --manifest-path items/py/Cargo.toml
 (cd examples/python && uv lock -q)
 # The API document records the version too; its test rewrites it.
 KONKLAV_UPDATE_OPENAPI=1 cargo test -q -p konklav-server --lib openapi::tests::committed_document_is_current
+# The bootstrap formats this release ships are released, and frozen from
+# now on: stamp every pending one with the version.
+for snapshot in examples/bootstrap/formats/*/format.snapshot; do
+  grep -q '^released in ' "$snapshot" || perl -pi -e 's/^(format [0-9]+\\.[0-9]+)$/$1\\nreleased in '"$version"'/' "$snapshot"
+done
 git commit -q -am "Release $version"
 if test "$current" = main; then
   git push -q -u origin "$branch"

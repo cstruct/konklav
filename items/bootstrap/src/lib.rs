@@ -5,6 +5,7 @@
 //! about the database. The server resolves identifiers against stored
 //! records and applies the set.
 
+mod format;
 mod model;
 mod nested;
 mod table;
@@ -12,6 +13,7 @@ mod table;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+pub use format::{FORMAT, FormatVersion, InvalidFormatVersion, UNDECLARED};
 pub use model::*;
 
 /// Something wrong with the files, and where.
@@ -52,13 +54,14 @@ impl fmt::Display for Problem {
 }
 
 /// The flat tables a directory may hold, by file name.
-pub const TABLES: [&str; 7] = [
+pub const TABLES: [&str; 8] = [
     "tenants.csv",
     "subjects.csv",
     "credentials.csv",
     "mfa_factors.csv",
     "memberships.csv",
     "assignments.csv",
+    "registered_scopes.csv",
     "sessions.csv",
 ];
 
@@ -93,12 +96,30 @@ pub fn read(paths: &[PathBuf]) -> Result<BootstrapSet, Vec<Problem>> {
             files.push(path.clone());
         }
     }
+    let mut texts = Vec::new();
+    for file in &files {
+        match std::fs::read_to_string(file) {
+            Ok(text) => texts.push((file, text)),
+            Err(error) => problems.push(Problem::in_file(file, error.to_string())),
+        }
+    }
+    let declarations = texts
+        .iter()
+        .filter(|(file, _)| file.extension().is_some_and(|e| e == "styx"))
+        .filter_map(|(file, text)| nested::declared_format(file, text))
+        .filter_map(|declared| declared.map_err(|problem| problems.push(problem)).ok())
+        .collect();
+    let format = format::merge(declarations, &mut problems);
+    if let Err(problem) = format::readable(format.as_ref()) {
+        problems.push(problem);
+        return Err(problems);
+    }
     // Tables before documents, so a document's tenant tree and roles can
     // be read in any order relative to them; the server orders records by
     // kind anyway.
     let mut set = BootstrapSet::default();
-    for file in &files {
-        match read_file(file) {
+    for (file, text) in &texts {
+        match read_text(file, text) {
             Ok(read) => set.extend(read, &mut problems),
             Err(mut found) => problems.append(&mut found),
         }
@@ -118,21 +139,19 @@ pub fn read(paths: &[PathBuf]) -> Result<BootstrapSet, Vec<Problem>> {
     }
 }
 
-fn read_file(file: &Path) -> Result<BootstrapSet, Vec<Problem>> {
-    let text = std::fs::read_to_string(file)
-        .map_err(|error| vec![Problem::in_file(file, error.to_string())])?;
+fn read_text(file: &Path, text: &str) -> Result<BootstrapSet, Vec<Problem>> {
     let name = file
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or_default();
     match file.extension().and_then(|e| e.to_str()) {
-        Some("styx") => nested::read(file, &text),
-        Some("csv") if TABLES.contains(&name) => table::read(file, name, &text),
+        Some("styx") => nested::read(file, text),
+        Some("csv") if TABLES.contains(&name) => table::read(file, name, text),
         Some("csv") => Err(vec![Problem::in_file(
             file,
             format!("unknown table; expected one of {}", TABLES.join(", ")),
         )]),
-        Some("json") => read_catalog(file, &text),
+        Some("json") => read_catalog(file, text),
         _ => Err(vec![Problem::in_file(
             file,
             "expected a .csv table, a .styx document or catalog.json",

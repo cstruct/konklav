@@ -434,6 +434,7 @@ impl Relying {
                 requirements,
                 &claims,
                 &set.restrictive_flags,
+                &set.confinements,
                 &set.entitlements,
                 &registered,
                 now_seconds,

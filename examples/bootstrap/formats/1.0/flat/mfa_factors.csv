@@ -1,0 +1,3 @@
+id,subject,kind,seed_base32,email,active
+f-4711-1,4711,totp,JBSWY3DPEHPK3PXP,,true
+f-4711-2,4711,email_code,,cy@org.example,false

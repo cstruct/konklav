@@ -593,6 +593,17 @@ pub(crate) async fn rotate(
     {
         return Err(session_ended());
     }
+    // A confined session whose tenant stopped matching gets no token, and
+    // keeps its refresh token for when the tenant matches again. Only the
+    // holder of the current refresh token learns why.
+    // r[impl session.flags.confine.tenant]
+    if let (Stage::Tenant, Some(tenant), false) =
+        (current.stage, current.tenant_id, current.flags.is_empty())
+        && sessions::refresh_matches(conn, current.id, &presented.hash()).await?
+    {
+        let tenant = tenants::get(conn, tenant).await?;
+        issue::check_confinement(conn, &current.flags, &tenant).await?;
+    }
     let next = RefreshToken::generate(presented.session());
     let rotation = sessions::rotate_refresh(
         conn,
@@ -850,6 +861,7 @@ async fn select_tenant(
     let membership = memberships::find_active(&mut conn, claims.sub, tenant_id)
         .await?
         .ok_or_else(no_access)?;
+    issue::check_confinement(&mut conn, &session.flags, &tenant).await?;
     let (session, cursor) =
         sessions::select_tenant(&mut conn, session.id, tenant_id, membership.id).await?;
     let token = issue::access_token(&mut conn, &state.auth, &session).await?;

@@ -595,6 +595,9 @@ async fn local_evaluation_matches_the_check_api() {
     let entitlements: konklav_authz::Entitlements = serde_json::from_value(set.clone()).unwrap();
     let restrictive: std::collections::BTreeSet<String> =
         serde_json::from_value(set["restrictive_flags"].clone()).unwrap();
+    let confinements: konklav_authz::Confinements =
+        serde_json::from_value(set.get("confinements").cloned().unwrap_or_default())
+            .unwrap_or_default();
 
     let cases = [
         json!({"tenant": ["project:read"]}),
@@ -611,6 +614,7 @@ async fn local_evaluation_matches_the_check_api() {
             &parsed,
             &claims,
             &restrictive,
+            &confinements,
             &entitlements,
             &konklav_authz::RegisteredScopes::default(),
             chrono::Utc::now().timestamp(),
