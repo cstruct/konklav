@@ -105,6 +105,11 @@ class _Presented:
     dpop: str | None
     token: str
 
+    @property
+    def scheme(self) -> str:
+        """The scheme to challenge a refused token in."""
+        return "DPoP" if self.authorization.partition(" ")[0].lower() == "dpop" else "Bearer"
+
 
 @dataclass(frozen=True)
 class _Outcome:
@@ -401,7 +406,7 @@ class KonklavRoutes:
             case _:
                 assert decision.reason is not None
                 if decision.reason.code in ("invalid_token", "invalid_dpop_proof"):
-                    raise Unauthenticated(decision.reason.code)
+                    raise Unauthenticated(decision.reason.code, presented.scheme)
                 raise Forbidden(decision.reason)
 
     async def _accept(self, connection: HTTPConnection, presented: _Presented) -> AcceptedRequest:
@@ -418,7 +423,7 @@ class KonklavRoutes:
         except KonklavError:
             raise KonklavUnavailable() from None
         if accepted is None:
-            raise Unauthenticated("invalid_token")
+            raise Unauthenticated("invalid_token", presented.scheme)
         return accepted
 
     # r[impl item.py-fastapi.hooks]
@@ -443,7 +448,7 @@ class KonklavRoutes:
         except KonklavError:
             raise KonklavUnavailable() from None
         if token is None:
-            raise Unauthenticated("invalid_token")
+            raise Unauthenticated("invalid_token", presented.scheme)
         await self._verified(connection, token)
         return token
 

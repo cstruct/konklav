@@ -202,7 +202,12 @@ def test_optional_tokens_on_public_routes_are_verified() -> None:
 @pytest.mark.parametrize(
     ("outcome", "status", "body", "challenge"),
     [
-        ({"decision": "deny", "reason": "invalid_token"}, 401, {"code": "invalid_token"}, "Bearer"),
+        (
+            {"decision": "deny", "reason": "invalid_token"},
+            401,
+            {"code": "invalid_token"},
+            'Bearer error="invalid_token"',
+        ),
         (
             {"decision": "deny", "reason": "invalid_dpop_proof"},
             401,
@@ -256,15 +261,22 @@ def test_tokens_that_dont_verify_are_refused_before_anything_reads_them() -> Non
         return None
 
     with serve(app, KonklavRoutes(route_tenant=route_tenant), fake) as http:
-        assert http.get("/").json() == {"error": {"code": "missing_token"}}
-        assert http.get("/", headers=bearer("not-a-jwt")).json() == {"error": {"code": "invalid_token"}}
+        missing = http.get("/")
+        assert missing.json() == {"error": {"code": "missing_token"}}
+        assert missing.headers["www-authenticate"] == "Bearer, DPoP"
+        invalid = http.get("/", headers=bearer("not-a-jwt"))
+        assert invalid.json() == {"error": {"code": "invalid_token"}}
+        assert invalid.headers["www-authenticate"] == 'Bearer error="invalid_token"'
+        # Challenged in the scheme the token came in.
+        invalid = http.get("/", headers={"authorization": "DPoP not-a-jwt", "dpop": "proof"})
+        assert invalid.headers["www-authenticate"] == 'DPoP error="invalid_token"'
         response = http.get("/", headers={"authorization": "DPoP bad-proof", "dpop": "proof"})
         assert response.json() == {"error": {"code": "invalid_dpop_proof"}}
         assert response.headers["www-authenticate"] == 'DPoP error="invalid_dpop_proof"'
         assert http.get("/", headers=bearer("unreachable")).status_code == 503
     # Refused tokens reach no application code and no decision.
     assert fake.decided == [] and asked == []
-    assert [request["method"] for request in fake.accepted] == ["GET"] * 3
+    assert [request["method"] for request in fake.accepted] == ["GET"] * 4
 
 
 # r[verify item.py-fastapi.outcomes]

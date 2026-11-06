@@ -123,7 +123,10 @@ Evaluation MUST end in one of these:
 - `Unauthenticated` (401) when no token is presented, it doesn't verify, or
   the decision denies with `invalid_token`; and when its DPoP proof or
   scheme is refused, as `invalid_dpop_proof` with `WWW-Authenticate: DPoP
-  error="invalid_dpop_proof"` (`relying.verify.dpop-challenge`);
+  error="invalid_dpop_proof"` (`relying.verify.dpop-challenge`). A token
+  that doesn't verify MUST be challenged in the scheme it was presented
+  with, as `error="invalid_token"`, and a missing token with both `Bearer`
+  and `DPoP`;
 - `Forbidden` (403) for any other deny, carrying the `DenyReason`, and for
   `token_tenant`;
 - `StepUpRequired` (401) for a step-up demand, carrying its requirement;

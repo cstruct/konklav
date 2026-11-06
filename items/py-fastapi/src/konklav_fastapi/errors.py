@@ -59,16 +59,25 @@ class KonklavDenied(Exception):
 class Unauthenticated(KonklavDenied):
     """
     No usable token: `missing_token`, `invalid_token` or
-    `invalid_dpop_proof`, which carries a `WWW-Authenticate: DPoP` challenge.
+    `invalid_dpop_proof`, with a `WWW-Authenticate` challenge. A refused
+    token is challenged in the scheme it was presented with (`scheme`, `DPoP`
+    or `Bearer`), a refused proof always with `DPoP`, and a missing token
+    with both.
     """
 
     status_code = 401
+
+    def __init__(self, code: str, scheme: str | None = None) -> None:
+        super().__init__(code)
+        self.scheme = scheme
 
     @property
     def headers(self) -> dict[str, str]:
         if self.code == "invalid_dpop_proof":
             return {"WWW-Authenticate": 'DPoP error="invalid_dpop_proof"'}
-        return {"WWW-Authenticate": "Bearer"}
+        if self.scheme is None:
+            return {"WWW-Authenticate": "Bearer, DPoP"}
+        return {"WWW-Authenticate": f'{self.scheme} error="{self.code}"'}
 
 
 class Forbidden(KonklavDenied):

@@ -116,7 +116,8 @@ async def can(action: str, request: Request) -> Any:
     except KonklavError:
         raise KonklavUnavailable() from None
     if decision.reason is not None and decision.reason.code in ("invalid_token", "invalid_dpop_proof"):
-        raise Unauthenticated(decision.reason.code)
+        scheme = "DPoP" if authorization.partition(" ")[0].lower() == "dpop" else "Bearer"
+        raise Unauthenticated(decision.reason.code, scheme)
     return {"action": action, "allowed": decision.decision == "allow"}
 
 
