@@ -65,6 +65,10 @@ await client.stop()
   sender-constrained (DPoP) tokens work too. A deny with reason
   `invalid_dpop_proof` should be answered with 401 and
   `WWW-Authenticate: DPoP error="invalid_dpop_proof"`.
+- `accept_request` verifies a request's token, session and DPoP proof
+  once and returns the verified token, and `decide_accepted` then decides
+  for it without spending the proof again, for hosts that need the token
+  before they know the requirements.
 
 - `Policy` declares an operation's requirements once per route or router,
   merges the policies of nested layers and resolves them per request with

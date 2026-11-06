@@ -6,7 +6,10 @@ use ed25519_dalek::SigningKey;
 use konklav_authz::{Decision, DenyReason, EntitlementSet, Entitlements, Requirements};
 use konklav_core::feed::SessionChanged;
 use konklav_core::{Cursor, SessionId, SubjectId, TenantId};
-use konklav_relying::{Config, Need, Outcome, Presented, Relying, RequestDescriptor, Verification};
+use konklav_relying::{
+    Acceptance, Config, Need, Outcome, PresentationId, Presented, Relying, RequestDescriptor,
+    Verification,
+};
 use konklav_test_support::DpopKey;
 use konklav_token::{AccessClaims, Confirmation, Jwk, JwkSet, Signer, TokenKind};
 
@@ -277,5 +280,130 @@ fn proofs_are_checked_before_the_check_api_and_count_as_answered() {
     assert_eq!(
         f.decide(&presented, T0),
         denied(DenyReason::InvalidDpopProof)
+    );
+}
+
+fn accepted(acceptance: Acceptance) -> PresentationId {
+    match acceptance {
+        Acceptance::Accepted { presentation, .. } => presentation,
+        other => panic!("not accepted: {other:?}"),
+    }
+}
+
+// r[verify relying.verify.accepted-presentation]
+#[test]
+fn an_accepted_presentation_is_decided_once_without_its_proof_again() {
+    let mut f = Fixture::new(config());
+    f.warm();
+    let token = f.bound();
+    let presented = dpop(&token, Some(f.proof(&token, "a")));
+    let acceptance = f.core.accept_presented(&presented, T0);
+    let Acceptance::Accepted {
+        claims,
+        presentation,
+    } = acceptance
+    else {
+        panic!("not accepted: {acceptance:?}");
+    };
+    assert_eq!(claims.sid, f.session);
+    // The proof was spent on accepting.
+    assert_eq!(
+        f.decide(&presented, T0),
+        denied(DenyReason::InvalidDpopProof)
+    );
+    assert_eq!(
+        f.core.decide_accepted(presentation, &reading(), T0),
+        allowed()
+    );
+    // Answered once.
+    assert_eq!(
+        f.core.decide_accepted(presentation, &reading(), T0),
+        denied(DenyReason::InvalidToken)
+    );
+    // Another core doesn't take it for its own, even while holding one.
+    let mut other = Fixture::new(config());
+    other.warm();
+    let own = other.token(None);
+    let held = accepted(other.core.accept_presented(&Presented::bearer(&own), T0));
+    assert_eq!(
+        other.core.decide_accepted(presentation, &reading(), T0),
+        denied(DenyReason::InvalidToken)
+    );
+    assert_eq!(other.core.decide_accepted(held, &reading(), T0), allowed());
+}
+
+// r[verify relying.verify.accepted-presentation]
+#[test]
+fn an_accepted_presentation_still_checks_the_session_and_expires_with_its_proof() {
+    let mut f = Fixture::new(config());
+    f.warm();
+    let token = f.bound();
+    let revoked = accepted(
+        f.core
+            .accept_presented(&dpop(&token, Some(f.proof(&token, "a"))), T0),
+    );
+    let stale = accepted(
+        f.core
+            .accept_presented(&dpop(&token, Some(f.proof(&token, "b"))), T0),
+    );
+    // A proof dated T0 is fresh for 60 seconds plus 30 seconds of leeway.
+    let later = T0 + 91_000;
+    f.core.on_feed_activity(later);
+    assert_eq!(
+        f.core.decide_accepted(stale, &reading(), later),
+        denied(DenyReason::InvalidToken)
+    );
+    f.core.on_session(SessionChanged {
+        session: f.session,
+        subject: f.subject,
+        version: 2,
+        revoked: true,
+        expires_at: seconds(T0) + 86_400,
+    });
+    assert_eq!(
+        f.core.decide_accepted(revoked, &reading(), T0),
+        denied(DenyReason::InvalidToken)
+    );
+}
+
+// r[verify relying.verify.accepted-presentation]
+#[test]
+fn accepting_waits_for_fetches_and_hands_bearer_tokens_and_the_check_api_a_presentation() {
+    let mut f = Fixture::new(config());
+    let token = f.bound();
+    let presented = dpop(&token, Some(f.proof(&token, "a")));
+    // The session isn't known yet: not answered, so the proof isn't spent.
+    assert!(matches!(
+        f.core.accept_presented(&presented, T0),
+        Acceptance::Need { .. }
+    ));
+    f.warm();
+    accepted(f.core.accept_presented(&presented, T0));
+
+    let bearer = f.token(None);
+    let presentation = accepted(f.core.accept_presented(&Presented::bearer(&bearer), T0));
+    assert_eq!(
+        f.core.decide_accepted(presentation, &reading(), T0),
+        allowed()
+    );
+
+    // Without a trusted cache the check API decides, and the presentation
+    // is answered by the hand-off.
+    f.core.on_feed_lost();
+    let Acceptance::Check { presentation } = f
+        .core
+        .accept_presented(&dpop(&token, Some(f.proof(&token, "b"))), T0)
+    else {
+        panic!("not handed to the check API");
+    };
+    assert_eq!(
+        f.core.decide_accepted(presentation, &reading(), T0),
+        Outcome::Need {
+            needs: vec![Need::Check]
+        }
+    );
+    assert_eq!(
+        f.core.decide_accepted(presentation, &reading(), T0),
+        denied(DenyReason::InvalidToken)
     );
 }

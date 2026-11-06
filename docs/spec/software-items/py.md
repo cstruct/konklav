@@ -101,3 +101,12 @@ methods, `decide_typed`, `decide_request_typed`, `verify_typed` and
 `verify_request_typed`, which take the same arguments, also accept a
 `Requirements` mapping built by `Policy.requirements`, and raise the same
 errors.
+
+r[item.py.accepted-request]
+`RelyingClient.accept_request` MUST accept a request's presentation
+(`relying.verify.accepted-presentation`), taking the arguments
+`verify_request` takes and raising the same errors, and MUST return `None`
+for a token that isn't valid, or an `AcceptedRequest` with the verified
+`AccessToken`. `decide_accepted` and `decide_accepted_typed` MUST decide
+requirements for it as `decide_request` and `decide_request_typed` decide
+them, including through the check API when the caches can't be trusted.

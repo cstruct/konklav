@@ -21,6 +21,7 @@ from typing import Any, Literal
 from konklav_relying.policy import StepUp
 
 __all__ = [
+    "AcceptedRequest",
     "AccessToken",
     "Actor",
     "Confirmation",
@@ -224,3 +225,19 @@ class AccessToken:
             cid=claims.get("cid"),
             cnf=None if cnf is None else Confirmation(jkt=cnf["jkt"]),
         )
+
+
+@dataclass(frozen=True)
+class AcceptedRequest:
+    """
+    A request whose token, session and DPoP proof `RelyingClient.accept_request`
+    verified: its `token`, and the presentation to decide once with
+    `RelyingClient.decide_accepted`. It is valid only in the client that
+    accepted it, and only while the proof is fresh.
+    """
+
+    token: AccessToken
+    presentation: str = field(repr=False, compare=False)
+    """The relying core's handle, opaque."""
+    access_token: str = field(repr=False, compare=False)
+    """The access token, for the check API."""

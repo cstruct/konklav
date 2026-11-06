@@ -68,9 +68,10 @@ import httpx
 
 from konklav_relying._core import Core
 from konklav_relying.policy import MissingScopeId, Policy, PolicyError, Requirements, StepUp
-from konklav_relying.results import AccessToken, Actor, Confirmation, Decision, DenyReason, Obligation
+from konklav_relying.results import AcceptedRequest, AccessToken, Actor, Confirmation, Decision, DenyReason, Obligation
 
 __all__ = [
+    "AcceptedRequest",
     "AccessToken",
     "Actor",
     "Confirmation",
@@ -259,6 +260,62 @@ class RelyingClient:
         """`verify_request`, returning an `AccessToken`."""
         claims = await self.verify_request(authorization=authorization, dpop=dpop, method=method, url=url)
         return None if claims is None else AccessToken.from_claims(claims)
+
+    # r[impl relying.verify.accepted-presentation]
+    # r[impl item.py.accepted-request]
+    async def accept_request(
+        self, *, authorization: str, dpop: str | None, method: str, url: str
+    ) -> AcceptedRequest | None:
+        """
+        `verify_request_typed` for a request you decide afterwards: verifies
+        the token, its session and its DPoP proof, and returns the verified
+        token with the presentation to pass to `decide_accepted`, which
+        doesn't check the proof again. Returns None if the token isn't
+        valid; raises `InvalidDpopProof` and `KonklavError` as
+        `verify_request` does.
+        """
+        presented = _presented(authorization, dpop, method, url)
+        token = _token_of(authorization)
+        for _ in range(4):
+            with self._lock:
+                outcome = json.loads(self._core.accept_presented(presented, _now()))
+            match outcome["outcome"]:
+                case "accepted":
+                    claims = outcome["claims"]
+                case "check":
+                    claims = await self._verify_centrally(token)
+                    if claims is None:
+                        return None
+                case "invalid":
+                    return None
+                case "invalid_proof":
+                    raise InvalidDpopProof("the DPoP proof or scheme is invalid")
+                case _:
+                    await asyncio.gather(*(self._fetch(need) for need in outcome["needs"]))
+                    continue
+            return AcceptedRequest(
+                token=AccessToken.from_claims(claims),
+                presentation=json.dumps(outcome["presentation"]),
+                access_token=token,
+            )
+        raise KonklavError("could not verify the token")
+
+    async def decide_accepted(self, accepted: AcceptedRequest, requirements: Mapping[str, Any]) -> _DecisionJson:
+        """
+        Decide `requirements` for a request `accept_request` accepted, once.
+        Its session is checked again; its proof isn't. A request decided
+        before, or accepted too long ago, is denied with `invalid_token`.
+        """
+        encoded = json.dumps(requirements)
+        return await self._decide(
+            accepted.access_token,
+            requirements,
+            lambda: self._core.decide_accepted(accepted.presentation, encoded, _now()),
+        )
+
+    async def decide_accepted_typed(self, accepted: AcceptedRequest, requirements: Mapping[str, Any]) -> Decision:
+        """`decide_accepted`, returning a `Decision`."""
+        return Decision.from_json(await self.decide_accepted(accepted, requirements))
 
     async def verify(self, token: str) -> dict[str, Any] | None:
         """

@@ -21,6 +21,8 @@ mod cache;
 mod config;
 mod presented;
 
-pub use cache::{Key, Need, Outcome, Relying, RequestDescriptor, ScopeRecord, Verification, Work};
+pub use cache::{
+    Acceptance, Key, Need, Outcome, Relying, RequestDescriptor, ScopeRecord, Verification, Work,
+};
 pub use config::Config;
-pub use presented::Presented;
+pub use presented::{PresentationId, Presented};
