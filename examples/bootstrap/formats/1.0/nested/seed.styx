@@ -1,0 +1,84 @@
+// A set as format 1.0 wrote it: no format declaration, so it is 1.0.
+// Frozen: it must keep reading and applying unchanged.
+id_namespace 3f1c9a52-6a1e-4d0b-9a0e-6c1d8f0b2e11
+catalog_file "../catalog.json"
+
+templates (
+    {
+        key reader
+        description "Reads projects"
+        metadata {label Reader, shown_to (members admins)}
+        policies ({action project:read})
+    }
+    {key writer, policies ({action document:write, effect allow, scope_bound true} {action project:read, effect deny})}
+)
+
+global_roles ({key support, priority 1, policies ({action konklav:subject:impersonate})})
+
+tenants (
+    {
+        key acme
+        facts {seats 25}
+        templates (reader)
+        roles ({key editor, priority 2, metadata {label Editor}, policies ({action document:write, scope_bound true})})
+        children ({key acme-north, roles ({key auditor, template writer})})
+        members (
+            {
+                email ada@acme.example
+                password_hash "$argon2id$v=19$m=65536,t=3,p=4$8+FttqUgBxV0WJVJEoSFig$sTbjdRtZ6f7ZyvBNPA+oh9ju0QJs7jIKIFEyit//6T0"
+                mfa_factors_required 1
+                factors (
+                    {kind totp, seed_base32 JBSWY3DPEHPK3PXP}
+                    {kind email_code, email ada@acme.example, active false}
+                )
+                roles (reader)
+                scoped_roles ({role editor, scope_kind project, scope_id p-1})
+                facts {member_type professional}
+            }
+            {
+                email bo@acme.example
+                email_link true
+                phone "+46700000002"
+                roles (reader)
+            }
+            {
+                id 0193b6a0-0000-7000-8000-000000000001
+                membership 0193b6a0-0000-7000-8000-000000000002
+                kind human
+                state disabled
+                credentials ({
+                    id 0193b6a0-0000-7000-8000-000000000003
+                    kind federated
+                    provider corp
+                    provider_subject corp-cy
+                })
+                global_roles (support)
+            }
+        )
+    }
+    {id 0193b6a0-0000-7000-8000-000000000004, parent root}
+)
+
+subjects (
+    {
+        email ops@konklav.example
+        password_hash "$argon2id$v=19$m=65536,t=3,p=4$8+FttqUgBxV0WJVJEoSFig$sTbjdRtZ6f7ZyvBNPA+oh9ju0QJs7jIKIFEyit//6T0"
+        global_roles (konklav.admin support)
+    }
+    {
+        id svc-backup
+        kind service
+        state active
+        credentials (
+            {
+                id key-backup
+                kind secret_key
+                identifier backup
+                session_flags ()
+                a {hash "$argon2id$v=19$m=65536,t=3,p=4$8+FttqUgBxV0WJVJEoSFig$sTbjdRtZ6f7ZyvBNPA+oh9ju0QJs7jIKIFEyit//6T0", created_at 2026-01-01T00:00:00Z}
+                b {hash "$argon2id$v=19$m=65536,t=3,p=4$8+FttqUgBxV0WJVJEoSFig$sTbjdRtZ6f7ZyvBNPA+oh9ju0QJs7jIKIFEyit//6T0", created_at 2026-02-01T00:00:00Z, expires_at 2027-02-01T00:00:00Z}
+            }
+            {kind password, identifier backup@konklav.example, password_hash "$argon2id$v=19$m=65536,t=3,p=4$8+FttqUgBxV0WJVJEoSFig$sTbjdRtZ6f7ZyvBNPA+oh9ju0QJs7jIKIFEyit//6T0", mfa_factors_required 0}
+        )
+    }
+)

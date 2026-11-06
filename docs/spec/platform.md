@@ -344,6 +344,37 @@ The command MUST accept flat tables (CSV, one file per kind of record,
 with a fixed header) and nested documents (Styx), and MUST accept both in
 one run, read into a single bootstrap set.
 
+r[bootstrap.format.version]
+A bootstrap set's tables and documents MUST follow a bootstrap format
+version, `major.minor`, which is separate from Konklav's release version. A
+new minor version MUST only add: a new optional table, column or key. Any
+other change, such as removing or renaming a table, column or key, making
+one required, or changing what a value means, MUST be a new major version.
+
+r[bootstrap.format.declare]
+A set MAY declare its format version as the top-level `format` key of any
+of its nested documents; flat tables can't declare it. Declarations that
+differ MUST be reported as a problem. A set that declares none is format 1.0.
+
+r[bootstrap.format.read]
+The command MUST read a set of its own major format version at any minor
+version up to its own. It MUST refuse a set of a newer minor version or of
+another major version before reading its records, with one problem at the
+declaration that names the version the set needs and the newest it reads.
+A set of an older major version MAY instead be upgraded in memory to the
+current format after it is read, so that applying sees one shape.
+
+r[bootstrap.format.export]
+The `export` command MUST declare the current format version in the set it
+writes.
+
+r[bootstrap.format.released]
+Every released format version MUST keep a frozen set that the command
+still reads and applies. A change to the tables, columns or keys MUST be
+checked against the latest released format version, so that the current
+version is that version bumped as the change needs: unchanged, the next
+minor version or the next major version.
+
 r[bootstrap.contents]
 A bootstrap set MAY contain the action catalog, templates, tenants,
 subjects, credentials (federated ones included), MFA factors, memberships,

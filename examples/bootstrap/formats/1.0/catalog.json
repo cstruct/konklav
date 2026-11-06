@@ -1,0 +1,9 @@
+{
+  "actions": [{"name": "project:read"}, {"name": "document:write"}],
+  "scope_kinds": [{"name": "project"}],
+  "facts": [
+    {"key": "member_type", "target": "membership", "type": "string", "portable": true},
+    {"key": "seats", "target": "tenant", "type": "integer"}
+  ],
+  "session_flags": [{"name": "passwordless", "kind": "restrictive", "requestable": false}]
+}
