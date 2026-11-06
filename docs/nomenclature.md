@@ -522,6 +522,16 @@ Terms are introduced in dependency order: each definition only uses terms define
     referring to each other by id) or as nested documents (Styx, with
     records inside the ones they belong to), or a mix of both.
 
+- `bootstrap format version`
+  - The version of the tables and documents a bootstrap set is written in,
+    `major.minor`. It is not Konklav's release version: a release changes
+    it only when it changes the files it reads.
+  - A minor version only adds optional tables, columns or keys, so a
+    server reads every older minor version of its major. Anything else is
+    a new major version.
+  - A set declares it with a top-level `format` key in one of its nested
+    documents; a set without one is format 1.0.
+
 - `export`
   - Writing a database's identity data as a bootstrap set, which the
     `bootstrap` command applies to an empty database unchanged.

@@ -12,6 +12,7 @@ use facet_reflect::Span;
 use facet_styx::RenderError;
 use uuid::Uuid;
 
+use crate::format::FormatVersion;
 use crate::model::{
     Assignment, AssignmentTarget, BootstrapSet, Credential, CredentialMaterial, Effect, FactValue,
     Factor, FactorMaterial, Facts, Id, Located, Location, Membership, MembershipRef, Policy, Role,
@@ -29,7 +30,9 @@ struct Spanned<T> {
 
 #[derive(Debug, Facet)]
 #[facet(deny_unknown_fields)]
-struct Document {
+pub(crate) struct Document {
+    /// The set's format version, read before the rest by [`declared_format`].
+    format: Option<Spanned<String>>,
     id_namespace: Option<Spanned<String>>,
     /// A catalog document in the control plane's JSON shape, relative to
     /// this file.
@@ -206,6 +209,31 @@ struct MembershipParts {
     facts: Option<BTreeMap<String, facet_value::Value>>,
     roles: Vec<String>,
     scoped_roles: Vec<ScopedRoleDoc>,
+}
+
+/// Only a document's `format`, read before the documents themselves so a
+/// set of a format this crate can't read gets one problem saying so rather
+/// than one for every key it doesn't know.
+#[derive(Debug, Facet)]
+struct Header {
+    format: Option<Spanned<String>>,
+}
+
+/// The format `text` declares, if it can be read and declares one. A
+/// document that can't be read is reported when it is read in full.
+pub(crate) fn declared_format(
+    file: &Path,
+    text: &str,
+) -> Option<Result<Located<FormatVersion>, Problem>> {
+    let header: Header = facet_styx::from_str(text).ok()?;
+    let format = header.format?;
+    let at = Location {
+        file: file.to_owned(),
+        line: format
+            .span
+            .map_or(1, |span| line_of(text, span.offset as usize)),
+    };
+    Some(crate::format::declaration(&at, &format.value))
 }
 
 struct Reader<'a> {

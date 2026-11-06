@@ -449,6 +449,7 @@ fn read_dir(dir: &Path) -> std::collections::BTreeMap<String, String> {
 }
 
 // r[verify bootstrap.export]
+// r[verify bootstrap.format.export]
 #[tokio::test(flavor = "multi_thread")]
 async fn an_exported_set_bootstraps_an_empty_database_unchanged() {
     let app = TestApp::new().await;
@@ -535,6 +536,10 @@ async fn an_exported_set_bootstraps_an_empty_database_unchanged() {
         files["mfa_factors.csv"].contains(&seed.to_base32()),
         "seeds are decrypted"
     );
+    assert!(
+        files["set.styx"].starts_with(&format!("format {}\n", konklav_bootstrap::FORMAT)),
+        "declares the current format"
+    );
 
     let copy = TestApp::new().await;
     let applied = apply(&copy, &[dir.join("first")], Options::default()).await;
@@ -582,4 +587,33 @@ async fn an_exported_set_bootstraps_an_empty_database_unchanged() {
         "never overwrites"
     );
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+// r[verify bootstrap.format.released]
+#[tokio::test(flavor = "multi_thread")]
+async fn every_frozen_set_of_a_released_format_still_applies() {
+    let mut sets = Vec::new();
+    for format in std::fs::read_dir(examples().join("formats")).unwrap() {
+        for set in std::fs::read_dir(format.unwrap().path()).unwrap() {
+            let set = set.unwrap().path();
+            if set.is_dir() {
+                sets.push(set);
+            }
+        }
+    }
+    sets.sort();
+    assert_ne!(sets, Vec::<PathBuf>::new(), "a frozen set");
+    for set in sets {
+        let app = TestApp::new().await;
+        let paths = std::slice::from_ref(&set);
+        let applied = apply(&app, paths, Options::default()).await;
+        assert!(applied.committed, "{}: {applied}", set.display());
+        assert!(applied.conflicts.is_empty(), "{}: {applied}", set.display());
+        let again = apply(&app, paths, Options::default()).await;
+        assert!(
+            again.committed && again.conflicts.is_empty(),
+            "{}: {again}",
+            set.display()
+        );
+    }
 }
