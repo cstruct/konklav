@@ -56,6 +56,7 @@ fn claims_of(state: &AppState, session: &sessions::Session) -> AccessClaims {
         sfl: session.flags.clone(),
         fct: BTreeMap::new(),
         act: None,
+        cnf: None,
     }
 }
 

@@ -254,6 +254,15 @@ config_tree! {
             /// signing, such as the next key ahead of a rotation.
             #[facet(default)]
             pub published_key_files: Vec<String>,
+            /// Base URLs at which clients address the subject-facing and
+            /// control-plane surfaces, for the `htu` of DPoP proofs: a
+            /// proof must name one of them followed by the request's path.
+            /// List each prefix a reverse proxy mounts a surface under,
+            /// such as `https://admin.example/control`. Defaults to the
+            /// issuer and each of `browser.allowed_origins`, with and
+            /// without the console's `/control` prefix.
+            #[facet(default)]
+            pub dpop_urls: Vec<String>,
         },
         /// Konklav as an OpenID provider. A section of its own, loaded with
         /// tokens (contexts are limited in number). Without it, the
@@ -272,6 +281,22 @@ config_tree! {
             /// offer RS256; without this key, clients can't be registered
             /// for it.
             pub rsa_key_file: Option<String>,
+            /// How old a DPoP proof may be, in seconds.
+            #[facet(default = 60)]
+            pub dpop_max_age_seconds: u32,
+            /// Which clients must send a DPoP proof with every grant, on
+            /// top of those registered with `require_dpop`.
+            #[facet(default)]
+            pub require_dpop: #[derive(Default, Copy, Eq)] #[facet(rename_all = "snake_case")] pub enum DpopRequirement {
+                /// Only clients registered with `require_dpop`.
+                #[default]
+                None,
+                /// Every public client: the browser and native apps that
+                /// have no other proof of who they are.
+                PublicClients,
+                /// Every client.
+                All,
+            },
             /// A relying system's endpoint that userinfo asks for profile
             /// claims Konklav doesn't hold, such as `name`.
             pub claims_hook: Option<pub struct ClaimsHook {
@@ -325,6 +350,10 @@ config_tree! {
             /// Set to `false` only for local development over plain HTTP.
             #[facet(default = true)]
             pub secure_cookies: bool,
+            /// Refuse browser logins and federated sign-ins that bring no
+            /// DPoP key, so every browser session is bound.
+            #[facet(default)]
+            pub require_dpop: bool,
         }>,
         /// Passkey login and registration. A section of its own, loaded with
         /// `browser`. Without it, the passkey endpoints answer 404.

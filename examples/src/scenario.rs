@@ -2,5 +2,6 @@
 //! the first thing that doesn't go as described.
 
 pub mod bootstrap;
+pub mod dpop;
 pub mod federation;
 pub mod smtp_delivery;

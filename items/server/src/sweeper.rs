@@ -29,6 +29,7 @@ pub struct Swept {
     pub login_attempts: usize,
     pub client_assertions: usize,
     pub bearer_assertions: usize,
+    pub dpop_proofs: usize,
     pub sessions: usize,
     pub delivery_material: usize,
     pub identity_claims: usize,
@@ -38,12 +39,13 @@ pub struct Swept {
 }
 
 impl Swept {
-    fn kinds(self) -> [(&'static str, usize); 10] {
+    fn kinds(self) -> [(&'static str, usize); 11] {
         [
             ("challenge", self.challenges),
             ("login_attempt", self.login_attempts),
             ("client_assertion", self.client_assertions),
             ("bearer_assertion", self.bearer_assertions),
+            ("dpop_proof", self.dpop_proofs),
             ("session", self.sessions),
             ("delivery_material", self.delivery_material),
             ("session_identity_claims", self.identity_claims),
@@ -137,6 +139,7 @@ async fn sweep_locked(
         login_attempts: drain!(batch, sweep::login_attempts(conn, attempts_before, batch)),
         client_assertions: drain!(batch, sweep::client_assertions(conn, now, batch)),
         bearer_assertions: drain!(batch, sweep::bearer_assertions(conn, now, batch)),
+        dpop_proofs: drain!(batch, sweep::dpop_proofs(conn, now, batch)),
         sessions: drain!(batch, sweep::sessions(conn, sessions_before, batch)),
         history: drain!(batch, sweep::history(conn, now, batch)),
         batch_results: drain!(batch, sweep::batch_results(conn, now, batch)),

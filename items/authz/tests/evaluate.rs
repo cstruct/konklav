@@ -28,6 +28,7 @@ fn claims(kind: TokenKind, flags: &[&str], amr: &[&str], auth_age: i64) -> Acces
         sfl: flags.iter().map(|f| (*f).to_owned()).collect(),
         fct: BTreeMap::new(),
         act: None,
+        cnf: None,
     }
 }
 

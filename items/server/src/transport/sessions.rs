@@ -32,6 +32,7 @@ pub(crate) fn session(session: Session) -> api::Session {
             id_token: session.oidc_claims.id_token,
         },
         identity_claims: session.identity_claims,
+        dpop_jkt: session.dpop_jkt,
         version: session.version,
         created_at: session.created_at,
         updated_at: session.updated_at,

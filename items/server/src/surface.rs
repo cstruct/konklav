@@ -11,8 +11,8 @@ use axum::routing::get;
 
 use crate::config::Listen;
 use crate::{
-    AppState, capabilities, control_api, cors, error, federation_api, feed, flows, health, invites,
-    keys, oidc_api, passkeys_api, relying_api, subject_api, telemetry,
+    AppState, capabilities, control_api, cors, dpop, error, federation_api, feed, flows, health,
+    invites, keys, oidc_api, passkeys_api, relying_api, subject_api, telemetry,
 };
 
 /// One of Konklav's groups of endpoints.
@@ -99,11 +99,26 @@ pub fn router(surfaces: &[Surface], state: AppState) -> Router {
         .collect::<Vec<_>>()
         .join(",")
         .into();
-    root.route("/healthz", get(health::healthz))
+    let router = root
+        .route("/healthz", get(health::healthz))
         .route("/readyz", get(health::readyz))
         .nest("/v1", v1)
         .fallback(error::not_found)
-        .method_not_allowed_fallback(error::method_not_allowed)
+        .method_not_allowed_fallback(error::method_not_allowed);
+    // DPoP for Konklav's own tokens, where its own sessions are used. On the
+    // root router, so it sees the whole path a proof names.
+    let router = if surfaces
+        .iter()
+        .any(|s| matches!(s, Surface::Subject | Surface::Control))
+    {
+        router.layer(middleware::from_fn_with_state(
+            state.clone(),
+            dpop::own_surfaces,
+        ))
+    } else {
+        router
+    };
+    router
         .layer(middleware::from_fn_with_state(
             names,
             telemetry::http::serve,

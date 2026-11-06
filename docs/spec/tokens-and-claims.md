@@ -1,6 +1,6 @@
 # Tokens And Claims
 
-Access tokens, refresh tokens and signing keys.
+Access tokens, refresh tokens, sender-constrained tokens and signing keys.
 
 ## Access tokens
 
@@ -49,6 +49,61 @@ r[token.refresh.opaque]
 Refresh tokens MUST be opaque, high-entropy values stored only as hashes,
 each bound to one session.
 
+r[token.refresh.dpop-bound]
+A refresh token of a bound session MUST be accepted only together with a
+valid DPoP proof made with the session's DPoP key. The proof MUST be
+checked before the refresh token is rotated, so a refresh refused for its
+proof leaves the session and its current refresh token unchanged.
+
+## Sender-constrained tokens
+
+DPoP (RFC 9449). These rules apply wherever a DPoP proof is verified: at
+Konklav's endpoints and in the relying SDK.
+
+r[token.dpop.binding]
+A session MUST be bound to a DPoP key only when it is created, and its
+binding MUST NOT be added, changed or removed afterwards.
+
+r[token.dpop.cnf]
+Access tokens of a bound session MUST carry the key thumbprint as
+`cnf.jkt`. Access tokens of an unbound session MUST NOT carry `cnf`.
+
+r[token.dpop.proof]
+A DPoP proof MUST be refused unless:
+
+- it is a compact JWS with `typ` `dpop+jwt`
+- its `alg` is `ES256` or `EdDSA` (Ed25519), and matches its key
+- its `jwk` header holds a public key and no private key material
+- its signature verifies with that key
+- it carries `jti`, `htm`, `htu` and `iat`
+
+r[token.dpop.request-match]
+A DPoP proof MUST be refused unless its `htm` equals the request method and
+its `htu` equals the request URL without query and fragment. Before
+comparing, the scheme and host are lowercased and a default port is
+dropped.
+
+r[token.dpop.freshness]
+A DPoP proof MUST be refused if its `iat` is further in the past than a
+configured maximum age (60 seconds by default), or further in the future
+than the verifier's clock leeway.
+
+r[token.dpop.access-token]
+A DPoP proof presented with an access token MUST be refused unless it
+carries `ath`, the base64url SHA-256 of the access token, and its key's
+thumbprint equals the token's `cnf.jkt`.
+
+r[token.dpop.scheme]
+An access token carrying `cnf` MUST be accepted only under the `DPoP`
+authorization scheme, with a valid DPoP proof. Under `Bearer`, or without a
+proof, it MUST be refused. An access token without `cnf` MUST be refused
+under the `DPoP` scheme.
+
+r[token.dpop.replay]
+A verifier MUST refuse a DPoP proof whose `jti` it has already accepted for
+the same key thumbprint, for as long as that proof could still pass the
+freshness check.
+
 ## Signing keys
 
 r[token.keys.kid]
@@ -94,6 +149,9 @@ persist private key material in its database.
   "mid": "0193a2f0-1111-7000-8000-000000000002",
   "sfl": ["restricted_personal"],
   "fct": { "tenant_type": "personal" },
-  "act": { "sub": "0193a2ef-aaaa-7000-8000-000000000003", "tid": "root" }
+  "act": { "sub": "0193a2ef-aaaa-7000-8000-000000000003", "tid": "root" },
+  "cnf": { "jkt": "0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I" }
 }
 ```
+
+`cnf` appears only on access tokens of a bound session.

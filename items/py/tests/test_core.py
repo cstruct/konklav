@@ -3,7 +3,7 @@ import time
 import uuid
 
 from konklav_relying import Core
-from support import AUDIENCE, ISSUER, Keys
+from support import AUDIENCE, ISSUER, DpopKey, Keys
 
 
 def now() -> int:
@@ -84,3 +84,25 @@ def test_rejects_malformed_input() -> None:
         except ValueError:
             continue
         raise AssertionError("expected ValueError")
+
+
+def presented(authorization: str, dpop: str | None, url: str = "https://api.example/projects/1") -> str:
+    return json.dumps({"authorization": authorization, "dpop": dpop, "request": {"method": "GET", "url": url}})
+
+
+def test_sender_constrained_tokens_need_their_proof() -> None:
+    keys = Keys()
+    key = DpopKey()
+    subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
+    core = warm_core(keys, subject, tenant, session)
+    token = keys.token(subject=subject, session=session, tenant=tenant, jkt=key.jkt())
+    requirements = json.dumps({"tenant": ["project:read"]})
+    proof = key.proof("GET", "https://api.example/projects/1", token)
+
+    allowed = json.loads(core.decide_presented(presented(f"DPoP {token}", proof), requirements, now()))
+    assert allowed["decision"] == {"decision": "allow"}
+    refused = {"decision": "deny", "reason": "invalid_dpop_proof"}
+    replayed = json.loads(core.decide_presented(presented(f"DPoP {token}", proof), requirements, now()))
+    assert replayed["decision"] == refused
+    assert decide(core, token, {"tenant": ["project:read"]})["decision"] == refused
+    assert json.loads(core.verify_presented(presented(f"Bearer {token}", None), now())) == {"outcome": "invalid_proof"}

@@ -28,6 +28,7 @@ pub(crate) fn oidc_client(client: OidcClient) -> api::OidcClient {
             post_logout_redirect_uris: definition.post_logout_redirect_uris,
             backchannel_logout_uri: definition.backchannel_logout_uri,
             require_pkce: definition.require_pkce,
+            require_dpop: definition.require_dpop,
         },
         has_secret: client.has_secret,
         disabled_at: client.disabled_at,
@@ -58,6 +59,7 @@ pub(crate) fn client_definition(definition: api::OidcClientDefinition) -> Client
         post_logout_redirect_uris: definition.post_logout_redirect_uris,
         backchannel_logout_uri: definition.backchannel_logout_uri,
         require_pkce: definition.require_pkce,
+        require_dpop: definition.require_dpop,
     }
 }
 

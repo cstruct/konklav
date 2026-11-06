@@ -24,7 +24,7 @@ use crate::client_address::ClientAddress;
 use crate::cookies::{Cookie, SameSite};
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::issue::{self, IssuedToken};
-use crate::{AppState, AuthContext, BrowserSettings, keys, pacing};
+use crate::{AppState, AuthContext, BrowserSettings, dpop, keys, pacing};
 
 pub fn routes(state: &AppState) -> Router<AppState> {
     let paced = Router::new()
@@ -272,6 +272,9 @@ fn session_flags(requested: &[String], credential: &[String]) -> Vec<String> {
 }
 
 /// Starts a session for `credential`, at most `lifetime` long.
+// The session's settings come from as many places as there are login
+// flows; a struct for them would be built once per call site anyway.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn create_session(
     state: &AppState,
     conn: &mut Connection,
@@ -280,7 +283,15 @@ pub(crate) async fn create_session(
     client: Client,
     flags: &[String],
     lifetime: chrono::Duration,
+    dpop_jkt: Option<String>,
 ) -> Result<Started, ApiError> {
+    // r[impl session.dpop.required]
+    let required = state.auth.browser.as_ref().is_some_and(|b| b.require_dpop);
+    if matches!(client, Client::Browser) && required && dpop_jkt.is_none() {
+        return Err(ApiError::invalid_request(
+            "browser sessions must be bound to a DPoP key: send a DPoP proof",
+        ));
+    }
     let now = Utc::now();
     let id = SessionId::new_v7();
     let refresh = RefreshToken::generate(id);
@@ -290,7 +301,9 @@ pub(crate) async fn create_session(
     } else {
         Stage::Identity
     };
+    // r[impl session.dpop.bind]
     let new = NewSession {
+        dpop_jkt,
         id,
         subject_id: credential.subject_id,
         credential_id: credential.id,
@@ -337,6 +350,9 @@ pub(crate) async fn create_session(
     })
 }
 
+// The session's settings come from as many places as there are login
+// flows; a struct for them would be built once per call site anyway.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn start_session(
     state: &AppState,
     conn: &mut Connection,
@@ -345,6 +361,7 @@ pub(crate) async fn start_session(
     client: Client,
     browser: Option<&BrowserSettings>,
     flags: &[String],
+    dpop_jkt: Option<String>,
 ) -> Result<Response, ApiError> {
     let now = Utc::now();
     let Started {
@@ -359,6 +376,7 @@ pub(crate) async fn start_session(
         client,
         flags,
         state.auth.session_lifetime,
+        dpop_jkt,
     )
     .await?;
     let stage = session.stage;
@@ -390,6 +408,7 @@ pub(crate) async fn start_session(
 // r[impl authn.login.methods]
 async fn login_password(
     State(state): State<AppState>,
+    dpop::Bound(dpop_jkt): dpop::Bound,
     address: ClientAddress,
     headers: HeaderMap,
     ApiJson(body): ApiJson<PasswordLogin>,
@@ -456,6 +475,7 @@ async fn login_password(
         body.client,
         browser.as_ref(),
         &body.flags,
+        dpop_jkt,
     )
     .await
 }
@@ -464,6 +484,7 @@ async fn login_password(
 /// for tokens. Native clients only.
 async fn login_secret_key(
     State(state): State<AppState>,
+    dpop::Bound(dpop_jkt): dpop::Bound,
     address: ClientAddress,
     ApiJson(body): ApiJson<SecretKeyLogin>,
 ) -> Result<Response, ApiError> {
@@ -523,6 +544,7 @@ async fn login_secret_key(
         Client::Native,
         None,
         &[],
+        dpop_jkt,
     )
     .await
 }
@@ -548,17 +570,25 @@ pub(crate) async fn still_valid(
 
 /// Rotates a refresh token, checking that its session is still usable and,
 /// when `client` is given, that it belongs to that OIDC client.
+///
+/// `dpop_jkt` is the key thumbprint of the request's verified DPoP proof. A
+/// bound session's refresh token is refused before anything rotates unless
+/// it matches.
 pub(crate) async fn rotate(
     conn: &mut Connection,
     presented: &str,
     client: Option<&str>,
+    dpop_jkt: Option<&str>,
 ) -> Result<Started, ApiError> {
     let presented = RefreshToken::parse(presented).map_err(|_| session_ended())?;
     let current = sessions::get(conn, presented.session())
         .await
         .map_err(|_| session_ended())?;
+    // r[impl token.refresh.dpop-bound]
+    let wrong_key = current.dpop_jkt.is_some() && current.dpop_jkt.as_deref() != dpop_jkt;
     if current.stage == Stage::Partial
         || current.oidc_client_id.as_deref() != client
+        || wrong_key
         || !still_valid(conn, &current).await?
     {
         return Err(session_ended());
@@ -590,6 +620,7 @@ pub(crate) async fn rotate(
 /// browsers send the cookie.
 async fn refresh(
     State(state): State<AppState>,
+    dpop::Bound(dpop_jkt): dpop::Bound,
     headers: HeaderMap,
     body: Option<ApiJson<RefreshRequest>>,
 ) -> Result<Response, ApiError> {
@@ -608,7 +639,7 @@ async fn refresh(
         session,
         refresh: next,
         cursor,
-    } = rotate(&mut conn, &presented, None).await?;
+    } = rotate(&mut conn, &presented, None, dpop_jkt.as_deref()).await?;
     let token = issue::access_token(&mut conn, &state.auth, &session).await?;
     let now = Utc::now();
     let (refresh_token, cookies) = match &browser {
@@ -678,6 +709,8 @@ pub(crate) async fn authenticate(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or_else(unauthenticated)?;
+    // A sender-constrained token reaches here as a bearer token only after
+    // `dpop::own_surfaces` checked its proof.
     verify_access_token(state, conn, token).await
 }
 
@@ -834,6 +867,7 @@ pub(crate) async fn start_passwordless_session(
     conn: &mut Connection,
     credential: &Credential,
     amr: &str,
+    dpop_jkt: Option<String>,
 ) -> Result<Response, ApiError> {
     let subject = subjects::get(conn, credential.subject_id).await?;
     if subject.state != SubjectState::Active
@@ -842,5 +876,15 @@ pub(crate) async fn start_passwordless_session(
     {
         return Err(invalid_credentials());
     }
-    start_session(state, conn, credential, &[amr], Client::Native, None, &[]).await
+    start_session(
+        state,
+        conn,
+        credential,
+        &[amr],
+        Client::Native,
+        None,
+        &[],
+        dpop_jkt,
+    )
+    .await
 }

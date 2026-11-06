@@ -115,6 +115,14 @@ diesel::table! {
 }
 
 diesel::table! {
+    dpop_proof (jkt, jti) {
+        jkt -> Text,
+        jti -> Text,
+        expires_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
     event (cursor) {
         cursor -> Int8,
         kind -> Text,
@@ -187,6 +195,7 @@ diesel::table! {
         post_logout_redirect_uris -> Array<Nullable<Text>>,
         backchannel_logout_uri -> Nullable<Text>,
         require_pkce -> Bool,
+        require_dpop -> Bool,
     }
 }
 
@@ -275,6 +284,7 @@ diesel::table! {
         oidc_userinfo_claims -> Array<Nullable<Text>>,
         oidc_id_token_claims -> Array<Nullable<Text>>,
         identity_claims -> Nullable<Jsonb>,
+        dpop_jkt -> Nullable<Text>,
     }
 }
 
@@ -409,6 +419,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     challenge,
     client_assertion,
     credential,
+    dpop_proof,
     event,
     feed_watermark,
     login_attempt,

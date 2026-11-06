@@ -17,12 +17,17 @@ The relying core: a sans-I/O library with everything a relying system needs to d
   - `scope.changed` marks a record stale with the same debounce bound as entitlement sets
 - Following the change feed's state: cursor, heartbeats, `position`, `reset`. When it lags (three missed heartbeats), the core answers `Need::Check`, so hosts ask `/v1/check`.
 - Read-your-writes: `await_cursor` is ready once the feed has passed the cursor and every entry it invalidated has been refreshed.
+- Sender-constrained (DPoP) tokens: from a request's raw `Authorization` and `DPoP` headers and its request descriptor (the method and the public URL the client addressed):
+  - a token with `cnf` needs the `DPoP` scheme and a valid proof; under `Bearer`, or without a request descriptor, it is denied with `invalid_dpop_proof`
+  - the proof is checked before anything else, including before a hand-off to the check API, which never sees it
+  - accepted proofs are remembered for the freshness window (60 s), bounded (100 000 by default; when full of fresh proofs, new ones are refused), and only once the core has answered, so a host's fetch-and-retry isn't a replay
 
 The core never makes network calls, reads clocks, spawns tasks or sleeps. Hosts pass the time (Unix ms) and the data in, and ask `decide` and `poll_work`.
 
 ## Public interface
 
-- `Relying::decide` returns `Outcome::Decided` or `Outcome::Need { needs }`.
+- `Relying::decide` returns `Outcome::Decided` or `Outcome::Need { needs }`. `decide_presented` and `verify_presented` take a `Presented` (raw headers and a `RequestDescriptor`) for DPoP; `decide` and `verify` take a bearer token.
+- `Verification::InvalidProof` and `DenyReason::InvalidDpopProof` mean the relying system should answer with a `WWW-Authenticate: DPoP` challenge.
 - `Relying::poll_work` returns the fetches due and when to poll next.
 - `on_jwks`, `on_session`, `on_session_unknown`, `on_entitlements`, `on_registered_scope`, `on_registered_scope_unknown`, `on_fetch_failed`, `on_feed_connected`, `on_feed_activity`, `on_feed_lost`, `on_feed_event`, `await_cursor`.
 - `Config` holds the issuer, audience and tuning.
@@ -53,6 +58,7 @@ cargo build -p konklav-relying --target wasm32-unknown-unknown
   - session revocation, the debounce bound, TTL, reset
   - JWKS refresh limits, await-cursor, sweeps, tenant-scoped invalidation
   - registered scopes: lazy fetches, unknown scopes, moves within the debounce window, the size bound
+  - DPoP: schemes, proofs checked before the check API, replays, the bounded replay set
 - Indirect coverage: the native client's end-to-end tests against a real server, and the Python tests.
 
 ## Traceability and related docs

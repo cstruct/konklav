@@ -371,6 +371,7 @@ struct Login {
 // r[impl authn.passkey.discoverable]
 async fn login(
     State(state): State<AppState>,
+    crate::dpop::Bound(dpop_jkt): crate::dpop::Bound,
     address: ClientAddress,
     headers: HeaderMap,
     ApiJson(body): ApiJson<Login>,
@@ -429,6 +430,7 @@ async fn login(
         body.client,
         browser.as_ref(),
         &body.flags,
+        dpop_jkt,
     )
     .await
 }

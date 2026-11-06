@@ -126,6 +126,7 @@ fn token(tenant: TenantId) -> AccessClaims {
         sfl: vec![],
         fct: BTreeMap::new(),
         act: None,
+        cnf: None,
     }
 }
 

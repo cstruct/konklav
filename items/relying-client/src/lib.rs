@@ -20,6 +20,7 @@ use konklav_authz::{Decision, EntitlementSet, Requirements};
 use konklav_core::Cursor;
 use konklav_core::feed::{FeedEvent, SessionChanged};
 use konklav_relying::{Config, Key, Need, Outcome, Relying, ScopeRecord};
+pub use konklav_relying::{Presented, RequestDescriptor};
 use konklav_token::JwkSet;
 use serde::Deserialize;
 use tokio::sync::Notify;
@@ -161,21 +162,39 @@ impl RelyingClient {
         Ok(response)
     }
 
-    /// Decides `requirements` for an access token presented to the relying
-    /// system. Fails closed: an error means deny.
-    // r[impl relying.decision.fail-closed]
+    /// Decides `requirements` for a bearer access token presented to the
+    /// relying system. Fails closed: an error means deny. A
+    /// sender-constrained token is denied: use
+    /// [`RelyingClient::decide_request`].
     pub async fn decide(
         &self,
         token: &str,
         requirements: &Requirements,
     ) -> Result<Decision, Error> {
+        self.decide_request(&Presented::bearer(token), requirements)
+            .await
+    }
+
+    /// Decides `requirements` for a request's raw `Authorization` and
+    /// `DPoP` headers and the public URL the client addressed, so
+    /// sender-constrained tokens work too. Fails closed: an error means
+    /// deny.
+    // r[impl relying.decision.fail-closed]
+    pub async fn decide_request(
+        &self,
+        presented: &Presented,
+        requirements: &Requirements,
+    ) -> Result<Decision, Error> {
         for _ in 0..4 {
-            let outcome = self.core().decide(token, requirements, None, now());
+            let outcome = self.core().decide_presented(presented, requirements, now());
             let needs = match outcome {
                 Outcome::Decided { decision } => return Ok(decision),
                 Outcome::Need { needs } => needs,
             };
             if needs.contains(&Need::Check) {
+                // The core has checked any DPoP proof; the check API takes
+                // the token alone.
+                let token = presented.access_token().unwrap_or_default();
                 return self.check(token, requirements).await;
             }
             let results =

@@ -19,6 +19,8 @@
 // r[impl item.relying.single-implementation]
 mod cache;
 mod config;
+mod presented;
 
 pub use cache::{Key, Need, Outcome, Relying, RequestDescriptor, ScopeRecord, Verification, Work};
 pub use config::Config;
+pub use presented::Presented;

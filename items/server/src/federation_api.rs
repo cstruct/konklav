@@ -63,6 +63,9 @@ struct Details {
     nonce: String,
     code_verifier: String,
     return_to: String,
+    /// The DPoP key the sign-in's session is bound to (`dpop_jkt`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dpop_jkt: Option<String>,
 }
 
 fn provider<'a>(state: &'a AppState, id: &str) -> Result<&'a Provider, ApiError> {
@@ -133,6 +136,7 @@ async fn begin(
     purpose: Purpose,
     subject: Option<SubjectId>,
     return_to: String,
+    dpop_jkt: Option<String>,
 ) -> Result<(String, String), ApiError> {
     let id = uuid::Uuid::now_v7();
     let secret = generate_secret();
@@ -142,6 +146,7 @@ async fn begin(
         nonce: request.nonce.clone(),
         code_verifier: request.code_verifier.clone(),
         return_to,
+        dpop_jkt,
     };
     challenges::create(
         conn,
@@ -170,6 +175,9 @@ async fn begin(
 #[derive(Deserialize)]
 struct StartQuery {
     return_to: Option<String>,
+    /// The thumbprint of the DPoP key to bind the session to: a navigation
+    /// can't carry a proof.
+    dpop_jkt: Option<String>,
 }
 
 /// `GET /v1/login/oidc/{provider}/start`
@@ -181,8 +189,37 @@ async fn start(
     let provider = provider(&state, &provider_id)?;
     let browser = browser(&state)?;
     let return_to = return_to(provider, query.return_to.as_deref())?;
+    // r[impl session.dpop.bind]
+    // r[impl session.dpop.required]
+    let thumbprint = |jkt: &str| {
+        jkt.len() == 43
+            && jkt
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    };
+    match query.dpop_jkt.as_deref() {
+        Some(jkt) if !thumbprint(jkt) => {
+            return Err(ApiError::invalid_request(
+                "dpop_jkt is not a key thumbprint",
+            ));
+        }
+        None if browser.require_dpop => {
+            return Err(ApiError::invalid_request(
+                "browser sessions must be bound to a DPoP key: send dpop_jkt",
+            ));
+        }
+        _ => {}
+    }
     let mut conn = state.pool.get().await?;
-    let (url, login) = begin(&mut conn, provider, Purpose::OidcLogin, None, return_to).await?;
+    let (url, login) = begin(
+        &mut conn,
+        provider,
+        Purpose::OidcLogin,
+        None,
+        return_to,
+        query.dpop_jkt.clone(),
+    )
+    .await?;
     let mut response = Redirect::to(&url).into_response();
     response.headers_mut().append(
         header::SET_COOKIE,
@@ -224,6 +261,7 @@ async fn link(
         Purpose::OidcLink,
         Some(session.subject_id),
         return_to,
+        None,
     )
     .await?;
     let mut response = Json(LinkStarted {
@@ -454,6 +492,7 @@ async fn finish(
         Client::Browser,
         &[],
         lifetime,
+        details.dpop_jkt.clone(),
     )
     .await
     .map_err(|_| Failure::Provider)?;

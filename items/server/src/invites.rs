@@ -297,6 +297,7 @@ fn invalid_invite() -> ApiError {
 // r[impl authn.invite.redeem]
 async fn redeem_invite(
     State(state): State<AppState>,
+    crate::dpop::Bound(dpop_jkt): crate::dpop::Bound,
     ApiJson(body): ApiJson<RedeemInvite>,
 ) -> Result<Response, ApiError> {
     if body.password.chars().count() < 8 {
@@ -390,5 +391,5 @@ async fn redeem_invite(
             Ok(credential)
         })
         .await?;
-    start_passwordless_session(&state, &mut conn, &credential, "pwd").await
+    start_passwordless_session(&state, &mut conn, &credential, "pwd", dpop_jkt).await
 }

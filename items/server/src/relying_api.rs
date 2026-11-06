@@ -120,6 +120,9 @@ async fn check(
 ) -> Result<Json<CheckResponse>, ApiError> {
     let mut conn = state.pool.get().await?;
     require_service(&state, &mut conn, &headers).await?;
+    // A sender-constrained token is decided without its DPoP proof: the
+    // relying system calling this has checked the proof already.
+    // r[impl relying.verify.dpop-before-check]
     let (claims, _) = match verify_access_token(&state, &mut conn, &body.token).await {
         Ok(verified) => verified,
         Err(error)

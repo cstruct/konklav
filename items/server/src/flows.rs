@@ -33,7 +33,7 @@ use crate::subject_api::{
     authenticate, begin_attempt, check_browser_request, refresh_cookies, refuse_impersonation,
     require_recent, start_passwordless_session, with_cookies,
 };
-use crate::{AppState, capabilities, pacing, passkeys_api};
+use crate::{AppState, capabilities, dpop, pacing, passkeys_api};
 
 pub fn routes(state: &AppState) -> Router<AppState> {
     let paced = Router::new()
@@ -764,13 +764,14 @@ struct CompleteLink {
 
 async fn complete_email_link(
     State(state): State<AppState>,
+    dpop::Bound(dpop_jkt): dpop::Bound,
     ApiJson(body): ApiJson<CompleteLink>,
 ) -> Result<Response, ApiError> {
     let mut conn = state.pool.get().await?;
     let challenge = redeem_link(&mut conn, Purpose::EmailLink, &body.token).await?;
     let credential = challenge.credential_id.ok_or_else(invalid_code)?;
     let credential = credentials::get(&mut conn, credential).await?;
-    start_passwordless_session(&state, &mut conn, &credential, "eml").await
+    start_passwordless_session(&state, &mut conn, &credential, "eml", dpop_jkt).await
 }
 
 #[derive(Deserialize)]
@@ -817,6 +818,7 @@ struct CompletePhone {
 
 async fn complete_phone(
     State(state): State<AppState>,
+    dpop::Bound(dpop_jkt): dpop::Bound,
     ApiJson(body): ApiJson<CompletePhone>,
 ) -> Result<Response, ApiError> {
     let mut conn = state.pool.get().await?;
@@ -825,7 +827,7 @@ async fn complete_phone(
         redeem_code(&mut conn, Purpose::PhoneCode, &recipient, &body.code, None).await?;
     let credential =
         credentials::get(&mut conn, challenge.credential_id.ok_or_else(invalid_code)?).await?;
-    start_passwordless_session(&state, &mut conn, &credential, "sms").await
+    start_passwordless_session(&state, &mut conn, &credential, "sms", dpop_jkt).await
 }
 
 // --- Passwords ------------------------------------------------------------------
@@ -1033,7 +1035,10 @@ async fn impersonate(
     let id = SessionId::new_v7();
     let (session, _) = sessions::insert(
         &mut conn,
+        // An impersonation session keeps the operator's binding.
+        // r[impl session.dpop.bind]
         NewSession {
+            dpop_jkt: parent.dpop_jkt.clone(),
             id,
             subject_id: target.id,
             // The impersonator's credential: the target's credentials were

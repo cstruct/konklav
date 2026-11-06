@@ -38,6 +38,11 @@ pub struct Config {
     /// unknown.
     // r[impl relying.cache.registered-unknown]
     pub unknown_scope_ttl_ms: u64,
+    /// How old a DPoP proof may be, in seconds.
+    pub dpop_max_age_seconds: i64,
+    /// The most DPoP proofs remembered at once, to refuse replays. When it
+    /// is full of proofs that are still fresh, new proofs are refused.
+    pub dpop_replay_capacity: usize,
 }
 
 impl Default for Config {
@@ -55,6 +60,8 @@ impl Default for Config {
             sweep_batch: 50,
             registered_capacity: 100_000,
             unknown_scope_ttl_ms: 5 * 1000,
+            dpop_max_age_seconds: 60,
+            dpop_replay_capacity: 100_000,
         }
     }
 }

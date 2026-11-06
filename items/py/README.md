@@ -41,6 +41,8 @@ await client.start()
 decision = await client.decide(token, {"scopes": [{"kind": "project", "id": project_id, "actions": ["document:read"]}]})
 ```
 
+For sender-constrained (DPoP) tokens, `decide_request` and `verify_request` take the request's raw `Authorization` and `DPoP` headers, its method, and the public URL the client addressed (behind a proxy, not the upstream one). A deny with reason `invalid_dpop_proof`, or `InvalidDpopProof` from `verify_request`, should be answered with 401 and `WWW-Authenticate: DPoP error="invalid_dpop_proof"`.
+
 `await_cursor` takes the cursor a control-plane write returned, such as
 `konklav-control-plane`'s `Written.cursor`; see
 [`examples/python/read_your_writes.py`](../../examples/python/read_your_writes.py).
@@ -55,7 +57,7 @@ mise run py:build   # build the sdist and a wheel into dist/
 ```
 
 - Direct coverage:
-  - the core through the binding: decisions, revocations, flags, check fallback, input validation
+  - the core through the binding: decisions, revocations, flags, check fallback, input validation, DPoP proofs
   - the client against an httpx mock of Konklav with a live SSE feed: fallback, local decisions, invalidation, revocation, unknown sessions
 
 ## Traceability and related docs

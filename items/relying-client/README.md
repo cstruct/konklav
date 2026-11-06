@@ -12,7 +12,7 @@ Native Rust host binding for the relying core, on tokio and reqwest.
   2. Fetches whatever it needs and asks again.
   3. Asks `/v1/check` when the core says the caches can't be trusted.
 
-  Errors mean deny.
+  Errors mean deny. `decide_request` takes a `Presented` (the request's raw `Authorization` and `DPoP` headers and the public URL it addressed) so sender-constrained tokens work too; `decide` takes a bearer token.
 - `await_cursor` for read-your-writes after a Konklav write.
 
 ## Relationships

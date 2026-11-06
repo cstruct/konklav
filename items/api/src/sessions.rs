@@ -64,6 +64,9 @@ pub struct Session {
     #[schema(value_type = Option<Object>)]
     #[schema(required)]
     pub identity_claims: Option<serde_json::Value>,
+    /// The DPoP key thumbprint of a bound session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dpop_jkt: Option<String>,
     pub version: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

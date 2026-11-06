@@ -17,3 +17,9 @@ r[item.token.shared-claims]
 the access-token payload and the only access-token verification. The issuer
 and every verifier use them, so that a token Konklav issues is read the same
 way wherever it is verified.
+
+r[item.token.dpop-proof]
+`konklav-token` MUST hold the only DPoP proof verification and key
+thumbprint computation. Konklav's endpoints and the relying core both use
+them, and the caller supplies the current time, the request and any replay
+state.

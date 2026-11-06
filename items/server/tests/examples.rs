@@ -27,3 +27,12 @@ async fn a_bootstrap_set_seeds_a_new_deployment() {
         .await
         .unwrap();
 }
+
+// r[verify relying.verify.dpop]
+// r[verify oidc.provider.dpop.required]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_apps_tokens_work_only_with_its_dpop_key() {
+    konklav_examples::scenario::dpop::run(binary())
+        .await
+        .unwrap();
+}

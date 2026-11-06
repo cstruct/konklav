@@ -2,9 +2,10 @@ import asyncio
 import uuid
 
 import httpx
+import pytest
 
-from konklav_relying import RelyingClient
-from support import AUDIENCE, ISSUER, FakeKonklav, Keys
+from konklav_relying import InvalidDpopProof, RelyingClient
+from support import AUDIENCE, ISSUER, DpopKey, FakeKonklav, Keys
 
 
 def client_for(fake: FakeKonklav) -> RelyingClient:
@@ -104,6 +105,40 @@ def test_verifies_tokens_and_reads_entitlements() -> None:
             assert await client.verify(stranger) is None
             entitlements = await client.entitlements(subject, tenant)
             assert entitlements["tenant"] == ["project:read"]
+        finally:
+            await client.stop()
+
+    asyncio.run(scenario())
+
+
+def test_decides_and_verifies_requests_with_dpop_proofs() -> None:
+    async def scenario() -> None:
+        keys = Keys()
+        key = DpopKey()
+        subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
+        fake = FakeKonklav(keys, subject, tenant, session)
+        client = client_for(fake)
+        await client.start()
+        try:
+            await until_trusted(client)
+            token = keys.token(subject=subject, session=session, tenant=tenant, jkt=key.jkt())
+            url = "https://api.example/projects/1"
+            decision = await client.decide_request(
+                authorization=f"DPoP {token}",
+                dpop=key.proof("GET", url, token),
+                method="GET",
+                url=url,
+                requirements={"tenant": ["project:read"]},
+            )
+            assert decision == {"decision": "allow"}
+            claims = await client.verify_request(
+                authorization=f"DPoP {token}", dpop=key.proof("GET", url, token), method="GET", url=url
+            )
+            assert claims is not None and claims["cnf"] == {"jkt": key.jkt()}
+            with pytest.raises(InvalidDpopProof):
+                await client.verify(token)
+            denied = await client.decide(token, {"tenant": ["project:read"]})
+            assert denied == {"decision": "deny", "reason": "invalid_dpop_proof"}
         finally:
             await client.stop()
 

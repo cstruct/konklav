@@ -7,6 +7,7 @@ Library crate with test helpers shared by Konklav's software items. It is only u
 - `TestDatabase`:
   - creates a uniquely named database on the development Postgres server and applies every migration to it
   - drops the database (`with (force)`) when the value is dropped
+- `DpopKey`: a P-256 key standing in for a client's WebCrypto key, signing DPoP proofs with fresh `jti`s, or at a given time for tests with their own clock
 
 ## Relationships
 
@@ -14,6 +15,8 @@ Library crate with test helpers shared by Konklav's software items. It is only u
 |---|---|
 | `konklav-store` | Provides the pool and migrations |
 | `konklav-store`, `konklav-server` tests | Use it for isolated databases |
+| `konklav-relying`, `konklav-server` tests, `konklav-examples` | Use `DpopKey` for DPoP proofs |
+| `konklav-token` | Key thumbprints and access-token hashes for `DpopKey` |
 | PostgreSQL | The server from `KONKLAV_TEST_DATABASE_URL`, falling back to `DATABASE_URL` (which mise sets) |
 
 ## Usage

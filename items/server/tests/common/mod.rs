@@ -67,6 +67,7 @@ pub fn auth_context(signer: Signer) -> AuthContext {
         browser: Some(BrowserSettings {
             allowed_origins: vec![ORIGIN.into()],
             secure_cookies: true,
+            require_dpop: false,
         }),
         control_token: Some(CONTROL_TOKEN.into()),
         control_token_expires_at: None,
@@ -78,6 +79,7 @@ pub fn auth_context(signer: Signer) -> AuthContext {
         passkeys: None,
         trusted_proxies: Vec::new(),
         batches: konklav_server::batch_api::BatchLimits::DEFAULT,
+        dpop_urls: Vec::new(),
     }
 }
 
