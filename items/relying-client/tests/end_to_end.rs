@@ -528,3 +528,92 @@ async fn registered_scopes_are_fetched_and_kept_fresh() {
         }
     );
 }
+
+/// Tenant fact requirements, through the check API before the feed is up
+/// and locally after, follow the tenant's current facts.
+// r[verify authz.decision.tenant-facts]
+// r[verify authz.compile.tenant-facts]
+// r[verify relying.fallback.equivalence]
+#[tokio::test(flavor = "multi_thread")]
+async fn tenant_facts_follow_the_tenants_current_facts() {
+    let world = world().await;
+    world
+        .server
+        .control(
+            Method::PUT,
+            "/v1/catalog",
+            json!({
+                "actions": [{"name": "project:read"}],
+                "scope_kinds": [{"name": "project"}],
+                "facts": [{"key": "tenant_type", "target": "tenant", "type": "string", "portable": true}],
+            }),
+        )
+        .await;
+    let written = world
+        .server
+        .control(
+            Method::PUT,
+            &format!("/v1/tenants/{}/facts", world.tenant),
+            json!({"tenant_type": "client"}),
+        )
+        .await;
+    let clients: Requirements = serde_json::from_value(json!({
+        "tenant": ["project:read"],
+        "tenant_facts": {"tenant_type": ["client"]},
+    }))
+    .unwrap();
+    // Possibly before the feed is up, possibly after.
+    assert_eq!(
+        world.client.decide(&world.token, &clients).await.unwrap(),
+        Decision::allow()
+    );
+    until_trusted(&world.client).await;
+    assert!(
+        world
+            .client
+            .await_cursor(
+                Cursor::new(written["cursor"].as_i64().unwrap()),
+                Duration::from_secs(5)
+            )
+            .await
+    );
+    assert_eq!(
+        world.client.decide(&world.token, &clients).await.unwrap(),
+        Decision::allow()
+    );
+
+    let changed = world
+        .server
+        .control(
+            Method::PUT,
+            &format!("/v1/tenants/{}/facts", world.tenant),
+            json!({"tenant_type": "personal"}),
+        )
+        .await;
+    assert!(
+        world
+            .client
+            .await_cursor(
+                Cursor::new(changed["cursor"].as_i64().unwrap()),
+                Duration::from_secs(5)
+            )
+            .await
+    );
+    // Within the debounce bound the old set may still answer.
+    let mut decision = Decision::allow();
+    for _ in 0..100 {
+        decision = world.client.decide(&world.token, &clients).await.unwrap();
+        if decision != Decision::allow() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        decision,
+        Decision::Deny {
+            reason: DenyReason::TenantFacts {
+                fact: "tenant_type".into()
+            }
+        }
+    );
+}

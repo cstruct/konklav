@@ -72,6 +72,7 @@ fn explain(assignments: &[Assignment], requirements: &Requirements) -> DecisionE
             requirements,
             registered: &RegisteredScopes::default(),
             tenant: Some(TenantId::new_v7()),
+            tenant_facts: &std::collections::BTreeMap::new(),
             session: None,
             now: NOW,
         },
@@ -235,6 +236,7 @@ fn session_checks_explain_authentication() {
             requirements: &requirements,
             registered: &RegisteredScopes::default(),
             tenant: Some(tenant),
+            tenant_facts: &std::collections::BTreeMap::new(),
             session: Some(SessionContext {
                 claims: &claims,
                 restrictive_flags: &flags,
@@ -298,6 +300,7 @@ fn shares_explain_what_they_do_and_dont_grant() {
                 requirements: &requirements,
                 registered: &RegisteredScopes::default(),
                 tenant: Some(tenant),
+                tenant_facts: &std::collections::BTreeMap::new(),
                 session: None,
                 now: NOW,
             },
@@ -435,6 +438,7 @@ fn explanations_agree_with_decisions() {
                     requirements,
                     registered: &RegisteredScopes::default(),
                     tenant: Some(tenant),
+                    tenant_facts: &std::collections::BTreeMap::new(),
                     session: Some(SessionContext {
                         claims: &claims,
                         restrictive_flags: &flags,

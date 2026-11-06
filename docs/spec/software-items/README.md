@@ -31,7 +31,7 @@ Planned software items (see
 - [`relying`](relying.md)
 - [`console`](console.md)
 - `relying-client`
-- `py` (built separately by maturin)
+- [`py`](py.md) (built separately by maturin)
 - [`py-control-plane`](py-control-plane.md) (pure Python, built by uv)
 - `cli`
 - `test-support` (test-only)

@@ -110,41 +110,57 @@ impl Confinement {
     /// the fact is missing, or its value isn't one of those allowed.
     #[must_use]
     pub fn failing(&self, tenant_facts: &BTreeMap<String, serde_json::Value>) -> Option<&str> {
-        self.tenant
-            .iter()
-            .find(|(key, allowed)| {
-                tenant_facts
-                    .get(*key)
-                    .is_none_or(|value| !allowed.contains(value))
-            })
-            .map(|(key, _)| key.as_str())
+        failing_predicate(&self.tenant, tenant_facts)
     }
 
     /// Such as "`tenant_type` is one of `\"personal\"`".
     #[must_use]
     pub fn describe(&self) -> String {
-        self.tenant
-            .iter()
-            .map(|(key, allowed)| {
-                let values: Vec<String> = allowed.iter().map(|v| format!("`{v}`")).collect();
-                format!("`{key}` is one of {}", values.join(", "))
-            })
-            .collect::<Vec<_>>()
-            .join(" and ")
+        describe_predicates(&self.tenant)
     }
 }
 
-/// What deciding confinements needs: the catalog's confinements by flag,
-/// and the current values of the tenant facts they name.
+/// The first of `predicates` (by fact key) that `facts` fails, if any: the
+/// fact is missing, or its value isn't one of those allowed. Confinements
+/// and tenant fact requirements match the same way.
+#[must_use]
+pub fn failing_predicate<'a>(
+    predicates: &'a BTreeMap<String, Vec<serde_json::Value>>,
+    facts: &BTreeMap<String, serde_json::Value>,
+) -> Option<&'a str> {
+    predicates
+        .iter()
+        .find(|(key, allowed)| facts.get(*key).is_none_or(|value| !allowed.contains(value)))
+        .map(|(key, _)| key.as_str())
+}
+
+/// Fact predicates in words, such as "`tenant_type` is one of
+/// `\"personal\"`".
+#[must_use]
+pub fn describe_predicates(predicates: &BTreeMap<String, Vec<serde_json::Value>>) -> String {
+    predicates
+        .iter()
+        .map(|(key, allowed)| {
+            let values: Vec<String> = allowed.iter().map(|v| format!("`{v}`")).collect();
+            format!("`{key}` is one of {}", values.join(", "))
+        })
+        .collect::<Vec<_>>()
+        .join(" and ")
+}
+
+/// What deciding confinements and tenant fact requirements needs: the
+/// catalog's confinements by flag, and the current values of the tenant's
+/// portable facts.
 // r[impl authz.compile.confinements]
+// r[impl authz.compile.tenant-facts]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Confinements {
     /// Confinements by the restrictive flag they belong to.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub flags: BTreeMap<String, Confinement>,
-    /// The tenant's values of the facts any confinement names; empty
-    /// without a tenant.
+    /// The tenant's portable facts, which confinements and tenant fact
+    /// requirements are decided from; empty without a tenant.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[cfg_attr(feature = "openapi", schema(value_type = Object))]
     pub tenant_facts: BTreeMap<String, serde_json::Value>,
@@ -352,8 +368,9 @@ pub struct EntitlementSet {
     // r[impl authz.compile.registered-kinds]
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub registered_kinds: BTreeSet<String>,
-    /// The catalog's confinements and the tenant's facts they name, so
-    /// confinements can be decided without another lookup.
+    /// The catalog's confinements and the tenant's portable facts, so
+    /// confinements and tenant fact requirements can be decided without
+    /// another lookup.
     #[serde(default, skip_serializing_if = "Confinements::is_empty")]
     pub confinements: Confinements,
 }

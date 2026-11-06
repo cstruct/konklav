@@ -353,6 +353,11 @@ Terms are introduced in dependency order: each definition only uses terms define
     - accepted token kinds
     - admitted restrictive flags and required assertive flags
     - step-up conditions
+    - `tenant fact requirements`: fact predicates, shaped like a confinement's, that the token's tenant must match. Example: `{"tenant_facts": {"tenant_type": ["client"]}}` for an operation only client tenants may use.
+
+- `route policy`
+  - A relying system's declaration of an operation's requirements with scope ids still unresolved, such as the requirements of one HTTP route, which it can merge with the route policies of the layers around the operation (routers, applications).
+  - In the Python relying SDK it is `konklav_relying.Policy`. Say `route policy` in prose, so it isn't mistaken for a `policy` in a role.
 
 - `decision`
   - The outcome of evaluating requirements against an access token, its session, and an entitlement set: `allow`, `deny`, or a step-up demand.

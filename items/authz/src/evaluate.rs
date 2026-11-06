@@ -1,9 +1,9 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use konklav_token::{AccessClaims, TokenKind};
 use serde::{Deserialize, Serialize};
 
-use crate::{Confinements, Entitlements, RegisteredScopes, Registration, Scope};
+use crate::{Confinements, Entitlements, RegisteredScopes, Registration, Scope, failing_predicate};
 
 /// Actions required at one scope. The relying system resolves its own
 /// resources into scopes before asking, except registered scopes, which
@@ -68,6 +68,51 @@ pub struct Requirements {
     pub require_flags: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "StepUp::is_empty")]
     pub step_up: StepUp,
+    /// Fact predicates the token's tenant must match: each tenant fact key
+    /// with the values the fact may have, such as
+    /// `{"tenant_type": ["client"]}`.
+    // r[impl authz.decision.tenant-facts]
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "tenant_fact_predicates"
+    )]
+    pub tenant_facts: BTreeMap<String, Vec<serde_json::Value>>,
+}
+
+/// Reads tenant fact predicates, refusing a predicate without values and
+/// values a predicate can't match. It doesn't consult the catalog, so the
+/// check API and the relying core refuse the same requirements.
+// r[impl authz.decision.tenant-facts.shape]
+fn tenant_fact_predicates<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Vec<serde_json::Value>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let predicates = BTreeMap::<String, Vec<serde_json::Value>>::deserialize(deserializer)?;
+    for (key, allowed) in &predicates {
+        if allowed.is_empty() {
+            return Err(D::Error::custom(format!(
+                "tenant_facts lists no value for `{key}`"
+            )));
+        }
+        if let Some(value) = allowed.iter().find(|value| !is_matchable(value)) {
+            return Err(D::Error::custom(format!(
+                "tenant_facts lists `{value}` for `{key}`: only strings, integers and booleans can be matched"
+            )));
+        }
+    }
+    Ok(predicates)
+}
+
+fn is_matchable(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(_) | serde_json::Value::Bool(_) => true,
+        serde_json::Value::Number(number) => number.is_i64() || number.is_u64(),
+        _ => false,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +135,10 @@ pub enum DenyReason {
     /// or one whose facts don't match the flag's confinement.
     #[cfg_attr(feature = "openapi", schema(title = "DenyReasonConfinedSession"))]
     ConfinedSession { flag: String },
+    /// The token targets no tenant, or one whose facts fail the operation's
+    /// tenant fact predicate on `fact`.
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonTenantFacts"))]
+    TenantFacts { fact: String },
     /// The session lacks an assertive flag the operation requires.
     #[cfg_attr(feature = "openapi", schema(title = "DenyReasonMissingFlag"))]
     MissingFlag { flag: String },
@@ -156,6 +205,7 @@ impl Decision {
 // r[impl session.flags.restrictive]
 // r[impl session.flags.assertive]
 // r[impl session.flags.confine.decision]
+// r[impl authz.decision.tenant-facts]
 // r[impl authn.step-up.demand]
 // r[impl item.authz.single-evaluator]
 #[must_use]
@@ -199,6 +249,16 @@ pub fn evaluate(
                 reason: DenyReason::MissingFlag { flag: flag.clone() },
             };
         }
+    }
+
+    // Before step-up, which can't help, and before any action is
+    // considered, so global actions can't lift it.
+    if let Some(fact) = failing_tenant_fact(requirements, confinements, claims) {
+        return Decision::Deny {
+            reason: DenyReason::TenantFacts {
+                fact: fact.to_owned(),
+            },
+        };
     }
 
     if !step_up_satisfied(&requirements.step_up, claims, now) {
@@ -359,6 +419,20 @@ fn shared_actions<'a>(
         }
     }
     (granted, obligations)
+}
+
+/// The first tenant fact predicate (by key) the token's tenant fails, given
+/// its current facts; the first predicate when the token targets no tenant.
+// r[impl authz.decision.tenant-facts.reason]
+pub(crate) fn failing_tenant_fact<'a>(
+    requirements: &'a Requirements,
+    confinements: &Confinements,
+    claims: &AccessClaims,
+) -> Option<&'a str> {
+    if claims.tid.is_none() {
+        return requirements.tenant_facts.keys().next().map(String::as_str);
+    }
+    failing_predicate(&requirements.tenant_facts, &confinements.tenant_facts)
 }
 
 pub(crate) fn step_up_satisfied(step_up: &StepUp, claims: &AccessClaims, now: i64) -> bool {

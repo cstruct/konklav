@@ -54,8 +54,9 @@ entitlement set, session flags and step-up state.
 r[relying.decision.requirements]
 An operation's requirements MUST be expressible as: required actions at the
 global, tenant and scope levels; allowed token kinds; admitted restrictive
-flags; required assertive flags; and step-up requirements (a minimum number
-of `amr` methods, an allowed `amr` set, a maximum `auth_time` age).
+flags; required assertive flags; step-up requirements (a minimum number of
+`amr` methods, an allowed `amr` set, a maximum `auth_time` age); and
+required tenant facts (`authz.decision.tenant-facts`).
 
 r[relying.decision.fail-closed]
 If the relying SDK can neither decide locally nor reach the check API, it

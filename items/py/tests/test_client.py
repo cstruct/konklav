@@ -4,7 +4,7 @@ import uuid
 import httpx
 import pytest
 
-from konklav_relying import InvalidDpopProof, RelyingClient
+from konklav_relying import AccessToken, Decision, DenyReason, InvalidDpopProof, Policy, RelyingClient
 from support import AUDIENCE, ISSUER, DpopKey, FakeKonklav, Keys
 
 
@@ -139,6 +139,73 @@ def test_decides_and_verifies_requests_with_dpop_proofs() -> None:
                 await client.verify(token)
             denied = await client.decide(token, {"tenant": ["project:read"]})
             assert denied == {"decision": "deny", "reason": "invalid_dpop_proof"}
+        finally:
+            await client.stop()
+
+    asyncio.run(scenario())
+
+
+# r[verify item.py.typed.compatible]
+# r[verify authz.decision.tenant-facts]
+# r[verify relying.fallback.equivalence]
+def test_typed_variants_decide_route_policies() -> None:
+    async def scenario() -> None:
+        keys = Keys()
+        subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
+        fake = FakeKonklav(keys, subject, tenant, session)
+        client = client_for(fake)
+        token = keys.token(subject=subject, session=session, tenant=tenant)
+        policy = Policy.merge(
+            Policy(tenant_actions={"project:read"}),
+            Policy(tenant_facts={"tenant_type": ["client"]}),
+        )
+        requirements = policy.requirements()
+
+        # Through the check API, typed like the JSON.
+        assert await client.decide_typed(token, requirements) == Decision("allow")
+        assert await client.decide(token, requirements) == {"decision": "allow"}
+
+        await client.start()
+        try:
+            await until_trusted(client)
+            fake.calls.clear()
+            assert (await client.decide_typed(token, requirements)).allowed
+            assert "/v1/check" not in fake.calls, "decided locally"
+
+            # The tenant stops matching.
+            fake.tenant_facts = {"tenant_type": "personal"}
+            fake.revision = 2
+            cursor = fake.push("entitlements.changed", {"all": True, "tenant": tenant})
+            assert await client.await_cursor(cursor)
+            decision = Decision("allow")
+            for _ in range(100):
+                decision = await client.decide_typed(token, requirements)
+                if not decision.allowed:
+                    break
+                await asyncio.sleep(0.02)
+            assert decision == Decision("deny", reason=DenyReason("tenant_facts", fact="tenant_type"))
+            assert await client.decide(token, requirements) == {
+                "decision": "deny",
+                "reason": {"tenant_facts": {"fact": "tenant_type"}},
+            }
+
+            verified = await client.verify_typed(token)
+            assert isinstance(verified, AccessToken)
+            assert (verified.sub, verified.tid, verified.sid) == (subject, tenant, session)
+            assert await client.verify_typed("not.a.token") is None
+            requested = await client.verify_request_typed(
+                authorization=f"Bearer {token}", dpop=None, method="GET", url="https://api.example/p"
+            )
+            assert requested == verified
+            assert (
+                await client.decide_request_typed(
+                    authorization=f"Bearer {token}",
+                    dpop=None,
+                    method="GET",
+                    url="https://api.example/p",
+                    requirements=requirements,
+                )
+            ) == decision
         finally:
             await client.stop()
 

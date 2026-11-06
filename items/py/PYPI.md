@@ -66,6 +66,19 @@ await client.stop()
   `invalid_dpop_proof` should be answered with 401 and
   `WWW-Authenticate: DPoP error="invalid_dpop_proof"`.
 
+- `Policy` declares an operation's requirements once per route or router,
+  merges the policies of nested layers and resolves them per request with
+  the scope ids it names. `decide_typed`, `decide_request_typed`,
+  `verify_typed` and `verify_request_typed` return a `Decision` and an
+  `AccessToken` instead of JSON:
+
+  ```python
+  policy = Policy(tenant_actions={"project:read"}, tenant_facts={"tenant_type": ["client"]})
+  decision = await client.decide_typed(token, policy.requirements())
+  if not decision.allowed:
+      ...
+  ```
+
 The decision logic lives in a Rust core shared with Konklav's other relying
 bindings, so they can't disagree. Python does only the I/O.
 

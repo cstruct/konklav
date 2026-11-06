@@ -4156,6 +4156,28 @@
           },
           {
             "type": "object",
+            "title": "DenyReasonTenantFacts",
+            "description": "The token targets no tenant, or one whose facts fail the operation's\ntenant fact predicate on `fact`.",
+            "required": [
+              "tenant_facts"
+            ],
+            "properties": {
+              "tenant_facts": {
+                "type": "object",
+                "description": "The token targets no tenant, or one whose facts fail the operation's\ntenant fact predicate on `fact`.",
+                "required": [
+                  "fact"
+                ],
+                "properties": {
+                  "fact": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
             "title": "DenyReasonMissingFlag",
             "description": "The session lacks an assertive flag the operation requires.",
             "required": [
@@ -5894,6 +5916,17 @@
             },
             "description": "Actions required tenant-wide in the token's tenant.",
             "uniqueItems": true
+          },
+          "tenant_facts": {
+            "type": "object",
+            "description": "Fact predicates the token's tenant must match: each tenant fact key\nwith the values the fact may have, such as\n`{\"tenant_type\": [\"client\"]}`.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {}
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           },
           "token_kinds": {
             "type": [

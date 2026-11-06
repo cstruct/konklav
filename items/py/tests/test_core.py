@@ -29,6 +29,7 @@ def warm_core(keys: Keys, subject: str, tenant: str, session: str) -> Core:
                 "tenant": ["project:read"],
                 "scoped": [],
                 "restrictive_flags": ["personal_only"],
+                "confinements": {"tenant_facts": {"tenant_type": "client"}},
             }
         ),
         now(),
@@ -106,3 +107,23 @@ def test_sender_constrained_tokens_need_their_proof() -> None:
     assert replayed["decision"] == refused
     assert decide(core, token, {"tenant": ["project:read"]})["decision"] == refused
     assert json.loads(core.verify_presented(presented(f"Bearer {token}", None), now())) == {"outcome": "invalid_proof"}
+
+
+# r[verify authz.decision.tenant-facts]
+# r[verify authz.decision.tenant-facts.shape]
+def test_tenant_facts_are_decided_from_the_cached_set() -> None:
+    keys = Keys()
+    subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
+    core = warm_core(keys, subject, tenant, session)
+    token = keys.token(subject=subject, session=session, tenant=tenant)
+    assert decide(core, token, {"tenant_facts": {"tenant_type": ["client"]}})["decision"] == {"decision": "allow"}
+    assert decide(core, token, {"tenant_facts": {"tenant_type": ["personal"]}})["decision"] == {
+        "decision": "deny",
+        "reason": {"tenant_facts": {"fact": "tenant_type"}},
+    }
+    for unmatchable in ([], [1.5], [None]):
+        try:
+            decide(core, token, {"tenant_facts": {"tenant_type": unmatchable}})
+        except ValueError:
+            continue
+        raise AssertionError(f"{unmatchable} should be refused")

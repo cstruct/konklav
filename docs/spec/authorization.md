@@ -172,9 +172,17 @@ Every entitlement set MUST name the catalog's registered scope kinds, so a
 relying core knows which requirements need a registered scope's record.
 
 r[authz.compile.confinements]
-Every entitlement set MUST carry the catalog's confinements and the
-current values of the tenant facts they name (none for a set without a
-tenant), so a relying core can decide confinements without another lookup.
+Every entitlement set MUST carry the catalog's confinements, so a relying
+core can decide them without another lookup, from the tenant facts the set
+carries (`authz.compile.tenant-facts`).
+
+r[authz.compile.tenant-facts]
+Every entitlement set MUST carry the current values of all of its tenant's
+portable facts (none for a set without a tenant), so a relying core can
+decide confinements and tenant fact requirements without another lookup.
+The portable facts are bounded (`fact.bounded`), so carrying all of them
+keeps the set small, and the set doesn't depend on which requirements it
+will be used for.
 
 ## Sharing
 
@@ -304,12 +312,38 @@ pair to authorized relying systems.
 r[authz.api.check]
 The relying surface MUST offer a check API. Given an access token and an
 operation's requirements (actions per level and scope, admitted and required
-session flags, step-up requirements), it returns a decision computed from
-current state, including session validity.
+session flags, step-up requirements, required tenant facts), it returns a
+decision computed from current state, including session validity.
 
 r[authz.api.check-equivalence]
 For the same state, the check API and local evaluation by the relying core
 MUST reach the same decision.
+
+r[authz.decision.tenant-facts]
+An operation MAY require tenant facts as `tenant_facts`, an object mapping
+tenant fact keys to the values each fact may have, such as
+`{"tenant_facts": {"tenant_type": ["client"]}}`. Like a confinement
+(`session.flags.confine`), it is a conjunction of fact predicates: the
+tenant matches when, for every predicate, it has the fact and its value
+equals one of the listed values. A decision MUST deny unless the token
+targets a tenant whose current facts match every predicate, whatever
+actions the token holds, global ones included. An empty object requires
+nothing.
+
+r[authz.decision.tenant-facts.reason]
+A decision denied for tenant facts MUST name the first predicate, by fact
+key, that the tenant fails, as `{"tenant_facts": {"fact": "<key>"}}`. When
+the token targets no tenant, every predicate fails, so the first is named.
+
+r[authz.decision.tenant-facts.shape]
+Requirements MUST be refused as invalid when a tenant fact predicate lists
+no values, or lists a value that isn't a string, an integer or a boolean,
+the types a confinement can match (`session.flags.confine.facts`). Reading
+requirements MUST NOT depend on the catalog, so that the check API and the
+relying core refuse the same requirements: a predicate on a fact that isn't
+a declared, portable tenant fact, or with values of another type than the
+fact's, is not refused, and denies, since no tenant's carried facts can
+match it.
 
 r[authz.resource-context.external]
 Decisions that depend on relying-system resources (for example, which
@@ -341,6 +375,12 @@ With a session that carries a confined flag, a decision explanation MUST
 report a confinement check that names each such flag, its confinement and
 the tenant's values of the facts it names, and says which predicate fails
 when one does.
+
+r[authz.explain.tenant-facts]
+With tenant fact requirements, a decision explanation MUST report a
+`tenant_facts` check that names each predicate and the tenant's values of
+the facts they name, and says which predicate fails when one does, or that
+the decision is for no tenant.
 
 r[authz.explain.at]
 With history enabled, the control plane MUST be able to explain a decision

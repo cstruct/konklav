@@ -18,9 +18,12 @@ specs (
                 name python
                 include (
                     items/py-control-plane/**/*.py
+                    items/py/**/*.py
                 )
                 exclude (
                     items/py-control-plane/.venv/**
+                    items/py/.venv/**
+                    items/py/target/**
                 )
             }
         )

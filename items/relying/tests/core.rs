@@ -861,3 +861,49 @@ fn confinements_are_decided_from_the_cached_tenant_facts() {
         }
     );
 }
+
+// r[verify authz.decision.tenant-facts]
+// r[verify authz.compile.tenant-facts]
+// r[verify relying.decision.local]
+#[test]
+fn tenant_facts_are_decided_from_the_cached_tenant_facts() {
+    let mut f = Fixture::new();
+    f.core.on_session(f.session_state(1, false));
+    let mut set = f.set(&["project:read"], 1);
+    set.confinements = serde_json::from_value(json!({
+        "tenant_facts": {"tenant_type": "client", "seats": 5},
+    }))
+    .unwrap();
+    f.core.on_entitlements(set, T0);
+    let token = f.token(1, T0);
+    let requiring = |facts: serde_json::Value| -> Requirements {
+        Requirements {
+            tenant_facts: serde_json::from_value(facts).unwrap(),
+            ..reading()
+        }
+    };
+    assert_eq!(
+        f.core.decide(
+            &token,
+            &requiring(json!({"tenant_type": ["client"], "seats": [5]})),
+            None,
+            T0
+        ),
+        allowed()
+    );
+    assert_eq!(
+        f.core.decide(
+            &token,
+            &requiring(json!({"tenant_type": ["client"], "seats": [10]})),
+            None,
+            T0
+        ),
+        Outcome::Decided {
+            decision: Decision::Deny {
+                reason: DenyReason::TenantFacts {
+                    fact: "seats".into()
+                }
+            }
+        }
+    );
+}

@@ -37,6 +37,18 @@ decision = await client.decide_request(
 
 A decision denied with reason `invalid_dpop_proof` should be answered with
 401 and `WWW-Authenticate: DPoP error="invalid_dpop_proof"`.
+
+Route policies (`Policy`, in `konklav_relying.policy`) declare an
+operation's requirements once per route or router and resolve them per
+request; `decide_typed`, `decide_request_typed`, `verify_typed` and
+`verify_request_typed` return `Decision` and `AccessToken` instead of JSON:
+
+```python
+policy = Policy.merge(router_policy, route_policy)
+decision = await client.decide_typed(token, policy.requirements({"project": project_id}))
+if not decision.allowed:
+    ...
+```
 """
 
 from __future__ import annotations
@@ -55,12 +67,30 @@ from typing import Any
 import httpx
 
 from konklav_relying._core import Core
+from konklav_relying.policy import MissingScopeId, Policy, PolicyError, Requirements, StepUp
+from konklav_relying.results import AccessToken, Actor, Confirmation, Decision, DenyReason, Obligation
 
-__all__ = ["InvalidDpopProof", "KonklavError", "Core", "RelyingClient"]
+__all__ = [
+    "AccessToken",
+    "Actor",
+    "Confirmation",
+    "Core",
+    "Decision",
+    "DenyReason",
+    "InvalidDpopProof",
+    "KonklavError",
+    "MissingScopeId",
+    "Obligation",
+    "Policy",
+    "PolicyError",
+    "RelyingClient",
+    "Requirements",
+    "StepUp",
+]
 
 _log = logging.getLogger(__name__)
 
-Decision = dict[str, Any]
+_DecisionJson = dict[str, Any]
 
 
 class KonklavError(Exception):
@@ -143,7 +173,7 @@ class RelyingClient:
 
     # -- decisions --------------------------------------------------------
 
-    async def decide(self, token: str, requirements: Mapping[str, Any]) -> Decision:
+    async def decide(self, token: str, requirements: Mapping[str, Any]) -> _DecisionJson:
         """
         Decide `requirements` for a bearer access token presented to this
         system. A sender-constrained (DPoP) token is denied: use
@@ -165,7 +195,7 @@ class RelyingClient:
         method: str,
         url: str,
         requirements: Mapping[str, Any],
-    ) -> Decision:
+    ) -> _DecisionJson:
         """
         Decide `requirements` for a request's raw `Authorization` and `DPoP`
         headers. `url` is the URL the client addressed. Bearer and
@@ -181,7 +211,7 @@ class RelyingClient:
 
     async def _decide(
         self, token: str, requirements: Mapping[str, Any], ask: Callable[[], str]
-    ) -> Decision:
+    ) -> _DecisionJson:
         for _ in range(4):
             with self._lock:
                 outcome = json.loads(ask())
@@ -194,6 +224,41 @@ class RelyingClient:
                 return await self._check(token, requirements)
             await asyncio.gather(*(self._fetch(need) for need in needs))
         raise KonklavError("could not reach a decision")
+
+    # -- typed results ----------------------------------------------------
+
+    # r[impl item.py.typed.compatible]
+    async def decide_typed(self, token: str, requirements: Mapping[str, Any]) -> Decision:
+        """`decide`, returning a `Decision`."""
+        return Decision.from_json(await self.decide(token, requirements))
+
+    async def decide_request_typed(
+        self,
+        *,
+        authorization: str,
+        dpop: str | None,
+        method: str,
+        url: str,
+        requirements: Mapping[str, Any],
+    ) -> Decision:
+        """`decide_request`, returning a `Decision`."""
+        return Decision.from_json(
+            await self.decide_request(
+                authorization=authorization, dpop=dpop, method=method, url=url, requirements=requirements
+            )
+        )
+
+    async def verify_typed(self, token: str) -> AccessToken | None:
+        """`verify`, returning an `AccessToken`."""
+        claims = await self.verify(token)
+        return None if claims is None else AccessToken.from_claims(claims)
+
+    async def verify_request_typed(
+        self, *, authorization: str, dpop: str | None, method: str, url: str
+    ) -> AccessToken | None:
+        """`verify_request`, returning an `AccessToken`."""
+        claims = await self.verify_request(authorization=authorization, dpop=dpop, method=method, url=url)
+        return None if claims is None else AccessToken.from_claims(claims)
 
     async def verify(self, token: str) -> dict[str, Any] | None:
         """
@@ -297,7 +362,7 @@ class RelyingClient:
         headers = {"authorization": f"Bearer {await self._bearer()}"}
         return await self._http.get(f"{self._relying_url}{path}", headers=headers)
 
-    async def _check(self, token: str, requirements: Mapping[str, Any]) -> Decision:
+    async def _check(self, token: str, requirements: Mapping[str, Any]) -> _DecisionJson:
         headers = {"authorization": f"Bearer {await self._bearer()}"}
         response = await self._http.post(
             f"{self._relying_url}/v1/check",
