@@ -100,13 +100,27 @@ class Forbidden(KonklavDenied):
 
 
 class StepUpRequired(KonklavDenied):
-    """Fresher or stronger authentication would allow the request: `step_up` says what."""
+    """
+    Fresher or stronger authentication would allow the request: `step_up`
+    says what. Challenged in the token's `scheme` with
+    `error="insufficient_user_authentication"` (RFC 9470), and `max_age` when
+    the requirement has one. The methods it needs are `amr` values, which the
+    challenge's `acr_values` can't carry, so they are only in the body.
+    """
 
     status_code = 401
 
-    def __init__(self, step_up: StepUp) -> None:
+    def __init__(self, step_up: StepUp, scheme: str = "Bearer") -> None:
         super().__init__("step_up")
         self.step_up = step_up
+        self.scheme = scheme
+
+    @property
+    def headers(self) -> dict[str, str]:
+        challenge = f'{self.scheme} error="insufficient_user_authentication"'
+        if self.step_up.max_age_seconds is not None:
+            challenge += f", max_age={self.step_up.max_age_seconds}"
+        return {"WWW-Authenticate": challenge}
 
     def body(self) -> dict[str, Any]:
         return {"error": {"code": "step_up", "requirement": self.step_up.to_json()}}

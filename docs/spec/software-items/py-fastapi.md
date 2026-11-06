@@ -129,7 +129,10 @@ Evaluation MUST end in one of these:
   and `DPoP`;
 - `Forbidden` (403) for any other deny, carrying the `DenyReason`, and for
   `token_tenant`;
-- `StepUpRequired` (401) for a step-up demand, carrying its requirement;
+- `StepUpRequired` (401) for a step-up demand, carrying its requirement,
+  with a `WWW-Authenticate` challenge in the token's scheme as
+  `error="insufficient_user_authentication"` (RFC 9470), and `max_age`
+  when the requirement has one;
 - `KonklavUnavailable` (503) when no decision can be reached
   (`relying.decision.fail-closed`).
 

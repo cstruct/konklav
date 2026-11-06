@@ -188,6 +188,7 @@ def test_bearer_tokens_are_decided_by_konklav(world: World) -> None:
         response = http.get("/sensitive", headers=bearer)
         assert response.status_code == 401
         assert response.json() == {"error": {"code": "step_up", "requirement": {"min_methods": 2}}}
+        assert response.headers["www-authenticate"] == 'Bearer error="insufficient_user_authentication"'
 
         assert http.get(f"/tenants/{world.reader_tenant}/documents").status_code == 401
         forged = reader[:-4] + ("AAAA" if not reader.endswith("AAAA") else "BBBB")

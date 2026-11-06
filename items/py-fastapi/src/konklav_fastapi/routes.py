@@ -402,7 +402,7 @@ class KonklavRoutes:
                 return _Outcome(public=False, token=token)
             case "step_up":
                 assert decision.step_up is not None
-                raise StepUpRequired(decision.step_up)
+                raise StepUpRequired(decision.step_up, presented.scheme)
             case _:
                 assert decision.reason is not None
                 if decision.reason.code in ("invalid_token", "invalid_dpop_proof"):
