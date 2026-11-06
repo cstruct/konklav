@@ -1,6 +1,7 @@
 # The bootstrap format's tables, columns and keys, generated from the
 # readers by items/bootstrap/src/format/check.rs. Don't edit it by hand.
 format 1.0
+released in 1.5.0
 
 catalog.json: optional catalog
 csv/assignments.csv: optional table
