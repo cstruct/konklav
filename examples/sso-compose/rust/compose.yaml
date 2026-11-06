@@ -1,0 +1,142 @@
+# Single sign-on with DPoP: Konklav, a login application, a browser app with
+# its API, and an admin page, in Rust. See ../README.md.
+#
+#   docker compose -f examples/sso-compose/rust/compose.yaml up --build
+#
+# Then open http://localhost:3000 (the app) or http://localhost:4000 (admin).
+name: konklav-sso-example-rust
+
+x-rust: &rust
+  image: konklav-sso-example-rust:dev
+  build:
+    context: ../../..
+    dockerfile: examples/sso-compose/rust/Dockerfile
+  restart: on-failure
+
+services:
+  postgres:
+    image: konklav-dev-postgres:18.6-jsonschema0.3.4
+    build: ../../../dev/postgres
+    environment:
+      POSTGRES_USER: konklav
+      POSTGRES_PASSWORD: konklav
+      POSTGRES_DB: konklav
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      # Over TCP: during first-start initialisation the server listens on
+      # its socket only, and a socket check would pass too early.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U konklav -d konklav"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  # Creates Konklav's token-signing key and ID-token key once.
+  keys:
+    <<: *rust
+    restart: "no"
+    command: ["sso-keys", "/keys"]
+    volumes:
+      - konklav-keys:/keys
+
+  migrate:
+    image: konklav-sso-example-konklav:dev
+    build: ../../..
+    command: ["migrate"]
+    volumes: &konklav-files
+      - ../konklav/config.styx:/etc/konklav/config.styx:ro
+      - ../konklav/secrets.styx:/etc/konklav/secrets.styx:ro
+      - konklav-keys:/keys:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      keys: {condition: service_completed_successfully}
+
+  # Not published: browsers reach the subject-facing surface through the
+  # login application's origin, and the other two surfaces stay internal.
+  konklav:
+    image: konklav-sso-example-konklav:dev
+    build: ../../..
+    command: ["serve"]
+    volumes: *konklav-files
+    restart: on-failure
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  # Seeds the catalog, roles, people, OIDC clients and service principals,
+  # and writes the secrets the apps need to the shared volume.
+  setup:
+    <<: *rust
+    restart: "no"
+    command: ["sso-setup"]
+    environment:
+      KONKLAV_SUBJECT_URL: http://konklav:8080
+      KONKLAV_CONTROL_URL: http://konklav:8082
+      KONKLAV_BOOTSTRAP_TOKEN: example-bootstrap-token-0123456789abcdef
+      SECRETS_FILE: /shared/secrets.json
+    volumes:
+      - shared:/shared
+    depends_on:
+      konklav: {condition: service_started}
+
+  # The login application. Serves the login page and proxies Konklav's
+  # subject-facing surface, so Konklav's issuer is this origin.
+  sso:
+    <<: *rust
+    command: ["sso-login"]
+    environment:
+      KONKLAV_SUBJECT_URL: http://konklav:8080
+    ports: ["8000:8000"]
+    depends_on:
+      setup: {condition: service_completed_successfully}
+
+  # The app's frontend: static files only. A public OIDC client.
+  app-frontend:
+    <<: *rust
+    command: ["sso-app-frontend"]
+    environment:
+      ISSUER: http://localhost:8000
+      CLIENT_ID: app
+      API_URL: http://localhost:3001
+    ports: ["3000:3000"]
+    depends_on:
+      setup: {condition: service_completed_successfully}
+
+  # The app's backend: a relying system for the `app-api` audience.
+  app-backend:
+    <<: *rust
+    command: ["sso-app-backend"]
+    environment:
+      ISSUER: http://localhost:8000
+      PUBLIC_URL: http://localhost:3001
+      FRONTEND_ORIGIN: http://localhost:3000
+      KONKLAV_SUBJECT_URL: http://konklav:8080
+      KONKLAV_RELYING_URL: http://konklav:8081
+      SECRETS_FILE: /shared/secrets.json
+    volumes:
+      - shared:/shared:ro
+    ports: ["3001:3001"]
+    depends_on:
+      setup: {condition: service_completed_successfully}
+
+  # The admin page: frontend and backend in one process. A confidential
+  # OIDC client whose tokens never leave the server.
+  admin:
+    <<: *rust
+    command: ["sso-admin"]
+    environment:
+      ISSUER: http://localhost:8000
+      PUBLIC_URL: http://localhost:4000
+      KONKLAV_SUBJECT_URL: http://konklav:8080
+      KONKLAV_RELYING_URL: http://konklav:8081
+      KONKLAV_CONTROL_URL: http://konklav:8082
+      SECRETS_FILE: /shared/secrets.json
+    volumes:
+      - shared:/shared:ro
+    ports: ["4000:4000"]
+    depends_on:
+      setup: {condition: service_completed_successfully}
+
+volumes:
+  postgres-data:
+  konklav-keys:
+  shared:

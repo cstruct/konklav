@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Example Sign-in</title>
+  <link rel="stylesheet" href="/shared/style.css">
+  <script type="module" src="/static/login.js"></script>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Example Sign-in</h1>
+      <div class="muted">One sign-in for the app and the admin page, served by Konklav.</div>
+    </div>
+  </header>
+
+  <p id="status" class="muted">Checking for a sign-in…</p>
+
+  <form id="sign-in" class="card" hidden>
+    <h2 id="sign-in-title">Sign in</h2>
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" autocomplete="username" required>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <div class="row">
+      <button type="submit">Sign in</button>
+      <button id="cancel" type="button" class="secondary" hidden>Cancel</button>
+    </div>
+    <p id="error" class="error" hidden></p>
+    <p class="muted">Try <code>ada@example.com</code> / <code>correct horse battery</code> (an admin) or
+      <code>bob@example.com</code> / <code>bob's long password</code> (a member).</p>
+  </form>
+
+  <section id="account" class="card" hidden>
+    <h2>You're signed in</h2>
+    <p>Subject <code id="subject"></code></p>
+    <p class="muted">Your Konklav session is bound to this page's key. Its refresh token is an HttpOnly cookie;
+      its access token is only in this page's memory.</p>
+    <div class="row">
+      <a class="button" href="http://localhost:3000/">Open the app</a>
+      <a class="button secondary" href="http://localhost:4000/">Open the admin page</a>
+      <button id="sign-out" class="danger">Sign out everywhere</button>
+    </div>
+  </section>
+</main>
+</body>
+</html>

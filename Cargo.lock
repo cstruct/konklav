@@ -2979,6 +2979,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "konklav-sso-example"
+version = "1.4.0"
+dependencies = [
+ "axum",
+ "base64 0.23.1",
+ "ed25519-dalek 3.0.0",
+ "getrandom 0.4.3",
+ "konklav-authz",
+ "konklav-core",
+ "konklav-relying",
+ "konklav-relying-client",
+ "konklav-token",
+ "p256 0.14.0",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "konklav-store"
 version = "1.4.0"
 dependencies = [

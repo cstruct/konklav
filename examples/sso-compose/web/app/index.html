@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Example Notes</title>
+  <link rel="stylesheet" href="/shared/style.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Example Notes</h1>
+      <div class="muted">A browser app and its API, signed in through Konklav.</div>
+    </div>
+    <div id="who" class="row" hidden>
+      <span id="email"></span>
+      <button id="sign-out" class="secondary">Sign out</button>
+    </div>
+  </header>
+
+  <p id="status" class="muted">Signing in…</p>
+
+  <section id="signed-out" class="card" hidden>
+    <h2>You're signed out</h2>
+    <p class="muted">Sign in once at the login page and both this app and the admin page know you.</p>
+    <button id="sign-in">Sign in</button>
+  </section>
+
+  <div id="signed-in" hidden>
+    <section class="card">
+      <h2>Notes</h2>
+      <ul id="notes" class="notes"></ul>
+      <form id="new-note" class="row">
+        <input id="note" placeholder="Write a note" maxlength="200" required class="grow">
+        <button type="submit">Add</button>
+      </form>
+      <p id="notes-error" class="error" hidden></p>
+    </section>
+
+    <section class="card">
+      <h2>Your access</h2>
+      <p id="access" class="muted"></p>
+      <p class="muted">The admin page can change your roles or sign you out. This app's backend hears of it
+        over Konklav's change feed within about a second.</p>
+      <div class="row">
+        <button id="refresh-access" class="secondary">Check again</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>What DPoP stops</h2>
+      <p class="muted">The access token is in this page's memory, so a script injected into the page could
+        read it. It's bound to a key the page can use but not export, so the token alone is worthless.</p>
+      <div class="row">
+        <button id="steal-bearer" class="secondary">Send the token as a bearer token</button>
+        <button id="steal-replay" class="secondary">Replay a captured request</button>
+      </div>
+      <pre id="attack" hidden></pre>
+    </section>
+
+    <section class="card">
+      <h2>Tokens</h2>
+      <p class="muted">Held in a JavaScript variable only: not in localStorage, sessionStorage or cookies.
+        A reload signs in again through the login page without asking.</p>
+      <pre id="tokens"></pre>
+    </section>
+  </div>
+</main>
+</body>
+</html>

@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 840 300" width="840" height="300" role="img" aria-labelledby="title desc">
+  <title id="title">The Python read-your-writes example</title>
+  <desc id="desc">An operator&#x27;s tool writes through the control plane with konklav-control-plane and gets each write&#x27;s cursor. Konklav publishes the change on its feed, which a relying system using konklav-relying follows. The tool hands the relying system the cursor, a plain int; it waits with await_cursor until it has seen that cursor, and then allows what the new role grants.</desc>
+  <style>
+    text{font-family:Inter,"Helvetica Neue",Arial,sans-serif;fill:#16161D}
+    .bg{fill:#FBFAF7;stroke:#E4E0D8}
+    .box{fill:#FFFFFF;stroke:#B9B5AD}
+    .alt{fill:#F1EEE7;stroke:#D6D1C7}
+    .key{fill:#FBEEEE;stroke:#B3202A}
+    .h{font-size:14px;font-weight:600}
+    .s{font-size:12px;fill:#5E5B66}
+    .m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+    .c{text-anchor:middle}
+    .e{text-anchor:end}
+    .cap{font-size:11px;font-weight:600;letter-spacing:.08em;fill:#5E5B66}
+    .ln{stroke:#6E6A75;stroke-width:1.5;fill:none}
+    .lk{stroke:#B3202A;stroke-width:1.5;fill:none}
+    .d{stroke-dasharray:5 4}
+    .ah{fill:#6E6A75}.ak{fill:#B3202A}.acc{fill:#B3202A}
+    @media (prefers-color-scheme:dark){
+      text{fill:#F4F1EA}
+      .bg{fill:#16161D;stroke:#2E2E38}
+      .box{fill:#1F1F28;stroke:#4A4954}
+      .alt{fill:#24242D;stroke:#3A3944}
+      .key{fill:#331A1E;stroke:#E0454E}
+      .s,.cap{fill:#A8A49C}
+      .ln{stroke:#A8A49C}.lk{stroke:#E0454E}
+      .ah{fill:#A8A49C}.ak{fill:#E0454E}.acc{fill:#E0454E}
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0 1L10 5L0 9z"/></marker>
+    <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ak" d="M0 1L10 5L0 9z"/></marker>
+  </defs>
+  <rect class="bg" x="0.5" y="0.5" width="839" height="299" rx="12"/>
+  <rect class="box" x="40" y="60" width="200" height="70" rx="8"/>
+  <text class="h c" x="140.0" y="92.0">Operator&#x27;s tool</text>
+  <text class="s c" x="140.0" y="109.0">konklav-control-plane</text>
+  <rect class="key" x="320" y="60" width="200" height="70" rx="8"/>
+  <text class="h c" x="420.0" y="92.0">Konklav</text>
+  <text class="s c" x="420.0" y="109.0">control plane, change feed</text>
+  <rect class="box" x="600" y="60" width="200" height="70" rx="8"/>
+  <text class="h c" x="700.0" y="92.0">Relying system</text>
+  <text class="s c" x="700.0" y="109.0">konklav-relying</text>
+  <path class="ln" d="M240 84H318" marker-end="url(#a)"/>
+  <text class="s c" x="279" y="76">batch, role</text>
+  <path class="ln d" d="M318 108H242" marker-end="url(#a)"/>
+  <text class="m c" x="279" y="124">cursor N</text>
+  <path class="ln d" d="M520 95H598" marker-end="url(#a)"/>
+  <text class="s c" x="559" y="87">feed (SSE)</text>
+  <path class="lk d" d="M140 130V200H700V132" marker-end="url(#k)"/>
+  <text class="s c" x="420" y="192">the cursor N, a plain int: the packages don&#x27;t import each other</text>
+  <rect class="box" x="560" y="220" width="240" height="52" rx="8"/>
+  <text class="s c" x="680" y="241">await_cursor(N), then decide:</text>
+  <text class="s c" x="680" y="259">allow what the role grants</text>
+</svg>
