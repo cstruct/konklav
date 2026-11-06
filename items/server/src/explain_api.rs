@@ -288,6 +288,7 @@ async fn explain_decision(
             requirements: &body.requirements,
             registered: &registered,
             tenant,
+            tenant_facts: &confinements.tenant_facts,
             session: context,
             now: body.at.unwrap_or(now).timestamp(),
         },

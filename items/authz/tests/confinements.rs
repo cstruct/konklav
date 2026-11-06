@@ -270,6 +270,7 @@ fn explanations_name_the_confinement_that_denies() {
                 requirements: &requirements,
                 registered: &RegisteredScopes::default(),
                 tenant: claims.tid,
+                tenant_facts: &confinements.tenant_facts,
                 session: Some(SessionContext {
                     claims,
                     restrictive_flags: &restrictive,

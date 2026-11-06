@@ -212,8 +212,10 @@ impl CatalogDocument {
             .collect()
     }
 
-    /// The confinements by flag, with the values in `tenant_facts` of the
-    /// portable facts they name.
+    /// The confinements by flag, with every portable fact in
+    /// `tenant_facts`, which confinements and tenant fact requirements are
+    /// decided from.
+    // r[impl authz.compile.tenant-facts]
     #[must_use]
     pub fn confinements(&self, tenant_facts: &serde_json::Value) -> Confinements {
         let flags: BTreeMap<String, Confinement> = self
@@ -221,14 +223,9 @@ impl CatalogDocument {
             .iter()
             .filter_map(|flag| Some((flag.name.clone(), flag.confine.clone()?)))
             .collect();
-        let named: BTreeSet<&String> = flags.values().flat_map(|c| c.tenant.keys()).collect();
-        let tenant_facts = portable_facts(self, FactTarget::Tenant, tenant_facts)
-            .into_iter()
-            .filter(|(key, _)| named.contains(key))
-            .collect();
         Confinements {
             flags,
-            tenant_facts,
+            tenant_facts: portable_facts(self, FactTarget::Tenant, tenant_facts),
         }
     }
 

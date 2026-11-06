@@ -108,6 +108,7 @@ class FakeKonklav:
         self.tenant = tenant
         self.session = session
         self.actions = ["project:read"]
+        self.tenant_facts: dict[str, Any] = {"tenant_type": "client"}
         self.revision = 1
         self.session_version = 1
         self.session_revoked = False
@@ -161,6 +162,7 @@ class FakeKonklav:
                     "tenant": self.actions,
                     "scoped": [],
                     "restrictive_flags": ["personal_only"],
+                    "confinements": {"tenant_facts": self.tenant_facts},
                 },
             )
         if path == "/v1/check":

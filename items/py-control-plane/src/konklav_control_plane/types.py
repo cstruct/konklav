@@ -206,6 +206,28 @@ class DenyReasonConfinedSession(TypedDict):
     """
 
 
+class TenantFacts(TypedDict):
+    """
+    The token targets no tenant, or one whose facts fail the operation's
+    tenant fact predicate on `fact`.
+    """
+
+    fact: str
+
+
+class DenyReasonTenantFacts(TypedDict):
+    """
+    The token targets no tenant, or one whose facts fail the operation's
+    tenant fact predicate on `fact`.
+    """
+
+    tenant_facts: TenantFacts
+    """
+    The token targets no tenant, or one whose facts fail the operation's
+    tenant fact predicate on `fact`.
+    """
+
+
 class MissingFlag(TypedDict):
     """
     The session lacks an assertive flag the operation requires.
@@ -262,7 +284,7 @@ class DenyReasonMissingActions(TypedDict):
     missing_actions: MissingActions
 
 
-type DenyReason = DenyReasonInvalidToken | DenyReasonInvalidDpopProof | DenyReasonTokenKind | DenyReasonRestrictedSession | DenyReasonConfinedSession | DenyReasonMissingFlag | DenyReasonNoTenant | DenyReasonUnknownScope | DenyReasonMissingActions
+type DenyReason = DenyReasonInvalidToken | DenyReasonInvalidDpopProof | DenyReasonTokenKind | DenyReasonRestrictedSession | DenyReasonConfinedSession | DenyReasonTenantFacts | DenyReasonMissingFlag | DenyReasonNoTenant | DenyReasonUnknownScope | DenyReasonMissingActions
 
 
 type Effect = Literal['allow', 'deny']
@@ -1984,6 +2006,7 @@ Requirements = TypedDict(
         'scopes': NotRequired[list[ScopeRequirement]],
         'step_up': NotRequired[StepUp],
         'tenant': NotRequired[list[str]],
+        'tenant_facts': NotRequired[dict[str, list[Any]]],
         'token_kinds': NotRequired[list[TokenKind] | None],
     },
 )

@@ -124,9 +124,16 @@ says where. Konklav enforces it in two places:
 - **Deciding:** a decision for a confined session denies with
   `confined_session` when its tenant doesn't match now, or when the token
   targets no tenant. Global actions don't lift that deny. Entitlement sets
-  carry the confinements and the tenant's values of the facts they name,
-  and changing a tenant's facts emits `entitlements.changed` for the tenant,
-  so a relying core decides from current facts rather than the token's.
+  carry the confinements and the tenant's portable facts, and changing a
+  tenant's facts emits `entitlements.changed` for the tenant, so a relying
+  core decides from current facts rather than the token's.
+
+An operation can match tenant facts the same way without a flag, as a
+requirement: `{"tenant_facts": {"tenant_type": ["client"]}}` denies with
+`{"tenant_facts": {"fact": "tenant_type"}}` unless the token's tenant is a
+client tenant now. Since a cached entitlement set can't know which
+requirements it will meet, it carries every portable tenant fact, which
+`fact.bounded` keeps small.
 
 Confinements are deliberately small: each predicate matches one string,
 integer or boolean fact against a list of values, and all must hold. A

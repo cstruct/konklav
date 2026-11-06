@@ -237,7 +237,7 @@ session holds its global actions only while it acts in a matching tenant.
 r[session.flags.confine.invalidate]
 Changing a tenant's facts MUST emit an `entitlements.changed` event for all
 subjects in that tenant, so that a relying core refetches the facts its
-cached entitlement sets carry for confinements.
+cached entitlement sets carry (`authz.compile.tenant-facts`).
 
 ## Browser sessions
 

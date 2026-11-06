@@ -442,6 +442,7 @@ fn explanations_agree_with_decisions_at_registered_scopes() {
                         requirements: &requirements,
                         registered: &registered,
                         tenant,
+                        tenant_facts: &std::collections::BTreeMap::new(),
                         session: Some(SessionContext {
                             claims: &claims,
                             restrictive_flags: &flags,

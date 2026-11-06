@@ -21,5 +21,6 @@ pub use explain::{
 };
 pub use model::{
     Assignment, Catalog, Confinement, Confinements, Effect, EntitlementSet, Entitlements, Group,
-    Level, Policy, RegisteredScopes, Registration, Scope, Share, Shared,
+    Level, Policy, RegisteredScopes, Registration, Scope, Share, Shared, describe_predicates,
+    failing_predicate,
 };

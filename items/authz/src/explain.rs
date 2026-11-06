@@ -4,7 +4,7 @@
 //! Explaining never decides. [`explain_decision`] reports the decision
 //! [`evaluate`] reaches, and its reasons are computed to agree with it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use konklav_core::{ShareId, TenantId};
@@ -15,7 +15,8 @@ use crate::compile::{Placement, beats, effective_policies};
 use crate::evaluate::step_up_satisfied;
 use crate::{
     Assignment, Catalog, Confinements, Decision, DenyReason, Effect, Entitlements,
-    RegisteredScopes, Registration, Requirements, Scope, Share, compile, evaluate, shared,
+    RegisteredScopes, Registration, Requirements, Scope, Share, compile, describe_predicates,
+    evaluate, failing_predicate, shared,
 };
 
 /// One policy that bears on an action, and where it lands.
@@ -344,6 +345,9 @@ pub struct ExplainInput<'a> {
     pub registered: &'a RegisteredScopes,
     /// The tenant the decision is for; `None` for global-only decisions.
     pub tenant: Option<TenantId>,
+    /// The tenant's portable facts, which tenant fact requirements are
+    /// decided from; empty without a tenant.
+    pub tenant_facts: &'a BTreeMap<String, serde_json::Value>,
     pub session: Option<SessionContext<'a>>,
     /// Unix seconds.
     pub now: i64,
@@ -703,6 +707,9 @@ fn decision_checks(
             },
         ));
     }
+    if let Some(check) = tenant_facts_check(requirements, tenant, input.tenant_facts) {
+        checks.push(check);
+    }
     for required in &requirements.scopes {
         let scope = Scope {
             kind: required.kind.clone(),
@@ -713,6 +720,53 @@ fn decision_checks(
         }
     }
     checks
+}
+
+/// Whether the tenant matches the operation's tenant fact predicates,
+/// naming each predicate and the tenant's facts; `None` when the operation
+/// requires no tenant facts.
+// r[impl authz.explain.tenant-facts]
+fn tenant_facts_check(
+    requirements: &Requirements,
+    tenant: Option<TenantId>,
+    facts: &BTreeMap<String, serde_json::Value>,
+) -> Option<Check> {
+    let predicates = &requirements.tenant_facts;
+    if predicates.is_empty() {
+        return None;
+    }
+    let rule = describe_predicates(predicates);
+    if tenant.is_none() {
+        return Some(Check::new(
+            "tenant_facts",
+            false,
+            format!("The operation needs a tenant where {rule}, and the decision is for none."),
+        ));
+    }
+    let values: Vec<String> = predicates
+        .keys()
+        .map(|key| match facts.get(key) {
+            Some(value) => format!("`{key}` is `{value}`"),
+            None => format!("`{key}` is not set"),
+        })
+        .collect();
+    let values = values.join(", ");
+    Some(match failing_predicate(predicates, facts) {
+        Some(key) => Check::new(
+            "tenant_facts",
+            false,
+            format!(
+                "The operation needs a tenant where {rule}; the tenant fails on `{key}` ({values})."
+            ),
+        ),
+        None => Check::new(
+            "tenant_facts",
+            true,
+            format!(
+                "The operation needs a tenant where {rule}, and the tenant matches ({values})."
+            ),
+        ),
+    })
 }
 
 /// Whether a required registered scope is recorded, in the tenant the
