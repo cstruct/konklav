@@ -1,0 +1,47 @@
+[build-system]
+requires = ["uv_build>=0.8.24,<0.9"]
+build-backend = "uv_build"
+
+[project]
+name = "konklav-fastapi"
+# Set by `mise run release:bump`, with the rest of the release, as is the
+# exact requirement on konklav-relying.
+version = "1.4.0"
+description = "Konklav route policies for FastAPI: declare requirements on routes and routers, decided by the relying core"
+readme = "PYPI.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+# The FastAPI range is tested at both ends in CI: this package reads how
+# FastAPI keeps the routes of included routers (see _routing.py).
+dependencies = ["konklav-relying==1.4.0", "fastapi>=0.143,<0.163"]
+classifiers = [
+    "Framework :: FastAPI",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Repository = "https://github.com/cstruct/konklav"
+Documentation = "https://github.com/cstruct/konklav/tree/main/items/py-fastapi"
+Changelog = "https://github.com/cstruct/konklav/releases"
+Issues = "https://github.com/cstruct/konklav/issues"
+
+[dependency-groups]
+dev = [
+    "cryptography>=45",
+    "httpx>=0.28",
+    "konklav-control-plane",
+    "mypy==1.20.2",
+    "pytest>=8",
+]
+
+[tool.uv.sources]
+konklav-relying = { path = "../py" }
+konklav-control-plane = { path = "../py-control-plane" }
+
+[tool.mypy]
+files = ["src"]
+strict = true
+python_version = "3.12"

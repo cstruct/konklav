@@ -357,7 +357,14 @@ Terms are introduced in dependency order: each definition only uses terms define
 
 - `route policy`
   - A relying system's declaration of an operation's requirements with scope ids still unresolved, such as the requirements of one HTTP route, which it can merge with the route policies of the layers around the operation (routers, applications).
-  - In the Python relying SDK it is `konklav_relying.Policy`. Say `route policy` in prose, so it isn't mistaken for a `policy` in a role.
+  - In the Python relying SDK it is `konklav_relying.Policy`, and in its FastAPI integration (`konklav-fastapi`) `RoutePolicy`. Say `route policy` in prose, so it isn't mistaken for a `policy` in a role.
+  - The `operation's own route policy` is the one declared on the route itself, not on the routers or application around it. Only it can admit restrictive flags.
+
+- `scope resolver`
+  - A relying system's function that finds, for one request, the id of a scope its route policy names by kind, such as from a path parameter. It can also name the scope's kind, for a route whose resource may be of several kinds, and its owner tenant.
+
+- `route tenant`
+  - The tenant a request addresses on its own, such as from a path parameter, rather than through its token. A route tenant that isn't the token's tenant is denied before any decision, since requirements always mean the token's tenant.
 
 - `decision`
   - The outcome of evaluating requirements against an access token, its session, and an entitlement set: `allow`, `deny`, or a step-up demand.
