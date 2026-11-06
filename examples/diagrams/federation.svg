@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 840 432" width="840" height="432" role="img" aria-labelledby="title desc">
+  <title id="title">The federation example</title>
+  <desc id="desc">A tool signs in at the downstream Konklav, an environment&#x27;s instance and an OpenID provider. The downstream hands the request to its app&#x27;s login page, which signs the person in through the upstream Konklav, the operators&#x27; instance. The upstream hands that request to its own login page, which signs the operator in and accepts. Back at the downstream, the first sign-in creates the subject and maps the upstream&#x27;s groups claim sre to the global role granting env:operate. The upstream&#x27;s claims hook supplies the name, which the downstream passes on to the tool through userinfo.</desc>
+  <style>
+    text{font-family:Inter,"Helvetica Neue",Arial,sans-serif;fill:#16161D}
+    .bg{fill:#FBFAF7;stroke:#E4E0D8}
+    .box{fill:#FFFFFF;stroke:#B9B5AD}
+    .alt{fill:#F1EEE7;stroke:#D6D1C7}
+    .key{fill:#FBEEEE;stroke:#B3202A}
+    .h{font-size:14px;font-weight:600}
+    .s{font-size:12px;fill:#5E5B66}
+    .m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+    .c{text-anchor:middle}
+    .e{text-anchor:end}
+    .cap{font-size:11px;font-weight:600;letter-spacing:.08em;fill:#5E5B66}
+    .ln{stroke:#6E6A75;stroke-width:1.5;fill:none}
+    .lk{stroke:#B3202A;stroke-width:1.5;fill:none}
+    .d{stroke-dasharray:5 4}
+    .ah{fill:#6E6A75}.ak{fill:#B3202A}.acc{fill:#B3202A}
+    @media (prefers-color-scheme:dark){
+      text{fill:#F4F1EA}
+      .bg{fill:#16161D;stroke:#2E2E38}
+      .box{fill:#1F1F28;stroke:#4A4954}
+      .alt{fill:#24242D;stroke:#3A3944}
+      .key{fill:#331A1E;stroke:#E0454E}
+      .s,.cap{fill:#A8A49C}
+      .ln{stroke:#A8A49C}.lk{stroke:#E0454E}
+      .ah{fill:#A8A49C}.ak{fill:#E0454E}.acc{fill:#E0454E}
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0 1L10 5L0 9z"/></marker>
+    <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ak" d="M0 1L10 5L0 9z"/></marker>
+  </defs>
+  <rect class="bg" x="0.5" y="0.5" width="839" height="431" rx="12"/>
+  <text class="cap" x="36" y="44">ENVIRONMENT</text>
+  <text class="cap" x="612" y="44">OPERATORS</text>
+  <rect class="box" x="40" y="60" width="170" height="60" rx="8"/>
+  <text class="h c" x="125.0" y="87.0">Tool</text>
+  <text class="s c" x="125.0" y="104.0">OIDC client</text>
+  <rect class="key" x="290" y="60" width="240" height="60" rx="8"/>
+  <text class="h c" x="410.0" y="87.0">Downstream Konklav</text>
+  <text class="s c" x="410.0" y="104.0">OpenID provider, IdP client</text>
+  <rect class="key" x="612" y="60" width="200" height="60" rx="8"/>
+  <text class="h c" x="712.0" y="87.0">Upstream Konklav</text>
+  <text class="s c" x="712.0" y="104.0">OpenID provider</text>
+  <rect class="box" x="290" y="220" width="240" height="60" rx="8"/>
+  <text class="h c" x="410.0" y="247.0">Downstream app</text>
+  <text class="s c" x="410.0" y="264.0">its login page</text>
+  <rect class="box" x="612" y="220" width="160" height="60" rx="8"/>
+  <text class="h c" x="692.0" y="247.0">Login page</text>
+  <text class="s c" x="692.0" y="264.0">the upstream&#x27;s</text>
+  <rect class="box" x="612" y="350" width="200" height="60" rx="8"/>
+  <text class="h c" x="712.0" y="377.0">Claims hook</text>
+  <text class="s c" x="712.0" y="394.0">names, by subject</text>
+  <rect class="box" x="40" y="220" width="170" height="80" rx="8"/>
+  <text class="h c" x="125.0" y="241.0">First sign-in</text>
+  <text class="s c" x="125.0" y="258.0">subject created</text>
+  <text class="s c" x="125.0" y="274.0">groups: sre</text>
+  <text class="s c" x="125.0" y="290.0">→ env:operate</text>
+  <path class="ln" d="M210 82H288" marker-end="url(#a)"/>
+  <text class="s c" x="250" y="74">authorize</text>
+  <path class="ln" d="M288 104H212" marker-end="url(#a)"/>
+  <text class="s c" x="250" y="124">code; userinfo</text>
+  <text class="s c" x="250" y="140">with the name</text>
+  <path class="ln" d="M410 120V218" marker-end="url(#a)"/>
+  <text class="s" x="418" y="200">login_request</text>
+  <path class="ln" d="M530 250H566V108H610" marker-end="url(#a)"/>
+  <text class="s e" x="558" y="160">sign in</text>
+  <text class="s e" x="558" y="176">with ops</text>
+  <path class="ln d" d="M612 80H532" marker-end="url(#a)"/>
+  <text class="s c" x="572" y="72">code</text>
+  <path class="ln" d="M652 120V218" marker-end="url(#a)"/>
+  <text class="s e" x="644" y="210">login_request</text>
+  <path class="ln" d="M740 218V122" marker-end="url(#a)"/>
+  <text class="s e" x="732" y="160">signs in,</text>
+  <text class="s e" x="732" y="176">accepts</text>
+  <path class="ln d" d="M796 120V348" marker-end="url(#a)"/>
+  <text class="s e" x="788" y="330">name</text>
+  <path class="ln" d="M330 120V176H125V218" marker-end="url(#a)"/>
+  <text class="s c" x="228" y="194">provision, map groups</text>
+</svg>

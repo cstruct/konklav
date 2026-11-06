@@ -17,11 +17,31 @@ Run one with:
 mise run example smtp-delivery
 ```
 
+That starts the development Postgres, builds `konklav-server` and runs the scenario, printing each step. Set `KONKLAV_SERVER_BIN` to run another build of the server.
+
+### `smtp-delivery`
+
+![The app starts an email link; the delivery worker reads delivery.requested from the feed and sends the email; the app completes the sign-in once](diagrams/smtp-delivery.svg)
+
+### `federation`
+
+![A tool signs in at the downstream Konklav, whose app signs the person in through the upstream Konklav and its login page; the first sign-in maps the groups claim to a role, and the name comes from the upstream's claims hook](diagrams/federation.svg)
+
+### `dpop`
+
+![A browser app gets DPoP tokens with a proof; the relying system allows a fresh proof and refuses a replay and a bearer token; refresh works only with the app's key](diagrams/dpop.svg)
+
+## Single sign-on in Docker Compose
+
+[`sso-compose/`](sso-compose/README.md) runs Konklav with a login application, a browser app and its API, and an admin page, with `docker compose`, in two versions: Python and Rust. Every token is DPoP-bound, and none is stored in `localStorage` or `sessionStorage`.
+
+![The browser's login, app and admin pages, the four services on the Compose network and Konklav's three surfaces](sso-compose/diagrams/topology.svg)
+
 ## Python
 
 [`python/read_your_writes.py`](python/read_your_writes.py) uses both Python packages: `konklav-control-plane` assigns a role, and `konklav-relying` waits for that write's cursor with `await_cursor` and then allows what the role grants. Neither package imports the other; the cursor, an `int`, is all they share. `mise run example:python` runs it against a server on a fresh database, as `mise run test` does. `examples/python` is its own uv project, installing both packages from their source trees.
 
-That starts the development Postgres, builds `konklav-server` and runs the scenario, printing each step. Set `KONKLAV_SERVER_BIN` to run another build of the server.
+![An operator's tool writes through the control plane and hands the cursor to a relying system, which waits for it on the change feed and then allows what the role grants](diagrams/read-your-writes.svg)
 
 ## The delivery worker
 
@@ -84,6 +104,8 @@ Last run with suite release v5.3.4, both plans had no failures, and the Basic OP
 - `src/smtp_sink.rs`: a minimal SMTP server that keeps what it receives, for the tests.
 - `src/bin/test-server.rs`: starts one server for another language's tests, such as the Python control-plane client's integration tests. It prints the surfaces' URLs and the bootstrap token as one JSON line, and stops when its stdin closes.
 - `bootstrap/`: the example bootstrap sets, nested and flat, and under `bootstrap/formats/<version>/` the sets of each bootstrap format: a released one's are frozen and must keep reading and applying unchanged, and the pending one's grow with it until a release ships it.
+- `diagrams/`: the diagrams in this README.
+- `sso-compose/`: the Docker Compose example, with its own [README](sso-compose/README.md). Its Rust services are the `konklav-sso-example` crate.
 
 ## Testing
 

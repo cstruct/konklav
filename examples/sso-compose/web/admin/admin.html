@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Example Admin</title>
+  <link rel="stylesheet" href="/shared/style.css">
+  <script type="module" src="/static/admin.js"></script>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Example Admin</h1>
+      <div class="muted">People and their access to the notes app. Admins only.</div>
+    </div>
+    <div id="who" class="row" hidden>
+      <span id="email"></span>
+      <button id="sign-out" class="secondary">Sign out</button>
+    </div>
+  </header>
+
+  <p id="status" class="muted">Loading…</p>
+
+  <section id="signed-out" class="card" hidden>
+    <h2>Sign in</h2>
+    <p class="muted">This page's backend signs you in and keeps your tokens on the server. Your browser holds
+      only an HttpOnly session cookie.</p>
+    <a class="button" href="/login">Sign in</a>
+  </section>
+
+  <section id="forbidden" class="card" hidden>
+    <h2>Admins only</h2>
+    <p>You're signed in, but you don't have the <code>admin</code> role.</p>
+    <p class="muted">Sign in as <code>ada@example.com</code> instead.</p>
+  </section>
+
+  <div id="console" hidden>
+    <section class="card">
+      <h2>People</h2>
+      <table>
+        <thead><tr><th>Email</th><th>Roles</th><th></th></tr></thead>
+        <tbody id="users"></tbody>
+      </table>
+      <p id="users-error" class="error" hidden></p>
+    </section>
+
+    <section class="card">
+      <h2>Add a person</h2>
+      <form id="new-user">
+        <label for="new-email">Email</label>
+        <input id="new-email" type="email" required>
+        <label for="new-password">Password (at least 12 characters)</label>
+        <input id="new-password" type="password" minlength="12" required autocomplete="new-password">
+        <div class="row"><button type="submit">Add as member</button></div>
+        <p id="new-error" class="error" hidden></p>
+      </form>
+    </section>
+  </div>
+</main>
+</body>
+</html>

@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "examples",
+    "examples/sso-compose/rust",
     "items/api",
     "items/authn",
     "items/authz",
@@ -37,6 +38,7 @@ konklav-bootstrap = { path = "items/bootstrap" }
 konklav-console = { path = "items/console" }
 konklav-core = { version = "=1.4.0", path = "items/core", default-features = false }
 konklav-examples = { path = "examples" }
+konklav-sso-example = { path = "examples/sso-compose/rust" }
 konklav-relying = { version = "=1.4.0", path = "items/relying" }
 konklav-relying-client = { path = "items/relying-client" }
 konklav-server = { path = "items/server" }

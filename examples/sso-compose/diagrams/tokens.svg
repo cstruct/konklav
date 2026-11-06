@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 840 440" width="840" height="440" role="img" aria-labelledby="title desc">
+  <title id="title">Where the example keeps its tokens and keys</title>
+  <desc id="desc">The login page keeps Konklav&#x27;s refresh token in an HttpOnly cookie and its access token in page memory, with a non-extractable DPoP key in IndexedDB. The app page keeps its access and refresh tokens in memory, its key in IndexedDB, and the PKCE verifier there only during the redirect. The admin page holds only an opaque HttpOnly session cookie; the admin backend keeps the tokens, the DPoP key and the secrets in memory. localStorage and sessionStorage stay empty.</desc>
+  <style>
+    text{font-family:Inter,"Helvetica Neue",Arial,sans-serif;fill:#16161D}
+    .bg{fill:#FBFAF7;stroke:#E4E0D8}
+    .box{fill:#FFFFFF;stroke:#B9B5AD}
+    .alt{fill:#F1EEE7;stroke:#D6D1C7}
+    .key{fill:#FBEEEE;stroke:#B3202A}
+    .h{font-size:14px;font-weight:600}
+    .s{font-size:12px;fill:#5E5B66}
+    .m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+    .c{text-anchor:middle}
+    .e{text-anchor:end}
+    .cap{font-size:11px;font-weight:600;letter-spacing:.08em;fill:#5E5B66}
+    .ln{stroke:#6E6A75;stroke-width:1.5;fill:none}
+    .lk{stroke:#B3202A;stroke-width:1.5;fill:none}
+    .d{stroke-dasharray:5 4}
+    .ah{fill:#6E6A75}.ak{fill:#B3202A}.acc{fill:#B3202A}
+    @media (prefers-color-scheme:dark){
+      text{fill:#F4F1EA}
+      .bg{fill:#16161D;stroke:#2E2E38}
+      .box{fill:#1F1F28;stroke:#4A4954}
+      .alt{fill:#24242D;stroke:#3A3944}
+      .key{fill:#331A1E;stroke:#E0454E}
+      .s,.cap{fill:#A8A49C}
+      .ln{stroke:#A8A49C}.lk{stroke:#E0454E}
+      .ah{fill:#A8A49C}.ak{fill:#E0454E}.acc{fill:#E0454E}
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0 1L10 5L0 9z"/></marker>
+    <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ak" d="M0 1L10 5L0 9z"/></marker>
+  </defs>
+  <rect class="bg" x="0.5" y="0.5" width="839" height="439" rx="12"/>
+  <text class="cap" x="36" y="40">BROWSER</text>
+  <text class="cap" x="552" y="40">SERVER</text>
+  <rect class="box" x="36" y="54" width="228" height="210" rx="10"/>
+  <text class="h" x="52" y="80">Login page</text>
+  <text class="s" x="52" y="98">localhost:8000</text>
+  <text class="h" x="60" y="130">refresh token</text>
+  <text class="s" x="60" y="146">HttpOnly cookie Konklav reads</text>
+  <text class="h" x="60" y="174">access token</text>
+  <text class="s" x="60" y="190">a variable in the page</text>
+  <rect class="key" x="48" y="204" width="4" height="34" rx="2"/>
+  <text class="h" x="60" y="218">DPoP key</text>
+  <text class="s" x="60" y="234">IndexedDB, non-extractable</text>
+  <rect class="box" x="280" y="54" width="228" height="210" rx="10"/>
+  <text class="h" x="296" y="80">App page</text>
+  <text class="s" x="296" y="98">localhost:3000</text>
+  <text class="h" x="304" y="130">access, refresh tokens</text>
+  <text class="s" x="304" y="146">a variable in the page</text>
+  <text class="h" x="304" y="174">PKCE verifier</text>
+  <text class="s" x="304" y="190">IndexedDB, during the redirect</text>
+  <rect class="key" x="292" y="204" width="4" height="34" rx="2"/>
+  <text class="h" x="304" y="218">DPoP key</text>
+  <text class="s" x="304" y="234">IndexedDB, non-extractable</text>
+  <rect class="box" x="36" y="290" width="472" height="60" rx="10"/>
+  <text class="h" x="52" y="316">Admin page</text>
+  <text class="s" x="52" y="334">localhost:4000: an opaque HttpOnly session cookie, no token, no key</text>
+  <rect class="box" x="552" y="54" width="252" height="310" rx="10"/>
+  <text class="h" x="568" y="80">Admin backend</text>
+  <text class="s" x="568" y="98">admin:4000, in memory</text>
+  <text class="h" x="576" y="130">access, refresh, ID tokens</text>
+  <text class="s" x="576" y="146">one set per signed-in admin</text>
+  <rect class="key" x="564" y="160" width="4" height="34" rx="2"/>
+  <text class="h" x="576" y="174">DPoP key</text>
+  <text class="s" x="576" y="190">P-256, one per session</text>
+  <text class="h" x="576" y="218">client secret</text>
+  <text class="s" x="576" y="234">for the token endpoint</text>
+  <text class="h" x="576" y="262">service principal key</text>
+  <text class="s" x="576" y="278">for feed and control plane</text>
+  <text class="h" x="576" y="306"></text>
+  <text class="s" x="576" y="322"></text>
+  <path class="ln" d="M508 320H550" marker-end="url(#a)"/>
+  <rect class="alt" x="36" y="384" width="768" height="36" rx="8"/>
+  <text class="s c" x="420" y="407">localStorage and sessionStorage stay empty on every origin, and no cookie holds a token a script can read</text>
+</svg>
