@@ -21,5 +21,19 @@ services:
       timeout: 3s
       retries: 30
 
+  # The rate-limit store for the relying SDK's tests: Valkey, which speaks
+  # Redis' protocol. Rate-limit state expires on its own, so nothing is
+  # persisted.
+  valkey:
+    image: valkey/valkey:8.1-alpine
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "${KONKLAV_DEV_VALKEY_PORT:-16379}:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
 volumes:
   postgres-data:

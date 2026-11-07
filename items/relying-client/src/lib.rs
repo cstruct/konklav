@@ -10,7 +10,12 @@
 //!   the core still needs, or asking `/v1/check` when the core says the
 //!   caches can't be trusted.
 //!
+//! [`rate_limit::RateLimit`] enforces rate limits, through Redis with the
+//! `redis` feature and in memory always.
+//!
 //! The decision rules live in `konklav-relying`; this crate only moves bytes.
+
+pub mod rate_limit;
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

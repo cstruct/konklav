@@ -31,6 +31,15 @@ publishes it to PyPI with the other Python packages.
   (401), `Forbidden` (403), `StepUpRequired` (401) and
   `KonklavUnavailable` (503), with a default handler that the application
   can replace.
+- Rate limits (`konklav_fastapi.rate_limits`): `RouteRateLimit(limit, key)`
+  adds one event per request to a `konklav_relying.RateLimit`, for a key
+  template such as `"{token:sub}/{path:project}"` or the key a dependency
+  returns. Startup validation refuses templates a route can't render.
+  `install` answers `RateLimited`, from it or from the application's own
+  `limit.add(...)`, with 429 and a jittered `Retry-After`, or closes
+  websockets with 1013.
+- Client addresses: `KonklavRoutes.client_address`, which reads
+  `X-Forwarded-For` only from `trusted_proxies`.
 - Injected tokens: `CurrentToken`, `OptionalToken`, `IdentityToken`,
   `TenantToken`.
 - Startup validation over every HTTP and websocket route, and
@@ -146,6 +155,45 @@ verified token with a handle. Hooks, the route tenant and the scope
 resolvers only ever see that verified token. One `decide_accepted_typed`
 call then decides for the handle, rechecking the session but not the proof
 (`relying.verify.accepted-presentation`).
+
+### Rate limits
+
+```python
+login_rate_limit = RateLimit("login", [RateLimitWindow(size=5, period=timedelta(minutes=1))])
+exports_rate_limit = RateLimit("export", [RateLimitWindow(size=10, period=timedelta(hours=1))])
+
+
+@app.post("/login", dependencies=[RoutePolicy.public(), RouteRateLimit(login_rate_limit, "{client:address}")])
+async def login(form: LoginForm) -> ...:
+    await login_rate_limit.add(form.email)  # a second limit, in code
+
+
+@router.post("/projects/{project}/export", dependencies=[RouteRateLimit(exports_rate_limit, "{token:sub}/{path:project}")])
+async def export(project: str) -> ...: ...
+```
+
+A key template is literal text and fields, with `{{` and `}}` for literal
+braces:
+
+| Field | Value |
+|---|---|
+| `{path:<name>}` | The path parameter `<name>` |
+| `{token:sub}`, `{token:sid}`, `{token:knd}` | A claim of the token the route's policy verified |
+| `{token:tid}` | The tenant, on routes that admit only tenant tokens |
+| `{client:address}` | `KonklavRoutes.client_address` |
+
+Startup validation refuses a template that names a path parameter the route
+doesn't have, a token claim on a public route, or `tid` where other token
+kinds are admitted. The parts are encoded so that different values never
+render the same key.
+
+Behind a load balancer, set `trusted_proxies` (addresses or networks) on
+`KonklavRoutes`. Otherwise `{client:address}` is the proxy's address, and
+every client shares one limit. `X-Forwarded-For` is read only from trusted
+proxies, last untrusted hop first, as the Konklav server does.
+
+For anything else, `key` can be a dependency returning `str` or `bytes`. It
+can depend on others, such as `TenantToken`.
 
 ## Testing
 

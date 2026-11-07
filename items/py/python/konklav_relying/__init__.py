@@ -53,6 +53,15 @@ decision = await client.decide_typed(token, policy.requirements({"project": proj
 if not decision.allowed:
     ...
 ```
+
+`RateLimit` (in `konklav_relying.rate_limit`) bounds how often events may
+happen per key, through a Redis rate-limit store with the `redis` extra
+and in memory always:
+
+```python
+login = RateLimit("login", [RateLimitWindow(size=5, period=timedelta(minutes=1))])
+await login.add(email)  # raises RateLimited
+```
 """
 
 from __future__ import annotations
@@ -72,6 +81,7 @@ import httpx
 
 from konklav_relying._core import Core
 from konklav_relying.policy import MissingScopeId, Policy, PolicyError, Requirements, StepUp
+from konklav_relying.rate_limit import RateLimit, RateLimited, RateLimitWindow
 from konklav_relying.results import AcceptedRequest, AccessToken, Actor, Confirmation, Decision, DenyReason, Obligation
 
 __all__ = [
@@ -88,6 +98,9 @@ __all__ = [
     "Obligation",
     "Policy",
     "PolicyError",
+    "RateLimit",
+    "RateLimitWindow",
+    "RateLimited",
     "RelyingClient",
     "Requirements",
     "StepUp",

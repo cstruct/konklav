@@ -22,6 +22,7 @@ call decides.
 
 from __future__ import annotations
 
+import ipaddress
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from contextlib import asynccontextmanager
@@ -41,6 +42,7 @@ from konklav_relying import (
     KonklavError,
     Policy,
     PolicyError,
+    RateLimited,
     RelyingClient,
 )
 from konklav_relying.policy import PolicyFields
@@ -54,6 +56,7 @@ from konklav_fastapi.errors import (
     StepUpRequired,
     Unauthenticated,
     handle_denied,
+    handle_rate_limited,
 )
 
 __all__ = [
@@ -216,6 +219,30 @@ def _method(connection: HTTPConnection) -> str:
     return "GET" if isinstance(connection, WebSocket) else str(connection.scope["method"])
 
 
+def _ip(address: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """`address` parsed, an IPv4-mapped IPv6 address as IPv4."""
+    parsed = ipaddress.ip_address(address)
+    if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped is not None:
+        return parsed.ipv4_mapped
+    return parsed
+
+
+def _parses(address: str) -> bool:
+    try:
+        _ip(address)
+    except ValueError:
+        return False
+    return True
+
+
+def _canonical(address: str) -> str:
+    try:
+        return str(_ip(address))
+    except ValueError:
+        # Not an IP address, such as a Unix socket peer: as given.
+        return address
+
+
 def _url(connection: HTTPConnection) -> str:
     url = connection.url
     if url.scheme in ("ws", "wss"):
@@ -242,8 +269,17 @@ class KonklavRoutes:
     """Reads the token from a cookie, for requests without an `Authorization` header."""
     public_url: Callable[[HTTPConnection], str] | None = None
     """The URL the client addressed, behind a proxy; DPoP proofs are checked against it."""
+    trusted_proxies: Sequence[str] = ()
+    """
+    Proxies' addresses or networks, such as `10.0.0.0/8`: behind one, the
+    client's address comes from `X-Forwarded-For` (`client_address`).
+    """
 
     _owners: dict[int, tuple[Any, Any]] = field(default_factory=dict, init=False, repr=False)
+    _trusted: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = field(default=(), init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._trusted = tuple(ipaddress.ip_network(proxy, strict=False) for proxy in self.trusted_proxies)
 
     STATE_ATTRIBUTE: ClassVar[str] = "konklav_routes"
 
@@ -253,11 +289,13 @@ class KonklavRoutes:
         """
         Makes `app`'s routes use this configuration, validates them when the
         application starts, publishes each operation's policy in OpenAPI and
-        handles `KonklavDenied` with `handle_denied`.
+        handles `KonklavDenied` with `handle_denied` and
+        `konklav_relying.RateLimited` with `handle_rate_limited`.
         """
         setattr(app.state, self.STATE_ATTRIBUTE, self)
-        # Starlette types handlers per connection kind; this one takes both.
+        # Starlette types handlers per connection kind; these take both.
         app.add_exception_handler(KonklavDenied, cast(Any, handle_denied))
+        app.add_exception_handler(RateLimited, cast(Any, handle_rate_limited))
 
         # r[impl item.py-fastapi.validation]
         lifespan = app.router.lifespan_context
@@ -297,6 +335,40 @@ class KonklavRoutes:
             raise RuntimeError("route policies need KonklavRoutes(...).install(app)")
         return routes
 
+    # -- client addresses -------------------------------------------------
+
+    # r[impl item.py-fastapi.client-address]
+    # r[depends platform.server.client-address]
+    def client_address(self, connection: HTTPConnection) -> str | None:
+        """
+        The address of the client behind `connection`, or `None` without a
+        peer address. It is the peer, unless the peer is a trusted proxy:
+        then the last address in `X-Forwarded-For` that isn't one too, since
+        proxies append and everything before that is the client's own claim.
+        """
+        if connection.client is None:
+            return None
+        peer = connection.client.host
+        if not self._is_trusted(peer):
+            return _canonical(peer)
+        hops = [
+            hop.strip()
+            for value in connection.headers.getlist("x-forwarded-for")
+            for hop in value.split(",")
+            if _parses(hop.strip())
+        ]
+        for hop in reversed(hops):
+            if not self._is_trusted(hop):
+                return _canonical(hop)
+        return _canonical(hops[0]) if hops else _canonical(peer)
+
+    def _is_trusted(self, address: str) -> bool:
+        try:
+            parsed = _ip(address)
+        except ValueError:
+            return False
+        return any(parsed in network for network in self._trusted)
+
     # -- startup validation ---------------------------------------------
 
     def validate(self, app: FastAPI) -> None:
@@ -328,6 +400,12 @@ class KonklavRoutes:
         except PolicyError as error:
             return str(error)
         injected = [_INJECTED[call] for call in _routing.dependency_calls(served.dependant) if call in _INJECTED]
+        admitted = None if policy.is_public else (policy.token_kinds if policy.token_kinds is not None else DEFAULT_TOKEN_KINDS)
+        # Rate limits (konklav_fastapi.rate_limits) check their key templates.
+        for dependency in served.dependencies:
+            check = getattr(dependency, "_route_problem", None)
+            if check is not None and (problem := check(served.path_parameters, admitted)) is not None:
+                return cast(str, problem)
         if policy.is_public:
             for name, _ in injected:
                 if name != "OptionalToken":
@@ -342,7 +420,7 @@ class KonklavRoutes:
         for kind in sorted(policy.scope_kinds):
             if kind not in self.scope_resolvers and kind not in served.path_parameters:
                 return f"needs a `{kind}` scope: configure a scope resolver or add a `{kind}` path parameter"
-        admitted = policy.token_kinds if policy.token_kinds is not None else DEFAULT_TOKEN_KINDS
+        assert admitted is not None
         for name, accepted in injected:
             if not admitted <= accepted:
                 return (

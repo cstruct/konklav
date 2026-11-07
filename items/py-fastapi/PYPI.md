@@ -23,6 +23,11 @@ Startup validation refuses routes without a policy, policies that can't be
 decided, and token dependencies the policy doesn't match. Each operation's
 merged policy is published in OpenAPI as `x-konklav-policy`.
 
+`RouteRateLimit(limit, "{token:sub}/{path:project}")` limits routes with a
+`konklav_relying.RateLimit`, keyed by path parameters, token claims or
+`{client:address}` (honouring `trusted_proxies`). Refused requests, and
+`RateLimited` raised in handlers, are answered with 429 and `Retry-After`.
+
 ## Versions
 
 The package has the same version as the Konklav server it was released

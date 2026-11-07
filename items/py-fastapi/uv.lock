@@ -335,13 +335,18 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "httpx", specifier = ">=0.28" }]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "redis", marker = "extra == 'redis'", specifier = ">=5.0" },
+]
+provides-extras = ["redis"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "cryptography", specifier = ">=45" },
     { name = "maturin", specifier = ">=1.9,<2" },
     { name = "pytest", specifier = ">=8" },
+    { name = "redis", specifier = ">=5.0" },
 ]
 
 [[package]]
