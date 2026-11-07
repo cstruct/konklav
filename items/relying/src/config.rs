@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Tuning for the relying core. Durations are milliseconds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -6,8 +6,11 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     /// The `iss` tokens must carry.
     pub issuer: String,
-    /// The `aud` tokens must carry.
-    pub audience: String,
+    /// The audiences this relying system accepts: a token's `aud` must be
+    /// one of them. Also read from `audience`, as one audience or a list.
+    // r[impl relying.verify.audiences]
+    #[serde(alias = "audience", deserialize_with = "one_or_many")]
+    pub audiences: Vec<String>,
     /// Tolerated clock skew when checking token times, in seconds.
     pub leeway_seconds: i64,
     /// How long an entitlement set may be used without being refreshed.
@@ -49,7 +52,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             issuer: String::new(),
-            audience: String::new(),
+            audiences: Vec::new(),
             leeway_seconds: 30,
             entitlement_ttl_ms: 15 * 60 * 1000,
             debounce_ms: 500,
@@ -63,5 +66,45 @@ impl Default for Config {
             dpop_max_age_seconds: 60,
             dpop_replay_capacity: 100_000,
         }
+    }
+}
+
+/// One string or a list of them.
+fn one_or_many<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match OneOrMany::deserialize(deserializer)? {
+        OneOrMany::One(one) => vec![one],
+        OneOrMany::Many(many) => many,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    // r[verify relying.verify.audiences]
+    #[test]
+    fn audiences_are_read_as_one_or_many() {
+        let read = |json: &str| serde_json::from_str::<Config>(json).map(|config| config.audiences);
+        assert_eq!(read(r#"{"audience": "api"}"#).unwrap(), ["api"]);
+        assert_eq!(read(r#"{"audiences": "api"}"#).unwrap(), ["api"]);
+        assert_eq!(
+            read(r#"{"audiences": ["api", "app"]}"#).unwrap(),
+            ["api", "app"]
+        );
+        assert_eq!(
+            read(r#"{"audience": ["api", "app"]}"#).unwrap(),
+            ["api", "app"]
+        );
+        assert!(read("{}").unwrap().is_empty(), "accepts no token");
+        assert!(
+            read(r#"{"audience": "api", "audiences": ["app"]}"#).is_err(),
+            "one or the other"
+        );
     }
 }

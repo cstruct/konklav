@@ -23,10 +23,11 @@ call decides.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from functools import cache
-from typing import Annotated, Any, ClassVar, Literal, cast
+from typing import Annotated, Any, ClassVar, Literal, Self, Unpack, cast
 
 from fastapi import FastAPI
 from fastapi.params import Depends
@@ -42,6 +43,7 @@ from konklav_relying import (
     PolicyError,
     RelyingClient,
 )
+from konklav_relying.policy import PolicyFields
 
 from konklav_fastapi import _routing
 from konklav_fastapi.errors import (
@@ -62,6 +64,7 @@ __all__ = [
     "ResolvedScope",
     "RouteTenantResolver",
     "RoutePolicy",
+    "RoutePolicyFields",
     "ScopeResolver",
     "TenantToken",
     "TokenHook",
@@ -126,6 +129,12 @@ async def _evaluate(connection: HTTPConnection) -> None:
     connection.scope[_SCOPE_KEY] = await routes._evaluate(connection)
 
 
+class RoutePolicyFields(PolicyFields, total=False):
+    """The fields `RoutePolicy.override` can set."""
+
+    audiences: AbstractSet[str]
+
+
 # r[impl item.py-fastapi.route-policy]
 @dataclass(frozen=True, kw_only=True)
 class RoutePolicy(Policy, Depends):
@@ -136,7 +145,16 @@ class RoutePolicy(Policy, Depends):
     Restrictive flags are admitted only by the policies declared on the
     route itself: they intersect when merged, so a router can't admit one
     for every route under it.
+
+    `audiences` limits the routes to tokens for some of the audiences the
+    `RelyingClient` accepts, such as only Konklav's own for an API that
+    services call with secret keys. They intersect when merged.
     """
+
+    CONSTRAINTS: ClassVar[tuple[str, ...]] = (*Policy.CONSTRAINTS, "audiences")
+
+    audiences: AbstractSet[str] | None = None
+    """The token audiences the routes accept, among the client's."""
 
     # A factory: a function as a plain default would read back as a bound method.
     dependency: Callable[..., Any] | None = field(default_factory=lambda: _evaluate, init=False, repr=False)
@@ -144,17 +162,49 @@ class RoutePolicy(Policy, Depends):
     scope: Literal["function", "request"] | None = field(default=None, init=False, repr=False)
     __hash__ = Policy.__hash__
 
+    def __post_init__(self) -> None:
+        if self.audiences is not None:
+            if isinstance(self.audiences, str):
+                raise TypeError("audiences takes a set of strings, not a string")
+            object.__setattr__(self, "audiences", frozenset(self.audiences))
+        super().__post_init__()
+
+    @classmethod
+    def override(cls, *, public: bool = False, **fields: Unpack[RoutePolicyFields]) -> Self:
+        """`Policy.override`, which can also replace `audiences`."""
+        if public and fields:
+            raise PolicyError("a public override sets no other field")
+        return cls(is_override=True, is_public=public, **fields)
+
+
+# r[impl item.py-fastapi.audiences]
+def _audiences(layers: tuple[RoutePolicy, ...]) -> frozenset[str] | None:
+    """The audiences `layers` accept, merged outermost first: they intersect."""
+    audiences: frozenset[str] | None = None
+    for policy in layers:
+        if policy.is_override and policy.is_public:
+            audiences = None
+        elif policy.audiences is not None:
+            own = frozenset(policy.audiences)
+            audiences = own if policy.is_override or audiences is None else audiences & own
+    return audiences
+
 
 # r[impl item.py-fastapi.merge-order]
 # r[impl item.py-fastapi.admit-flags-operation]
 @cache
-def _merged(layers: tuple[RoutePolicy, ...], own: tuple[RoutePolicy, ...]) -> Policy:
+def _merged(layers: tuple[RoutePolicy, ...], own: tuple[RoutePolicy, ...]) -> RoutePolicy:
     """`layers` merged outermost first, admitting only the flags `own` admits."""
     merged = Policy.merge(*layers)
+    audiences = _audiences(layers)
     if merged.is_public:
-        return merged
+        if audiences is not None:
+            raise PolicyError("a public policy can't be merged with constraints; override it instead")
+        return RoutePolicy.public()
     operation = Policy.merge(*own)
-    return replace(merged, admit_flags=None if operation.is_public else operation.admit_flags)
+    fields = {name: getattr(merged, name) for name in Policy.CONSTRAINTS}
+    fields["admit_flags"] = None if operation.is_public else operation.admit_flags
+    return RoutePolicy(**fields, audiences=audiences)
 
 
 def _policies(dependencies: Sequence[Depends]) -> tuple[RoutePolicy, ...]:
@@ -285,6 +335,8 @@ class KonklavRoutes:
             return None
         if policy.token_kinds == frozenset():
             return "merged policies admit no token kind"
+        if policy.audiences == frozenset():
+            return "merged policies admit no audience"
         if policy.step_up is not None and policy.step_up.allowed_methods == frozenset():
             return "merged policies allow no step-up method"
         for kind in sorted(policy.scope_kinds):
@@ -311,11 +363,13 @@ class KonklavRoutes:
             requirements["scopes"] = [
                 {"kind": scope["kind"], "actions": scope["actions"]} for scope in requirements["scopes"]
             ]
+        if policy.audiences is not None:
+            requirements["audiences"] = sorted(policy.audiences)
         return {"public": False, **requirements}
 
     # -- evaluation -------------------------------------------------------
 
-    def _policy(self, connection: HTTPConnection) -> Policy:
+    def _policy(self, connection: HTTPConnection) -> RoutePolicy:
         found = _routing.requested(connection)
         if found is None:
             raise RoutePolicyError("route policies only apply to API and websocket routes")
@@ -362,6 +416,9 @@ class KonklavRoutes:
         # r[impl item.py-fastapi.verify-then-decide]
         accepted = await self._accept(connection, presented)
         token = accepted.token
+        # r[impl item.py-fastapi.audiences]
+        if policy.audiences is not None and token.aud not in policy.audiences:
+            raise Forbidden(DenyReason(code="token_audience"))
         await self._verified(connection, token)
 
         # r[impl item.py-fastapi.token-tenant]

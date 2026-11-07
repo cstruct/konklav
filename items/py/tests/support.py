@@ -47,12 +47,13 @@ class Keys:
         version: int = 1,
         flags: list[str] | None = None,
         jkt: str | None = None,
+        audience: str = AUDIENCE,
     ) -> str:
         now = int(time.time())
         header = {"alg": "EdDSA", "typ": "JWT", "kid": self.kid}
         claims = {
             "iss": ISSUER,
-            "aud": AUDIENCE,
+            "aud": audience,
             "sub": subject,
             "jti": str(uuid.uuid4()),
             "iat": now,
@@ -115,6 +116,7 @@ class FakeKonklav:
         self.events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.cursor = 0
         self.calls: list[str] = []
+        self.checks: list[dict[str, Any]] = []
 
     def push(self, kind: str, payload: dict[str, Any]) -> int:
         self.cursor += 1
@@ -166,6 +168,13 @@ class FakeKonklav:
                 },
             )
         if path == "/v1/check":
+            body = json.loads(request.content)
+            self.checks.append(body)
+            # As Konklav: only tokens for the audiences the relying system names.
+            payload = body["token"].split(".")[1]
+            claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+            if claims["aud"] not in body.get("audiences", [AUDIENCE]):
+                return httpx.Response(200, json={"decision": "deny", "reason": "invalid_token", "revision": None})
             return httpx.Response(200, json={"decision": "allow", "revision": self.revision})
         if path == "/v1/events":
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=self._feed())

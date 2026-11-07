@@ -81,7 +81,8 @@ impl std::fmt::Debug for Signer {
 #[derive(Clone, Debug)]
 pub struct VerifyOptions<'a> {
     pub issuer: &'a str,
-    pub audience: &'a str,
+    /// The audiences a token may carry; its `aud` must be one of them.
+    pub audiences: &'a [String],
     /// The current time, in Unix seconds.
     pub now: i64,
     /// Tolerated clock skew, in seconds.
@@ -139,7 +140,7 @@ pub fn decode_claims_unverified(token: &str) -> Option<AccessClaims> {
 }
 
 /// Verifies a compact JWS access token: algorithm, signature, issuer,
-/// audience, expiry and issue time.
+/// audience (one of `options.audiences`), expiry and issue time.
 ///
 /// `key_for` maps a `kid` to its verification key.
 // r[impl item.token.shared-claims]
@@ -171,7 +172,7 @@ pub fn verify(
     if claims.iss != options.issuer {
         return Err(VerifyError::WrongIssuer);
     }
-    if claims.aud != options.audience {
+    if !options.audiences.contains(&claims.aud) {
         return Err(VerifyError::WrongAudience);
     }
     if claims.exp + options.leeway <= options.now {
@@ -220,9 +221,10 @@ mod tests {
     }
 
     fn options(now: i64) -> VerifyOptions<'static> {
+        static API: std::sync::LazyLock<[String; 1]> = std::sync::LazyLock::new(|| ["api".into()]);
         VerifyOptions {
             issuer: "https://auth.example",
-            audience: "api",
+            audiences: &*API,
             now,
             leeway: 5,
         }
@@ -293,13 +295,31 @@ mod tests {
             verify(&token, |_| Some(key), &options(900)),
             Err(VerifyError::IssuedInFuture)
         );
+        let others = ["other".to_owned(), "more".to_owned()];
         let wrong_audience = VerifyOptions {
-            audience: "other",
+            audiences: &others,
             ..options(1000)
         };
         assert_eq!(
             verify(&token, |_| Some(key), &wrong_audience),
             Err(VerifyError::WrongAudience)
+        );
+        let none = VerifyOptions {
+            audiences: &[],
+            ..options(1000)
+        };
+        assert_eq!(
+            verify(&token, |_| Some(key), &none),
+            Err(VerifyError::WrongAudience)
+        );
+        let several = ["other".to_owned(), "api".to_owned()];
+        let one_of_several = VerifyOptions {
+            audiences: &several,
+            ..options(1000)
+        };
+        assert!(
+            verify(&token, |_| Some(key), &one_of_several).is_ok(),
+            "any accepted audience"
         );
         let wrong_issuer = VerifyOptions {
             issuer: "https://evil",

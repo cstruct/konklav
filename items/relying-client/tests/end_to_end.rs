@@ -240,7 +240,7 @@ async fn world() -> World {
         secret: secret.into(),
         core: Config {
             issuer: ISSUER.into(),
-            audience: AUDIENCE.into(),
+            audiences: vec![AUDIENCE.into()],
             ..Config::default()
         },
     };

@@ -102,6 +102,12 @@ methods, `decide_typed`, `decide_request_typed`, `verify_typed` and
 `Requirements` mapping built by `Policy.requirements`, and raise the same
 errors.
 
+r[item.py.audiences]
+`RelyingClient` MUST take the audiences it accepts as `audiences`, a
+collection of strings, or one as `audience`, and MUST refuse both, neither,
+a bare string as `audiences` and an empty collection. Its verified
+`AccessToken`'s `aud` is the audience the token carried.
+
 r[item.py.accepted-request]
 `RelyingClient.accept_request` MUST accept a request's presentation
 (`relying.verify.accepted-presentation`), taking the arguments

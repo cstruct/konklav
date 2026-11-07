@@ -206,15 +206,22 @@ impl RelyingClient {
         Err(Error::Exhausted)
     }
 
-    /// Asks Konklav's check API, for when local caches can't be trusted.
+    /// Asks Konklav's check API, for when local caches can't be trusted,
+    /// for a token with one of the audiences this relying system accepts.
+    // r[impl relying.verify.audiences]
     async fn check(&self, token: &str, requirements: &Requirements) -> Result<Decision, Error> {
         let url = format!("{}/v1/check", self.inner.config.relying_url);
+        let body = serde_json::json!({
+            "token": token,
+            "requirements": requirements,
+            "audiences": self.inner.config.core.audiences,
+        });
         let response = self
             .inner
             .http
             .post(url)
             .bearer_auth(self.bearer().await?)
-            .json(&serde_json::json!({"token": token, "requirements": requirements}))
+            .json(&body)
             .send()
             .await?;
         match Relying::from_check(checked(response).await?.json::<Decision>().await?) {
