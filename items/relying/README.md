@@ -16,6 +16,10 @@ The relying core: a sans-I/O library with everything a relying system needs to d
   - scopes Konklav doesn't know are remembered for 5 s, and forgotten as soon as `scope.changed` names them
   - `scope.changed` marks a record stale with the same debounce bound as entitlement sets
 - Following the change feed's state: cursor, heartbeats, `position`, `reset`. When it lags (three missed heartbeats), the core answers `Need::Check`, so hosts ask `/v1/check`.
+- Rate limits (`rate_limit`): named limits of several windows per key, enforced with the generic cell rate algorithm (GCRA):
+  - local state for a bounded number of keys (100 000 by default, least recently used first), dropped once drained, with an optional local divisor
+  - for a rate-limit store (Redis), the script to run with its keys and arguments, keys hashed under a configured secret (HMAC-SHA-256)
+  - the store's backoff while it fails (1 s, doubling to 30 s), so the host answers from local state
 - Read-your-writes: `await_cursor` is ready once the feed has passed the cursor and every entry it invalidated has been refreshed.
 - Sender-constrained (DPoP) tokens: from a request's raw `Authorization` and `DPoP` headers and its request descriptor (the method and the public URL the client addressed):
   - a token with `cnf` needs the `DPoP` scheme and a valid proof; under `Bearer`, or without a request descriptor, it is denied with `invalid_dpop_proof`
@@ -31,6 +35,7 @@ The core never makes network calls, reads clocks, spawns tasks or sleeps. Hosts 
 - `Relying::poll_work` returns the fetches due and when to poll next.
 - `on_jwks`, `on_session`, `on_session_unknown`, `on_entitlements`, `on_registered_scope`, `on_registered_scope_unknown`, `on_fetch_failed`, `on_feed_connected`, `on_feed_activity`, `on_feed_lost`, `on_feed_event`, `await_cursor`.
 - `Config` holds the issuer, audience and tuning.
+- `rate_limit::RateLimiter`: `begin` counts an event locally and returns `Attempt::Decided` or `Attempt::Store { call, local }`; `on_store_answer` and `on_store_failed` take the store's answer or failure. `STORE_SCRIPT` is the script both hosts run.
 
 ## Relationships
 
@@ -59,7 +64,8 @@ cargo build -p konklav-relying --target wasm32-unknown-unknown
   - JWKS refresh limits, await-cursor, sweeps, tenant-scoped invalidation
   - registered scopes: lazy fetches, unknown scopes, moves within the debounce window, the size bound
   - DPoP: schemes, proofs checked before the check API, replays, the bounded replay set
-- Indirect coverage: the native client's end-to-end tests against a real server, and the Python tests.
+  - rate limits: bursts and intervals, several windows, refusals that don't count, the local divisor, the key bound and expiry, store calls and backoff
+- Indirect coverage: the native client's end-to-end tests against a real server, the Python tests, and both hosts' rate-limit tests against a real Redis, which run `STORE_SCRIPT`.
 
 ## Traceability and related docs
 

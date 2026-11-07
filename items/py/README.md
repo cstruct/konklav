@@ -11,6 +11,7 @@ Python bindings for the relying core, plus an asyncio/httpx host.
   - Decides locally, falling back to `/v1/check` when caches can't be trusted.
   - Offers `await_cursor` for read-your-writes.
 - `konklav_relying.policy`: route policies (`Policy`, `StepUp`), which state an operation's requirements with scope ids unresolved, merge across nested layers and resolve to the requirements JSON. Frozen dataclasses and the standard library only, so framework integrations can build on it.
+- `konklav_relying.rate_limit`: `RateLimit.add(key)`, raising `RateLimited`, over `_core.RateLimiterCore`. With the `redis` extra it shares limits through a `redis.asyncio` client the application owns, and answers from memory while Redis fails or is slow.
 - `konklav_relying.results`: typed results (`Decision`, `DenyReason`, `AccessToken`) read from the JSON the core and Konklav return.
 
 No decision logic lives in Python: a route policy only builds requirements.
@@ -132,6 +133,48 @@ if not decision.allowed:
 `await_cursor` takes the cursor a control-plane write returned, such as
 `konklav-control-plane`'s `Written.cursor`; see
 [`examples/python/read_your_writes.py`](../../examples/python/read_your_writes.py).
+
+
+### Rate limits
+
+A `RateLimit` admits an event for a key only when every window admits it.
+Each window lets `size` events through at once, and after that one more
+each `period / size`:
+
+```python
+>>> import asyncio
+>>> from datetime import timedelta
+>>> from konklav_relying import RateLimit, RateLimited, RateLimitWindow
+>>> login = RateLimit("login", [RateLimitWindow(size=2, period=timedelta(seconds=1))])
+>>> async def three() -> None:
+...     for _ in range(3):
+...         await login.add("a@example.com")
+>>> asyncio.run(three())
+Traceback (most recent call last):
+...
+konklav_relying.rate_limit.RateLimited: rate limited; retry after ...
+
+```
+
+To share a limit between processes, install the `redis` extra
+(`pip install konklav-relying[redis]`) and pass a client and a secret of at
+least 32 bytes that every process shares; keys reach Redis only as keyed
+hashes. Every process keeps counting in memory too, and answers from that
+while Redis fails or takes longer than `timeout` (100 ms by default). Set
+`local_divisor` to the number of processes so that, answering from memory
+together, they admit about the limit:
+
+```python
+login = RateLimit(
+    "login",
+    [RateLimitWindow(size=5, period=timedelta(minutes=1)), RateLimitWindow(size=20, period=timedelta(hours=1))],
+    redis=redis.asyncio.Redis.from_url(redis_url),
+    secret=rate_limit_secret,
+    local_divisor=replicas,
+)
+```
+
+Limits with the same name and windows share their state in Redis.
 
 ## Running and testing
 

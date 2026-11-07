@@ -13,6 +13,9 @@
 //!   to poll next, so busy entries are refreshed before they expire.
 //! - The `on_*` methods apply what the host fetched or received.
 //!
+//! - [`rate_limit::RateLimiter`] enforces rate limits in memory and says
+//!   what to ask a rate-limit store.
+//!
 //! Every decision rule lives here, so all host bindings behave identically.
 
 // r[impl item.relying.sans-io]
@@ -20,6 +23,7 @@
 mod cache;
 mod config;
 mod presented;
+pub mod rate_limit;
 
 pub use cache::{
     Acceptance, Key, Need, Outcome, Relying, RequestDescriptor, ScopeRecord, Verification, Work,

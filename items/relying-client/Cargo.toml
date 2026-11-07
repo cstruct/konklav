@@ -15,12 +15,17 @@ konklav-relying.workspace = true
 konklav-token.workspace = true
 futures-util.workspace = true
 percent-encoding.workspace = true
+redis = { workspace = true, optional = true }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 tracing.workspace = true
+
+[features]
+# Rate limits shared through a Redis rate-limit store.
+redis = ["dep:redis"]
 
 [dev-dependencies]
 konklav-authn.workspace = true

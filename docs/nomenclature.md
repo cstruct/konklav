@@ -452,6 +452,21 @@ Terms are introduced in dependency order: each definition only uses terms define
   - The guarantee that a relying system, after changing something in Konklav, sees that change in its next decision.
   - The relying SDK provides it by waiting until it has applied events up to the cursor that the write returned.
 
+- `rate limit`
+  - A named bound on how often events may happen per key, such as login attempts per email address, enforced by the relying SDK.
+  - It has one or more `rate-limit windows`, and an event is admitted only when every window admits it.
+
+- `rate-limit window`
+  - A number of events and a period: the window admits that many events at once, and after that one more each time the period divided by the number has passed.
+  - Example: 3 per minute and 30 per hour, together, let a burst through but not a sustained flood.
+
+- `rate-limit store`
+  - A Redis server the relying system owns, through which every process enforces its rate limits together.
+  - Every process also tracks its limits in memory, and answers from that state while the store is unavailable.
+
+- `local divisor`
+  - A number that divides each window's size in a process's in-memory state, so that several processes answering from memory together admit about the limit.
+
 ## Federation
 
 - `OpenID Connect` (OIDC)

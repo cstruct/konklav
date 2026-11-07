@@ -146,3 +146,50 @@ decide through the check API until it has reconnected and caught up.
 r[relying.fallback.equivalence]
 The relying SDK MUST report decisions made through the check API in the
 same form as local decisions.
+
+## Rate limits
+
+r[relying.rate-limit.windows]
+A rate limit MUST have a name and one or more windows, each a number of
+events and a period. Each window MUST admit its number of events at once,
+and after that one more each time the period divided by that number has
+passed. An event MUST be admitted only when every window of its limit
+admits it for its key, and a refused event MUST NOT count toward any
+window.
+
+r[relying.rate-limit.retry-after]
+A refused event MUST report how long until its key would be admitted by
+every window.
+
+r[relying.rate-limit.shared]
+When a rate-limit store is configured, the relying SDK MUST check and
+update all of a key's windows there in one atomic step, using the store's
+clock, so every process sharing the store enforces one limit together.
+Limits with the same name and windows MUST share their state in the store.
+
+r[relying.rate-limit.local]
+Every process MUST also apply each event to in-memory state of its own,
+whether or not a store is configured or answers, and MUST keep that state
+for a bounded number of keys, the least recently used going first.
+
+r[relying.rate-limit.fallback]
+When the store fails, or doesn't answer within the limit's timeout, the
+relying SDK MUST answer from its local state, and MUST NOT ask the store
+again until a backoff has passed: 1 second after the first failure,
+doubling with each further failure to at most 30 seconds, and reset by the
+store's first answer.
+
+r[relying.rate-limit.local-divisor]
+A rate limit MUST accept an optional local divisor, 1 by default, that
+divides each window's number of events in local state (rounded down, at
+least 1), so that several processes answering from local state together
+admit about the limit. It MUST apply to limits without a store too.
+
+r[relying.rate-limit.key-privacy]
+The relying SDK MUST NOT write rate-limit keys to the store in the clear,
+only a keyed hash of each under a secret the relying system configures. A
+store MUST be refused without a secret of at least 32 bytes.
+
+r[relying.rate-limit.expiry]
+A key's state MUST be dropped, in the store and in memory, once every
+window would admit its full number of events again.

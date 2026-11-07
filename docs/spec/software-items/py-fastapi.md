@@ -141,6 +141,47 @@ The default handler MUST answer HTTP requests with the status above and a
 JSON body naming the code, the deny reason or the step-up requirement, and
 MUST close websocket connections with code 1008 (policy violation).
 
+## Rate limits
+
+r[item.py-fastapi.rate-limit]
+`RouteRateLimit(limit, key)` MUST be a FastAPI dependency, declarable on
+routes, routers, `include_router` and the application, that adds one
+event to the `konklav_relying.RateLimit` `limit` for each request. `key`
+MUST be a FastAPI dependency itself, so it can depend on others, such as
+the verified token.
+
+r[item.py-fastapi.rate-limit-template]
+`key` MAY instead be a template: literal text and fields `{source:name}`,
+with `{{` and `}}` for literal braces. The sources MUST be `path` (a path
+parameter), `token` (a claim of the verified token: `sub`, `sid`, `knd` or
+`tid`) and `client` (only `client:address`, the client's address). A
+malformed template, or an unknown source or claim, MUST raise `ValueError`
+when the `RouteRateLimit` is created. A template's key MUST encode its parts
+so that different values can't render the same key. Its token MUST be the
+one the route's policy verified, not verified again.
+
+r[item.py-fastapi.rate-limit-template-validation]
+Startup validation MUST refuse a route whose rate-limit templates name a
+path parameter the route doesn't have, a token claim on a public route, or
+`tid` on a route whose policy admits token kinds other than `tenant`.
+
+r[item.py-fastapi.client-address]
+`KonklavRoutes.client_address(connection)` MUST answer the connection's
+peer address unless the peer is one of `trusted_proxies` (addresses or
+networks). Then it MUST answer the last address in `X-Forwarded-For` that
+isn't a trusted proxy, or the first when all are, like the server's
+`platform.server.client-address`. A connection without a peer address
+MUST be refused rather than given an empty key.
+
+r[item.py-fastapi.rate-limited]
+`KonklavRoutes.install` MUST handle `konklav_relying.RateLimited`, whether
+raised by `RouteRateLimit` or by the relying system's own code: HTTP
+requests are answered with 429, a JSON body with the code `rate_limited`
+(like the package's other codes), and a `Retry-After` header of the
+retry-after time in whole seconds, rounded up, plus random jitter
+(`platform.error.retry-after`); websocket connections are closed with code
+1013 (try again later).
+
 ## Injected tokens
 
 r[item.py-fastapi.injected-tokens]

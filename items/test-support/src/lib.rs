@@ -24,6 +24,27 @@ use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 use konklav_store::{ConnectOptions, Pool};
 
 const SERVER_URL_VARS: [&str; 2] = ["KONKLAV_TEST_DATABASE_URL", "DATABASE_URL"];
+const REDIS_URL_VARS: [&str; 2] = ["KONKLAV_TEST_REDIS_URL", "REDIS_URL"];
+
+/// The Redis server for rate-limit store tests, from `KONKLAV_TEST_REDIS_URL`
+/// or `REDIS_URL` as set by mise; start it with `mise run db:up`. Tests keep
+/// apart by using rate-limit names of their own.
+///
+/// # Panics
+///
+/// Panics when neither is set.
+#[must_use]
+pub fn redis_url() -> String {
+    REDIS_URL_VARS
+        .iter()
+        .find_map(|var| std::env::var(var).ok().filter(|v| !v.is_empty()))
+        .unwrap_or_else(|| {
+            panic!(
+                "set {} to a Redis server URL (mise sets REDIS_URL; start it with `mise run db:up`)",
+                REDIS_URL_VARS.join(" or ")
+            )
+        })
+}
 
 /// A freshly created and migrated database, dropped when this value is.
 pub struct TestDatabase {

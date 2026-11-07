@@ -21,5 +21,18 @@ services:
       timeout: 3s
       retries: 30
 
+  # The rate-limit store for the relying SDK's tests. Rate-limit state
+  # expires on its own, so nothing is persisted.
+  redis:
+    image: redis:8.2-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "${KONKLAV_DEV_REDIS_PORT:-16379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
 volumes:
   postgres-data:

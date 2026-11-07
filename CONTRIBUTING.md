@@ -58,18 +58,20 @@ need Docker for the local Postgres and the OpenSSL headers (for example
 
 ```sh
 mise trust && mise install
-mise run db:up      # Postgres 18 with pg_jsonschema in Docker on localhost:15432
+mise run db:up      # Postgres 18 with pg_jsonschema on localhost:15432, Redis on localhost:16379
 ```
 
-mise sets `DATABASE_URL`, `KONKLAV_CONFIG` and `KONKLAV_SECRETS` for the
-local setup. Everyday tasks:
+mise sets `DATABASE_URL`, `REDIS_URL`, `KONKLAV_CONFIG` and
+`KONKLAV_SECRETS` for the local setup. Redis is the relying SDK's
+rate-limit store; only its tests use it. Everyday tasks:
 
 - `mise run serve` starts Postgres, migrates it, creates an untracked
   development signing key if needed, and serves on ports 8080 to 8082.
 - `mise run console:serve` serves the operators' console on
   <http://127.0.0.1:8083> against that server. `console:build` makes a
   release build. See [`items/console`](items/console/README.md).
-- `mise run test` runs every test, each database test in its own database.
+- `mise run test` runs every test, each database test in its own database
+  and each rate-limit store test under rate-limit names of its own.
   OIDC interoperability tests run against independent implementations:
   - Ory Hydra as an identity provider for Konklav
     (`items/server/tests/hydra.rs`; skipped if `hydra` isn't on the PATH)
@@ -87,13 +89,13 @@ local setup. Everyday tasks:
 
 Other database tasks:
 
-- `db:down` stops Postgres and keeps its data.
-- `db:reset` stops it and deletes the data.
+- `db:down` stops Postgres and Redis and keeps Postgres' data.
+- `db:reset` stops them and deletes Postgres' data.
 - `db:status` shows its status.
 - `db:logs` follows its logs.
 - `db:psql` opens psql inside the container.
 
-To use another port, set `KONKLAV_DEV_PG_PORT`, for example in an untracked
+To use other ports, set `KONKLAV_DEV_PG_PORT` or `KONKLAV_DEV_REDIS_PORT`, for example in an untracked
 `mise.local.toml`.
 
 ## Pull requests

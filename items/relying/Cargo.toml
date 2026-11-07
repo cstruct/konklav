@@ -12,8 +12,10 @@ repository.workspace = true
 konklav-authz.workspace = true
 konklav-core.workspace = true
 konklav-token.workspace = true
+hmac.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 konklav-test-support.workspace = true

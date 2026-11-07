@@ -14,6 +14,7 @@ Native Rust host binding for the relying core, on tokio and reqwest.
 
   Errors mean deny. `decide_request` takes a `Presented` (the request's raw `Authorization` and `DPoP` headers and the public URL it addressed) so sender-constrained tokens work too; `decide` takes a bearer token.
 - `await_cursor` for read-your-writes after a Konklav write.
+- `rate_limit::RateLimit`: `add(key)` counts an event or returns `RateLimited`. With the `redis` feature, `RateLimit::with_redis` shares the limit through Redis (a `ConnectionManager` the application owns, and a secret every process shares), giving up on Redis after a timeout (100 ms by default) and answering from memory while it fails.
 
 ## Relationships
 
@@ -31,12 +32,14 @@ This is a library; construct a `RelyingClient` and call `start()`.
 ```sh
 mise run db:up
 cargo test -p konklav-relying-client
+cargo test -p konklav-relying-client --features redis
 ```
 
 - Direct coverage: end to end against a real server on ephemeral ports:
   - check-API fallback before the feed connects, then local decisions
   - revocation through the feed
   - read-your-writes after removing an assignment
+- Rate limits against the development Redis (`REDIS_URL`): one limit shared by two clients, refusals that don't count, hashed and expiring keys, and falling back to memory and recovering when a proxy cuts the connection.
 
 ## Traceability and related docs
 

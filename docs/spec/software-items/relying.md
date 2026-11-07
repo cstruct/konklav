@@ -30,3 +30,9 @@ authorization schemes or proofs themselves.
 r[item.relying.single-implementation]
 Host bindings MUST NOT re-implement verification, evaluation or cache-state
 logic. They only translate between the core and their language's runtime.
+
+r[item.relying.rate-limit]
+`konklav-relying` MUST own the rate-limit algorithm, the local state, the
+backoff, and the store's script with the keys and arguments it is called
+with, and MUST interpret the script's answer. Host bindings only send the
+call, report its answer or failure, and supply the time.

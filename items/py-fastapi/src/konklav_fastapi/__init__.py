@@ -38,6 +38,12 @@ routes.install(app)
 Each request makes one decision with the route's merged policy; denials
 raise `KonklavDenied` subclasses (`konklav_fastapi.errors`), answered with
 401, 403 or 503 unless the application handles them itself.
+
+`RouteRateLimit(limit, "{token:sub}/{path:project}")`
+(`konklav_fastapi.rate_limits`) adds one event per request to a
+`konklav_relying.RateLimit`, keyed by a template or a dependency; a refused
+event, from it or from the application's own `limit.add(...)`, is answered
+with 429.
 """
 
 import importlib.metadata
@@ -51,6 +57,7 @@ from konklav_fastapi.errors import (
     Unauthenticated,
     handle_denied,
 )
+from konklav_fastapi.rate_limits import RouteRateLimit, handle_rate_limited
 from konklav_fastapi.routes import (
     CurrentToken,
     IdentityToken,
@@ -81,6 +88,7 @@ __all__ = [
     "ResolvedScope",
     "RoutePolicy",
     "RoutePolicyError",
+    "RouteRateLimit",
     "RouteTenantResolver",
     "ScopeResolver",
     "StepUpRequired",
@@ -88,4 +96,5 @@ __all__ = [
     "TokenHook",
     "Unauthenticated",
     "handle_denied",
+    "handle_rate_limited",
 ]
