@@ -116,3 +116,52 @@ for a token that isn't valid, or an `AcceptedRequest` with the verified
 `AccessToken`. `decide_accepted` and `decide_accepted_typed` MUST decide
 requirements for it as `decide_request` and `decide_request_typed` decide
 them, including through the check API when the caches can't be trusted.
+
+## Pacing and fake ids
+
+Relying systems have endpoints of their own whose answers could reveal
+whether a record exists, such as inviting an address or starting a reset.
+The binding offers pacing (see the nomenclature) and fake ids for them.
+Both are host-level timing and id generation, not decision logic, so they
+live in Python rather than in the relying core.
+
+r[item.py.pacing.framework-free]
+`konklav_relying.pacing` and `konklav_relying.fake_ids` MUST use the
+standard library alone, and MUST NOT import a web framework, so framework
+integrations can build on them.
+
+r[item.py.pacing.delay]
+`Pacing(floor, jitter)` MUST draw each wait uniformly from `floor ± jitter`,
+with microsecond resolution, from the `secrets` module, and MUST clamp it at
+zero, as the server's pacing does (`authn.pacing`). It MUST refuse a
+negative floor or jitter. `Pacing.NONE` MUST wait not at all, so tests need
+no other way to turn pacing off.
+
+r[item.py.pacing.concurrent]
+`paced(pacing)` MUST work both as an async context manager and as a
+decorator of async functions. It MUST draw the wait when the work starts,
+and finish when both the work and the wait are done, so the floor adds no
+latency when the work takes longer.
+
+r[item.py.pacing.errors]
+When the work raises an exception (an `Exception`), `paced` MUST still
+finish the wait before the exception propagates, since a failure that
+answers early is the timing difference pacing hides.
+
+r[item.py.pacing.cancellation]
+When the work is cancelled, or raises another `BaseException` such as
+`KeyboardInterrupt`, `paced` MUST NOT wait, and MUST propagate it at once;
+cancellation during the wait MUST end the wait. Whoever cancelled isn't
+waiting for an answer, so there is no timing to hide, and waiting would
+hold up timeouts and shutdown.
+
+r[item.py.fake-id.layout]
+`fake_uuid7` MUST return a UUID of version 7 and the RFC 9562 variant, with
+a 48-bit Unix timestamp in milliseconds, and its 74 other bits drawn from
+the `secrets` module.
+
+r[item.py.fake-id.time]
+The caller MUST choose the time a fake id claims: the current millisecond,
+to stand in for something just created, or, with a past window, a
+millisecond drawn uniformly from that window up to now, to stand in for
+something created some time ago. A window MUST be positive.

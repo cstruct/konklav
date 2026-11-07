@@ -38,6 +38,10 @@ routes.install(app)
 Each request makes one decision with the route's merged policy; denials
 raise `KonklavDenied` subclasses (`konklav_fastapi.errors`), answered with
 401, 403 or 503 unless the application handles them itself.
+
+`RoutePacing` (`konklav_fastapi.pacing`) paces chosen routes, so their
+response time doesn't reveal whether a record exists, and
+`PacingMiddleware` paces every answer for chosen paths.
 """
 
 import importlib.metadata
@@ -51,6 +55,7 @@ from konklav_fastapi.errors import (
     Unauthenticated,
     handle_denied,
 )
+from konklav_fastapi.pacing import PacingMiddleware, RoutePacing
 from konklav_fastapi.routes import (
     CurrentToken,
     IdentityToken,
@@ -79,7 +84,9 @@ __all__ = [
     "KonklavRoutes",
     "KonklavUnavailable",
     "OptionalToken",
+    "PacingMiddleware",
     "ResolvedScope",
+    "RoutePacing",
     "RoutePolicy",
     "RoutePolicyError",
     "RoutePolicyFields",

@@ -71,6 +71,8 @@ from typing import Any
 import httpx
 
 from konklav_relying._core import Core
+from konklav_relying.fake_ids import fake_uuid7
+from konklav_relying.pacing import Pacing, paced
 from konklav_relying.policy import MissingScopeId, Policy, PolicyError, Requirements, StepUp
 from konklav_relying.results import AcceptedRequest, AccessToken, Actor, Confirmation, Decision, DenyReason, Obligation
 
@@ -86,11 +88,14 @@ __all__ = [
     "KonklavError",
     "MissingScopeId",
     "Obligation",
+    "Pacing",
     "Policy",
     "PolicyError",
     "RelyingClient",
     "Requirements",
     "StepUp",
+    "fake_uuid7",
+    "paced",
 ]
 
 _log = logging.getLogger(__name__)

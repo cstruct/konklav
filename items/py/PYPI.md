@@ -83,6 +83,29 @@ await client.stop()
       ...
   ```
 
+For a relying system's own endpoints that could reveal whether a record
+exists, such as inviting an address or starting a password reset:
+
+- `paced(Pacing(floor, jitter))`, an async context manager and decorator,
+  answers no sooner than `floor ± jitter` (drawn from `secrets`), also when
+  the work raises. Cancellation isn't paced. Tests use `Pacing.NONE`.
+- `fake_uuid7()` makes a UUIDv7 to answer with in place of one that wasn't
+  created, claiming now; `fake_uuid7(within=timedelta(days=365))` claims a
+  random time in the past year, for records that would already exist.
+
+```python
+from datetime import timedelta
+
+from konklav_relying import Pacing, fake_uuid7, paced
+
+pacing = Pacing(floor=timedelta(milliseconds=800), jitter=timedelta(milliseconds=200))
+
+async def invite(address: str) -> str:
+    async with paced(pacing):
+        member = await find_member(address)
+        return str(await send_invite(member) if member else fake_uuid7())
+```
+
 The decision logic lives in a Rust core shared with Konklav's other relying
 bindings, so they can't disagree. Python does only the I/O.
 

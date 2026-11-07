@@ -55,6 +55,7 @@ from konklav_fastapi.errors import (
     Unauthenticated,
     handle_denied,
 )
+from konklav_fastapi.pacing import RoutePacing
 
 __all__ = [
     "CurrentToken",
@@ -320,6 +321,10 @@ class KonklavRoutes:
         own = _policies(served.own_dependencies)
         if not layers:
             return "declares no RoutePolicy; declare one, or RoutePolicy.public()"
+        # r[impl item.py-fastapi.route-pacing.order]
+        first_policy = next(i for i, d in enumerate(served.dependencies) if isinstance(d, RoutePolicy))
+        if any(isinstance(d, RoutePacing) for d in served.dependencies[first_policy + 1 :]):
+            return "declares a RoutePacing after its RoutePolicy; declare it before, so denials are paced too"
         inherited = layers[: len(layers) - len(own)]
         if any(policy.admit_flags is not None for policy in inherited):
             return "admit_flags set outside the route; only the route's own RoutePolicy can admit flags"

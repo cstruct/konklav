@@ -23,6 +23,23 @@ Startup validation refuses routes without a policy, policies that can't be
 decided, and token dependencies the policy doesn't match. Each operation's
 merged policy is published in OpenAPI as `x-konklav-policy`.
 
+`RoutePacing(pacing)` paces routes whose response time could reveal
+whether a record exists, such as invites and password resets: declared
+before the `RoutePolicy`, it answers no sooner than `floor ± jitter`, also
+for denials and errors. `PacingMiddleware` paces every answer for chosen
+paths, including those FastAPI gives before any dependency runs:
+
+```python
+from datetime import timedelta
+
+from konklav_relying import Pacing
+from konklav_fastapi import PacingMiddleware, RoutePacing
+
+pacing = Pacing(floor=timedelta(milliseconds=800), jitter=timedelta(milliseconds=200))
+router = APIRouter(dependencies=[RoutePacing(pacing), RoutePolicy(tenant_actions={"member:invite"})])
+app.add_middleware(PacingMiddleware, pacing=pacing, paths={"/password-resets"})
+```
+
 ## Versions
 
 The package has the same version as the Konklav server it was released
