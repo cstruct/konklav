@@ -209,8 +209,9 @@ fakes to them. A fake id helps only in an answer that is also paced.
 
 A FastAPI application declares pacing on routes with `konklav-fastapi`'s
 `RoutePacing` ([`items/py-fastapi`](../py-fastapi/README.md#pacing)).
-`konklav-axum`, the axum integration, should get the same helpers once it
-lands.
+The native Rust binding has the same helpers
+(`konklav_relying_client::{pacing, fake_ids}`), and `konklav-axum` paces
+axum routes with its `RoutePacing` layer.
 
 ### Rate limits
 

@@ -38,6 +38,8 @@ rate-limit key templates, in axum's terms (layers, extractors,
   and `RateLimited` (429).
 - Extractors: `CurrentToken`, `OptionalToken`, `IdentityToken`,
   `TenantToken`, and `ClientAddress`.
+- `RoutePacing`: a layer pacing the answers it wraps
+  (`konklav_relying_client::pacing`, re-exported as `Pacing` and `paced`).
 - Rate limits: `RouteRateLimit(limit, key)` over
   `konklav_relying_client::rate_limit::RateLimit`, with a key template or a
   key function, attached to a `RoutePolicy` or as a layer of its own.
@@ -213,6 +215,58 @@ Otherwise `{client:address}` is the proxy's address, and every client
 shares one limit. `X-Forwarded-For` is read only from trusted proxies, last
 untrusted hop first, as the Konklav server does.
 
+### Pacing
+
+An endpoint whose answer could reveal whether a record exists, such as
+inviting an address or starting a password reset, often does more work for
+a known record than for an unknown one. `RoutePacing::new(pacing)` answers
+no sooner than a wait drawn from `floor ± jitter`, run together with the
+route, so its response time is the floor (plus jitter) unless the work
+takes longer:
+
+```rust
+use std::time::Duration;
+
+use axum::{Router, routing::post};
+use konklav_axum::{Pacing, Policy, RoutePacing, RouterPolicy};
+use konklav_relying_client::fake_ids::fake_uuid7;
+
+fn invites(api: &RouterPolicy) -> Result<Router, Box<dyn std::error::Error>> {
+    let pacing = Pacing::new(Duration::from_millis(800), Duration::from_millis(200));
+    Ok(Router::new().route(
+        "/invites",
+        // A known address gets the new invite's id; an unknown one gets a
+        // fake id, just as fresh, and an answer just as late.
+        post(|| async { fake_uuid7().to_string() })
+            .route_layer(api.route(&Policy::new().tenant_actions(["member:invite"]))?)
+            .route_layer(RoutePacing::new(pacing)),
+    ))
+}
+```
+
+A layer wraps its route's whole answer, so the wait also holds back every
+`Denied`, rate limit, handler error and extractor rejection (an unparsable
+body's 400 or 422). Applied to a `Router` with `.layer`, a `RoutePacing`
+paces its 404 and 405 answers too, which `konklav-fastapi` needs
+`PacingMiddleware` for. Each `RoutePacing` waits on its own, so a route
+under several waits for the longest.
+
+- Apply it with `route_layer` after the route's `RoutePolicy`, so it wraps
+  the policy. Inside the policy it would start after the decision, and a
+  denial would answer sooner than an allow; it answers 500 there instead.
+- Cancellation isn't paced: when the client goes away, the wait is dropped
+  with the request. A panic isn't paced either, unless a panic-catching
+  layer inside the `RoutePacing` turns it into a 500.
+- Websocket upgrade requests aren't paced.
+- In tests, use `Pacing::NONE`.
+
+To pace part of a handler, call `paced(pacing, work).await`. Answer with a
+fake id (`konklav_relying_client::fake_ids`) where the real answer would
+carry an id that wasn't created: `fake_uuid7()` claims now, and
+`fake_uuid7_within(window)` claims a millisecond from a past window, for
+something that would already exist. A fake id helps only in an answer that
+is also paced.
+
 ## Testing
 
 ```sh
@@ -220,11 +274,11 @@ mise run db:up
 cargo test -p konklav-axum
 ```
 
-- Unit tests (`tests/routes.rs`, `tests/rate_limits.rs` and the crate's
-  own) use a fake `RelyingHost`: merging and its refusals, every outcome,
+- Unit tests (`tests/routes.rs`, `tests/rate_limits.rs`, `tests/pacing.rs`
+  and the crate's own) use a fake `RelyingHost`: merging and its refusals, every outcome,
   token extraction, hooks, route tenants, scope resolvers, extractors and
-  their kinds, misconfigurations, rate limits, key templates and client
-  addresses.
+  their kinds, misconfigurations, rate limits, key templates, client
+  addresses and pacing.
 - The end-to-end test (`tests/end_to_end.rs`) serves an axum application
   deciding through a real `RelyingClient` against a Konklav server on a
   fresh database, so it needs the development Postgres.

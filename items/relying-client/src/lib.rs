@@ -16,10 +16,14 @@
 //!   again.
 //!
 //! [`rate_limit::RateLimit`] enforces rate limits, through Redis with the
-//! `redis` feature and in memory always.
+//! `redis` feature and in memory always. [`pacing`] and [`fake_ids`] keep a
+//! relying system's own endpoints from showing, through their timing or
+//! their ids, whether a record exists.
 //!
 //! The decision rules live in `konklav-relying`; this crate only moves bytes.
 
+pub mod fake_ids;
+pub mod pacing;
 pub mod rate_limit;
 
 use std::sync::{Arc, Mutex};

@@ -36,6 +36,9 @@
 //! tenant other than the token's is denied, the scopes are resolved, and one
 //! decision is made. Anything but an allow answers with a [`Denied`].
 //!
+//! [`RoutePacing`] paces a route's answers, so that how long they take
+//! doesn't show whether a record exists.
+//!
 //! Every decision is the relying core's; this crate only translates.
 
 // Published with the other crates, requiring konklav-relying and
@@ -50,6 +53,7 @@ mod config;
 mod evaluate;
 mod host;
 mod outcome;
+mod pacing;
 mod policy;
 pub mod rate_limit;
 mod token;
@@ -61,9 +65,13 @@ pub use host::{Accepted, BoxFuture, RelyingHost};
 pub use outcome::{
     Denied, Forbidden, RoutePolicyError, Scheme, Unauthenticated, retry_after_seconds,
 };
+pub use pacing::{RoutePacing, RoutePacingService};
 pub use policy::{RoutePolicy, RoutePolicyService, RouterPolicy};
 pub use rate_limit::RouteRateLimit;
 pub use token::{CurrentToken, IdentityToken, OptionalToken, TenantToken};
+
+/// Pacing, for [`RoutePacing`] and for pacing work inside a handler.
+pub use konklav_relying_client::pacing::{Pacing, paced};
 
 /// The route-policy model the policies are built from.
 pub use konklav_relying::policy::{FactValue, Policy, PolicyError, ResolvedScope};

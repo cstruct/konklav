@@ -174,6 +174,26 @@ tenth of it and at least a second (`platform.error.retry-after`).
 `konklav_relying_client::rate_limit::RateLimited` from the application's own
 `limit.add(...)` MUST convert into the same `Denied`.
 
+## Pacing
+
+r[item.axum.route-pacing]
+`RoutePacing::new(pacing)` MUST be a tower layer that paces the HTTP
+requests it wraps as `paced` does (`item.relying-client.pacing.concurrent`),
+from when it is called to when the answer it wraps is ready, whatever that
+answer is: an allow, a `Denied`, a rate limit, the handler's error or an
+extractor's rejection (`item.relying-client.pacing.errors`). Applied to a
+`Router`, it MUST pace the router's own answers, such as 404 and 405, too.
+It MUST NOT pace websocket upgrade requests.
+
+r[item.axum.route-pacing.nested]
+Every `RoutePacing` around a request MUST wait on its own, so the answer
+waits for the longest of them.
+
+r[item.axum.route-pacing.order]
+A `RoutePacing` that meets a request a `RoutePolicy` has already evaluated
+MUST answer as a misconfiguration (`item.axum.misconfiguration`): it would
+start after the decision, so a denial would answer sooner than an allow.
+
 ## Injected tokens
 
 r[item.axum.injected-tokens]
@@ -213,8 +233,9 @@ runs where the problem is found before one: no `Konklav` installed, a
 second `RoutePolicy`, a scope kind with neither a resolver nor a path
 parameter of its name, a rate-limit template the request can't render, an
 extractor without a `RoutePolicy` or not matching its policy
-(`item.axum.injected-kinds`), and a request without a peer address for a
-client address.
+(`item.axum.injected-kinds`), a request without a peer address for a
+client address, and a `RoutePacing` inside a `RoutePolicy`
+(`item.axum.route-pacing.order`).
 
 r[item.axum.describe]
 `RoutePolicy::describe` MUST give the route's merged policy as

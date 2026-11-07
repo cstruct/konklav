@@ -251,6 +251,9 @@ pub enum RoutePolicyError {
     },
     /// A request without a peer address, for its client address.
     NoClientAddress,
+    /// A [`RoutePacing`](crate::RoutePacing) inside the route's policy,
+    /// which would start after the decision.
+    PacingAfterPolicy,
 }
 
 impl fmt::Display for RoutePolicyError {
@@ -278,6 +281,9 @@ impl fmt::Display for RoutePolicyError {
             Self::Extractor { extractor, problem } => write!(f, "{extractor} {problem}"),
             Self::NoClientAddress => f.write_str(
                 "the request has no peer address for its client address; serve with into_make_service_with_connect_info::<SocketAddr>()",
+            ),
+            Self::PacingAfterPolicy => f.write_str(
+                "a RoutePacing inside the route's RoutePolicy starts after the decision; apply it with route_layer after the RoutePolicy",
             ),
         }
     }

@@ -80,7 +80,7 @@ pub(crate) struct PresentedToken {
     pub(crate) scheme: Scheme,
 }
 
-fn is_websocket(parts: &Parts) -> bool {
+pub(crate) fn is_websocket(parts: &Parts) -> bool {
     // HTTP/1.1 upgrades, and HTTP/2's extended CONNECT (RFC 8441).
     parts.method == Method::CONNECT
         || parts
