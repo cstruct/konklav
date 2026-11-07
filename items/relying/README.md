@@ -18,7 +18,7 @@ The relying core: a sans-I/O library with everything a relying system needs to d
 - Following the change feed's state: cursor, heartbeats, `position`, `reset`. When it lags (three missed heartbeats), the core answers `Need::Check`, so hosts ask `/v1/check`.
 - Rate limits (`rate_limit`): named limits of several windows per key, enforced with the generic cell rate algorithm (GCRA):
   - local state for a bounded number of keys (100 000 by default, least recently used first), dropped once drained, with an optional local divisor
-  - for a rate-limit store (Redis), the script to run with its keys and arguments, keys hashed under a configured secret (HMAC-SHA-256)
+  - for a rate-limit store (Valkey, or Redis 6.2 or later), the script to run with its keys and arguments, keys hashed under a configured secret (HMAC-SHA-256)
   - the store's backoff while it fails (1 s, doubling to 30 s), so the host answers from local state
 - Read-your-writes: `await_cursor` is ready once the feed has passed the cursor and every entry it invalidated has been refreshed.
 - Sender-constrained (DPoP) tokens: from a request's raw `Authorization` and `DPoP` headers and its request descriptor (the method and the public URL the client addressed):
@@ -65,7 +65,7 @@ cargo build -p konklav-relying --target wasm32-unknown-unknown
   - registered scopes: lazy fetches, unknown scopes, moves within the debounce window, the size bound
   - DPoP: schemes, proofs checked before the check API, replays, the bounded replay set
   - rate limits: bursts and intervals, several windows, refusals that don't count, the local divisor, the key bound and expiry, store calls and backoff
-- Indirect coverage: the native client's end-to-end tests against a real server, the Python tests, and both hosts' rate-limit tests against a real Redis, which run `STORE_SCRIPT`.
+- Indirect coverage: the native client's end-to-end tests against a real server, the Python tests, and both hosts' rate-limit tests against a real Valkey, which run `STORE_SCRIPT`.
 
 ## Traceability and related docs
 

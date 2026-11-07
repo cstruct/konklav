@@ -19,7 +19,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-# Rate limits shared through a Redis rate-limit store.
+# Rate limits shared through a rate-limit store: Valkey or Redis.
 redis = ["redis>=5.0"]
 
 [project.urls]

@@ -461,7 +461,7 @@ Terms are introduced in dependency order: each definition only uses terms define
   - Example: 3 per minute and 30 per hour, together, let a burst through but not a sustained flood.
 
 - `rate-limit store`
-  - A Redis server the relying system owns, through which every process enforces its rate limits together.
+  - A server speaking Redis' protocol (Valkey, or Redis 6.2 or later) that the relying system owns, through which every process enforces its rate limits together.
   - Every process also tracks its limits in memory, and answers from that state while the store is unavailable.
 
 - `local divisor`

@@ -6,9 +6,10 @@ event only when every window admits it, raising `RateLimited` otherwise.
 Each window lets its `size` events through at once, and after that one more
 each time `period / size` has passed.
 
-With a Redis rate-limit store (the `redis` extra), every process sharing it
-enforces one limit together. Every process also tracks its limits in
-memory, and answers from that state while Redis fails or is slow; a
+With a rate-limit store, Valkey or Redis 6.2 or later (through the `redis`
+extra, the client library for both), every process sharing it enforces one
+limit together. Every process also tracks its limits in memory, and answers
+from that state while the store fails or is slow; a
 `local_divisor` of the number of processes keeps them together near the
 limit while they do.
 

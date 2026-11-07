@@ -58,12 +58,12 @@ need Docker for the local Postgres and the OpenSSL headers (for example
 
 ```sh
 mise trust && mise install
-mise run db:up      # Postgres 18 with pg_jsonschema on localhost:15432, Redis on localhost:16379
+mise run db:up      # Postgres 18 with pg_jsonschema on localhost:15432, Valkey on localhost:16379
 ```
 
 mise sets `DATABASE_URL`, `REDIS_URL`, `KONKLAV_CONFIG` and
-`KONKLAV_SECRETS` for the local setup. Redis is the relying SDK's
-rate-limit store; only its tests use it. Everyday tasks:
+`KONKLAV_SECRETS` for the local setup. Valkey, which speaks Redis'
+protocol, is the relying SDK's rate-limit store; only its tests use it. Everyday tasks:
 
 - `mise run serve` starts Postgres, migrates it, creates an untracked
   development signing key if needed, and serves on ports 8080 to 8082.
@@ -89,13 +89,13 @@ rate-limit store; only its tests use it. Everyday tasks:
 
 Other database tasks:
 
-- `db:down` stops Postgres and Redis and keeps Postgres' data.
+- `db:down` stops Postgres and Valkey and keeps Postgres' data.
 - `db:reset` stops them and deletes Postgres' data.
 - `db:status` shows its status.
 - `db:logs` follows its logs.
 - `db:psql` opens psql inside the container.
 
-To use other ports, set `KONKLAV_DEV_PG_PORT` or `KONKLAV_DEV_REDIS_PORT`, for example in an untracked
+To use other ports, set `KONKLAV_DEV_PG_PORT` or `KONKLAV_DEV_VALKEY_PORT`, for example in an untracked
 `mise.local.toml`.
 
 ## Pull requests

@@ -90,8 +90,8 @@ bindings, so they can't disagree. Python does only the I/O.
 
 `RateLimit` bounds how often events may happen per key, over several
 windows. With the `redis` extra (`pip install konklav-relying[redis]`),
-every process sharing a Redis enforces one limit together, and falls back
-to counting in memory while Redis is unavailable:
+every process sharing a Valkey or Redis server enforces one limit
+together, and falls back to counting in memory while it is unavailable:
 
 ```python
 login = RateLimit(

@@ -26,30 +26,31 @@ uv = "0.8.24"
 # outgoing connection can never be holding it when Postgres starts.
 KONKLAV_DEV_PG_PORT = "15432"
 DATABASE_URL = "postgres://konklav:konklav@localhost:{{env.KONKLAV_DEV_PG_PORT}}/konklav"
-# The relying SDK's rate-limit store, for tests.
-KONKLAV_DEV_REDIS_PORT = "16379"
-REDIS_URL = "redis://localhost:{{env.KONKLAV_DEV_REDIS_PORT}}"
+# The relying SDK's rate-limit store, for tests: Valkey, reached with a
+# redis:// URL as the Redis client libraries expect.
+KONKLAV_DEV_VALKEY_PORT = "16379"
+REDIS_URL = "redis://localhost:{{env.KONKLAV_DEV_VALKEY_PORT}}"
 KONKLAV_CONFIG = "{{config_root}}/config/dev.styx"
 KONKLAV_SECRETS = "{{config_root}}/config/dev.secrets.styx"
 
 [tasks."db:up"]
-description = "Start the local Postgres and Redis and wait until they accept connections"
+description = "Start the local Postgres and Valkey and wait until they accept connections"
 run = "docker compose -f dev/compose.yaml up -d --wait --build"
 
 [tasks."db:down"]
-description = "Stop the local Postgres and Redis, keeping Postgres' data"
+description = "Stop the local Postgres and Valkey, keeping Postgres' data"
 run = "docker compose -f dev/compose.yaml down"
 
 [tasks."db:reset"]
-description = "Stop the local Postgres and Redis and delete Postgres' data"
+description = "Stop the local Postgres and Valkey and delete Postgres' data"
 run = "docker compose -f dev/compose.yaml down --volumes"
 
 [tasks."db:status"]
-description = "Show the status of the local Postgres and Redis"
+description = "Show the status of the local Postgres and Valkey"
 run = "docker compose -f dev/compose.yaml ps"
 
 [tasks."db:logs"]
-description = "Follow logs from the local Postgres and Redis"
+description = "Follow logs from the local Postgres and Valkey"
 run = "docker compose -f dev/compose.yaml logs --follow"
 
 [tasks."db:psql"]
@@ -71,7 +72,7 @@ description = "Check the dependencies for security advisories, licenses and sour
 run = "cargo deny --locked check"
 
 [tasks."py:test"]
-description = "Build the Python relying binding and run its tests, the rate-limit store's against the local Redis"
+description = "Build the Python relying binding and run its tests, the rate-limit store's against the local Valkey"
 depends = ["db:up"]
 dir = "items/py"
 # The rate-limit store tests run only with this set, not with REDIS_URL alone.

@@ -1,5 +1,5 @@
-//! Rate limits, enforced through a Redis rate-limit store when one is
-//! configured (feature `redis`) and in memory always.
+//! Rate limits, enforced through a rate-limit store when one is configured
+//! (feature `redis`: Valkey, or Redis 6.2 or later) and in memory always.
 //!
 //! The rules live in `konklav_relying::rate_limit`; [`RateLimit`] only runs
 //! the store's script under a timeout and reports what happened.
@@ -68,8 +68,9 @@ impl RateLimit {
         })
     }
 
-    /// A limit enforced through Redis, shared by every process using it,
-    /// and in memory while Redis fails or takes longer than `timeout`.
+    /// A limit enforced through Valkey or Redis, shared by every process
+    /// using it, and in memory while the store fails or takes longer than
+    /// `timeout`.
     /// Keys are hashed under `secret`, which every process must share.
     #[cfg(feature = "redis")]
     pub fn with_redis(

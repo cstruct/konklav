@@ -156,11 +156,12 @@ konklav_relying.rate_limit.RateLimited: rate limited; retry after ...
 
 ```
 
-To share a limit between processes, install the `redis` extra
-(`pip install konklav-relying[redis]`) and pass a client and a secret of at
-least 32 bytes that every process shares; keys reach Redis only as keyed
+To share a limit between processes through Valkey or Redis (6.2 or later),
+install the `redis` extra (`pip install konklav-relying[redis]`, the
+client library for both) and pass a client and a secret of at
+least 32 bytes that every process shares; keys reach the store only as keyed
 hashes. Every process keeps counting in memory too, and answers from that
-while Redis fails or takes longer than `timeout` (100 ms by default). Set
+while the store fails or takes longer than `timeout` (100 ms by default). Set
 `local_divisor` to the number of processes so that, answering from memory
 together, they admit about the limit:
 
@@ -174,7 +175,7 @@ login = RateLimit(
 )
 ```
 
-Limits with the same name and windows share their state in Redis.
+Limits with the same name and windows share their state in the store.
 
 ## Running and testing
 
