@@ -131,11 +131,15 @@ async fn listeners_bound_time_size_and_concurrency() {
 // r[verify platform.server.limits]
 #[tokio::test(flavor = "multi_thread")]
 async fn change_feed_streams_outlive_the_request_timeout() {
+    // A stream counts against the bound until it starts, so the bound must
+    // leave room for authenticating and reading the feed position on a busy
+    // machine (they take up to ~100 ms there).
+    const TIMEOUT: Duration = Duration::from_secs(1);
     let app = common::TestApp::new().await;
     let token = app.service_token().await;
     let running = app
         .serve_with(Limits {
-            request_timeout: Duration::from_millis(100),
+            request_timeout: TIMEOUT,
             ..Limits::DEFAULT
         })
         .await;
@@ -144,11 +148,13 @@ async fn change_feed_streams_outlive_the_request_timeout() {
         "GET /v1/events HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {token}\r\n\r\n",
         running.relying
     );
+    let sent = tokio::time::Instant::now();
     stream.write_all(request.as_bytes()).await.unwrap();
     let mut head = [0u8; 15];
     stream.read_exact(&mut head).await.unwrap();
     assert_eq!(&head, b"HTTP/1.1 200 OK");
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Well past the bound, counted from the request.
+    tokio::time::sleep_until(sent + TIMEOUT + Duration::from_millis(300)).await;
     let mut rest = [0u8; 1024];
     let read = tokio::time::timeout(Duration::from_millis(200), stream.read(&mut rest)).await;
     assert!(
