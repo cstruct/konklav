@@ -1147,3 +1147,258 @@ async fn delivery_requests_are_only_for_the_delivery_capability_and_expire() {
         "material is gone once expired"
     );
 }
+
+/// A passwordless or invite login, for the tests that every one of them
+/// takes `client` and `flags` as password login does.
+#[derive(Clone, Copy, Debug)]
+enum Proof {
+    EmailLink,
+    Phone,
+    Invite,
+}
+
+/// A catalog with a confined, requestable flag and an assertive one, and a
+/// tenant that doesn't match the confinement.
+async fn confining_world(app: &TestApp) -> String {
+    let catalog = json!({
+        "actions": [{"name": "me"}],
+        "facts": [
+            {"key": "tenant_type", "target": "tenant", "type": "string", "portable": true}
+        ],
+        "session_flags": [
+            {"name": "personal_only", "kind": "restrictive", "requestable": true,
+             "confine": {"tenant": {"tenant_type": ["personal"]}}},
+            {"name": "device_bound", "kind": "assertive"}
+        ]
+    });
+    let reply = app.control(Method::PUT, "/v1/catalog", Some(catalog)).await;
+    assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+    let tenant = uuid::Uuid::now_v7().to_string();
+    let created = app
+        .control(
+            Method::PUT,
+            &format!("/v1/tenants/{tenant}"),
+            Some(json!({"facts": {"tenant_type": "client"}})),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+    tenant
+}
+
+impl Proof {
+    /// Sets up a subject who is (or, for an invite, becomes) a member of
+    /// `tenant` and can log in this way.
+    async fn subject(self, app: &TestApp, tenant: &str) {
+        let (kind, identifier) = match self {
+            Self::EmailLink => ("email_link", "link@example.com"),
+            Self::Phone => ("phone_otp", "+46701234567"),
+            Self::Invite => {
+                let invite = app
+                    .control(
+                        Method::POST,
+                        "/v1/invites",
+                        Some(json!({"email": "new@example.com", "tenant": tenant})),
+                    )
+                    .await;
+                assert_eq!(invite.status, StatusCode::CREATED, "{:?}", invite.body);
+                return;
+            }
+        };
+        let subject = uuid::Uuid::now_v7().to_string();
+        app.control(
+            Method::PUT,
+            &format!("/v1/subjects/{subject}"),
+            Some(json!({"kind": "human"})),
+        )
+        .await;
+        let created = app
+            .control(
+                Method::POST,
+                &format!("/v1/subjects/{subject}/credentials"),
+                Some(json!({"kind": kind, "identifier": identifier})),
+            )
+            .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+        let joined = app
+            .control(
+                Method::PUT,
+                &format!("/v1/memberships/{}", uuid::Uuid::now_v7()),
+                Some(json!({"subject": subject, "tenant": tenant})),
+            )
+            .await;
+        assert_eq!(joined.status, StatusCode::CREATED, "{:?}", joined.body);
+    }
+
+    /// Asks for a code or link, where there is one to ask for, and returns
+    /// the endpoint and body that complete the login with it.
+    async fn complete(self, app: &TestApp, mailer: &str) -> (&'static str, Value) {
+        match self {
+            Self::EmailLink => {
+                app.post(
+                    "/v1/login/email-link/start",
+                    json!({"email": "link@example.com"}),
+                )
+                .await;
+                let link = delivered(app, mailer, "link@example.com").await["token"].clone();
+                ("/v1/login/email-link/complete", json!({"token": link}))
+            }
+            Self::Phone => {
+                app.post("/v1/login/phone/start", json!({"phone": "+46701234567"}))
+                    .await;
+                let code = delivered(app, mailer, "+46701234567").await["code"].clone();
+                (
+                    "/v1/login/phone/complete",
+                    json!({"phone": "+46701234567", "code": code}),
+                )
+            }
+            Self::Invite => {
+                let link = delivered(app, mailer, "new@example.com").await["token"].clone();
+                (
+                    "/v1/invites/redeem",
+                    json!({"token": link, "password": "my new password"}),
+                )
+            }
+        }
+    }
+}
+
+fn with(mut body: Value, extra: &Value) -> Value {
+    for (key, value) in extra.as_object().unwrap() {
+        body[key] = value.clone();
+    }
+    body
+}
+
+// r[verify authn.login.session-request]
+// r[verify session.browser.cookie]
+// r[verify session.browser.csrf]
+// r[verify session.flags.origin]
+// r[verify session.flags.confine.tenant]
+#[tokio::test(flavor = "multi_thread")]
+async fn passwordless_and_invite_logins_start_browser_sessions_with_flags() {
+    for proof in [Proof::EmailLink, Proof::Phone, Proof::Invite] {
+        let app = TestApp::new().await;
+        let mailer = mailer(&app).await;
+        let tenant = confining_world(&app).await;
+        proof.subject(&app, &tenant).await;
+        let (uri, body) = proof.complete(&app, &mailer).await;
+        let browser = json!({"client": "browser", "flags": ["personal_only"]});
+
+        let refused = [
+            vec![
+                ("origin", "https://evil.example"),
+                ("x-konklav-client", "web"),
+            ],
+            vec![("origin", common::ORIGIN)],
+            vec![],
+        ];
+        for headers in refused {
+            let reply = app
+                .send(
+                    Method::POST,
+                    uri,
+                    &headers,
+                    Some(with(body.clone(), &browser)),
+                )
+                .await;
+            assert_eq!(reply.code(), "FORBIDDEN", "{proof:?} {headers:?}");
+        }
+        let headers = [("origin", common::ORIGIN), ("x-konklav-client", "web")];
+        let assertive = json!({"client": "browser", "flags": ["device_bound"]});
+        let reply = app
+            .send(
+                Method::POST,
+                uri,
+                &headers,
+                Some(with(body.clone(), &assertive)),
+            )
+            .await;
+        assert_eq!(
+            reply.code(),
+            "INVALID_REQUEST",
+            "{proof:?} {:?}",
+            reply.body
+        );
+
+        // Nothing above used up the code, link or invite.
+        let login = app
+            .send(
+                Method::POST,
+                uri,
+                &headers,
+                Some(with(body.clone(), &browser)),
+            )
+            .await;
+        assert_eq!(login.status, StatusCode::OK, "{proof:?} {:?}", login.body);
+        assert!(
+            login.body.get("refresh_token").is_none(),
+            "{proof:?}: browsers never see the refresh token"
+        );
+        let cookies = login.set_cookies();
+        assert_eq!(cookies.len(), 1, "{proof:?}");
+        assert!(
+            cookies[0].starts_with("__Host-konklav_refresh="),
+            "{proof:?} {}",
+            cookies[0]
+        );
+        let claims = app.verify(&token(&login)).await;
+        assert_eq!(claims.sfl, vec!["personal_only"], "{proof:?}");
+
+        let selected = post_bearer(
+            &app,
+            "/v1/login/tenant",
+            &token(&login),
+            json!({"tenant": tenant}),
+        )
+        .await;
+        assert_eq!(
+            selected.code(),
+            "FORBIDDEN",
+            "{proof:?} {:?}",
+            selected.body
+        );
+
+        let cookie = cookies[0].split(';').next().unwrap();
+        let refreshed = app
+            .send(
+                Method::POST,
+                "/v1/refresh",
+                &[
+                    ("origin", common::ORIGIN),
+                    ("x-konklav-client", "web"),
+                    ("cookie", cookie),
+                ],
+                None,
+            )
+            .await;
+        assert_eq!(
+            refreshed.status,
+            StatusCode::OK,
+            "{proof:?} {:?}",
+            refreshed.body
+        );
+        assert_eq!(
+            app.verify(&token(&refreshed)).await.sfl,
+            vec!["personal_only"]
+        );
+    }
+}
+
+// r[verify authn.login.session-request]
+#[tokio::test(flavor = "multi_thread")]
+async fn passwordless_and_invite_logins_stay_native_by_default() {
+    for proof in [Proof::EmailLink, Proof::Phone, Proof::Invite] {
+        let app = TestApp::new().await;
+        let mailer = mailer(&app).await;
+        let tenant = confining_world(&app).await;
+        proof.subject(&app, &tenant).await;
+        let (uri, body) = proof.complete(&app, &mailer).await;
+        let login = app
+            .post(uri, with(body, &json!({"flags": ["personal_only"]})))
+            .await;
+        assert_eq!(login.status, StatusCode::OK, "{proof:?} {:?}", login.body);
+        assert!(login.body["refresh_token"].is_string(), "{proof:?}");
+        assert!(login.set_cookies().is_empty(), "{proof:?}");
+        assert_eq!(app.verify(&token(&login)).await.sfl, vec!["personal_only"]);
+    }
+}
