@@ -37,11 +37,13 @@ base64.workspace = true
 ed25519-dalek.workspace = true
 getrandom.workspace = true
 konklav-authz.workspace = true
+konklav-axum.workspace = true
 konklav-core.workspace = true
 konklav-relying.workspace = true
-konklav-relying-client.workspace = true
+konklav-relying-client = { workspace = true, features = ["redis"] }
 konklav-token.workspace = true
 p256 = { workspace = true, features = ["pkcs8", "pem", "std"] }
+redis.workspace = true
 reqwest = { workspace = true, features = ["json", "form", "query"] }
 serde.workspace = true
 serde_json.workspace = true

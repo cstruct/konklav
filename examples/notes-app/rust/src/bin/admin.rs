@@ -15,10 +15,11 @@
 //! sessions and nothing else.
 
 use std::collections::{BTreeSet, HashMap};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post, put};
@@ -26,7 +27,11 @@ use axum::{Json, Router};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use konklav_authz::{Decision, DenyReason, Requirements};
+use konklav_axum::retry_after_seconds;
 use konklav_core::Cursor;
+use konklav_relying_client::rate_limit::{
+    RateLimit, RateLimitConfig, RateLimitWindow, RateLimited, StoreSecret,
+};
 use konklav_relying_client::{Presented, RelyingClient, RequestDescriptor};
 use konklav_sso_example::dpop::DpopKey;
 use konklav_sso_example::web::{self, ADMIN_HTML, ADMIN_JS};
@@ -91,6 +96,7 @@ struct Admin {
     endpoints: Endpoints,
     relying: RelyingClient,
     control: ControlPlane,
+    writes: RateLimit,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     pending: Mutex<HashMap<String, PendingLogin>>,
 }
@@ -104,17 +110,35 @@ impl Admin {
 }
 
 /// A refusal, answered as JSON.
-struct Refused(StatusCode, String);
+enum Refused {
+    Message(StatusCode, String),
+    /// A rate limit's refusal: 429 with a jittered `Retry-After`, as
+    /// `konklav-axum` answers its own.
+    Limited(RateLimited),
+}
 
 impl IntoResponse for Refused {
     fn into_response(self) -> Response {
-        (self.0, Json(json!({"message": self.1}))).into_response()
+        match self {
+            Self::Message(status, message) => {
+                (status, Json(json!({"message": message}))).into_response()
+            }
+            Self::Limited(limited) => {
+                let seconds = retry_after_seconds(limited.retry_after_ms);
+                (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    [(header::RETRY_AFTER, seconds.to_string())],
+                    Json(json!({"message": "too many changes at once"})),
+                )
+                    .into_response()
+            }
+        }
     }
 }
 
 impl From<reqwest::Error> for Refused {
     fn from(error: reqwest::Error) -> Self {
-        Self(
+        Self::Message(
             StatusCode::BAD_GATEWAY,
             format!("Konklav is unreachable: {error}"),
         )
@@ -124,7 +148,7 @@ impl From<reqwest::Error> for Refused {
 type Answer = Result<Response, Refused>;
 
 fn refused(status: StatusCode, message: impl Into<String>) -> Refused {
-    Refused(status, message.into())
+    Refused::Message(status, message.into())
 }
 
 fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -324,6 +348,8 @@ struct Asked {
     method: Method,
     uri: Uri,
     headers: HeaderMap,
+    /// The peer's address: no proxy stands in front of the admin page.
+    address: Option<IpAddr>,
 }
 
 impl<S: Send + Sync> axum::extract::FromRequestParts<S> for Asked {
@@ -337,6 +363,10 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for Asked {
             method: parts.method.clone(),
             uri: parts.uri.clone(),
             headers: parts.headers.clone(),
+            address: parts
+                .extensions
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|info| info.0.ip()),
         }))
     }
 }
@@ -351,6 +381,14 @@ async fn authorize(
         let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok());
         if !headers.contains_key(CSRF_HEADER) || origin != Some(admin.public_url.as_str()) {
             return Err(refused(StatusCode::FORBIDDEN, "cross-site request refused"));
+        }
+        // Ten changes at once per client address, in code: before the
+        // session is looked up, so signed-out requests count too.
+        let address = request
+            .address
+            .map_or_else(|| "unknown".to_owned(), |address| address.to_string());
+        if let Err(limited) = admin.writes.add(address).await {
+            return Err(Refused::Limited(limited));
         }
     }
     let sid = cookie(headers, SESSION_COOKIE).unwrap_or_default();
@@ -774,6 +812,28 @@ async fn act_on_user(
 
 // --- Serving -----------------------------------------------------------------
 
+/// Ten changes a minute per client address, shared through Valkey.
+async fn admin_writes(rate_limit_secret: &str) -> RateLimit {
+    let valkey = redis::Client::open(env("REDIS_URL"))
+        .expect("a redis:// URL")
+        .get_connection_manager()
+        .await
+        .expect("reaching Valkey");
+    RateLimit::with_redis(
+        RateLimitConfig::new(
+            "notes-app.admin-writes",
+            vec![RateLimitWindow {
+                size: 10,
+                period_ms: 60_000,
+            }],
+        ),
+        valkey,
+        StoreSecret::new(rate_limit_secret.as_bytes()).expect("a 32-byte secret"),
+        RateLimit::DEFAULT_TIMEOUT,
+    )
+    .expect("a valid rate limit")
+}
+
 #[tokio::main]
 async fn main() {
     let secrets = secrets();
@@ -815,6 +875,7 @@ async fn main() {
         endpoints,
         sessions: Mutex::new(HashMap::new()),
         pending: Mutex::new(HashMap::new()),
+        writes: admin_writes(&secrets.rate_limit_secret).await,
     });
 
     let router = Router::new()

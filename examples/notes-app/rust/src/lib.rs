@@ -45,6 +45,8 @@ pub struct Secrets {
     pub app_api_key: String,
     pub admin_api_key: String,
     pub admin_client_secret: String,
+    /// Rate-limit keys are hashed under it before they reach Valkey.
+    pub rate_limit_secret: String,
 }
 
 /// Reads `SECRETS_FILE`.
@@ -102,7 +104,8 @@ pub async fn relying_client(audience: &str, key: &str) -> RelyingClient {
     client
 }
 
-/// Serves `router` on every interface at `port` until the process stops.
+/// Serves `router` on every interface at `port` until the process stops,
+/// with each request's peer address, for rate limits keyed by it.
 ///
 /// # Panics
 ///
@@ -112,5 +115,10 @@ pub async fn serve(router: axum::Router, port: u16) {
         .await
         .unwrap_or_else(|e| panic!("binding port {port}: {e}"));
     println!("listening on port {port}");
-    axum::serve(listener, router).await.expect("serving");
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
+    .expect("serving");
 }

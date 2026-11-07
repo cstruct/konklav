@@ -13,7 +13,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use konklav_sso_example::env;
+use konklav_sso_example::{env, random_token};
 use reqwest::{Client, Method};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -221,6 +221,7 @@ async fn main() {
         "app_api_key": control.service_principal("app-api", &[]).await,
         "admin_api_key": control.service_principal("admin-api", &["admin-api"]).await,
         "admin_client_secret": admin_secret,
+        "rate_limit_secret": random_token(32),
     });
     write_secrets(&secrets_file, &secrets);
     println!("wrote {secrets_file}");

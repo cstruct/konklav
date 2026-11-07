@@ -1,25 +1,37 @@
 //! The app's backend, on <http://localhost:3001>: a relying system.
 //!
 //! Every request must carry `Authorization: DPoP <token>` and a fresh
-//! `DPoP` proof signed by the key the token is bound to. The relying client
-//! checks both, verifies the token offline against Konklav's keys, and
-//! decides from entitlements it keeps fresh from Konklav's change feed, so
-//! a role the admin page removes, or a session it ends, stops working here
-//! within about a second.
+//! `DPoP` proof signed by the key the token is bound to. `konklav-axum`
+//! evaluates each route's policy through the relying client, which checks
+//! both, verifies the token offline against Konklav's keys, and decides
+//! from entitlements it keeps fresh from Konklav's change feed. A role the
+//! admin page removes, or a session it ends, stops working here within
+//! about a second.
+//!
+//! Adding notes is rate limited per person, through Valkey, and in memory
+//! while Valkey is unavailable.
 
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Path, Request, State};
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use konklav_authz::{Decision, DenyReason, Requirements};
+use konklav_axum::{
+    Denied, Forbidden, IdentityToken, Konklav, Policy, RoutePolicy, RouteRateLimit, RouterPolicy,
+    Scheme, Unauthenticated,
+};
+use konklav_relying_client::rate_limit::{
+    RateLimit, RateLimitConfig, RateLimitWindow, StoreSecret,
+};
 use konklav_relying_client::{Presented, RelyingClient, RequestDescriptor};
-use konklav_sso_example::{claims_of, env, relying_client, secrets, serve};
+use konklav_sso_example::{env, relying_client, secrets, serve};
 use konklav_token::TokenKind;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -39,42 +51,8 @@ struct App {
     notes: Mutex<VecDeque<Note>>,
 }
 
-/// A refusal, answered as JSON with a `WWW-Authenticate` challenge on 401.
-struct Refused {
-    status: StatusCode,
-    message: String,
-    challenge: Option<&'static str>,
-}
-
-impl Refused {
-    fn unauthorized(message: &str, challenge: &'static str) -> Self {
-        Self {
-            status: StatusCode::UNAUTHORIZED,
-            message: message.into(),
-            challenge: Some(challenge),
-        }
-    }
-
-    fn new(status: StatusCode, message: impl Into<String>) -> Self {
-        Self {
-            status,
-            message: message.into(),
-            challenge: None,
-        }
-    }
-}
-
-impl IntoResponse for Refused {
-    fn into_response(self) -> Response {
-        let mut response = (self.status, Json(json!({"message": self.message}))).into_response();
-        if let Some(challenge) = self.challenge {
-            response.headers_mut().insert(
-                header::WWW_AUTHENTICATE,
-                HeaderValue::from_static(challenge),
-            );
-        }
-        response
-    }
+fn message(status: StatusCode, message: impl Into<String>) -> Response {
+    (status, Json(json!({"message": message.into()}))).into_response()
 }
 
 fn now_ms() -> u128 {
@@ -83,16 +61,42 @@ fn now_ms() -> u128 {
         .map_or(0, |d| d.as_millis())
 }
 
-/// Allows the request if its token holds `action`, or refuses it. The
-/// relying client gets the raw headers and the URL the browser addressed:
-/// the proof's `htu` names this public URL, not the container's.
-async fn decide(
-    app: &App,
-    method: &Method,
-    path: &str,
-    headers: &HeaderMap,
-    action: &str,
-) -> Result<(), Refused> {
+/// Answers refusals as the app's page reads errors, with a `message`, and
+/// keeps the default answer's status and headers: the `WWW-Authenticate`
+/// challenge, and `Retry-After` on a 429.
+fn denied(denied: Denied) -> Response {
+    let text = match &denied {
+        Denied::Unauthenticated { reason, .. } => match reason {
+            Unauthenticated::MissingToken => "sign in first",
+            Unauthenticated::InvalidDpopProof => "the DPoP proof is missing, invalid or replayed",
+            Unauthenticated::InvalidToken => "the token is invalid or its session has ended",
+        }
+        .to_owned(),
+        Denied::Forbidden(Forbidden::Decision(DenyReason::MissingActions { actions })) => {
+            let actions: Vec<_> = actions.iter().map(String::as_str).collect();
+            format!("your roles don't grant {}", actions.join(", "))
+        }
+        Denied::Unavailable => "authorization is unavailable; try again".to_owned(),
+        Denied::RateLimited { .. } => "too many requests".to_owned(),
+        other => other.code().to_owned(),
+    };
+    let mut response = denied.into_response();
+    *response.body_mut() = axum::body::Body::from(json!({"message": text}).to_string());
+    response
+}
+
+/// Whether the caller holds one of the app's actions. The action comes from
+/// the path, so no route policy can name it: the route is public and
+/// decides itself. One per request, since a proof is accepted only once.
+async fn can(
+    State(app): State<Arc<App>>,
+    Path(action): Path<String>,
+    method: Method,
+    headers: HeaderMap,
+) -> Response {
+    if !ACTIONS.contains(&action.as_str()) {
+        return message(StatusCode::NOT_FOUND, format!("no action {action}"));
+    }
     let header = |name| {
         headers
             .get(name)
@@ -100,93 +104,53 @@ async fn decide(
             .map(str::to_owned)
     };
     let Some(authorization) = header(header::AUTHORIZATION) else {
-        return Err(Refused::unauthorized(
-            "sign in first",
-            "DPoP algs=\"ES256\"",
-        ));
+        return denied(Denied::Unauthenticated {
+            reason: Unauthenticated::MissingToken,
+            scheme: None,
+        });
     };
     let presented = Presented {
         authorization,
         dpop: header(HeaderName::from_static("dpop")),
+        // The URL the browser addressed: the proof's `htu` names this
+        // public URL, not the container's.
         request: Some(RequestDescriptor {
             method: method.to_string(),
-            url: format!("{}{path}", app.public_url),
+            url: format!("{}/api/can/{action}", app.public_url),
         }),
     };
     let requirements = Requirements {
-        global: BTreeSet::from([action.to_owned()]),
+        global: BTreeSet::from([action.clone()]),
         token_kinds: Some(BTreeSet::from([TokenKind::Identity])),
         ..Requirements::default()
     };
     // An error means Konklav couldn't be reached and the caches can't be
     // trusted: deny.
-    let decision = app
-        .konklav
-        .decide_request(&presented, &requirements)
-        .await
-        .map_err(|_| {
-            Refused::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "authorization is unavailable; try again",
-            )
-        })?;
+    let Ok(decision) = app.konklav.decide_request(&presented, &requirements).await else {
+        return denied(Denied::Unavailable);
+    };
+    let unauthenticated = |reason| {
+        denied(Denied::Unauthenticated {
+            reason,
+            scheme: Some(Scheme::DPoP),
+        })
+    };
     match decision {
-        Decision::Allow { .. } => Ok(()),
         Decision::Deny {
             reason: DenyReason::InvalidDpopProof,
-        } => Err(Refused::unauthorized(
-            "the DPoP proof is missing, invalid or replayed",
-            "DPoP error=\"invalid_dpop_proof\"",
-        )),
+        } => unauthenticated(Unauthenticated::InvalidDpopProof),
         Decision::Deny {
             reason: DenyReason::InvalidToken,
-        } => Err(Refused::unauthorized(
-            "the token is invalid or its session has ended",
-            "DPoP error=\"invalid_token\"",
-        )),
-        _ => Err(Refused::new(
-            StatusCode::FORBIDDEN,
-            format!("your roles don't grant {action}"),
-        )),
+        } => unauthenticated(Unauthenticated::InvalidToken),
+        decision => Json(json!({
+            "action": action,
+            "allowed": matches!(decision, Decision::Allow { .. }),
+        }))
+        .into_response(),
     }
 }
 
-/// Whether the caller holds one of the app's actions. One per request,
-/// since a proof is accepted only once.
-async fn can(
-    State(app): State<Arc<App>>,
-    Path(action): Path<String>,
-    method: Method,
-    headers: HeaderMap,
-) -> Result<Response, Refused> {
-    if !ACTIONS.contains(&action.as_str()) {
-        return Err(Refused::new(
-            StatusCode::NOT_FOUND,
-            format!("no action {action}"),
-        ));
-    }
-    let allowed = match decide(
-        &app,
-        &method,
-        &format!("/api/can/{action}"),
-        &headers,
-        &action,
-    )
-    .await
-    {
-        Ok(()) => true,
-        Err(refused) if refused.status == StatusCode::FORBIDDEN => false,
-        Err(refused) => return Err(refused),
-    };
-    Ok(Json(json!({"action": action, "allowed": allowed})).into_response())
-}
-
-async fn list_notes(
-    State(app): State<Arc<App>>,
-    method: Method,
-    headers: HeaderMap,
-) -> Result<Response, Refused> {
-    decide(&app, &method, "/api/notes", &headers, "notes:read").await?;
+async fn list_notes(State(app): State<Arc<App>>) -> Response {
     let notes: Vec<Note> = app
         .notes
         .lock()
@@ -195,7 +159,7 @@ async fn list_notes(
         .rev()
         .cloned()
         .collect();
-    Ok(Json(json!({"notes": notes})).into_response())
+    Json(json!({"notes": notes})).into_response()
 }
 
 #[derive(Deserialize)]
@@ -203,24 +167,15 @@ struct NewNote {
     text: String,
 }
 
+// `token` is the token the relying core verified for this request.
 async fn add_note(
     State(app): State<Arc<App>>,
-    method: Method,
-    headers: HeaderMap,
+    token: IdentityToken,
     Json(note): Json<NewNote>,
-) -> Result<Response, Refused> {
-    decide(&app, &method, "/api/notes", &headers, "notes:write").await?;
-    // The relying client verified the token above; read who it names.
-    let subject = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split_once(' '))
-        .and_then(|(_, token)| claims_of(token))
-        .and_then(|claims| claims["sub"].as_str().map(str::to_owned))
-        .unwrap_or_default();
+) -> Response {
     let text: String = note.text.trim().chars().take(200).collect();
     if text.is_empty() {
-        return Err(Refused::new(StatusCode::BAD_REQUEST, "a note needs text"));
+        return message(StatusCode::BAD_REQUEST, "a note needs text");
     }
     let mut notes = app.notes.lock().expect("notes");
     if notes.len() == 50 {
@@ -228,10 +183,10 @@ async fn add_note(
     }
     notes.push_back(Note {
         text,
-        author: subject.chars().take(8).collect(),
+        author: token.sub.to_string().chars().take(8).collect(),
         at: now_ms(),
     });
-    Ok((StatusCode::CREATED, Json(json!({"ok": true}))).into_response())
+    (StatusCode::CREATED, Json(json!({"ok": true}))).into_response()
 }
 
 /// CORS for the frontend's origin only, with the `Authorization` and `DPoP`
@@ -254,32 +209,101 @@ async fn cors(State(origin): State<HeaderValue>, request: Request, next: Next) -
             header::ACCESS_CONTROL_ALLOW_HEADERS,
             HeaderValue::from_static("authorization, dpop, content-type"),
         );
+        // `Retry-After` isn't a CORS-safelisted header, so the page can read
+        // it on a 429 only when it is exposed.
         headers.insert(
             header::ACCESS_CONTROL_EXPOSE_HEADERS,
-            HeaderValue::from_static("www-authenticate"),
+            HeaderValue::from_static("www-authenticate, retry-after"),
         );
         headers.insert(header::VARY, HeaderValue::from_static("origin"));
     }
     response
 }
 
+/// Five notes at once, then one every 12 seconds, per person, shared
+/// through Valkey and counted in memory while Valkey is unavailable.
+async fn note_writes(rate_limit_secret: &str) -> RateLimit {
+    // Valkey, through the redis client library: it speaks the same protocol.
+    let valkey = redis::Client::open(env("REDIS_URL"))
+        .expect("a redis:// URL")
+        .get_connection_manager()
+        .await
+        .expect("reaching Valkey");
+    RateLimit::with_redis(
+        RateLimitConfig::new(
+            "notes-app.note-writes",
+            vec![RateLimitWindow {
+                size: 5,
+                period_ms: 60_000,
+            }],
+        ),
+        valkey,
+        // Keys are hashed under this before they reach Valkey. The setup
+        // service generated it.
+        StoreSecret::new(rate_limit_secret.as_bytes()).expect("a 32-byte secret"),
+        RateLimit::DEFAULT_TIMEOUT,
+    )
+    .expect("a valid rate limit")
+}
+
 #[tokio::main]
 async fn main() {
+    let secrets = secrets();
+    let public_url = env("PUBLIC_URL");
+    // The `app` OIDC client's tokens carry this audience.
+    let client = relying_client("app-api", &secrets.app_api_key).await;
+    let konklav = Konklav::builder(client.clone())
+        .public_url({
+            let public_url = public_url.clone();
+            move |parts: &Parts| format!("{public_url}{}", parts.uri.path())
+        })
+        .respond_with(denied)
+        .build()
+        .expect("a valid configuration");
     let app = Arc::new(App {
-        // The `app` OIDC client's tokens carry this audience.
-        konklav: relying_client("app-api", &secrets().app_api_key).await,
-        public_url: env("PUBLIC_URL"),
+        konklav: client,
+        public_url,
         notes: Mutex::new(VecDeque::from([Note {
             text: "Welcome! Editors can add notes.".into(),
             author: "the example".into(),
             at: now_ms(),
         }])),
     });
+
+    // The app's sign-in gives identity tokens: it selects no tenant.
+    let notes_api = RouterPolicy::new(Policy::new().token_kinds([TokenKind::Identity]));
+    let read = notes_api
+        .route(&Policy::new().global_actions(["notes:read"]))
+        .expect("a valid policy");
+    // Counts only the requests the policy allows, keyed by the verified
+    // token's subject. A refusal is 429 with `Retry-After`.
+    let per_person =
+        RouteRateLimit::new(note_writes(&secrets.rate_limit_secret).await, "{token:sub}")
+            .expect("a valid key template");
+    let write = notes_api
+        .route(&Policy::new().global_actions(["notes:write"]))
+        .and_then(|policy| policy.rate_limit(per_person))
+        .expect("a valid policy");
+
     let origin = HeaderValue::from_str(&env("FRONTEND_ORIGIN")).expect("an origin");
     let router = Router::new()
-        .route("/api/can/{action}", get(can))
-        .route("/api/notes", get(list_notes).post(add_note))
+        // For compose's healthcheck: answers once the app has started.
+        .route(
+            "/healthz",
+            get(|| async { "ok" }).route_layer(RoutePolicy::public()),
+        )
+        .route(
+            "/api/can/{action}",
+            get(can).route_layer(RoutePolicy::public()),
+        )
+        .route(
+            "/api/notes",
+            get(list_notes)
+                .route_layer(read)
+                .merge(axum::routing::post(add_note).route_layer(write)),
+        )
         .with_state(app)
+        .layer(konklav.layer())
         .layer(middleware::from_fn_with_state(origin, cors));
     serve(router, 3001).await;
 }

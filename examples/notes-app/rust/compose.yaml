@@ -31,6 +31,17 @@ services:
       timeout: 3s
       retries: 30
 
+  # The rate-limit store the app's backend and the admin page share. In
+  # memory only: rate-limit state needn't outlive a restart.
+  valkey:
+    image: valkey/valkey:8.1-alpine
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
   # Creates Konklav's token-signing key and ID-token key once.
   keys:
     <<: *rust
@@ -112,11 +123,15 @@ services:
       KONKLAV_SUBJECT_URL: http://konklav:8080
       KONKLAV_RELYING_URL: http://konklav:8081
       SECRETS_FILE: /shared/secrets.json
+      REDIS_URL: redis://valkey:6379
     volumes:
       - shared:/shared:ro
     ports: ["3001:3001"]
     depends_on:
       setup: {condition: service_completed_successfully}
+      # Healthy: the Rust services connect to Valkey as they start. Once
+      # running, they count in memory while it is unavailable.
+      valkey: {condition: service_healthy}
 
   # The admin page: frontend and backend in one process. A confidential
   # OIDC client whose tokens never leave the server.
@@ -130,11 +145,15 @@ services:
       KONKLAV_RELYING_URL: http://konklav:8081
       KONKLAV_CONTROL_URL: http://konklav:8082
       SECRETS_FILE: /shared/secrets.json
+      REDIS_URL: redis://valkey:6379
     volumes:
       - shared:/shared:ro
     ports: ["4000:4000"]
     depends_on:
       setup: {condition: service_completed_successfully}
+      # Healthy: the Rust services connect to Valkey as they start. Once
+      # running, they count in memory while it is unavailable.
+      valkey: {condition: service_healthy}
 
 volumes:
   postgres-data:

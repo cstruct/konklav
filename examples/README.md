@@ -4,7 +4,7 @@ Runnable examples of Konklav deployments: one complete app, and scenarios that e
 
 ## The notes app
 
-[`notes-app/`](notes-app/README.md) is the showcase: one complete app in Docker Compose, in two versions, Python and Rust. Konklav signs people in once to a notes app, a browser page with its API, and to an admin page that manages people, roles and sessions. Every token is DPoP-bound, and none is stored in `localStorage` or `sessionStorage`. In Python, the API runs as two replicas behind a load balancer and rate limits writes through Valkey.
+[`notes-app/`](notes-app/README.md) is the showcase: one complete app in Docker Compose, in two versions, Python and Rust. Konklav signs people in once to a notes app, a browser page with its API, and to an admin page that manages people, roles and sessions. Every token is DPoP-bound, and none is stored in `localStorage` or `sessionStorage`. Both rate limit writes through Valkey, with `konklav-fastapi` in Python and `konklav-axum` in Rust; in Python the API also runs as two replicas behind a load balancer.
 
 ```sh
 docker compose -f examples/notes-app/python/compose.yaml up --build
