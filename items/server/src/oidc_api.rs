@@ -1455,7 +1455,7 @@ async fn revoke(
                     &state,
                     &mut conn,
                     token,
-                    &client.audience,
+                    std::slice::from_ref(&client.audience),
                 )
                 .await;
                 verified.ok().map(|(_, session)| session)
@@ -1926,8 +1926,13 @@ async fn userinfo(
     let client = oidc_clients::get(&mut conn, &client_id)
         .await
         .map_err(ApiError::from)?;
-    let (verified, session) =
-        subject_api::verify_access_token_for(state, &mut conn, token, &client.audience).await?;
+    let (verified, session) = subject_api::verify_access_token_for(
+        state,
+        &mut conn,
+        token,
+        std::slice::from_ref(&client.audience),
+    )
+    .await?;
     // r[impl token.dpop.scheme]
     match (&verified.cnf, scheme) {
         (Some(cnf), Scheme::Dpop) => {

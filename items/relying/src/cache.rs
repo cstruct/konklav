@@ -431,7 +431,7 @@ impl Relying {
         let now_seconds = i64::try_from(now / 1000).unwrap_or(i64::MAX);
         let options = VerifyOptions {
             issuer: &self.config.issuer,
-            audience: &self.config.audience,
+            audiences: &self.config.audiences,
             now: now_seconds,
             leeway: self.config.leeway_seconds,
         };

@@ -34,7 +34,7 @@ The core never makes network calls, reads clocks, spawns tasks or sleeps. Hosts 
 - `Verification::InvalidProof` and `DenyReason::InvalidDpopProof` mean the relying system should answer with a `WWW-Authenticate: DPoP` challenge.
 - `Relying::poll_work` returns the fetches due and when to poll next.
 - `on_jwks`, `on_session`, `on_session_unknown`, `on_entitlements`, `on_registered_scope`, `on_registered_scope_unknown`, `on_fetch_failed`, `on_feed_connected`, `on_feed_activity`, `on_feed_lost`, `on_feed_event`, `await_cursor`.
-- `Config` holds the issuer, audience and tuning.
+- `Config` holds the issuer, the audiences a token may carry (`audiences`, also read from `audience` as one or a list) and tuning. A verified token's `AccessClaims::aud` says which audience it carried.
 - `rate_limit::RateLimiter`: `begin` counts an event locally and returns `Attempt::Decided` or `Attempt::Store { call, local }`; `on_store_answer` and `on_store_failed` take the store's answer or failure. `STORE_SCRIPT` is the script both hosts run.
 
 ## Relationships

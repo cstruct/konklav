@@ -732,16 +732,22 @@ pub(crate) async fn verify_access_token(
     conn: &mut Connection,
     token: &str,
 ) -> Result<(AccessClaims, Session), ApiError> {
-    verify_access_token_for(state, conn, token, &state.auth.audience).await
+    verify_access_token_for(
+        state,
+        conn,
+        token,
+        std::slice::from_ref(&state.auth.audience),
+    )
+    .await
 }
 
-/// [`verify_access_token`] for tokens with another audience, such as those
-/// issued to an OIDC client.
+/// [`verify_access_token`] for tokens with other audiences, such as those
+/// issued to an OIDC client: the token's `aud` must be one of `audiences`.
 pub(crate) async fn verify_access_token_for(
     state: &AppState,
     conn: &mut Connection,
     token: &str,
-    audience: &str,
+    audiences: &[String],
 ) -> Result<(AccessClaims, Session), ApiError> {
     let unauthenticated = || {
         ApiError::new(
@@ -753,7 +759,7 @@ pub(crate) async fn verify_access_token_for(
     let key = keys::verifying_key(conn, &kid, state.auth.access_ttl).await?;
     let options = VerifyOptions {
         issuer: &state.auth.issuer,
-        audience,
+        audiences,
         now: Utc::now().timestamp(),
         leeway: 30,
     };

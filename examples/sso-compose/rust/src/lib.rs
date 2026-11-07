@@ -86,7 +86,7 @@ pub async fn relying_client(audience: &str, key: &str) -> RelyingClient {
         secret: secret.into(),
         core: Config {
             issuer: env("ISSUER"),
-            audience: audience.into(),
+            audiences: vec![audience.into()],
             ..Config::default()
         },
     });

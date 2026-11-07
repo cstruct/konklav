@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from typing import Any
 
 import httpx
 import pytest
@@ -8,7 +9,7 @@ from konklav_relying import AccessToken, Decision, DenyReason, InvalidDpopProof,
 from support import AUDIENCE, ISSUER, DpopKey, FakeKonklav, Keys
 
 
-def client_for(fake: FakeKonklav) -> RelyingClient:
+def client_for(fake: FakeKonklav, **audiences: Any) -> RelyingClient:
     http = httpx.AsyncClient(transport=httpx.MockTransport(fake.handle))
     return RelyingClient(
         relying_url="http://konklav",
@@ -16,7 +17,7 @@ def client_for(fake: FakeKonklav) -> RelyingClient:
         key_id="key",
         secret="secret",
         issuer=ISSUER,
-        audience=AUDIENCE,
+        **(audiences or {"audience": AUDIENCE}),
         http=http,
         heartbeat_ms=500,
         debounce_ms=50,
@@ -86,6 +87,57 @@ def test_tokens_for_unknown_sessions_are_denied() -> None:
             await client.stop()
 
     asyncio.run(scenario())
+
+
+# r[verify item.py.audiences]
+# r[verify relying.verify.audiences]
+def test_accepts_tokens_for_any_of_its_audiences() -> None:
+    async def scenario() -> None:
+        keys = Keys()
+        subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
+        fake = FakeKonklav(keys, subject, tenant, session)
+        client = client_for(fake, audiences={AUDIENCE, "app"})
+        assert client.audiences == {AUDIENCE, "app"}
+        app = keys.token(subject=subject, session=session, tenant=tenant, audience="app")
+        other = keys.token(subject=subject, session=session, tenant=tenant, audience="other")
+        requirements = {"tenant": ["project:read"]}
+
+        # Before the feed is up, the check API is told the audiences.
+        assert await client.decide(app, requirements) == {"decision": "allow"}
+        assert fake.checks[-1]["audiences"] == sorted([AUDIENCE, "app"])
+        assert (await client.decide(other, requirements))["reason"] == "invalid_token"
+        unchecked = await client.verify_typed(app)
+        assert unchecked is not None and unchecked.aud == "app"
+
+        await client.start()
+        try:
+            await until_trusted(client)
+            fake.calls.clear()
+            for audience in (AUDIENCE, "app"):
+                token = keys.token(subject=subject, session=session, tenant=tenant, audience=audience)
+                verified = await client.verify_typed(token)
+                assert verified is not None and verified.aud == audience
+                assert await client.decide(token, requirements) == {"decision": "allow"}
+            assert await client.verify(other) is None
+            assert (await client.decide(other, requirements))["reason"] == "invalid_token"
+            assert "/v1/check" not in fake.calls, "decided locally"
+        finally:
+            await client.stop()
+
+    asyncio.run(scenario())
+
+
+def test_audiences_are_one_or_a_collection() -> None:
+    fake = FakeKonklav(Keys(), "s", "t", "x")
+    assert client_for(fake, audience="api").audiences == {"api"}
+    with pytest.raises(TypeError, match="either audience or audiences"):
+        client_for(fake, audience="api", audiences={"app"})
+    with pytest.raises(TypeError, match="either audience or audiences"):
+        client_for(fake, audience=None)
+    with pytest.raises(TypeError, match="not a string"):
+        client_for(fake, audiences="api")
+    with pytest.raises(ValueError, match="empty"):
+        client_for(fake, audiences=set())
 
 
 def test_verifies_tokens_and_reads_entitlements() -> None:

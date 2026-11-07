@@ -35,7 +35,7 @@ client = RelyingClient(
     key_id=key_id,
     secret=secret,
     issuer="https://auth.example",
-    audience="api",
+    audiences={"api", "app"},
 )
 await client.start()
 

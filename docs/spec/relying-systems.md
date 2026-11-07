@@ -9,6 +9,14 @@ r[relying.verify.offline]
 The relying SDK MUST verify access tokens offline against cached JWKS:
 signature, `iss`, `aud`, `exp`, token kind.
 
+r[relying.verify.audiences]
+A relying system MAY accept access tokens for several audiences, such as
+Konklav's own and those of the OIDC clients that sign people in to it. The
+relying SDK MUST then accept a token whose `aud` is any one of them, and no
+other, both when it verifies offline and when it decides through the check
+API, and MUST return the token's `aud` with its verified claims so the
+relying system can tell which audience it carried.
+
 r[relying.verify.foreign-keys]
 The relying SDK MUST accept a JWKS that also holds keys it doesn't verify
 access tokens with, such as ID-token keys of other types, and MUST ignore
