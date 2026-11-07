@@ -37,11 +37,13 @@ client = RelyingClient(
     key_id=key_id,
     secret=secret,
     issuer="https://auth.example",
-    audience="api",
+    audiences={"api", "app"},
 )
 await client.start()
 decision = await client.decide(token, {"scopes": [{"kind": "project", "id": project_id, "actions": ["document:read"]}]})
 ```
+
+`audiences` are the token audiences this relying system accepts, such as Konklav's own (`api`) and an OIDC client's (`app`); `audience="api"` is short for one. A token verifies for any of them, also through the check API, and `AccessToken.aud` says which it carried.
 
 For sender-constrained (DPoP) tokens, `decide_request` and `verify_request` take the request's raw `Authorization` and `DPoP` headers, its method, and the public URL the client addressed (behind a proxy, not the upstream one). A deny with reason `invalid_dpop_proof`, or `InvalidDpopProof` from `verify_request`, should be answered with 401 and `WWW-Authenticate: DPoP error="invalid_dpop_proof"`.
 

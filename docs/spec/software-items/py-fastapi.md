@@ -56,6 +56,15 @@ validation (`item.py-fastapi.validation`) MUST refuse a `RoutePolicy` on any
 of those layers that sets `admit_flags`, so a router can never admit a
 restrictive flag for every route under it.
 
+r[item.py-fastapi.audiences]
+A `RoutePolicy` MAY set `audiences`, the token audiences its routes accept
+among those the `RelyingClient` accepts (`relying.verify.audiences`).
+Audiences MUST intersect when policies merge, and an override that sets
+them MUST replace them. A route that isn't public and whose merged policy
+sets audiences MUST deny a token whose `aud` isn't one of them, after
+verifying it and before anything else reads it, with the deny reason
+`token_audience`.
+
 r[item.py-fastapi.public]
 A route whose merged policy is public (`item.py.policy.public`) MUST be
 served without reading or verifying a token, and without a decision.
@@ -78,7 +87,8 @@ any DPoP proof before anything else reads it, by accepting the presentation
 with `accept_request` (`item.py.accepted-request`), with the presented
 `Authorization` and `DPoP` values, the request's method (`GET` for a
 websocket) and its URL as the client addressed it. Only then, in this order,
-MUST it run the hooks (`item.py-fastapi.hooks`), check the route tenant
+MUST it check the token's audience (`item.py-fastapi.audiences`), run the
+hooks (`item.py-fastapi.hooks`), check the route tenant
 (`item.py-fastapi.token-tenant`), resolve the scope ids
 (`item.py-fastapi.scope-resolvers`) and decide. So no application code sees
 claims that weren't verified, and resolvers look nothing up in a tenant the
@@ -128,7 +138,7 @@ Evaluation MUST end in one of these:
   with, as `error="invalid_token"`, and a missing token with both `Bearer`
   and `DPoP`;
 - `Forbidden` (403) for any other deny, carrying the `DenyReason`, and for
-  `token_tenant`;
+  `token_tenant` and `token_audience`;
 - `StepUpRequired` (401) for a step-up demand, carrying its requirement,
   with a `WWW-Authenticate` challenge in the token's scheme as
   `error="insufficient_user_authentication"` (RFC 9470), and `max_age`
@@ -174,8 +184,8 @@ error listing each route that fails a check. A route fails when:
   (`item.py-fastapi.admit-flags-operation`);
 - its policy needs a scope kind that has no resolver and no path parameter
   of its name;
-- merging leaves an allowed set empty: token kinds or step-up's allowed
-  methods;
+- merging leaves an allowed set empty: token kinds, audiences or step-up's
+  allowed methods;
 - it injects a token dependency its policy doesn't match
   (`item.py-fastapi.injected-kinds`).
 
@@ -186,4 +196,5 @@ r[item.py-fastapi.openapi]
 application's OpenAPI document as the operation extension
 `x-konklav-policy`: `{"public": true}` for a public route, and otherwise
 `{"public": false}` with the requirements the policy resolves to, with each
-scope given by its kind and actions alone.
+scope given by its kind and actions alone, and its `audiences` when it sets
+them.

@@ -315,6 +315,12 @@ operation's requirements (actions per level and scope, admitted and required
 session flags, step-up requirements, required tenant facts), it returns a
 decision computed from current state, including session validity.
 
+r[authz.api.check-audiences]
+The check API MUST take the audiences the calling relying system accepts
+(`relying.verify.audiences`) and decide a token whose `aud` isn't one of
+them as an invalid token. Without them, it MUST accept only Konklav's own
+access-token audience.
+
 r[authz.api.check-equivalence]
 For the same state, the check API and local evaluation by the relying core
 MUST reach the same decision.

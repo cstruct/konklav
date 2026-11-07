@@ -338,6 +338,54 @@ def test_a_route_tenant_other_than_the_tokens_is_denied_before_deciding() -> Non
     assert len(fake.decided) == 2
 
 
+# r[verify item.py-fastapi.audiences]
+def test_routes_can_require_some_of_the_clients_audiences() -> None:
+    # Konklav's own audience for services, the SSO clients' for people.
+    app = FastAPI(dependencies=[RoutePolicy(tenant_actions={"a"}, audiences={"api", "app", "admin"})])
+    people = APIRouter(dependencies=[RoutePolicy(audiences={"app", "admin"})])
+
+    @people.get("/me")
+    async def me(token: CurrentToken) -> str:
+        return token.aud
+
+    @people.get("/admin", dependencies=[RoutePolicy(audiences={"admin", "api"})])
+    async def admin(token: CurrentToken) -> str:
+        return token.aud
+
+    @people.get("/anyone", dependencies=[RoutePolicy.override(audiences={"api", "app"})])
+    async def anyone(token: CurrentToken) -> str:
+        return token.aud
+
+    app.include_router(people)
+
+    @app.get("/service")
+    async def service(token: CurrentToken) -> str:
+        return token.aud
+
+    hooked: list[str] = []
+
+    async def hook(_: HTTPConnection, token: AccessToken) -> None:
+        hooked.append(token.aud)
+
+    fake = FakeClient()
+    with serve(app, KonklavRoutes(on_verified=[hook]), fake) as http:
+
+        def get(path: str, audience: str) -> tuple[int, Any]:
+            response = http.get(path, headers=bearer(token(aud=audience)))
+            return response.status_code, response.json()
+
+        refused = (403, {"error": {"code": "forbidden", "reason": "token_audience"}})
+        assert get("/service", "api") == (200, "api")
+        assert get("/me", "app") == (200, "app")
+        assert get("/me", "api") == refused
+        assert get("/admin", "admin") == (200, "admin")
+        assert get("/admin", "app") == refused
+        assert get("/anyone", "api") == (200, "api"), "an override replaces them"
+        assert get("/anyone", "admin") == refused
+    assert len(fake.decided) == 4, "refused before deciding"
+    assert hooked == ["api", "app", "admin", "api"], "and before the hooks"
+
+
 # r[verify item.py-fastapi.scope-resolvers]
 def test_scope_resolvers_name_ids_kinds_and_owner_tenants() -> None:
     app = FastAPI()
@@ -455,6 +503,14 @@ def test_startup_validation_lists_every_bad_route() -> None:
     async def facts() -> None:
         return None
 
+    @app.get("/audiences", dependencies=[RoutePolicy(audiences={"api"}), RoutePolicy(audiences={"app"})])
+    async def audiences() -> None:
+        return None
+
+    @app.get("/public-audiences", dependencies=[RoutePolicy(audiences={"api"}), RoutePolicy.public()])
+    async def public_audiences() -> None:
+        return None
+
     @app.get("/identity", dependencies=[RoutePolicy(tenant_actions={"a"})])
     async def identity(token: IdentityToken) -> None:
         return None
@@ -481,6 +537,8 @@ def test_startup_validation_lists_every_bad_route() -> None:
         "GET /kinds: merged policies admit no token kind",
         "GET /methods: merged policies allow no step-up method",
         "GET /facts: the merged policies allow no value of the tenant fact `t`",
+        "GET /audiences: merged policies admit no audience",
+        "GET /public-audiences: a public policy can't be merged with constraints; override it instead",
         "GET /identity: injects IdentityToken, which takes identity tokens, but its policy admits tenant",
         "GET /anyone: injects CurrentToken, but its policy is public; use OptionalToken",
         "WEBSOCKET /socket: declares no RoutePolicy; declare one, or RoutePolicy.public()",
@@ -502,7 +560,9 @@ def test_openapi_publishes_each_operations_policy() -> None:
 
     @router.post(
         "/projects/{project}",
-        dependencies=[RoutePolicy(scope_actions={"project": {"project:write"}}, admit_flags={"personal_only"})],
+        dependencies=[
+            RoutePolicy(scope_actions={"project": {"project:write"}}, admit_flags={"personal_only"}, audiences={"app"})
+        ],
     )
     async def write(project: str) -> None:
         return None
@@ -521,5 +581,6 @@ def test_openapi_publishes_each_operations_policy() -> None:
         "tenant": ["project:read"],
         "scopes": [{"kind": "project", "actions": ["project:write"]}],
         "admit_flags": ["personal_only"],
+        "audiences": ["app"],
     }
     assert paths["/health"]["get"]["x-konklav-policy"] == {"public": True}

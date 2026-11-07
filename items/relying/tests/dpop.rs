@@ -32,7 +32,7 @@ struct Fixture {
 fn config() -> Config {
     Config {
         issuer: "https://auth.example".into(),
-        audience: "api".into(),
+        audiences: vec!["api".into()],
         ..Config::default()
     }
 }

@@ -83,7 +83,7 @@ routes = KonklavRoutes(scope_resolvers={"document": document_scope})
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    routes.client = RelyingClient(relying_url=..., subject_url=..., key_id=..., secret=..., issuer=..., audience=...)
+    routes.client = RelyingClient(relying_url=..., subject_url=..., key_id=..., secret=..., issuer=..., audiences=...)
     await routes.client.start()
     yield
     await routes.client.stop()
@@ -122,6 +122,19 @@ the token's tenant. If routes also address a tenant themselves, such as
 `/tenants/{tenant}/...`, set `route_tenant` to return it: a request whose
 route tenant isn't the token's `tid` is denied with `token_tenant` before
 any decision.
+
+### Audiences
+
+A `RelyingClient` may accept tokens for several audiences, such as
+Konklav's own for services and an OIDC client's for people. Set
+`audiences` on a `RoutePolicy` to admit only some of them on its routes.
+They intersect when merged, an override replaces them, and a token for
+another audience is denied with `token_audience` right after it verifies,
+before the hooks and the decision:
+
+```python
+people = APIRouter(dependencies=[RoutePolicy(audiences={"app"})])
+```
 
 ### Verification and DPoP
 
