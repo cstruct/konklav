@@ -139,6 +139,12 @@ impl RateLimit {
         }
     }
 
+    /// The limit's name, as configured.
+    #[must_use]
+    pub fn name(&self) -> String {
+        self.limiter().config().name.clone()
+    }
+
     /// Forgets every key's state in memory. State in the store expires on
     /// its own.
     pub fn clear(&self) {
