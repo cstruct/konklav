@@ -1,6 +1,8 @@
 """
 Rate limits in memory, and against a real Redis when `KONKLAV_TEST_REDIS_URL`
-or `REDIS_URL` is set (mise sets it; `mise run db:up` starts Redis).
+is set, as `mise run py:test` does after starting Redis. Not `REDIS_URL`:
+mise sets that wherever its environment is loaded, as in CI's wheel jobs,
+whether or not Redis runs.
 """
 
 import asyncio
@@ -14,8 +16,8 @@ import redis.asyncio
 from konklav_relying import RateLimit, RateLimited, RateLimitWindow
 
 SECRET = b"0123456789abcdef0123456789abcdef"
-REDIS_URL = os.environ.get("KONKLAV_TEST_REDIS_URL") or os.environ.get("REDIS_URL")
-needs_redis = pytest.mark.skipif(not REDIS_URL, reason="no test Redis (set KONKLAV_TEST_REDIS_URL or REDIS_URL)")
+REDIS_URL = os.environ.get("KONKLAV_TEST_REDIS_URL")
+needs_redis = pytest.mark.skipif(not REDIS_URL, reason="no test Redis (set KONKLAV_TEST_REDIS_URL)")
 
 
 def window(size: int, ms: int) -> RateLimitWindow:

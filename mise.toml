@@ -74,6 +74,8 @@ run = "cargo deny --locked check"
 description = "Build the Python relying binding and run its tests, the rate-limit store's against the local Redis"
 depends = ["db:up"]
 dir = "items/py"
+# The rate-limit store tests run only with this set, not with REDIS_URL alone.
+env = { KONKLAV_TEST_REDIS_URL = "{{env.REDIS_URL}}" }
 # --refresh-package rebuilds the Rust extension: uv's build cache only
 # notices changes to pyproject.toml, not to the Rust sources.
 run = ["uv sync -q --refresh-package konklav-relying --reinstall-package konklav-relying", "uv run -q pytest -q tests"]
