@@ -60,11 +60,14 @@ jobs:
         run: mise run db:down
 
       # Builds the crates published to crates.io from their packaged sources,
-      # as the release would, each against the others' packages.
+      # as the release would, each against the others' packages. In a target
+      # directory of its own, outside the cache: Cargo takes a registry crate
+      # built before as current when its name and version match, so a cached
+      # build of an older `konklav-token 1.5.0` would stand in for this one.
       - name: Package the published crates
         run: |
           mapfile -t names < <(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.publish == null) | .name')
-          cargo package --locked "${names[@]/#/-p}"
+          cargo package --locked --target-dir "$RUNNER_TEMP/package" "${names[@]/#/-p}"
 
       # Not on tags: a cache saved by a tag run is scoped to the tag, so no
       # pull request could restore it, and it would evict the ones they use.
