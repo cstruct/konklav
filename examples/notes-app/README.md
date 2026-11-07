@@ -1,21 +1,23 @@
-# Single sign-on with DPoP, in Docker Compose
+# The notes app
 
-Konklav signs people in to two applications with one sign-in:
+Konklav's showcase example: one complete app, in Docker Compose. Konklav signs people in to two applications with one sign-in:
 
-- a browser app with its own API
-- an admin page
+- a notes app: a browser page with its own API
+- an admin page, which manages people, roles and sessions
 
-Every token is sender-constrained with DPoP (RFC 9449), and no token is ever written to `localStorage` or `sessionStorage`.
+Every token is sender-constrained with DPoP (RFC 9449), and no token is ever written to `localStorage` or `sessionStorage`. In the Python version the API runs as two replicas behind a load balancer, and both it and the admin page rate limit writes through Valkey, which speaks Redis' protocol.
+
+What it leaves out, the [scenario examples](../README.md#scenarios) show: federation, bootstrap sets, email delivery and DPoP on its own.
 
 The example comes in two versions with the same services, ports, people and behaviour. Pick one:
 
 ```sh
-docker compose -f examples/sso-compose/python/compose.yaml up --build
-docker compose -f examples/sso-compose/rust/compose.yaml up --build
+docker compose -f examples/notes-app/python/compose.yaml up --build
+docker compose -f examples/notes-app/rust/compose.yaml up --build
 ```
 
-- **Python** uses the `konklav-relying`, `konklav-fastapi` and `konklav-control-plane` packages. The app backend is a FastAPI app with route policies; the other services use Starlette.
-- **Rust** uses the `konklav-relying-client` crate, with axum and reqwest. Konklav has no axum integration, so its app backend decides each request itself.
+- **Python** uses the `konklav-relying`, `konklav-fastapi` and `konklav-control-plane` packages. The app backend is a FastAPI app with route policies and rate limits; the other services use Starlette.
+- **Rust** uses the `konklav-relying-client` crate, with axum and reqwest. Its app backend decides each request itself, runs once and keeps notes in memory. It gets the Python version's replicas and rate limits once `konklav-axum`, an axum counterpart of `konklav-fastapi`, exists.
 
 Both run the same browser code, from [`web/`](web), since DPoP keys have to be made in the page with WebCrypto. They use the same ports, so run one at a time. Each keeps its own volumes.
 
@@ -28,16 +30,17 @@ Sign in as `ada@example.com` / `correct horse battery`, an admin and editor, or 
 
 ## The services
 
-![The browser's three pages, the four services on the Compose network and Konklav's three surfaces](diagrams/topology.svg)
+![The browser's three pages, the services on the Compose network and Konklav's three surfaces](diagrams/topology.svg)
 
 | Service | Port | What it is |
 |---|---|---|
 | `konklav` | internal | Konklav, as an OpenID provider. Its surfaces stay on the Compose network. |
 | `sso` | 8000 | The login application. It serves the login page and proxies Konklav's subject-facing surface, so Konklav's issuer is `http://localhost:8000`. |
 | `app-frontend` | 3000 | The app's page. A public OIDC client, `app`. |
-| `app-backend` | 3001 | The app's API. A relying system for the `app-api` audience. |
+| `app-backend` | 3001 | The app's API. A relying system for the `app-api` audience. In Python, two replicas behind `app-api`, a Caddy load balancer that publishes the port. |
 | `admin` | 4000 | The admin page: its frontend and backend in one process. A confidential OIDC client, `admin`. |
-| `postgres`, `keys`, `migrate`, `setup` | | Postgres, Konklav's signing keys, its migrations, and seeding over the control plane: catalog, roles, people, clients and service principals. |
+| `valkey` | internal | Python only: the rate-limit store the app backend's replicas and the admin page share. |
+| `postgres`, `keys`, `migrate`, `setup` | | Postgres (Konklav's database, and in Python the notes' own `notes` database), Konklav's signing keys, its migrations, and seeding over the control plane: catalog, roles, people, clients and service principals. |
 
 | | Python ([`python/services`](python/services)) | Rust ([`rust/src/bin`](rust/src/bin)) |
 |---|---|---|
@@ -86,19 +89,31 @@ A proof is accepted once, so each decision is its own request: the app asks `/ap
 
 **Single logout.** Signing out of either app is RP-initiated logout (`/v1/oauth2/logout`). It ends the login page's session, and with it every client session started from it. The other app's next request is refused as `invalid_token`.
 
+## Rate limits
+
+The Python version limits writes with `konklav_relying.RateLimit`, in both of `konklav-fastapi`'s styles:
+
+- **On a route.** Adding a note takes `RouteRateLimit(note_writes, "{token:sub}")` next to its `RoutePolicy` ([`app-backend/api.py`](python/services/app-backend/api.py)): five notes at once per person, then one every 12 seconds. It counts after the policy allowed the request, keyed by the verified token's subject.
+- **In code.** The admin page calls `await admin_writes.add(address)` on every write before it looks up the session ([`admin/admin.py`](python/services/admin/admin.py)): ten at once per client address, then one every 6 seconds. The address is `KonklavRoutes.client_address`, with no `trusted_proxies` since nothing stands in front of the admin page; behind a proxy, list it there and the address comes from `X-Forwarded-For`. On Docker Desktop every browser connection comes from the same gateway address, so the limit is effectively shared.
+
+A refused write is `429` with `{"error": {"code": "rate_limited"}}` and a `Retry-After` in whole seconds, with jitter so clients refused together don't retry together. The app backend's `KonklavRoutes.install` registers that handler; the admin page, a Starlette app, registers the same `handle_rate_limited`. The browser reads `Retry-After` (exposed through CORS for the app's API) and says when to try again; the app also keeps its **Add** button disabled until then.
+
+Both limits share state through Valkey, so the app backend's two replicas count together; any rate-limit store works, Valkey or Redis 6.2 or later, reached with a `redis://` URL and the `redis` client library (`konklav-relying[redis]`). Keys are hashed under `rate_limit_secret`, 32 random bytes the setup service writes to the shared secrets file next to the other secrets, so every process has the same one. Every process also counts in memory. While Valkey fails, each answers from that, leaving it alone for a backoff of one second growing to 30. With `local_divisor=2`, the backend's replicas then allow two notes at once each, rather than five each, so together they stay near the limit.
+
 ## Things to try
 
 - **DPoP.** In the app, **What DPoP stops** sends the access token without a proof, then replays a captured request. Both get `401` with `WWW-Authenticate: DPoP error="invalid_dpop_proof"`.
 - **Live roles.** As Ada on the admin page, take away Ada's `editor` role. In the app, **Check again** shows `notes:write` gone, and adding a note is refused.
 - **Revocation.** Use **Sign out everywhere** for someone signed in to the app; their next API call is refused and the refresh fails.
 - **Single sign-on.** Sign in to the app, then open the admin page: it signs you in without a prompt. As Bob it says the page is for admins only.
+- **Rate limits** (Python). As Ada, add six notes quickly: the sixth is refused, and the page counts down to the next. Under the notes, the page names the backend replicas that answered it. Then stop Valkey with `docker compose -f examples/notes-app/python/compose.yaml stop valkey` and add notes again: each replica now counts alone and allows two at once, then one every 30 seconds, so the limit still holds, and the backends log that they answer from memory. Start it again with `start valkey`; after the backoff, at most 30 seconds, the replicas count together through Valkey again, from a fresh count since Valkey kept nothing.
 - **Storage.** In either page's developer tools, `localStorage`, `sessionStorage` and `document.cookie` are empty. IndexedDB holds only the `CryptoKey`.
 
 ## Layout
 
 - `konklav/`: Konklav's configuration and example-only secrets, shared by both versions.
 - `web/`: the pages and scripts the browser runs. The Python services serve them from disk; the Rust binaries compile them in.
-- `python/`: `compose.yaml`, the image's `Dockerfile` and `services/`.
+- `python/`: `compose.yaml`, the image's `Dockerfile`, `services/`, the load balancer's `Caddyfile`, `notes-database.sql`, which creates the notes' database, and `smoke.sh`, which CI runs against the running stack.
 - `rust/`: `compose.yaml`, the image's `Dockerfile` and the `konklav-sso-example` crate, a workspace member, so `cargo clippy --workspace` checks it.
 - `diagrams/`: the diagrams above.
 
@@ -106,7 +121,8 @@ A proof is accepted once, so each decision is its own request: the app asks `/ap
 
 - **HTTP.** Everything runs on `localhost` over plain HTTP with `secure_cookies false`. Over HTTPS, the login page's cookie becomes `__Host-konklav_refresh`.
 - **Shared cookies.** Cookies on `localhost` are shared by every port, which is why the admin page's cookie names are specific. Real deployments put each app on its own host under one registrable domain, since Konklav's cookie is `SameSite=Strict`.
-- **In-memory state.** The admin backend keeps sessions in memory, so a restart signs people out of it. The app backend keeps notes in memory.
+- **In-memory state.** The admin backend keeps sessions in memory, so a restart signs people out of it. The Rust app backend keeps notes in memory.
 - **Secrets.** The bootstrap token in `konklav/secrets.styx` grants everything; real deployments remove it once an operator exists. The setup service writes the client secret and service-principal keys to a shared volume.
-- **MFA.** The login page doesn't implement MFA, passkeys, or the `X-Forwarded-For` handling (`listen.trusted_proxies`) that per-address rate limits need behind its proxy.
+- **MFA.** The login page doesn't implement MFA, passkeys, or the `X-Forwarded-For` handling (`listen.trusted_proxies`) that Konklav's own per-address rate limits need behind its proxy.
+- **Valkey.** It runs without a password or TLS on the Compose network, and keeps nothing on disk, which is enough for rate-limit state.
 - **Back-channel logout.** It isn't used: the admin backend learns of ended sessions from the relying client's decisions instead.

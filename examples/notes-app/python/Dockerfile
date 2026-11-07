@@ -19,9 +19,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM python:3.12-slim-bookworm
 COPY --from=wheels /wheels /wheels
 RUN pip install --no-cache-dir /wheels/*.whl \
-        fastapi==0.162.0 uvicorn==0.34.3 httpx==0.28.1 cryptography==45.0.4
-COPY examples/sso-compose/python/services /app
-COPY examples/sso-compose/web /app/web
+        fastapi==0.162.0 uvicorn==0.34.3 httpx==0.28.1 cryptography==45.0.4 \
+        redis==8.1.0 asyncpg==0.30.0
+COPY examples/notes-app/python/services /app
+COPY examples/notes-app/web /app/web
 # Empty named volumes take these owners: Konklav's distroless image runs as
 # 65532 and reads its keys, the services run as nobody.
 RUN mkdir /keys /shared && chown 65532:65532 /keys && chown nobody /shared

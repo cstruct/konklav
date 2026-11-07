@@ -22,6 +22,9 @@ let tokens = null;
 /// The last API request's headers, to show that a replay is refused.
 let lastRequest = null;
 let refreshTimer = null;
+/// The app backend's replicas that answered this page, to show the load
+/// balancer at work. The Rust version runs one backend and doesn't say.
+const replicas = new Set();
 
 const random = (bytes) => b64url(crypto.getRandomValues(new Uint8Array(bytes)));
 const sha256 = async (text) => b64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
@@ -145,9 +148,37 @@ async function api(method, path, body, retried = false) {
     }
     return api(method, path, body, true);
   }
+  if (response.status === 429) {
+    // Rate limited: `Retry-After` says, in seconds, when to try again.
+    const retryAfter = Number(response.headers.get("retry-after")) || 1;
+    throw Object.assign(new Error(`Too many requests; try again in ${retryAfter} s.`), { retryAfter });
+  }
   const data = await response.json();
   if (!response.ok) throw new Error(data.message ?? `${response.status}`);
+  if (data.replica) {
+    replicas.add(data.replica);
+    $("replica").textContent = `Answered by backend replica${replicas.size > 1 ? "s" : ""} ${[...replicas].join(", ")}.`;
+  }
   return data;
+}
+
+/// After a 429: keeps the Add button disabled until `Retry-After` has
+/// passed, counting down, rather than letting the person retry into it.
+function holdOff(seconds) {
+  const until = Date.now() + seconds * 1000;
+  $("add-note").disabled = true;
+  const tick = () => {
+    const left = Math.ceil((until - Date.now()) / 1000);
+    if (left <= 0) {
+      $("add-note").disabled = false;
+      $("notes-error").hidden = true;
+      return;
+    }
+    $("notes-error").hidden = false;
+    $("notes-error").textContent = `You're adding notes too fast. You can add another in ${left} s.`;
+    setTimeout(tick, 250);
+  };
+  tick();
 }
 
 async function attack(request) {
@@ -235,6 +266,7 @@ $("new-note").addEventListener("submit", async (event) => {
     $("note").value = "";
     await renderNotes();
   } catch (error) {
+    if (error.retryAfter) return holdOff(error.retryAfter);
     $("notes-error").hidden = false;
     $("notes-error").textContent = error.message;
   }

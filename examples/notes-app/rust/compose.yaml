@@ -1,16 +1,16 @@
-# Single sign-on with DPoP: Konklav, a login application, a browser app with
-# its API, and an admin page, in Rust. See ../README.md.
+# The notes app: Konklav, a login application, a browser app with its API,
+# and an admin page, in Rust. See ../README.md.
 #
-#   docker compose -f examples/sso-compose/rust/compose.yaml up --build
+#   docker compose -f examples/notes-app/rust/compose.yaml up --build
 #
 # Then open http://localhost:3000 (the app) or http://localhost:4000 (admin).
-name: konklav-sso-example-rust
+name: konklav-notes-app-rust
 
 x-rust: &rust
-  image: konklav-sso-example-rust:dev
+  image: konklav-notes-app-rust:dev
   build:
     context: ../../..
-    dockerfile: examples/sso-compose/rust/Dockerfile
+    dockerfile: examples/notes-app/rust/Dockerfile
   restart: on-failure
 
 services:
@@ -40,7 +40,7 @@ services:
       - konklav-keys:/keys
 
   migrate:
-    image: konklav-sso-example-konklav:dev
+    image: konklav-notes-app-konklav:dev
     build: ../../..
     command: ["migrate"]
     volumes: &konklav-files
@@ -54,7 +54,7 @@ services:
   # Not published: browsers reach the subject-facing surface through the
   # login application's origin, and the other two surfaces stay internal.
   konklav:
-    image: konklav-sso-example-konklav:dev
+    image: konklav-notes-app-konklav:dev
     build: ../../..
     command: ["serve"]
     volumes: *konklav-files

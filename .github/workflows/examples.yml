@@ -1,0 +1,42 @@
+name: Examples
+
+# The notes app's Python version in Docker Compose: it builds, comes up and
+# answers (examples/notes-app/python/smoke.sh). The scenario examples run in
+# CI's `mise run test`.
+on:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: examples-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
+
+jobs:
+  notes-app:
+    name: Notes app (Python, Compose)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      COMPOSE_FILE: examples/notes-app/python/compose.yaml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build and start
+        run: docker compose up --build --wait --wait-timeout 600
+
+      - name: Smoke test
+        run: examples/notes-app/python/smoke.sh
+
+      - name: Logs
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Stop
+        if: always()
+        run: docker compose down -v

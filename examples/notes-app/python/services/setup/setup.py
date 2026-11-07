@@ -12,7 +12,9 @@ Run once, with the bootstrap token, before the apps start:
   - `admin-api`, which the admin page also manages people with
 
 It writes the secrets the apps need to SECRETS_FILE and does nothing if
-that file exists, since secrets are shown only once.
+that file exists, since secrets are shown only once. Among them is the
+rate-limit secret, which every replica must share: rate-limit keys are
+hashed under it before they reach Valkey.
 """
 
 import json
@@ -21,6 +23,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from secrets import token_urlsafe
 
 import httpx
 from konklav_control_plane.sync import BearerToken, ControlPlaneClient
@@ -145,6 +148,8 @@ def main() -> None:
             "app_api_key": service_principal(client, "app-api", []),
             "admin_api_key": service_principal(client, "admin-api", ["admin-api"]),
             "admin_client_secret": admin_secret,
+            # 32 random bytes, base64url: at least the 32 bytes RateLimit needs.
+            "rate_limit_secret": token_urlsafe(32),
         }
 
     temporary = SECRETS_FILE.with_suffix(".tmp")

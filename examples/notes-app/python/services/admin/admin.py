@@ -13,7 +13,7 @@ refused within about a second.
 
 What admins do here goes through the control-plane client as the
 `admin-api` service principal, which may manage people, roles and sessions
-and nothing else.
+and nothing else. Those writes are rate limited per client address.
 """
 
 from __future__ import annotations
@@ -25,14 +25,17 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import timedelta
 from secrets import token_urlsafe
 from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+import redis.asyncio
 import uvicorn
 from konklav_control_plane import ControlPlaneClient, KonklavError as ControlError, SecretKey
-from konklav_relying import KonklavError, RelyingClient
+from konklav_fastapi import KonklavRoutes, handle_rate_limited
+from konklav_relying import KonklavError, RateLimit, RateLimited, RateLimitWindow, RelyingClient
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, RedirectResponse, Response
@@ -85,6 +88,21 @@ def internal(url: str) -> str:
 
 
 ENDPOINTS: dict[str, str] = {}
+
+# Ten writes at once, then one every 6 seconds, per client address: making
+# people and changing roles is rare work, and a script doing it fast is not
+# an admin. Shared through Valkey like the app backend's limit, though this
+# service runs once.
+admin_writes = RateLimit(
+    "notes-app.admin-writes",
+    [RateLimitWindow(size=10, period=timedelta(minutes=1))],
+    redis=redis.asyncio.Redis.from_url(os.environ["REDIS_URL"]),
+    secret=SECRETS["rate_limit_secret"].encode(),
+)
+# Only for `client_address`. No proxy stands in front of this service, so
+# `trusted_proxies` stays empty and the address is the connection's peer;
+# behind one, list it here and the address comes from `X-Forwarded-For`.
+addresses = KonklavRoutes(trusted_proxies=[])
 
 
 # --- Server-side sessions ----------------------------------------------------
@@ -165,6 +183,9 @@ async def authorize(request: Request, *, require_admin: bool = True) -> tuple[Se
     if request.method != "GET":
         if CSRF_HEADER not in request.headers or request.headers.get("origin") != PUBLIC_URL:
             raise Refused(403, "cross-site request refused")
+        # Counted before the session is looked up, so refused writes count too.
+        # Raises `RateLimited`, which the app answers with 429.
+        await admin_writes.add(addresses.client_address(request) or "unknown")
     sid = request.cookies.get(SESSION_COOKIE)
     session = SESSIONS.get(sid or "")
     if session is None:
@@ -437,6 +458,8 @@ app = Starlette(
         Mount("/shared", StaticFiles(directory=WEB)),
     ],
     lifespan=lifespan,
+    # konklav-fastapi's handler is a plain Starlette one: 429, `Retry-After`.
+    exception_handlers={RateLimited: handle_rate_limited},
 )
 
 if __name__ == "__main__":

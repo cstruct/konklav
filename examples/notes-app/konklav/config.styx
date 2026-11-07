@@ -15,7 +15,7 @@ database {
 }
 
 telemetry {
-    service_name konklav-sso-example
+    service_name konklav-notes-app
     logs {level "info"}
 }
 

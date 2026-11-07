@@ -1,0 +1,16 @@
+# Balances the app's API over the app backend's replicas. Compose's DNS
+# answers `app-backend` with one address per replica.
+{
+	admin off
+}
+
+:3001 {
+	reverse_proxy {
+		dynamic a app-backend 3001 {
+			refresh 1s
+		}
+		lb_policy round_robin
+		# Try the other replica when one is down or restarting.
+		lb_try_duration 5s
+	}
+}

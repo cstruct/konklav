@@ -13,6 +13,11 @@ async function call(method, path, body) {
     },
     body: body && JSON.stringify(body),
   });
+  if (response.status === 429) {
+    // Rate limited: `Retry-After` says, in seconds, when to try again.
+    const retryAfter = Number(response.headers.get("retry-after")) || 1;
+    throw Object.assign(new Error(`Too many changes at once; try again in ${retryAfter} s.`), { status: 429, retryAfter });
+  }
   const data = await response.json();
   if (!response.ok) throw Object.assign(new Error(data.message), { status: response.status });
   return data;

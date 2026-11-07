@@ -45,7 +45,8 @@ with the [README](README.md).
   - `test-support`: shared test helpers
 - `config/`: development configuration.
 - `examples/`: runnable examples that start real servers and that the tests
-  also run (see [`examples/README.md`](examples/README.md)).
+  also run, and the notes app in Docker Compose, which CI's Examples
+  workflow starts (see [`examples/README.md`](examples/README.md)).
 - `dev/`: local services for development.
 - `.agents/`: agent skills and the planning standard.
 

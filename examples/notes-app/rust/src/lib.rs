@@ -1,6 +1,6 @@
 //! The single sign-on example's services in Rust, one binary each. They
 //! behave like the Python ones in `../python` and serve the same browser
-//! files from `../web`; see `examples/sso-compose/README.md`.
+//! files from `../web`; see `examples/notes-app/README.md`.
 //!
 //! This library holds what they share: DPoP proofs, the browser files,
 //! the relying client's setup and a few helpers.

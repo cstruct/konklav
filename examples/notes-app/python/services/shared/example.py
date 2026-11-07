@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
-# The browser files both versions of the example share (`examples/sso-compose/web`).
+# The browser files both versions of the example share (`examples/notes-app/web`).
 WEB_ROOT = Path("/app/web")
 WEB = WEB_ROOT / "shared"
 
