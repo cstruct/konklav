@@ -30,8 +30,8 @@ use crate::client_address::ClientAddress;
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::issue::{self, IssuedToken};
 use crate::subject_api::{
-    authenticate, begin_attempt, check_browser_request, refresh_cookies, refuse_impersonation,
-    require_recent, start_passwordless_session, with_cookies,
+    SessionRequest, authenticate, begin_attempt, check_browser_request, refresh_cookies,
+    refuse_impersonation, require_recent, start_passwordless_session, with_cookies,
 };
 use crate::{AppState, capabilities, dpop, pacing, passkeys_api};
 
@@ -760,18 +760,39 @@ async fn start_email_link(
 #[derive(Deserialize)]
 struct CompleteLink {
     token: String,
+    #[serde(flatten)]
+    session: SessionRequest,
 }
 
+/// `POST /v1/login/email-link/complete`: the request that redeems the link
+/// says which client the session is for and which flags it carries, not
+/// the one that asked for the link, because the link may be opened in
+/// another browser or app. Restrictive flags only narrow a session, so
+/// letting the redeeming client choose them gives it nothing an unflagged
+/// login wouldn't; flags a session must always carry belong on the
+/// credential.
+// r[impl authn.login.session-request]
 async fn complete_email_link(
     State(state): State<AppState>,
     dpop::Bound(dpop_jkt): dpop::Bound,
+    headers: HeaderMap,
     ApiJson(body): ApiJson<CompleteLink>,
 ) -> Result<Response, ApiError> {
     let mut conn = state.pool.get().await?;
+    let browser = body.session.check(&state, &mut conn, &headers).await?;
     let challenge = redeem_link(&mut conn, Purpose::EmailLink, &body.token).await?;
     let credential = challenge.credential_id.ok_or_else(invalid_code)?;
     let credential = credentials::get(&mut conn, credential).await?;
-    start_passwordless_session(&state, &mut conn, &credential, "eml", dpop_jkt).await
+    start_passwordless_session(
+        &state,
+        &mut conn,
+        &credential,
+        "eml",
+        &body.session,
+        browser.as_ref(),
+        dpop_jkt,
+    )
+    .await
 }
 
 #[derive(Deserialize)]
@@ -814,20 +835,35 @@ async fn start_phone(
 struct CompletePhone {
     phone: String,
     code: String,
+    #[serde(flatten)]
+    session: SessionRequest,
 }
 
+/// `POST /v1/login/phone/complete`
+// r[impl authn.login.session-request]
 async fn complete_phone(
     State(state): State<AppState>,
     dpop::Bound(dpop_jkt): dpop::Bound,
+    headers: HeaderMap,
     ApiJson(body): ApiJson<CompletePhone>,
 ) -> Result<Response, ApiError> {
     let mut conn = state.pool.get().await?;
+    let browser = body.session.check(&state, &mut conn, &headers).await?;
     let recipient = credentials::normalize_identifier(&body.phone);
     let challenge =
         redeem_code(&mut conn, Purpose::PhoneCode, &recipient, &body.code, None).await?;
     let credential =
         credentials::get(&mut conn, challenge.credential_id.ok_or_else(invalid_code)?).await?;
-    start_passwordless_session(&state, &mut conn, &credential, "sms", dpop_jkt).await
+    start_passwordless_session(
+        &state,
+        &mut conn,
+        &credential,
+        "sms",
+        &body.session,
+        browser.as_ref(),
+        dpop_jkt,
+    )
+    .await
 }
 
 // --- Passwords ------------------------------------------------------------------

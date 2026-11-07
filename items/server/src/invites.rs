@@ -2,7 +2,7 @@
 //! with roles; the recipient redeems the delivered token with a password.
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::middleware;
 use axum::response::Response;
 use axum::routing::post;
@@ -28,7 +28,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::error::{ApiError, ApiJson, ErrorCode};
-use crate::subject_api::start_passwordless_session;
+use crate::subject_api::{SessionRequest, start_passwordless_session};
 use crate::{AppState, pacing};
 
 /// Creating invites on the control plane, with the `OpenAPI` description
@@ -254,6 +254,8 @@ fn invite(challenge: challenges::Challenge) -> Invite {
 struct RedeemInvite {
     token: String,
     password: String,
+    #[serde(flatten)]
+    session: SessionRequest,
 }
 
 /// The password credential already registered for `email`, if any, after
@@ -295,9 +297,11 @@ fn invalid_invite() -> ApiError {
 /// address to a new subject, or proves the existing one, then activates the
 /// invited membership and starts a session.
 // r[impl authn.invite.redeem]
+// r[impl authn.login.session-request]
 async fn redeem_invite(
     State(state): State<AppState>,
     crate::dpop::Bound(dpop_jkt): crate::dpop::Bound,
+    headers: HeaderMap,
     ApiJson(body): ApiJson<RedeemInvite>,
 ) -> Result<Response, ApiError> {
     if body.password.chars().count() < 8 {
@@ -307,12 +311,13 @@ async fn redeem_invite(
     }
     let (id, secret) = body.token.split_once('.').ok_or_else(invalid_invite)?;
     let id: uuid::Uuid = id.parse().map_err(|_| invalid_invite())?;
+    let mut conn = state.pool.get().await?;
+    let browser = body.session.check(&state, &mut conn, &headers).await?;
     let password = body.password.clone();
     let new_hash = state
         .auth
         .hashing(move |hasher| hasher.hash(&password))
         .await?;
-    let mut conn = state.pool.get().await?;
     let challenge = challenges::get(&mut conn, id)
         .await
         .map_err(|_| invalid_invite())?;
@@ -351,45 +356,65 @@ async fn redeem_invite(
                     .await?
                 }
             };
-            if let Some(reference) = &details.tenant {
-                let tenant = tenants::parse_reference(reference).ok_or_else(invalid_invite)?;
-                // r[impl authn.invite.membership-id]
-                let membership = match (
-                    details.membership,
-                    memberships::find_active(conn, credential.subject_id, tenant).await?,
-                ) {
-                    (Some(named), Some(active)) if named != active.id => {
-                        return Err(ApiError::new(
-                            ErrorCode::Conflict,
-                            "the subject is already a member of the invited tenant",
-                        ));
-                    }
-                    (_, Some(active)) => active,
-                    (named, None) => {
-                        memberships::create(
-                            conn,
-                            named.unwrap_or_else(MembershipId::new_v7),
-                            credential.subject_id,
-                            tenant,
-                            &details.facts,
-                        )
-                        .await?
-                        .0
-                    }
-                };
-                for key in &details.roles {
-                    let role = roles::get(conn, tenant, key).await?;
-                    roles::assign(
-                        conn,
-                        role.id,
-                        AssignmentTarget::Membership(membership.id),
-                        None,
-                    )
-                    .await?;
-                }
-            }
+            join_invited_tenant(conn, &details, credential.subject_id).await?;
             Ok(credential)
         })
         .await?;
-    start_passwordless_session(&state, &mut conn, &credential, "pwd", dpop_jkt).await
+    start_passwordless_session(
+        &state,
+        &mut conn,
+        &credential,
+        "pwd",
+        &body.session,
+        browser.as_ref(),
+        dpop_jkt,
+    )
+    .await
+}
+
+/// Activates the membership an invite targets, if any, with its roles.
+async fn join_invited_tenant(
+    conn: &mut konklav_store::Connection,
+    details: &InviteDetails,
+    subject: SubjectId,
+) -> Result<(), ApiError> {
+    let Some(reference) = &details.tenant else {
+        return Ok(());
+    };
+    let tenant = tenants::parse_reference(reference).ok_or_else(invalid_invite)?;
+    // r[impl authn.invite.membership-id]
+    let membership = match (
+        details.membership,
+        memberships::find_active(conn, subject, tenant).await?,
+    ) {
+        (Some(named), Some(active)) if named != active.id => {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "the subject is already a member of the invited tenant",
+            ));
+        }
+        (_, Some(active)) => active,
+        (named, None) => {
+            memberships::create(
+                conn,
+                named.unwrap_or_else(MembershipId::new_v7),
+                subject,
+                tenant,
+                &details.facts,
+            )
+            .await?
+            .0
+        }
+    };
+    for key in &details.roles {
+        let role = roles::get(conn, tenant, key).await?;
+        roles::assign(
+            conn,
+            role.id,
+            AssignmentTarget::Membership(membership.id),
+            None,
+        )
+        .await?;
+    }
+    Ok(())
 }
