@@ -5,6 +5,7 @@ members = [
     "items/api",
     "items/authn",
     "items/authz",
+    "items/axum",
     "items/bootstrap",
     "items/console",
     "items/core",
@@ -34,13 +35,14 @@ publish = false
 konklav-api = { path = "items/api" }
 konklav-authn = { path = "items/authn" }
 konklav-authz = { version = "=1.5.0", path = "items/authz" }
+konklav-axum = { version = "=1.5.0", path = "items/axum" }
 konklav-bootstrap = { path = "items/bootstrap" }
 konklav-console = { path = "items/console" }
 konklav-core = { version = "=1.5.0", path = "items/core", default-features = false }
 konklav-examples = { path = "examples" }
 konklav-sso-example = { path = "examples/sso-compose/rust" }
 konklav-relying = { version = "=1.5.0", path = "items/relying" }
-konklav-relying-client = { path = "items/relying-client" }
+konklav-relying-client = { version = "=1.5.0", path = "items/relying-client" }
 konklav-server = { path = "items/server" }
 konklav-store = { path = "items/store" }
 konklav-test-support = { path = "items/test-support" }

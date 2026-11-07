@@ -2843,6 +2843,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "konklav-axum"
+version = "1.5.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "ed25519-dalek 3.0.0",
+ "getrandom 0.4.3",
+ "http-body-util",
+ "konklav-authn",
+ "konklav-authz",
+ "konklav-core",
+ "konklav-relying",
+ "konklav-relying-client",
+ "konklav-server",
+ "konklav-test-support",
+ "konklav-token",
+ "reqwest 0.13.5",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "konklav-bootstrap"
 version = "1.5.0"
 dependencies = [

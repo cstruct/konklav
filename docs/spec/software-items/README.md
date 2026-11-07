@@ -34,6 +34,7 @@ Planned software items (see
 - [`py`](py.md) (built separately by maturin)
 - [`py-control-plane`](py-control-plane.md) (pure Python, built by uv)
 - [`py-fastapi`](py-fastapi.md) (pure Python, built by uv)
+- [`axum`](axum.md)
 - `cli`
 - `test-support` (test-only)
 

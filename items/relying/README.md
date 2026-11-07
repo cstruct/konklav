@@ -20,6 +20,10 @@ The relying core: a sans-I/O library with everything a relying system needs to d
   - local state for a bounded number of keys (100 000 by default, least recently used first), dropped once drained, with an optional local divisor
   - for a rate-limit store (Redis), the script to run with its keys and arguments, keys hashed under a configured secret (HMAC-SHA-256)
   - the store's backoff while it fails (1 s, doubling to 30 s), so the host answers from local state
+- Route policies (`policy`): an operation's requirements with scope ids unresolved, for Rust hosts and framework integrations (such as `konklav-axum`) to declare per route or router:
+  - merged outermost first: actions accumulate, allowed sets intersect, the strictest step-up wins; overrides replace the fields they set; public policies admit anyone
+  - refused when they contradict (tenant facts) or would deny every request (no token kind, no step-up method)
+  - resolved per request into `Requirements` with each scope kind's id, and optionally its decision kind and owner tenant
 - Read-your-writes: `await_cursor` is ready once the feed has passed the cursor and every entry it invalidated has been refreshed.
 - Sender-constrained (DPoP) tokens: from a request's raw `Authorization` and `DPoP` headers and its request descriptor (the method and the public URL the client addressed):
   - a token with `cnf` needs the `DPoP` scheme and a valid proof; under `Bearer`, or without a request descriptor, it is denied with `invalid_dpop_proof`
@@ -35,6 +39,7 @@ The core never makes network calls, reads clocks, spawns tasks or sleeps. Hosts 
 - `Relying::poll_work` returns the fetches due and when to poll next.
 - `on_jwks`, `on_session`, `on_session_unknown`, `on_entitlements`, `on_registered_scope`, `on_registered_scope_unknown`, `on_fetch_failed`, `on_feed_connected`, `on_feed_activity`, `on_feed_lost`, `on_feed_event`, `await_cursor`.
 - `Config` holds the issuer, audience and tuning.
+- `policy::Policy`: a builder (`tenant_actions`, `scope_actions`, `token_kinds`, `admit_flags`, `step_up`, `tenant_fact`, ...), `Policy::public`, `Policy::overriding`, `Policy::merge`, `check` and `requirements` with `ResolvedScope`s. It follows the Python binding's `konklav_relying.policy.Policy`.
 - `rate_limit::RateLimiter`: `begin` counts an event locally and returns `Attempt::Decided` or `Attempt::Store { call, local }`; `on_store_answer` and `on_store_failed` take the store's answer or failure. `STORE_SCRIPT` is the script both hosts run.
 
 ## Relationships
@@ -45,6 +50,7 @@ The core never makes network calls, reads clocks, spawns tasks or sleeps. Hosts 
 | `konklav-authz` | `evaluate`, `Requirements`, `EntitlementSet` |
 | `konklav-core` | Ids, cursors, feed wire types (without id generation, so it builds for wasm) |
 | `konklav-relying-client` | Native Rust host |
+| `konklav-axum` | Route policies for axum, built on `policy` |
 | `konklav-py` | Python host |
 
 ## Running
@@ -64,6 +70,7 @@ cargo build -p konklav-relying --target wasm32-unknown-unknown
   - JWKS refresh limits, await-cursor, sweeps, tenant-scoped invalidation
   - registered scopes: lazy fetches, unknown scopes, moves within the debounce window, the size bound
   - DPoP: schemes, proofs checked before the check API, replays, the bounded replay set
+  - route policies: merging, overrides, public policies, contradictions, requirements
   - rate limits: bursts and intervals, several windows, refusals that don't count, the local divisor, the key bound and expiry, store calls and backoff
 - Indirect coverage: the native client's end-to-end tests against a real server, the Python tests, and both hosts' rate-limit tests against a real Redis, which run `STORE_SCRIPT`.
 

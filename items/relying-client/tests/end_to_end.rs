@@ -617,3 +617,73 @@ async fn tenant_facts_follow_the_tenants_current_facts() {
         }
     );
 }
+
+/// Accepting a request verifies it once and hands back its claims; one
+/// decision follows for it, and a second is refused.
+// r[verify relying.verify.accepted-presentation]
+#[tokio::test(flavor = "multi_thread")]
+async fn accepted_requests_are_decided_once() {
+    use konklav_relying_client::{Presented, RequestDescriptor, Verified};
+
+    let world = world().await;
+    let presented = Presented {
+        request: Some(RequestDescriptor {
+            method: "GET".into(),
+            url: "https://api.example/projects".into(),
+        }),
+        ..Presented::bearer(&world.token)
+    };
+    // Possibly before the feed is up (through the check API), then locally.
+    for trusted in [false, true] {
+        if trusted {
+            until_trusted(&world.client).await;
+        }
+        let Verified::Valid(accepted) = world.client.accept_request(&presented).await.unwrap()
+        else {
+            panic!("the token verifies");
+        };
+        assert_eq!(
+            accepted.claims().tid.map(uuid::Uuid::from),
+            Some(world.tenant)
+        );
+        assert_eq!(
+            world
+                .client
+                .decide_accepted(&accepted, &reading())
+                .await
+                .unwrap(),
+            Decision::allow()
+        );
+        if trusted {
+            assert_eq!(
+                world
+                    .client
+                    .decide_accepted(&accepted, &reading())
+                    .await
+                    .unwrap(),
+                Decision::Deny {
+                    reason: DenyReason::InvalidToken
+                },
+                "decided once"
+            );
+        }
+    }
+    let verified = world.client.verify_request(&presented).await.unwrap();
+    assert!(matches!(verified, Verified::Valid(claims) if claims.sub.to_string().len() == 36));
+    assert_eq!(
+        world
+            .client
+            .accept_request(&Presented::bearer("not-a-token"))
+            .await
+            .unwrap(),
+        Verified::Invalid
+    );
+    let bearer_as_dpop = Presented {
+        authorization: format!("DPoP {}", world.token),
+        ..presented
+    };
+    assert_eq!(
+        world.client.verify_request(&bearer_as_dpop).await.unwrap(),
+        Verified::InvalidProof
+    );
+}

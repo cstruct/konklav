@@ -54,4 +54,11 @@ boundary on every decision.
 
 Framework-specific glue (for example, a FastAPI dependency that turns
 route-level requirements into `decide` calls) lives in the relying system or
-in thin optional packages. The SDK exposes only requirements and decisions.
+in thin optional packages: `konklav-fastapi` for FastAPI and `konklav-axum`
+for axum. The SDK exposes requirements, decisions and route policies.
+
+Route policies merge by the same rules everywhere. In Rust the model lives
+in the relying core (`konklav_relying::policy`), since merging decides which
+flags and step-ups an operation admits, and every Rust integration builds on
+it. The Python binding has its own framework-free `Policy` with the same
+rules (`item.py.policy.*`).
