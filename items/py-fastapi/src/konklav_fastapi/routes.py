@@ -58,6 +58,7 @@ from konklav_fastapi.errors import (
     handle_denied,
     handle_rate_limited,
 )
+from konklav_fastapi.pacing import RoutePacing
 
 __all__ = [
     "CurrentToken",
@@ -212,6 +213,25 @@ def _merged(layers: tuple[RoutePolicy, ...], own: tuple[RoutePolicy, ...]) -> Ro
 
 def _policies(dependencies: Sequence[Depends]) -> tuple[RoutePolicy, ...]:
     return tuple(dependency for dependency in dependencies if isinstance(dependency, RoutePolicy))
+
+
+# r[impl item.py-fastapi.route-pacing.order]
+def _paced_too_late(served: _routing.ServedRoute) -> bool:
+    """
+    Whether FastAPI resolves a `RoutePacing` after a dependency that
+    evaluates the route's policy: a `RoutePolicy`, or anything that depends
+    on the verified token, such as a rate limit keyed by a claim.
+    """
+    pacings = {id(d.dependency) for d in served.dependencies if isinstance(d, RoutePacing)}
+    if served.dependant is None or not pacings:
+        return False
+    evaluated = False
+    for dependency in served.dependant.dependencies:
+        if id(dependency.call) in pacings and evaluated:
+            return True
+        if _evaluate in _routing.dependency_calls(dependency):
+            evaluated = True
+    return False
 
 
 def _method(connection: HTTPConnection) -> str:
@@ -392,6 +412,8 @@ class KonklavRoutes:
         own = _policies(served.own_dependencies)
         if not layers:
             return "declares no RoutePolicy; declare one, or RoutePolicy.public()"
+        if _paced_too_late(served):
+            return "declares a RoutePacing that FastAPI resolves after the route's policy; declare it first, so denials are paced too"
         inherited = layers[: len(layers) - len(own)]
         if any(policy.admit_flags is not None for policy in inherited):
             return "admit_flags set outside the route; only the route's own RoutePolicy can admit flags"

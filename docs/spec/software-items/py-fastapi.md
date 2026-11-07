@@ -210,6 +210,36 @@ admits (its `token_kinds`, or only `tenant` when unset, Konklav's default),
 and a route with a public policy that injects any token dependency other
 than `OptionalToken`.
 
+## Pacing
+
+r[item.py-fastapi.route-pacing]
+`RoutePacing(pacing)` MUST be a FastAPI `Depends`, so a relying system
+declares it in the `dependencies` of a route, of an `APIRouter`, of
+`include_router` or of the application. It MUST pace the HTTP requests of
+its routes as `paced` does (`item.py.pacing.concurrent`), from when FastAPI
+resolves it to before the response is sent, also when the handler or a
+later dependency raises, such as `KonklavDenied`, `RateLimited` or
+`HTTPException`
+(`item.py.pacing.errors`). It MUST NOT pace websocket connections.
+
+r[item.py-fastapi.route-pacing.nested]
+Every `RoutePacing` a route's layers declare MUST wait on its own, so the
+response waits for the longest of them.
+
+r[item.py-fastapi.route-pacing.order]
+Startup validation (`item.py-fastapi.validation`) MUST refuse a route on
+which FastAPI resolves a `RoutePacing` after a dependency that evaluates the
+route's policy: a `RoutePolicy`, or one that depends on the verified token,
+such as a `RouteRateLimit` keyed by a claim. That `RoutePacing` would start
+after the decision, so a denial would answer sooner than an allow.
+
+r[item.py-fastapi.pacing-middleware]
+`PacingMiddleware` MUST pace every answer to HTTP requests for the paths it
+is given, including those FastAPI gives before any dependency runs (a body
+it can't parse) and those for unhandled errors. It MUST hold back the start
+of the response until the wait is done, and MUST NOT pace other paths or
+websocket connections.
+
 ## Startup validation
 
 r[item.py-fastapi.validation]
@@ -228,7 +258,9 @@ error listing each route that fails a check. A route fails when:
 - merging leaves an allowed set empty: token kinds, audiences or step-up's
   allowed methods;
 - it injects a token dependency its policy doesn't match
-  (`item.py-fastapi.injected-kinds`).
+  (`item.py-fastapi.injected-kinds`);
+- it declares a `RoutePacing` that FastAPI resolves after the route's
+  policy (`item.py-fastapi.route-pacing.order`).
 
 ## OpenAPI
 

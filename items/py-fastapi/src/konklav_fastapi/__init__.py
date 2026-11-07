@@ -39,6 +39,10 @@ Each request makes one decision with the route's merged policy; denials
 raise `KonklavDenied` subclasses (`konklav_fastapi.errors`), answered with
 401, 403 or 503 unless the application handles them itself.
 
+`RoutePacing` (`konklav_fastapi.pacing`) paces chosen routes, so their
+response time doesn't reveal whether a record exists, and
+`PacingMiddleware` paces every answer for chosen paths.
+
 `RouteRateLimit(limit, "{token:sub}/{path:project}")`
 (`konklav_fastapi.rate_limits`) adds one event per request to a
 `konklav_relying.RateLimit`, keyed by a template or a dependency; a refused
@@ -57,6 +61,7 @@ from konklav_fastapi.errors import (
     Unauthenticated,
     handle_denied,
 )
+from konklav_fastapi.pacing import PacingMiddleware, RoutePacing
 from konklav_fastapi.rate_limits import RouteRateLimit, handle_rate_limited
 from konklav_fastapi.routes import (
     CurrentToken,
@@ -86,7 +91,9 @@ __all__ = [
     "KonklavRoutes",
     "KonklavUnavailable",
     "OptionalToken",
+    "PacingMiddleware",
     "ResolvedScope",
+    "RoutePacing",
     "RoutePolicy",
     "RoutePolicyError",
     "RoutePolicyFields",
