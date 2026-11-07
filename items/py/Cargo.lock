@@ -347,11 +347,13 @@ dependencies = [
 name = "konklav-relying"
 version = "1.5.0"
 dependencies = [
+ "hmac",
  "konklav-authz",
  "konklav-core",
  "konklav-token",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

@@ -460,6 +460,21 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `fake id`
   - An id a relying system answers with in place of a real one, such as for an invite to an unknown address, so the answer doesn't reveal that nothing was created. It must look like the relying system's real ids, including the creation time a UUIDv7 carries.
 
+- `rate limit`
+  - A named bound on how often events may happen per key, such as login attempts per email address, enforced by the relying SDK.
+  - It has one or more `rate-limit windows`, and an event is admitted only when every window admits it.
+
+- `rate-limit window`
+  - A number of events and a period: the window admits that many events at once, and after that one more each time the period divided by the number has passed.
+  - Example: 3 per minute and 30 per hour, together, let a burst through but not a sustained flood.
+
+- `rate-limit store`
+  - A server speaking Redis' protocol (Valkey, or Redis 6.2 or later) that the relying system owns, through which every process enforces its rate limits together.
+  - Every process also tracks its limits in memory, and answers from that state while the store is unavailable.
+
+- `local divisor`
+  - A number that divides each window's size in a process's in-memory state, so that several processes answering from memory together admit about the limit.
+
 ## Federation
 
 - `OpenID Connect` (OIDC)

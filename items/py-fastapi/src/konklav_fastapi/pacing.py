@@ -20,8 +20,8 @@ async def invite(body: Invite) -> Invited: ...
 
 It is a `yield` dependency with `scope="function"`: its wait starts when
 FastAPI resolves it and ends after the handler, also when the handler or a
-later dependency raises (`KonklavDenied`, `HTTPException`, a validation
-error of a parameter), and before the response is sent.
+later dependency raises (`KonklavDenied`, `RateLimited`, `HTTPException`,
+a validation error of a parameter), and before the response is sent.
 
 It can't pace what FastAPI answers before resolving dependencies: a body
 it can't parse (malformed JSON, 422, or a form it can't read, 400). Nor
@@ -52,8 +52,9 @@ class RoutePacing(Depends):
     """
     Paces the HTTP requests of the routes it is declared on, from when
     FastAPI resolves it until before the response is sent. Declare it before
-    the routes' `RoutePolicy`, so that denials are paced too: startup
-    validation refuses one declared after.
+    the routes' `RoutePolicy` and `RouteRateLimit`, so that denials are
+    paced too: startup validation refuses one FastAPI resolves after the
+    route's policy is evaluated.
 
     Each `RoutePacing` waits on its own, so a route under several waits for
     the longest. Websocket connections aren't paced.

@@ -151,6 +151,47 @@ The default handler MUST answer HTTP requests with the status above and a
 JSON body naming the code, the deny reason or the step-up requirement, and
 MUST close websocket connections with code 1008 (policy violation).
 
+## Rate limits
+
+r[item.py-fastapi.rate-limit]
+`RouteRateLimit(limit, key)` MUST be a FastAPI dependency, declarable on
+routes, routers, `include_router` and the application, that adds one
+event to the `konklav_relying.RateLimit` `limit` for each request. `key`
+MUST be a FastAPI dependency itself, so it can depend on others, such as
+the verified token.
+
+r[item.py-fastapi.rate-limit-template]
+`key` MAY instead be a template: literal text and fields `{source:name}`,
+with `{{` and `}}` for literal braces. The sources MUST be `path` (a path
+parameter), `token` (a claim of the verified token: `sub`, `sid`, `knd` or
+`tid`) and `client` (only `client:address`, the client's address). A
+malformed template, or an unknown source or claim, MUST raise `ValueError`
+when the `RouteRateLimit` is created. A template's key MUST encode its parts
+so that different values can't render the same key. Its token MUST be the
+one the route's policy verified, not verified again.
+
+r[item.py-fastapi.rate-limit-template-validation]
+Startup validation MUST refuse a route whose rate-limit templates name a
+path parameter the route doesn't have, a token claim on a public route, or
+`tid` on a route whose policy admits token kinds other than `tenant`.
+
+r[item.py-fastapi.client-address]
+`KonklavRoutes.client_address(connection)` MUST answer the connection's
+peer address unless the peer is one of `trusted_proxies` (addresses or
+networks). Then it MUST answer the last address in `X-Forwarded-For` that
+isn't a trusted proxy, or the first when all are, like the server's
+`platform.server.client-address`. A connection without a peer address
+MUST be refused rather than given an empty key.
+
+r[item.py-fastapi.rate-limited]
+`KonklavRoutes.install` MUST handle `konklav_relying.RateLimited`, whether
+raised by `RouteRateLimit` or by the relying system's own code: HTTP
+requests are answered with 429, a JSON body with the code `rate_limited`
+(like the package's other codes), and a `Retry-After` header of the
+retry-after time in whole seconds, rounded up, plus random jitter
+(`platform.error.retry-after`); websocket connections are closed with code
+1013 (try again later).
+
 ## Injected tokens
 
 r[item.py-fastapi.injected-tokens]
@@ -177,7 +218,8 @@ declares it in the `dependencies` of a route, of an `APIRouter`, of
 `include_router` or of the application. It MUST pace the HTTP requests of
 its routes as `paced` does (`item.py.pacing.concurrent`), from when FastAPI
 resolves it to before the response is sent, also when the handler or a
-later dependency raises, such as `KonklavDenied` or `HTTPException`
+later dependency raises, such as `KonklavDenied`, `RateLimited` or
+`HTTPException`
 (`item.py.pacing.errors`). It MUST NOT pace websocket connections.
 
 r[item.py-fastapi.route-pacing.nested]
@@ -185,10 +227,11 @@ Every `RoutePacing` a route's layers declare MUST wait on its own, so the
 response waits for the longest of them.
 
 r[item.py-fastapi.route-pacing.order]
-Startup validation (`item.py-fastapi.validation`) MUST refuse a route that
-declares a `RoutePacing` after its first `RoutePolicy`, in FastAPI's order
-(`item.py-fastapi.merge-order`). That `RoutePacing` would start after the
-decision, so a denial would answer sooner than an allow.
+Startup validation (`item.py-fastapi.validation`) MUST refuse a route on
+which FastAPI resolves a `RoutePacing` after a dependency that evaluates the
+route's policy: a `RoutePolicy`, or one that depends on the verified token,
+such as a `RouteRateLimit` keyed by a claim. That `RoutePacing` would start
+after the decision, so a denial would answer sooner than an allow.
 
 r[item.py-fastapi.pacing-middleware]
 `PacingMiddleware` MUST pace every answer to HTTP requests for the paths it
@@ -216,8 +259,8 @@ error listing each route that fails a check. A route fails when:
   allowed methods;
 - it injects a token dependency its policy doesn't match
   (`item.py-fastapi.injected-kinds`);
-- it declares a `RoutePacing` after its first `RoutePolicy`
-  (`item.py-fastapi.route-pacing.order`).
+- it declares a `RoutePacing` that FastAPI resolves after the route's
+  policy (`item.py-fastapi.route-pacing.order`).
 
 ## OpenAPI
 

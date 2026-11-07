@@ -7,6 +7,9 @@
 use konklav_authz::{EntitlementSet, Requirements};
 use konklav_core::Cursor;
 use konklav_core::feed::{FeedEvent, SessionChanged};
+use konklav_relying::rate_limit::{
+    Attempt, RateLimitConfig, RateLimited, RateLimiter, STORE_SCRIPT, StoreSecret,
+};
 use konklav_relying::{Config, Key, Need, PresentationId, Presented, Relying, ScopeRecord};
 use konklav_token::JwkSet;
 use pyo3::exceptions::PyValueError;
@@ -190,7 +193,72 @@ impl Core {
     }
 }
 
+/// The retry-after time of a refused event, `None` when admitted.
+fn retry_after(result: Result<(), RateLimited>) -> Option<u64> {
+    result.err().map(|limited| limited.retry_after_ms)
+}
+
+/// One rate limit's local state and store backoff, from
+/// `konklav_relying::rate_limit`. Times are Unix milliseconds; a verdict is
+/// `None` when admitted, otherwise the retry-after time in milliseconds.
+#[pyclass(module = "konklav_relying._core")]
+struct RateLimiterCore {
+    inner: RateLimiter,
+}
+
+#[pymethods]
+impl RateLimiterCore {
+    /// `config` is `{"name": ..., "windows": [{"size": ..., "period_ms":
+    /// ...}], "local_divisor": ..., "max_local_keys": ...}`; with `secret`,
+    /// the limit uses a store.
+    #[new]
+    #[pyo3(signature = (config, secret=None))]
+    fn new(config: &str, secret: Option<Vec<u8>>) -> PyResult<Self> {
+        let config: RateLimitConfig = parse(config, "rate-limit config")?;
+        let secret = secret
+            .map(StoreSecret::new)
+            .transpose()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let inner =
+            RateLimiter::new(config, secret).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    /// Counts one event in local state: `(local verdict, None)`, or
+    /// `(local verdict, (keys, args))` to run `STORE_SCRIPT` with.
+    #[allow(clippy::type_complexity)]
+    fn begin(&mut self, key: &[u8], now: u64) -> (Option<u64>, Option<(Vec<String>, Vec<String>)>) {
+        match self.inner.begin(key, now) {
+            Attempt::Decided(result) => (retry_after(result), None),
+            Attempt::Store { call, local } => (retry_after(local), Some((call.keys, call.args))),
+        }
+    }
+
+    /// The store's answer: `0`, or the retry-after time in milliseconds.
+    fn on_store_answer(&mut self, answer: u64) -> Option<u64> {
+        retry_after(self.inner.on_store_answer(answer))
+    }
+
+    fn on_store_failed(&mut self, now: u64) {
+        self.inner.on_store_failed(now);
+    }
+
+    fn store_backed_off(&self, now: u64) -> bool {
+        self.inner.store_backed_off(now)
+    }
+
+    fn clear(&mut self) {
+        self.inner.clear();
+    }
+
+    fn local_keys(&self) -> usize {
+        self.inner.local_keys()
+    }
+}
+
 #[pymodule]
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<Core>()
+    module.add_class::<Core>()?;
+    module.add_class::<RateLimiterCore>()?;
+    module.add("STORE_SCRIPT", STORE_SCRIPT)
 }

@@ -31,6 +31,15 @@ publishes it to PyPI with the other Python packages.
   (401), `Forbidden` (403), `StepUpRequired` (401) and
   `KonklavUnavailable` (503), with a default handler that the application
   can replace.
+- Rate limits (`konklav_fastapi.rate_limits`): `RouteRateLimit(limit, key)`
+  adds one event per request to a `konklav_relying.RateLimit`, for a key
+  template such as `"{token:sub}/{path:project}"` or the key a dependency
+  returns. Startup validation refuses templates a route can't render.
+  `install` answers `RateLimited`, from it or from the application's own
+  `limit.add(...)`, with 429 and a jittered `Retry-After`, or closes
+  websockets with 1013.
+- Client addresses: `KonklavRoutes.client_address`, which reads
+  `X-Forwarded-For` only from `trusted_proxies`.
 - Injected tokens: `CurrentToken`, `OptionalToken`, `IdentityToken`,
   `TenantToken`.
 - Startup validation over every HTTP and websocket route, and
@@ -176,12 +185,14 @@ async def invite(body: Invite) -> Invited:
 - It is a `yield` dependency with `scope="function"`, which FastAPI
   supports in every version this package does. Its wait starts when FastAPI
   resolves it and ends after the handler, also when the handler or a later
-  dependency raises (`KonklavDenied`, `HTTPException`, a parameter that
-  doesn't validate), and before the response is sent.
+  dependency raises (`KonklavDenied`, `RateLimited`, `HTTPException`, a
+  parameter that doesn't validate), and before the response is sent.
 - Declare it on a route, a router, `include_router` or the application, and
-  before the `RoutePolicy`: FastAPI resolves dependencies in order, so one
-  declared after the policy would start after the decision, and a denial
-  would answer sooner than an allow. Startup validation refuses that.
+  before the `RoutePolicy` and any `RouteRateLimit`. FastAPI resolves
+  dependencies in order, so one resolved after anything that evaluates the
+  policy (a `RoutePolicy`, or a rate limit keyed by a token claim) would
+  start after the decision, and a denial would answer sooner than an allow.
+  Startup validation refuses that.
 - Each `RoutePacing` waits on its own, so a route under several waits for
   the longest.
 - Websocket connections aren't paced, and cancellation isn't either (see
@@ -204,6 +215,45 @@ app.add_middleware(PacingMiddleware, pacing=pacing, paths={"/invites", "/passwor
 
 `konklav-axum`, the axum integration, should get the same pacing once it
 lands.
+
+### Rate limits
+
+```python
+login_rate_limit = RateLimit("login", [RateLimitWindow(size=5, period=timedelta(minutes=1))])
+exports_rate_limit = RateLimit("export", [RateLimitWindow(size=10, period=timedelta(hours=1))])
+
+
+@app.post("/login", dependencies=[RoutePolicy.public(), RouteRateLimit(login_rate_limit, "{client:address}")])
+async def login(form: LoginForm) -> ...:
+    await login_rate_limit.add(form.email)  # a second limit, in code
+
+
+@router.post("/projects/{project}/export", dependencies=[RouteRateLimit(exports_rate_limit, "{token:sub}/{path:project}")])
+async def export(project: str) -> ...: ...
+```
+
+A key template is literal text and fields, with `{{` and `}}` for literal
+braces:
+
+| Field | Value |
+|---|---|
+| `{path:<name>}` | The path parameter `<name>` |
+| `{token:sub}`, `{token:sid}`, `{token:knd}` | A claim of the token the route's policy verified |
+| `{token:tid}` | The tenant, on routes that admit only tenant tokens |
+| `{client:address}` | `KonklavRoutes.client_address` |
+
+Startup validation refuses a template that names a path parameter the route
+doesn't have, a token claim on a public route, or `tid` where other token
+kinds are admitted. The parts are encoded so that different values never
+render the same key.
+
+Behind a load balancer, set `trusted_proxies` (addresses or networks) on
+`KonklavRoutes`. Otherwise `{client:address}` is the proxy's address, and
+every client shares one limit. `X-Forwarded-For` is read only from trusted
+proxies, last untrusted hop first, as the Konklav server does.
+
+For anything else, `key` can be a dependency returning `str` or `bytes`. It
+can depend on others, such as `TenantToken`.
 
 ## Testing
 

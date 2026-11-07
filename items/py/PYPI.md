@@ -109,6 +109,26 @@ async def invite(address: str) -> str:
 The decision logic lives in a Rust core shared with Konklav's other relying
 bindings, so they can't disagree. Python does only the I/O.
 
+## Rate limits
+
+`RateLimit` bounds how often events may happen per key, over several
+windows. With the `redis` extra (`pip install konklav-relying[redis]`),
+every process sharing a Valkey or Redis server enforces one limit
+together, and falls back to counting in memory while it is unavailable:
+
+```python
+login = RateLimit(
+    "login",
+    [RateLimitWindow(size=5, period=timedelta(minutes=1))],
+    redis=redis.asyncio.Redis.from_url(redis_url),
+    secret=rate_limit_secret,
+)
+try:
+    await login.add(email)
+except RateLimited as limited:
+    ...  # retry after limited.retry_after
+```
+
 ## Versions
 
 The package has the same version as the Konklav server it was released

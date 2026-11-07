@@ -165,3 +165,16 @@ The caller MUST choose the time a fake id claims: the current millisecond,
 to stand in for something just created, or, with a past window, a
 millisecond drawn uniformly from that window up to now, to stand in for
 something created some time ago. A window MUST be positive.
+
+## Rate limits
+
+r[item.py.rate-limit.add]
+`konklav_relying.RateLimit` MUST offer `add(key)`, which counts one event
+for `key` (`str`, encoded as UTF-8, or `bytes`) and raises
+`konklav_relying.RateLimited`, carrying the retry-after time as a
+`timedelta`, when the event is refused (`relying.rate-limit.*`).
+
+r[item.py.rate-limit.redis]
+The rate-limit store MUST be an optional `redis` extra, and `RateLimit`
+MUST take a `redis.asyncio` client the relying system owns rather than
+connection settings.

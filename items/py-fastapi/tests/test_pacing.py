@@ -15,10 +15,10 @@ from typing import Any
 import pytest
 from fastapi import APIRouter, FastAPI, HTTPException, WebSocket
 from fastapi.testclient import TestClient
-from konklav_relying import Pacing
+from konklav_relying import Pacing, RateLimit, RateLimited, RateLimitWindow
 from pydantic import BaseModel
 
-from konklav_fastapi import KonklavRoutes, PacingMiddleware, RoutePacing, RoutePolicy, RoutePolicyError
+from konklav_fastapi import KonklavRoutes, PacingMiddleware, RoutePacing, RoutePolicy, RoutePolicyError, RouteRateLimit
 from support import FakeClient, token
 
 PACING = Pacing(floor=timedelta(milliseconds=150))
@@ -56,6 +56,7 @@ async def request(
         "method": method,
         "scheme": "http",
         "server": ("testserver", 80),
+        "client": ("127.0.0.1", 50000),
         "path": path,
         "raw_path": path.encode(),
         "root_path": "",
@@ -197,33 +198,62 @@ def test_route_pacing_leaves_websockets_alone() -> None:
 
 # r[verify item.py-fastapi.route-pacing.order]
 # r[verify item.py-fastapi.validation]
-def test_startup_refuses_a_route_pacing_after_the_route_policy() -> None:
+def test_startup_refuses_a_route_pacing_resolved_after_the_routes_policy() -> None:
+    by_subject = RateLimit("invites", [RateLimitWindow(size=5, period=timedelta(minutes=1))])
     app = FastAPI(dependencies=[RoutePolicy(tenant_actions={"member:invite"})])
 
     @app.post("/late", dependencies=[RoutePacing(PACING)])
     async def late() -> None:
         return None
 
-    @app.post("/early", dependencies=[RoutePacing(PACING)])
-    async def early() -> None:
+    router = APIRouter(dependencies=[RouteRateLimit(by_subject, "{token:sub}")])
+
+    # The rate limit's key needs the verified token, so it evaluates the
+    # policy before the pacing starts.
+    @router.post("/keyed", dependencies=[RoutePacing(PACING)])
+    async def keyed() -> None:
         return None
 
-    router = APIRouter(dependencies=[RoutePacing(PACING), RoutePolicy(tenant_actions={"a"})])
-
-    @router.post("/fine")
-    async def fine() -> None:
-        return None
-
-    other = FastAPI(dependencies=[RoutePacing(PACING)])
-    other.include_router(router)
-    KonklavRoutes().validate(other)
+    other = FastAPI()
+    other.include_router(router, dependencies=[RoutePolicy(tenant_actions={"member:invite"})])
 
     with pytest.raises(RoutePolicyError) as raised:
         KonklavRoutes().validate(app)
-    assert str(raised.value).splitlines()[1:] == [
-        "POST /late: declares a RoutePacing after its RoutePolicy; declare it before, so denials are paced too",
-        "POST /early: declares a RoutePacing after its RoutePolicy; declare it before, so denials are paced too",
-    ]
+    message = "declares a RoutePacing that FastAPI resolves after the route's policy; declare it first, so denials are paced too"
+    assert str(raised.value).splitlines()[1:] == [f"POST /late: {message}"]
+    with pytest.raises(RoutePolicyError) as raised:
+        KonklavRoutes().validate(other)
+    assert str(raised.value).splitlines()[1:] == [f"POST /keyed: {message}"]
+
+    fine = APIRouter(dependencies=[RoutePacing(PACING), RoutePolicy(tenant_actions={"a"}), RouteRateLimit(by_subject, "{token:sub}")])
+
+    @fine.post("/fine")
+    async def paced_twice() -> None:
+        return None
+
+    third = FastAPI(dependencies=[RoutePacing(PACING)])
+    third.include_router(fine)
+    KonklavRoutes().validate(third)
+
+
+# r[verify item.py-fastapi.route-pacing]
+async def test_route_pacing_paces_rate_limit_refusals() -> None:
+    once = RateLimit("invites", [RateLimitWindow(size=1, period=timedelta(hours=1))])
+    app = FastAPI(dependencies=[RoutePacing(PACING)])
+
+    @app.post("/limited", dependencies=[RoutePolicy.public(), RouteRateLimit(once, "{client:address}")])
+    async def limited() -> None:
+        return None
+
+    @app.post("/in-code", dependencies=[RoutePolicy.public()])
+    async def in_code() -> None:
+        raise RateLimited(timedelta(seconds=30))
+
+    installed(app)
+    for path, status in [("/limited", 200), ("/limited", 429), ("/in-code", 429)]:
+        answered, taken = await request(app, "POST", path)
+        assert answered == status
+        assert taken >= AT_LEAST, (path, status, taken)
 
 
 def test_route_pacing_repr() -> None:

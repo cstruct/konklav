@@ -15,12 +15,14 @@ app.add_exception_handler(Forbidden, my_forbidden_handler)
 
 from __future__ import annotations
 
+import math
+import secrets
 from typing import Any, ClassVar
 
 from fastapi.requests import HTTPConnection
 from fastapi.responses import JSONResponse
 from fastapi.websockets import WebSocket
-from konklav_relying import DenyReason, StepUp
+from konklav_relying import DenyReason, RateLimited, StepUp
 
 __all__ = [
     "Forbidden",
@@ -30,6 +32,8 @@ __all__ = [
     "StepUpRequired",
     "Unauthenticated",
     "handle_denied",
+    "handle_rate_limited",
+    "retry_after_seconds",
 ]
 
 
@@ -142,3 +146,35 @@ async def handle_denied(connection: HTTPConnection, error: Exception) -> JSONRes
         await connection.close(code=1008, reason=error.code)
         return None
     return JSONResponse(error.body(), status_code=error.status_code, headers=error.headers)
+
+
+# Websocket close code 1013: try again later.
+_TRY_AGAIN_LATER = 1013
+
+
+def retry_after_seconds(error: RateLimited) -> int:
+    """
+    The `Retry-After` value for `error`: its wait in whole seconds, rounded
+    up, plus random jitter of up to a tenth of it (at least a second), so
+    clients refused together don't all retry together.
+    """
+    seconds = max(1, math.ceil(error.retry_after.total_seconds()))
+    return seconds + secrets.randbelow(max(1, seconds // 10) + 1)
+
+
+# r[impl item.py-fastapi.rate-limited]
+async def handle_rate_limited(connection: HTTPConnection, error: Exception) -> JSONResponse | None:
+    """
+    Answers `konklav_relying.RateLimited`: 429 with `Retry-After`
+    (`retry_after_seconds`), or for a websocket, a close with 1013 (try
+    again later).
+    """
+    assert isinstance(error, RateLimited)
+    if isinstance(connection, WebSocket):
+        await connection.close(code=_TRY_AGAIN_LATER, reason="rate_limited")
+        return None
+    return JSONResponse(
+        {"error": {"code": "rate_limited"}},
+        status_code=429,
+        headers={"Retry-After": str(retry_after_seconds(error))},
+    )

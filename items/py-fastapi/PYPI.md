@@ -40,6 +40,11 @@ router = APIRouter(dependencies=[RoutePacing(pacing), RoutePolicy(tenant_actions
 app.add_middleware(PacingMiddleware, pacing=pacing, paths={"/password-resets"})
 ```
 
+`RouteRateLimit(limit, "{token:sub}/{path:project}")` limits routes with a
+`konklav_relying.RateLimit`, keyed by path parameters, token claims or
+`{client:address}` (honouring `trusted_proxies`). Refused requests, and
+`RateLimited` raised in handlers, are answered with 429 and `Retry-After`.
+
 ## Versions
 
 The package has the same version as the Konklav server it was released

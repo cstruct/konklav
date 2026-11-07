@@ -51,7 +51,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - `login/password` and `login/secret-key`, rate limited per identifier, with failures that reveal nothing
   - `refresh`, with rotation and reuse detection
   - `sign-out` and `sign-out/others`
-  - browser clients get the refresh token as an `HttpOnly` cookie and must pass Origin and `X-Konklav-Client` checks
+  - browser clients get the refresh token as an `HttpOnly` cookie and must pass Origin and `X-Konklav-Client` checks; password, email-link (on `complete`), phone-code and invite logins all take `client` and `flags` the same way
 - Subject-facing `login/tenant` moves a session into a tenant where the subject has an active membership. The new token carries `tid`, `mid` and portable facts. Logins may request restrictive session flags that the catalog marks as requestable. A confined flag keeps the session out of tenants whose facts don't match its confinement, at selection and at every tenant-token issuance, refresh included.
 - `GET /v1/capabilities`: the `konklav:` capabilities the caller holds, for operator tools such as the console.
 - Passkeys (`src/passkeys.rs` wraps `webauthn-rs`; routes in `src/passkeys_api.rs`):
