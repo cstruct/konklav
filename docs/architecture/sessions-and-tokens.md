@@ -165,6 +165,23 @@ rule, escalation checks and change-feed invalidation.
   preflight.
 - Non-browser clients use body tokens. The login endpoint variant or an
   explicit `client=browser|native` parameter chooses between the two.
+- Every interactive login takes `client` and `flags` in the same way:
+  `POST /v1/login/password`, `/v1/login/email-link/complete`,
+  `/v1/login/phone/complete` and `/v1/invites/redeem`. So a login
+  application can keep one single sign-on session in the cookie however
+  the person proves who they are. The browser checks and the flags are
+  checked before the password, code, link or invite is, so a refused
+  request leaves a code or link usable.
+- The email link takes them on `complete`, not on `start`. The link is
+  often opened in another browser, or in a mail app's web view, than the
+  one that asked for it. The client that redeems it is the one that holds
+  the session, so it must be the one that passes the browser checks and
+  gets the cookie. A choice recorded at `start` could only be refused
+  there or, worse, deliver a session to the wrong kind of client.
+  Restrictive flags only narrow a session, so letting the redeeming
+  client choose them gives it nothing that an unflagged login wouldn't. A
+  flag that every session of a credential must carry belongs on the
+  credential (`PUT /v1/credentials/{id}/session-flags`).
 
 ## Signing keys
 

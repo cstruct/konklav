@@ -366,7 +366,7 @@ impl TestApp {
         .unwrap();
         let options = VerifyOptions {
             issuer: ISSUER,
-            audience: AUDIENCE,
+            audiences: &[AUDIENCE.to_owned()],
             now: chrono::Utc::now().timestamp(),
             leeway: 5,
         };

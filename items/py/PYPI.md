@@ -35,7 +35,7 @@ client = RelyingClient(
     key_id=key_id,
     secret=secret,
     issuer="https://auth.example",
-    audience="api",
+    audiences={"api", "app"},
 )
 await client.start()
 
@@ -83,6 +83,29 @@ await client.stop()
       ...
   ```
 
+For a relying system's own endpoints that could reveal whether a record
+exists, such as inviting an address or starting a password reset:
+
+- `paced(Pacing(floor, jitter))`, an async context manager and decorator,
+  answers no sooner than `floor ± jitter` (drawn from `secrets`), also when
+  the work raises. Cancellation isn't paced. Tests use `Pacing.NONE`.
+- `fake_uuid7()` makes a UUIDv7 to answer with in place of one that wasn't
+  created, claiming now; `fake_uuid7(within=timedelta(days=365))` claims a
+  random time in the past year, for records that would already exist.
+
+```python
+from datetime import timedelta
+
+from konklav_relying import Pacing, fake_uuid7, paced
+
+pacing = Pacing(floor=timedelta(milliseconds=800), jitter=timedelta(milliseconds=200))
+
+async def invite(address: str) -> str:
+    async with paced(pacing):
+        member = await find_member(address)
+        return str(await send_invite(member) if member else fake_uuid7())
+```
+
 The decision logic lives in a Rust core shared with Konklav's other relying
 bindings, so they can't disagree. Python does only the I/O.
 
@@ -90,8 +113,8 @@ bindings, so they can't disagree. Python does only the I/O.
 
 `RateLimit` bounds how often events may happen per key, over several
 windows. With the `redis` extra (`pip install konklav-relying[redis]`),
-every process sharing a Redis enforces one limit together, and falls back
-to counting in memory while Redis is unavailable:
+every process sharing a Valkey or Redis server enforces one limit
+together, and falls back to counting in memory while it is unavailable:
 
 ```python
 login = RateLimit(

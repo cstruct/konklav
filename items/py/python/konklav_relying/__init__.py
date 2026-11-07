@@ -14,7 +14,7 @@ client = RelyingClient(
     key_id=key_id,
     secret=secret,
     issuer="https://auth.example",
-    audience="api",
+    audiences={"api", "app"},
 )
 await client.start()
 decision = await client.decide(token, {"tenant": ["project:read"]})
@@ -34,6 +34,10 @@ decision = await client.decide_request(
     requirements={"tenant": ["project:read"]},
 )
 ```
+
+`audiences` are the audiences this relying system accepts: a token is
+valid for any of them, and `AccessToken.aud` says which it carries.
+`audience="api"` is short for `audiences={"api"}`.
 
 A decision denied with reason `invalid_dpop_proof` should be answered with
 401 and `WWW-Authenticate: DPoP error="invalid_dpop_proof"`.
@@ -70,12 +74,14 @@ import logging
 import threading
 import time
 import urllib.parse
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from typing import Any
 
 import httpx
 
 from konklav_relying._core import Core
+from konklav_relying.fake_ids import fake_uuid7
+from konklav_relying.pacing import Pacing, paced
 from konklav_relying.policy import MissingScopeId, Policy, PolicyError, Requirements, StepUp
 from konklav_relying.rate_limit import RateLimit, RateLimited, RateLimitWindow
 from konklav_relying.results import AcceptedRequest, AccessToken, Actor, Confirmation, Decision, DenyReason, Obligation
@@ -92,6 +98,7 @@ __all__ = [
     "KonklavError",
     "MissingScopeId",
     "Obligation",
+    "Pacing",
     "Policy",
     "PolicyError",
     "RateLimit",
@@ -100,6 +107,8 @@ __all__ = [
     "RelyingClient",
     "Requirements",
     "StepUp",
+    "fake_uuid7",
+    "paced",
 ]
 
 _log = logging.getLogger(__name__)
@@ -132,6 +141,20 @@ def _presented(authorization: str, dpop: str | None, method: str, url: str) -> s
     )
 
 
+# r[impl item.py.audiences]
+def _audiences(audience: str | None, audiences: Collection[str] | None) -> list[str]:
+    if (audience is None) == (audiences is None):
+        raise TypeError("pass either audience or audiences")
+    if audiences is None:
+        assert audience is not None
+        return [audience]
+    if isinstance(audiences, str):
+        raise TypeError("audiences takes a collection of strings, not a string")
+    if not audiences:
+        raise ValueError("audiences is empty, so no token would be accepted")
+    return sorted(set(audiences))
+
+
 def _token_of(authorization: str) -> str:
     """The token after the scheme, for the check API."""
     return authorization.partition(" ")[2].strip()
@@ -146,16 +169,23 @@ class RelyingClient:
         key_id: str,
         secret: str,
         issuer: str,
-        audience: str,
+        audience: str | None = None,
+        audiences: Collection[str] | None = None,
         http: httpx.AsyncClient | None = None,
         **config: Any,
     ) -> None:
+        """
+        Pass the accepted audiences as `audiences`, or one as `audience`.
+        `config` tunes the relying core (`Config` in the Rust crate), such
+        as `entitlement_ttl_ms`.
+        """
         self._relying_url = relying_url.rstrip("/")
         self._subject_url = subject_url.rstrip("/")
         self._key_id = key_id
         self._secret = secret
         self._http = http or httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None))
-        self._core = Core(json.dumps({"issuer": issuer, "audience": audience, **config}))
+        self._audiences = _audiences(audience, audiences)
+        self._core = Core(json.dumps({"issuer": issuer, "audiences": self._audiences, **config}))
         # Decisions are synchronous calls into Rust; the lock only guards
         # against threads sharing one client.
         self._lock = threading.Lock()
@@ -180,6 +210,11 @@ class RelyingClient:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._tasks = []
+
+    @property
+    def audiences(self) -> frozenset[str]:
+        """The audiences this client accepts tokens for."""
+        return frozenset(self._audiences)
 
     def is_trusted(self) -> bool:
         with self._lock:
@@ -436,7 +471,7 @@ class RelyingClient:
         headers = {"authorization": f"Bearer {await self._bearer()}"}
         response = await self._http.post(
             f"{self._relying_url}/v1/check",
-            json={"token": token, "requirements": requirements},
+            json={"token": token, "requirements": requirements, "audiences": self._audiences},
             headers=headers,
         )
         body = _checked(response).json()

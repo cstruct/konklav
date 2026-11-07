@@ -64,16 +64,44 @@ pub(crate) enum Client {
     Native,
 }
 
-#[derive(Deserialize)]
-struct PasswordLogin {
+/// What an interactive login asks of the session it starts: the kind of
+/// client that receives it and the restrictive flags it should carry.
+/// Password, email-link, phone-code and invite logins all take these.
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct SessionRequest {
+    #[serde(default)]
+    pub client: Client,
     /// Restrictive session flags the client asks for, from the catalog's
     /// requestable ones.
     #[serde(default)]
-    flags: Vec<String>,
+    pub flags: Vec<String>,
+}
+
+impl SessionRequest {
+    /// Checks the browser rules and the requested flags. Logins call this
+    /// before they verify or consume anything, so a refused request leaves
+    /// a code or link usable.
+    pub(crate) async fn check(
+        &self,
+        state: &AppState,
+        conn: &mut Connection,
+        headers: &HeaderMap,
+    ) -> Result<Option<BrowserSettings>, ApiError> {
+        let browser = match self.client {
+            Client::Browser => Some(check_browser_request(&state.auth, headers)?.clone()),
+            Client::Native => None,
+        };
+        check_requested_flags(conn, &self.flags).await?;
+        Ok(browser)
+    }
+}
+
+#[derive(Deserialize)]
+struct PasswordLogin {
     identifier: String,
     password: String,
-    #[serde(default)]
-    client: Client,
+    #[serde(flatten)]
+    session: SessionRequest,
 }
 
 #[derive(Deserialize)]
@@ -406,6 +434,7 @@ pub(crate) async fn start_session(
 
 /// `POST /v1/login/password`
 // r[impl authn.login.methods]
+// r[impl authn.login.session-request]
 async fn login_password(
     State(state): State<AppState>,
     dpop::Bound(dpop_jkt): dpop::Bound,
@@ -413,12 +442,8 @@ async fn login_password(
     headers: HeaderMap,
     ApiJson(body): ApiJson<PasswordLogin>,
 ) -> Result<Response, ApiError> {
-    let browser = match body.client {
-        Client::Browser => Some(check_browser_request(&state.auth, &headers)?.clone()),
-        Client::Native => None,
-    };
     let mut conn = state.pool.get().await?;
-    check_requested_flags(&mut conn, &body.flags).await?;
+    let browser = body.session.check(&state, &mut conn, &headers).await?;
     let kind = CredentialKind::Password;
     let attempt = begin_attempt(&mut conn, kind, &body.identifier, address).await?;
 
@@ -472,9 +497,9 @@ async fn login_password(
         &mut conn,
         &credential,
         &["pwd"],
-        body.client,
+        body.session.client,
         browser.as_ref(),
-        &body.flags,
+        &body.session.flags,
         dpop_jkt,
     )
     .await
@@ -732,16 +757,22 @@ pub(crate) async fn verify_access_token(
     conn: &mut Connection,
     token: &str,
 ) -> Result<(AccessClaims, Session), ApiError> {
-    verify_access_token_for(state, conn, token, &state.auth.audience).await
+    verify_access_token_for(
+        state,
+        conn,
+        token,
+        std::slice::from_ref(&state.auth.audience),
+    )
+    .await
 }
 
-/// [`verify_access_token`] for tokens with another audience, such as those
-/// issued to an OIDC client.
+/// [`verify_access_token`] for tokens with other audiences, such as those
+/// issued to an OIDC client: the token's `aud` must be one of `audiences`.
 pub(crate) async fn verify_access_token_for(
     state: &AppState,
     conn: &mut Connection,
     token: &str,
-    audience: &str,
+    audiences: &[String],
 ) -> Result<(AccessClaims, Session), ApiError> {
     let unauthenticated = || {
         ApiError::new(
@@ -753,7 +784,7 @@ pub(crate) async fn verify_access_token_for(
     let key = keys::verifying_key(conn, &kid, state.auth.access_ttl).await?;
     let options = VerifyOptions {
         issuer: &state.auth.issuer,
-        audience,
+        audiences,
         now: Utc::now().timestamp(),
         leeway: 30,
     };
@@ -872,13 +903,16 @@ async fn select_tenant(
     }))
 }
 
-/// Starts a native session after a passwordless first factor (magic link,
-/// phone code, invite), checking the subject can still log in.
+/// Starts a session after a passwordless first factor (magic link, phone
+/// code, invite), checking the subject can still log in. `browser` is what
+/// [`SessionRequest::check`] returned for `request`.
 pub(crate) async fn start_passwordless_session(
     state: &AppState,
     conn: &mut Connection,
     credential: &Credential,
     amr: &str,
+    request: &SessionRequest,
+    browser: Option<&BrowserSettings>,
     dpop_jkt: Option<String>,
 ) -> Result<Response, ApiError> {
     let subject = subjects::get(conn, credential.subject_id).await?;
@@ -893,9 +927,9 @@ pub(crate) async fn start_passwordless_session(
         conn,
         credential,
         &[amr],
-        Client::Native,
-        None,
-        &[],
+        request.client,
+        browser,
+        &request.flags,
         dpop_jkt,
     )
     .await

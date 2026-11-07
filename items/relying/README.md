@@ -18,7 +18,7 @@ The relying core: a sans-I/O library with everything a relying system needs to d
 - Following the change feed's state: cursor, heartbeats, `position`, `reset`. When it lags (three missed heartbeats), the core answers `Need::Check`, so hosts ask `/v1/check`.
 - Rate limits (`rate_limit`): named limits of several windows per key, enforced with the generic cell rate algorithm (GCRA):
   - local state for a bounded number of keys (100 000 by default, least recently used first), dropped once drained, with an optional local divisor
-  - for a rate-limit store (Redis), the script to run with its keys and arguments, keys hashed under a configured secret (HMAC-SHA-256)
+  - for a rate-limit store (Valkey, or Redis 6.2 or later), the script to run with its keys and arguments, keys hashed under a configured secret (HMAC-SHA-256)
   - the store's backoff while it fails (1 s, doubling to 30 s), so the host answers from local state
 - Route policies (`policy`): an operation's requirements with scope ids unresolved, for Rust hosts and framework integrations (such as `konklav-axum`) to declare per route or router:
   - merged outermost first: actions accumulate, allowed sets intersect, the strictest step-up wins; overrides replace the fields they set; public policies admit anyone
@@ -38,7 +38,7 @@ The core never makes network calls, reads clocks, spawns tasks or sleeps. Hosts 
 - `Verification::InvalidProof` and `DenyReason::InvalidDpopProof` mean the relying system should answer with a `WWW-Authenticate: DPoP` challenge.
 - `Relying::poll_work` returns the fetches due and when to poll next.
 - `on_jwks`, `on_session`, `on_session_unknown`, `on_entitlements`, `on_registered_scope`, `on_registered_scope_unknown`, `on_fetch_failed`, `on_feed_connected`, `on_feed_activity`, `on_feed_lost`, `on_feed_event`, `await_cursor`.
-- `Config` holds the issuer, audience and tuning.
+- `Config` holds the issuer, the audiences a token may carry (`audiences`, also read from `audience` as one or a list) and tuning. A verified token's `AccessClaims::aud` says which audience it carried.
 - `policy::Policy`: a builder (`tenant_actions`, `scope_actions`, `token_kinds`, `admit_flags`, `step_up`, `tenant_fact`, ...), `Policy::public`, `Policy::overriding`, `Policy::merge`, `check` and `requirements` with `ResolvedScope`s. It follows the Python binding's `konklav_relying.policy.Policy`.
 - `rate_limit::RateLimiter`: `begin` counts an event locally and returns `Attempt::Decided` or `Attempt::Store { call, local }`; `on_store_answer` and `on_store_failed` take the store's answer or failure. `STORE_SCRIPT` is the script both hosts run.
 
@@ -72,7 +72,7 @@ cargo build -p konklav-relying --target wasm32-unknown-unknown
   - DPoP: schemes, proofs checked before the check API, replays, the bounded replay set
   - route policies: merging, overrides, public policies, contradictions, requirements
   - rate limits: bursts and intervals, several windows, refusals that don't count, the local divisor, the key bound and expiry, store calls and backoff
-- Indirect coverage: the native client's end-to-end tests against a real server, the Python tests, and both hosts' rate-limit tests against a real Redis, which run `STORE_SCRIPT`.
+- Indirect coverage: the native client's end-to-end tests against a real server, the Python tests, and both hosts' rate-limit tests against a real Valkey, which run `STORE_SCRIPT`.
 
 ## Traceability and related docs
 

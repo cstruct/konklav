@@ -21,7 +21,7 @@ struct Fixture {
 fn config() -> Config {
     Config {
         issuer: "https://auth.example".into(),
-        audience: "api".into(),
+        audiences: vec!["api".into(), "app".into()],
         ..Config::default()
     }
 }
@@ -47,10 +47,14 @@ impl Fixture {
     }
 
     fn token(&self, version: i64, now: u64) -> String {
+        self.token_for("api", version, now)
+    }
+
+    fn token_for(&self, audience: &str, version: i64, now: u64) -> String {
         let now = i64::try_from(now / 1000).unwrap();
         self.signer.sign(&AccessClaims {
             iss: "https://auth.example".into(),
-            aud: "api".into(),
+            aud: audience.into(),
             sub: self.subject,
             jti: "j".into(),
             iat: now,
@@ -488,6 +492,25 @@ fn verifies_tokens_without_needing_entitlements() {
             }]
         }
     );
+}
+
+// r[verify relying.verify.audiences]
+#[test]
+fn accepts_tokens_for_any_configured_audience() {
+    use konklav_relying::Verification;
+    let mut f = Fixture::new();
+    f.warm(T0);
+    for audience in ["api", "app"] {
+        let token = f.token_for(audience, 1, T0);
+        match f.core.verify(&token, T0) {
+            Verification::Verified { claims } => assert_eq!(claims.aud, audience),
+            other => panic!("expected verified, got {other:?}"),
+        }
+        assert_eq!(f.core.decide(&token, &reading(), None, T0), allowed());
+    }
+    let other = f.token_for("other", 1, T0);
+    assert_eq!(f.core.verify(&other, T0), Verification::Invalid);
+    assert_eq!(f.core.decide(&other, &reading(), None, T0), invalid());
 }
 
 #[test]

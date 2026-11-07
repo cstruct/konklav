@@ -24,7 +24,7 @@ tokio = { workspace = true, features = ["time"] }
 tracing.workspace = true
 
 [features]
-# Rate limits shared through a Redis rate-limit store.
+# Rate limits shared through a rate-limit store: Valkey or Redis.
 redis = ["dep:redis"]
 
 [dev-dependencies]

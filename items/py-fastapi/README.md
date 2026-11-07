@@ -44,6 +44,9 @@ publishes it to PyPI with the other Python packages.
   `TenantToken`.
 - Startup validation over every HTTP and websocket route, and
   `x-konklav-policy` in OpenAPI.
+- Pacing: `RoutePacing`, a dependency that paces the routes it is
+  declared on, and `PacingMiddleware`, which paces every answer for chosen
+  paths (`konklav_relying.pacing`).
 
 Out of scope:
 
@@ -55,7 +58,7 @@ Out of scope:
 
 | Software item | Relationship |
 |---|---|
-| `konklav-py` (`konklav-relying`) | Required at exactly this package's version; provides `Policy`, `RelyingClient` (`accept_request`, `decide_accepted_typed`) and the typed results |
+| `konklav-py` (`konklav-relying`) | Required at exactly this package's version; provides `Policy`, `RelyingClient` (`accept_request`, `decide_accepted_typed`), the typed results and `Pacing` |
 | `konklav-py-control-plane` | Used by the integration tests only, to set up a server |
 | `konklav-server` | Decides through the relying client; only the same version is supported |
 
@@ -92,7 +95,7 @@ routes = KonklavRoutes(scope_resolvers={"document": document_scope})
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    routes.client = RelyingClient(relying_url=..., subject_url=..., key_id=..., secret=..., issuer=..., audience=...)
+    routes.client = RelyingClient(relying_url=..., subject_url=..., key_id=..., secret=..., issuer=..., audiences=...)
     await routes.client.start()
     yield
     await routes.client.stop()
@@ -132,6 +135,19 @@ the token's tenant. If routes also address a tenant themselves, such as
 route tenant isn't the token's `tid` is denied with `token_tenant` before
 any decision.
 
+### Audiences
+
+A `RelyingClient` may accept tokens for several audiences, such as
+Konklav's own for services and an OIDC client's for people. Set
+`audiences` on a `RoutePolicy` to admit only some of them on its routes.
+They intersect when merged, an override replaces them, and a token for
+another audience is denied with `token_audience` right after it verifies,
+before the hooks and the decision:
+
+```python
+people = APIRouter(dependencies=[RoutePolicy(audiences={"app"})])
+```
+
 ### Verification and DPoP
 
 The relying core answers each DPoP proof once and refuses it as a replay
@@ -142,6 +158,63 @@ verified token with a handle. Hooks, the route tenant and the scope
 resolvers only ever see that verified token. One `decide_accepted_typed`
 call then decides for the handle, rechecking the session but not the proof
 (`relying.verify.accepted-presentation`).
+
+### Pacing
+
+An endpoint that invites an address or starts a password reset should take
+as long for an address that exists as for one that doesn't. `RoutePacing`
+paces the routes it is declared on, with a `Pacing` from `konklav-relying`
+(which also has `fake_uuid7`, for the id such an answer carries):
+
+```python
+from datetime import timedelta
+
+from konklav_relying import Pacing, fake_uuid7
+from konklav_fastapi import RoutePacing, RoutePolicy
+
+pacing = Pacing(floor=timedelta(milliseconds=800), jitter=timedelta(milliseconds=200))
+invites = APIRouter(dependencies=[RoutePacing(pacing), RoutePolicy(tenant_actions={"member:invite"})])
+
+
+@invites.post("/invites")
+async def invite(body: Invite) -> Invited:
+    member = await find_member(body.address)
+    return Invited(id=await send_invite(member) if member else fake_uuid7())
+```
+
+- It is a `yield` dependency with `scope="function"`, which FastAPI
+  supports in every version this package does. Its wait starts when FastAPI
+  resolves it and ends after the handler, also when the handler or a later
+  dependency raises (`KonklavDenied`, `RateLimited`, `HTTPException`, a
+  parameter that doesn't validate), and before the response is sent.
+- Declare it on a route, a router, `include_router` or the application, and
+  before the `RoutePolicy` and any `RouteRateLimit`. FastAPI resolves
+  dependencies in order, so one resolved after anything that evaluates the
+  policy (a `RoutePolicy`, or a rate limit keyed by a token claim) would
+  start after the decision, and a denial would answer sooner than an allow.
+  Startup validation refuses that.
+- Each `RoutePacing` waits on its own, so a route under several waits for
+  the longest.
+- Websocket connections aren't paced, and cancellation isn't either (see
+  [`konklav-relying`](../py/README.md#pacing-and-fake-ids)).
+
+What a dependency can't pace: FastAPI answers a body it can't parse
+(malformed JSON, 422, or an unreadable form, 400) before it resolves any
+dependency, and an unknown path (404) or method (405), or anything
+middleware answers, never reaches one. Parameters that don't validate are
+fine: FastAPI resolves dependencies first and answers 422 after them.
+
+`PacingMiddleware` covers every answer for the paths it is given, including
+those and unhandled errors (500), by holding back the start of the
+response until the wait is done. Paths are compared exactly with
+`request.url.path`:
+
+```python
+app.add_middleware(PacingMiddleware, pacing=pacing, paths={"/invites", "/password-resets"})
+```
+
+`konklav-axum`, the axum integration, should get the same pacing once it
+lands.
 
 ### Rate limits
 

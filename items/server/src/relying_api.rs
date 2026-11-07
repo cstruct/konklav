@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::AppState;
 use crate::error::{ApiError, ApiJson, ErrorCode};
-use crate::subject_api::{authenticate, verify_access_token};
+use crate::subject_api::{authenticate, verify_access_token_for};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -100,6 +100,8 @@ struct CheckRequest {
     token: String,
     #[serde(default)]
     requirements: Requirements,
+    /// The audiences the relying system accepts; Konklav's own when absent.
+    audiences: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -124,7 +126,12 @@ async fn check(
     // A sender-constrained token is decided without its DPoP proof: the
     // relying system calling this has checked the proof already.
     // r[impl relying.verify.dpop-before-check]
-    let (claims, _) = match verify_access_token(&state, &mut conn, &body.token).await {
+    // r[impl authz.api.check-audiences]
+    let audiences = body
+        .audiences
+        .unwrap_or_else(|| vec![state.auth.audience.clone()]);
+    let verified = verify_access_token_for(&state, &mut conn, &body.token, &audiences).await;
+    let (claims, _) = match verified {
         Ok(verified) => verified,
         Err(error)
             if matches!(

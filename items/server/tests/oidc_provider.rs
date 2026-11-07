@@ -2172,3 +2172,46 @@ async fn the_provider_can_require_dpop_of_every_public_client() {
     );
     assert_eq!(confidential.body["token_type"], "Bearer");
 }
+
+// r[verify authz.api.check-audiences]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_check_api_accepts_the_audiences_a_relying_system_names() {
+    let world = world().await;
+    let app = &world.app;
+    let code = authorize(&world, &[]).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    let client_token = tokens.body["access_token"].as_str().unwrap().to_owned();
+    let service = format!("Bearer {}", app.service_token().await);
+    let any_kind =
+        json!({"token_kinds": ["partial", "identity", "tenant", "reset_password", "invite"]});
+    let check = |token: String, audiences: Option<Value>| {
+        let mut body = json!({"token": token, "requirements": any_kind});
+        if let Some(audiences) = audiences {
+            body["audiences"] = audiences;
+        }
+        let service = service.clone();
+        async move {
+            let reply = app
+                .send(
+                    Method::POST,
+                    "/v1/check",
+                    &[("authorization", &service)],
+                    Some(body),
+                )
+                .await;
+            assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+            reply.body["decision"].as_str().unwrap().to_owned()
+        }
+    };
+
+    // Without audiences, only Konklav's own.
+    assert_eq!(check(client_token.clone(), None).await, "deny");
+    assert_eq!(check(world.login_token.clone(), None).await, "allow");
+    // With them, any of those named, and only those.
+    let both = Some(json!([common::AUDIENCE, "console"]));
+    assert_eq!(check(client_token.clone(), both.clone()).await, "allow");
+    assert_eq!(check(world.login_token.clone(), both).await, "allow");
+    let other = Some(json!(["other"]));
+    assert_eq!(check(client_token, other.clone()).await, "deny");
+    assert_eq!(check(world.login_token.clone(), other).await, "deny");
+}

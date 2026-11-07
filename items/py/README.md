@@ -13,8 +13,11 @@ Python bindings for the relying core, plus an asyncio/httpx host.
 - `konklav_relying.policy`: route policies (`Policy`, `StepUp`), which state an operation's requirements with scope ids unresolved, merge across nested layers and resolve to the requirements JSON. Frozen dataclasses and the standard library only, so framework integrations can build on it.
 - `konklav_relying.rate_limit`: `RateLimit.add(key)`, raising `RateLimited`, over `_core.RateLimiterCore`. With the `redis` extra it shares limits through a `redis.asyncio` client the application owns, and answers from memory while Redis fails or is slow.
 - `konklav_relying.results`: typed results (`Decision`, `DenyReason`, `AccessToken`) read from the JSON the core and Konklav return.
+- `konklav_relying.pacing` and `konklav_relying.fake_ids`: pacing (`Pacing`, `paced`) and fake ids (`fake_uuid7`), so that a relying system's own endpoints don't reveal by their timing or their ids whether a record exists. Standard library only.
 
 No decision logic lives in Python: a route policy only builds requirements.
+Pacing and fake ids are host-level timing and id generation, so they live
+here rather than in the relying core.
 
 ## Installing
 
@@ -38,11 +41,13 @@ client = RelyingClient(
     key_id=key_id,
     secret=secret,
     issuer="https://auth.example",
-    audience="api",
+    audiences={"api", "app"},
 )
 await client.start()
 decision = await client.decide(token, {"scopes": [{"kind": "project", "id": project_id, "actions": ["document:read"]}]})
 ```
+
+`audiences` are the token audiences this relying system accepts, such as Konklav's own (`api`) and an OIDC client's (`app`); `audience="api"` is short for one. A token verifies for any of them, also through the check API, and `AccessToken.aud` says which it carried.
 
 For sender-constrained (DPoP) tokens, `decide_request` and `verify_request` take the request's raw `Authorization` and `DPoP` headers, its method, and the public URL the client addressed (behind a proxy, not the upstream one). A deny with reason `invalid_dpop_proof`, or `InvalidDpopProof` from `verify_request`, should be answered with 401 and `WWW-Authenticate: DPoP error="invalid_dpop_proof"`.
 
@@ -134,6 +139,78 @@ if not decision.allowed:
 `konklav-control-plane`'s `Written.cursor`; see
 [`examples/python/read_your_writes.py`](../../examples/python/read_your_writes.py).
 
+### Pacing and fake ids
+
+An endpoint that invites an address, starts a password reset or looks up an
+account usually does more work for a record that exists than for one that
+doesn't, and answers with something only a real record has. Konklav hides
+both for its own authentication endpoints (`authn.pacing`); these helpers
+do the same for a relying system's.
+
+`Pacing(floor, jitter)` and `paced` run the work and a wait drawn uniformly
+from `floor ± jitter` together, and finish when both are done, so the floor
+adds no latency when the work takes longer. `paced` is an async context
+manager and a decorator:
+
+```python
+>>> import asyncio
+>>> from datetime import timedelta
+>>> from konklav_relying import Pacing, paced
+>>> pacing = Pacing(floor=timedelta(milliseconds=50), jitter=timedelta(milliseconds=10))
+>>> @paced(pacing)
+... async def invite(address: str) -> str:
+...     return "sent"
+>>> asyncio.run(invite("someone@example.com"))
+'sent'
+
+```
+
+- The jitter is drawn from `secrets`, with microsecond resolution, and the
+  wait never goes below zero. Konklav's own default is 1.5 s ± 250 ms; pick
+  a floor above what the slow path takes on a loaded host.
+- The wait also runs when the work raises, so a failure answers no sooner
+  than a success.
+- Cancellation (and any other `BaseException`) propagates at once, without
+  the wait, and cancelling during the wait ends it. Whoever cancelled, such
+  as a client that went away, a timeout or a shutdown, isn't waiting for an
+  answer, and waiting would hold up timeouts and shutdown.
+- Tests use `Pacing.NONE`, which doesn't wait, or a small explicit pacing.
+  There is no global switch to speed pacing up.
+
+`fake_uuid7` makes a UUIDv7 to answer with in place of a real one (a fake
+id): a version 7, RFC 9562 variant UUID whose 74 bits after the timestamp
+come from `secrets`. A UUIDv7 carries the millisecond it was made, so the
+caller chooses what a fake one claims:
+
+- `fake_uuid7()` claims now. Use it in place of something the request would
+  have just created, such as answering an invite or a creation request for
+  an unknown address with an id that looks like a fresh one. A past time
+  would give the fake away.
+- `fake_uuid7(within=timedelta(days=365))` claims a millisecond drawn
+  uniformly from the past year. Use it in place of something that would
+  already exist, such as the account id a lookup by address returns. Pick a
+  window that matches the age of the real records.
+
+```python
+>>> from konklav_relying import fake_uuid7
+>>> from konklav_relying.fake_ids import claimed_ms
+>>> fake = fake_uuid7()
+>>> fake.version
+7
+>>> claimed_ms(fake_uuid7(within=timedelta(days=365))) <= claimed_ms(fake_uuid7())
+True
+
+```
+
+If the relying system's real ids fix some of the bits after the timestamp,
+such as Python 3.14's `uuid.uuid7`, which seeds a counter whose top bit is
+zero, the fakes differ there; make real ids the same way, or match the
+fakes to them. A fake id helps only in an answer that is also paced.
+
+A FastAPI application declares pacing on routes with `konklav-fastapi`'s
+`RoutePacing` ([`items/py-fastapi`](../py-fastapi/README.md#pacing)).
+`konklav-axum`, the axum integration, should get the same helpers once it
+lands.
 
 ### Rate limits
 
@@ -156,11 +233,12 @@ konklav_relying.rate_limit.RateLimited: rate limited; retry after ...
 
 ```
 
-To share a limit between processes, install the `redis` extra
-(`pip install konklav-relying[redis]`) and pass a client and a secret of at
-least 32 bytes that every process shares; keys reach Redis only as keyed
+To share a limit between processes through Valkey or Redis (6.2 or later),
+install the `redis` extra (`pip install konklav-relying[redis]`, the
+client library for both) and pass a client and a secret of at
+least 32 bytes that every process shares; keys reach the store only as keyed
 hashes. Every process keeps counting in memory too, and answers from that
-while Redis fails or takes longer than `timeout` (100 ms by default). Set
+while the store fails or takes longer than `timeout` (100 ms by default). Set
 `local_divisor` to the number of processes so that, answering from memory
 together, they admit about the limit:
 
@@ -174,7 +252,7 @@ login = RateLimit(
 )
 ```
 
-Limits with the same name and windows share their state in Redis.
+Limits with the same name and windows share their state in the store.
 
 ## Running and testing
 
@@ -187,7 +265,8 @@ mise run py:build   # build the sdist and a wheel into dist/
 
 - Direct coverage:
   - the core through the binding: decisions, revocations, flags, tenant facts, check fallback, input validation, DPoP proofs
-  - route policies and typed results, with the doctests in this README and in `policy.py` and `results.py`
+  - route policies and typed results, with the doctests in this README and in `policy.py`, `results.py`, `pacing.py` and `fake_ids.py`
+  - pacing (lower bounds only, so a loaded machine can't fail them; errors and cancellation) and fake ids (layout, random bits, claimed times)
   - the client against an httpx mock of Konklav with a live SSE feed: fallback, local decisions, invalidation, revocation, unknown sessions
 
 ## Traceability and related docs

@@ -228,7 +228,7 @@ async fn relying_system(server: &Server) -> Result<RelyingClient> {
         secret: secret.into(),
         core: Config {
             issuer: server.issuer.clone(),
-            audience: "api".into(),
+            audiences: vec!["api".into()],
             ..Config::default()
         },
     });

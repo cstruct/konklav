@@ -56,6 +56,15 @@ validation (`item.py-fastapi.validation`) MUST refuse a `RoutePolicy` on any
 of those layers that sets `admit_flags`, so a router can never admit a
 restrictive flag for every route under it.
 
+r[item.py-fastapi.audiences]
+A `RoutePolicy` MAY set `audiences`, the token audiences its routes accept
+among those the `RelyingClient` accepts (`relying.verify.audiences`).
+Audiences MUST intersect when policies merge, and an override that sets
+them MUST replace them. A route that isn't public and whose merged policy
+sets audiences MUST deny a token whose `aud` isn't one of them, after
+verifying it and before anything else reads it, with the deny reason
+`token_audience`.
+
 r[item.py-fastapi.public]
 A route whose merged policy is public (`item.py.policy.public`) MUST be
 served without reading or verifying a token, and without a decision.
@@ -78,7 +87,8 @@ any DPoP proof before anything else reads it, by accepting the presentation
 with `accept_request` (`item.py.accepted-request`), with the presented
 `Authorization` and `DPoP` values, the request's method (`GET` for a
 websocket) and its URL as the client addressed it. Only then, in this order,
-MUST it run the hooks (`item.py-fastapi.hooks`), check the route tenant
+MUST it check the token's audience (`item.py-fastapi.audiences`), run the
+hooks (`item.py-fastapi.hooks`), check the route tenant
 (`item.py-fastapi.token-tenant`), resolve the scope ids
 (`item.py-fastapi.scope-resolvers`) and decide. So no application code sees
 claims that weren't verified, and resolvers look nothing up in a tenant the
@@ -128,7 +138,7 @@ Evaluation MUST end in one of these:
   with, as `error="invalid_token"`, and a missing token with both `Bearer`
   and `DPoP`;
 - `Forbidden` (403) for any other deny, carrying the `DenyReason`, and for
-  `token_tenant`;
+  `token_tenant` and `token_audience`;
 - `StepUpRequired` (401) for a step-up demand, carrying its requirement,
   with a `WWW-Authenticate` challenge in the token's scheme as
   `error="insufficient_user_authentication"` (RFC 9470), and `max_age`
@@ -200,6 +210,36 @@ admits (its `token_kinds`, or only `tenant` when unset, Konklav's default),
 and a route with a public policy that injects any token dependency other
 than `OptionalToken`.
 
+## Pacing
+
+r[item.py-fastapi.route-pacing]
+`RoutePacing(pacing)` MUST be a FastAPI `Depends`, so a relying system
+declares it in the `dependencies` of a route, of an `APIRouter`, of
+`include_router` or of the application. It MUST pace the HTTP requests of
+its routes as `paced` does (`item.py.pacing.concurrent`), from when FastAPI
+resolves it to before the response is sent, also when the handler or a
+later dependency raises, such as `KonklavDenied`, `RateLimited` or
+`HTTPException`
+(`item.py.pacing.errors`). It MUST NOT pace websocket connections.
+
+r[item.py-fastapi.route-pacing.nested]
+Every `RoutePacing` a route's layers declare MUST wait on its own, so the
+response waits for the longest of them.
+
+r[item.py-fastapi.route-pacing.order]
+Startup validation (`item.py-fastapi.validation`) MUST refuse a route on
+which FastAPI resolves a `RoutePacing` after a dependency that evaluates the
+route's policy: a `RoutePolicy`, or one that depends on the verified token,
+such as a `RouteRateLimit` keyed by a claim. That `RoutePacing` would start
+after the decision, so a denial would answer sooner than an allow.
+
+r[item.py-fastapi.pacing-middleware]
+`PacingMiddleware` MUST pace every answer to HTTP requests for the paths it
+is given, including those FastAPI gives before any dependency runs (a body
+it can't parse) and those for unhandled errors. It MUST hold back the start
+of the response until the wait is done, and MUST NOT pace other paths or
+websocket connections.
+
 ## Startup validation
 
 r[item.py-fastapi.validation]
@@ -215,10 +255,12 @@ error listing each route that fails a check. A route fails when:
   (`item.py-fastapi.admit-flags-operation`);
 - its policy needs a scope kind that has no resolver and no path parameter
   of its name;
-- merging leaves an allowed set empty: token kinds or step-up's allowed
-  methods;
+- merging leaves an allowed set empty: token kinds, audiences or step-up's
+  allowed methods;
 - it injects a token dependency its policy doesn't match
-  (`item.py-fastapi.injected-kinds`).
+  (`item.py-fastapi.injected-kinds`);
+- it declares a `RoutePacing` that FastAPI resolves after the route's
+  policy (`item.py-fastapi.route-pacing.order`).
 
 ## OpenAPI
 
@@ -227,4 +269,5 @@ r[item.py-fastapi.openapi]
 application's OpenAPI document as the operation extension
 `x-konklav-policy`: `{"public": true}` for a public route, and otherwise
 `{"public": false}` with the requirements the policy resolves to, with each
-scope given by its kind and actions alone.
+scope given by its kind and actions alone, and its `audiences` when it sets
+them.

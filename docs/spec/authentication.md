@@ -259,6 +259,18 @@ When MFA completes a browser session's login, the refresh cookie MUST be
 delivered in that response, after the same `Origin` and header checks as
 the login itself.
 
+r[authn.login.session-request]
+A password, email-link, phone-code or invite login MUST accept the same
+two session inputs: `client`, `native` (the default) or `browser`, and the
+restrictive `flags` the login asks for (`r[session.flags.origin]`), checked
+against the catalog as for any login. A browser login MUST pass the checks
+of `r[session.browser.csrf]` before the login verifies or consumes its
+password, code, link or invite, and MUST then get its refresh token only as
+the cookie (`r[session.browser.cookie]`), or once MFA completes
+(`r[session.browser.mfa]`). An email-link login MUST take both inputs when
+the link is redeemed, not when it is asked for: the link can be opened in
+another browser or app than the one that asked.
+
 r[session.dpop.bind]
 A request that starts a session (a password, secret-key, passkey, email-link
 or one-time-code login, or redeeming an invite) MAY carry a DPoP proof for

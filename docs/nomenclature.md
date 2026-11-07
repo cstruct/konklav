@@ -172,6 +172,11 @@ Terms are introduced in dependency order: each definition only uses terms define
   - Email addresses and phone numbers are compared case-insensitively; credential IDs are unpadded base64url and compared exactly.
   - It is stored on the credential, not as subject profile data, and is unique among active credentials of the same kind.
 
+- `pacing`
+  - Answering an endpoint no sooner than a `floor` plus or minus a random `jitter`, measured from the request's arrival, so its response time doesn't reveal whether a login identifier, subject or other record exists.
+  - The work and the wait run together: the floor adds no latency when the work takes longer.
+  - Konklav paces its own authentication endpoints (`authn.pacing`); the relying SDK offers the same for a relying system's endpoints.
+
 - `MFA factor`
   - A second factor registered for a subject, used after a credential has succeeded.
   - Kinds: `totp` (an authenticator app) and `email_code`.
@@ -458,6 +463,9 @@ Terms are introduced in dependency order: each definition only uses terms define
   - The guarantee that a relying system, after changing something in Konklav, sees that change in its next decision.
   - The relying SDK provides it by waiting until it has applied events up to the cursor that the write returned.
 
+- `fake id`
+  - An id a relying system answers with in place of a real one, such as for an invite to an unknown address, so the answer doesn't reveal that nothing was created. It must look like the relying system's real ids, including the creation time a UUIDv7 carries.
+
 - `rate limit`
   - A named bound on how often events may happen per key, such as login attempts per email address, enforced by the relying SDK.
   - It has one or more `rate-limit windows`, and an event is admitted only when every window admits it.
@@ -467,7 +475,7 @@ Terms are introduced in dependency order: each definition only uses terms define
   - Example: 3 per minute and 30 per hour, together, let a burst through but not a sustained flood.
 
 - `rate-limit store`
-  - A Redis server the relying system owns, through which every process enforces its rate limits together.
+  - A server speaking Redis' protocol (Valkey, or Redis 6.2 or later) that the relying system owns, through which every process enforces its rate limits together.
   - Every process also tracks its limits in memory, and answers from that state while the store is unavailable.
 
 - `local divisor`
