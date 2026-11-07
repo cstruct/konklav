@@ -55,6 +55,7 @@ and spec-first development with Tracey.
 | `konklav-server` | axum surfaces, wiring, background workers |
 | `konklav-relying` | Sans-I/O relying core |
 | `konklav-relying-client` | Native Rust host binding (reqwest + tokio) |
+| `konklav-axum` | axum integration of the native Rust host binding: route policies and rate limits |
 | `konklav-py` | pyo3 host binding |
 | `konklav-py-control-plane` | Python control-plane client (`konklav-control-plane`), with types generated from the API document |
 | `konklav-py-fastapi` | FastAPI integration of the Python binding's route policies (`konklav-fastapi`) |

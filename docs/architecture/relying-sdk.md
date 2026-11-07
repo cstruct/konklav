@@ -71,4 +71,19 @@ boundary on every decision.
 
 Framework-specific glue (for example, a FastAPI dependency that turns
 route-level requirements into `decide` calls) lives in the relying system or
-in thin optional packages. The SDK exposes only requirements and decisions.
+in thin optional packages: `konklav-fastapi` for FastAPI and `konklav-axum`
+for axum. The SDK exposes requirements, decisions and route policies.
+
+Route policies merge by the same rules everywhere. In Rust the model lives
+in the relying core (`konklav_relying::policy`), since merging decides which
+flags and step-ups an operation admits, and every Rust integration builds on
+it. The Python binding has its own framework-free `Policy` with the same
+rules (`item.py.policy.*`).
+
+Pacing and fake ids are host-level timing and id generation, so each
+binding has its own (`konklav_relying.pacing` and `.fake_ids` in Python,
+`konklav_relying_client::{pacing, fake_ids}` in Rust) rather than the core,
+which reads no clock (`item.relying.sans-io`). Each framework adapter paces
+routes in its own terms: `RoutePacing` is a dependency in `konklav-fastapi`,
+with `PacingMiddleware` for answers FastAPI gives outside dependencies, and
+a layer in `konklav-axum`, which wraps a route's whole answer.

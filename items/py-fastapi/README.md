@@ -213,8 +213,9 @@ response until the wait is done. Paths are compared exactly with
 app.add_middleware(PacingMiddleware, pacing=pacing, paths={"/invites", "/password-resets"})
 ```
 
-`konklav-axum`, the axum integration, should get the same pacing once it
-lands.
+`konklav-axum` paces axum routes with its `RoutePacing` layer
+([`items/axum`](../axum/README.md#pacing)). A layer wraps its route's
+whole answer, so it needs no counterpart of `PacingMiddleware`.
 
 ### Rate limits
 

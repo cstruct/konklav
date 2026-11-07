@@ -13,6 +13,7 @@
 //!   to poll next, so busy entries are refreshed before they expire.
 //! - The `on_*` methods apply what the host fetched or received.
 //!
+//! - [`policy::Policy`] merges route policies and builds their requirements.
 //! - [`rate_limit::RateLimiter`] enforces rate limits in memory and says
 //!   what to ask a rate-limit store.
 //!
@@ -22,6 +23,7 @@
 // r[impl item.relying.single-implementation]
 mod cache;
 mod config;
+pub mod policy;
 mod presented;
 pub mod rate_limit;
 

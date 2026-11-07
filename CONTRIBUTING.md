@@ -37,6 +37,7 @@ with the [README](README.md).
   - `server`: the binary
   - `relying`: the sans-I/O relying core
   - `relying-client`: the native Rust host
+  - `axum`: route policies and rate limits for axum
   - `py`: the Python binding (maturin)
   - `py-control-plane`: the Python control-plane client (pure Python)
   - `py-fastapi`: route policies for FastAPI (pure Python)
@@ -166,8 +167,9 @@ The release workflow then:
    stored.
 6. Publishes the crates with `publish = true` to crates.io, also through
    trusted publishing, from the `crates-io` environment. These are
-   `konklav-core`, `konklav-token`, `konklav-authz`, `konklav-relying` and
-   `konklav-relying-client`; every other crate inherits `publish = false`.
+   `konklav-core`, `konklav-token`, `konklav-authz`, `konklav-relying`,
+   `konklav-relying-client` and `konklav-axum`; every other crate inherits
+   `publish = false`.
    Crates already on crates.io at that version are skipped, so a failed
    release can be rerun.
 7. Publishes a GitHub release with the archives, the Python packages and

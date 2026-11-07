@@ -9,24 +9,35 @@
 //! - It answers [`RelyingClient::decide`] from the core, fetching whatever
 //!   the core still needs, or asking `/v1/check` when the core says the
 //!   caches can't be trusted.
+//! - It accepts a request's presentation once
+//!   ([`RelyingClient::accept_request`]), for a host that needs the verified
+//!   claims before it can state the requirements, and decides for it later
+//!   ([`RelyingClient::decide_accepted`]) without checking its DPoP proof
+//!   again.
 //!
 //! [`rate_limit::RateLimit`] enforces rate limits, through Redis with the
-//! `redis` feature and in memory always.
+//! `redis` feature and in memory always. [`pacing`] and [`fake_ids`] keep a
+//! relying system's own endpoints from showing, through their timing or
+//! their ids, whether a record exists.
 //!
 //! The decision rules live in `konklav-relying`; this crate only moves bytes.
 
+pub mod fake_ids;
+pub mod pacing;
 pub mod rate_limit;
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
-use konklav_authz::{Decision, EntitlementSet, Requirements};
+use konklav_authz::{Decision, DenyReason, EntitlementSet, Requirements};
 use konklav_core::Cursor;
 use konklav_core::feed::{FeedEvent, SessionChanged};
-use konklav_relying::{Config, Key, Need, Outcome, Relying, ScopeRecord};
-pub use konklav_relying::{Presented, RequestDescriptor};
-use konklav_token::JwkSet;
+use konklav_relying::{
+    Acceptance, Config, Key, Need, Outcome, PresentationId, Relying, ScopeRecord, Verification,
+};
+pub use konklav_relying::{Presented, RequestDescriptor, policy};
+use konklav_token::{AccessClaims, JwkSet, TokenKind};
 use serde::Deserialize;
 use tokio::sync::Notify;
 
@@ -52,6 +63,46 @@ pub enum Error {
     #[error("could not reach a decision")]
     Exhausted,
 }
+
+/// What verifying a request's presentation found.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Verified<T> {
+    /// The token verifies, its session is current and any proof is
+    /// accepted.
+    Valid(T),
+    /// The token doesn't verify, or its session has ended or moved on.
+    Invalid,
+    /// Refused for the DPoP proof or the authorization scheme: answer with
+    /// `WWW-Authenticate: DPoP error="invalid_dpop_proof"`.
+    InvalidProof,
+}
+
+/// A request's presentation that [`RelyingClient::accept_request`]
+/// accepted, for one [`RelyingClient::decide_accepted`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct AcceptedRequest {
+    claims: AccessClaims,
+    presentation: PresentationId,
+    access_token: String,
+}
+
+impl AcceptedRequest {
+    /// The verified token's claims.
+    #[must_use]
+    pub fn claims(&self) -> &AccessClaims {
+        &self.claims
+    }
+}
+
+/// Every token kind, for verifying a token through the check API whatever
+/// its kind.
+const EVERY_TOKEN_KIND: [TokenKind; 5] = [
+    TokenKind::Partial,
+    TokenKind::Identity,
+    TokenKind::Tenant,
+    TokenKind::ResetPassword,
+    TokenKind::Invite,
+];
 
 /// `value` as one percent-encoded URL path segment: scope ids are opaque.
 fn path_segment(value: &str) -> String {
@@ -190,25 +241,143 @@ impl RelyingClient {
         presented: &Presented,
         requirements: &Requirements,
     ) -> Result<Decision, Error> {
+        // The core checks any DPoP proof; the check API takes the token
+        // alone.
+        let token = presented.access_token().unwrap_or_default();
+        self.decide_with(token, requirements, |core| {
+            core.decide_presented(presented, requirements, now())
+        })
+        .await
+    }
+
+    /// Accepts a request's presentation: verifies the token, its session
+    /// and any DPoP proof, once, and returns the verified claims with the
+    /// presentation to decide for with [`RelyingClient::decide_accepted`],
+    /// which doesn't check the proof again. Fails closed: an error means
+    /// deny.
+    // r[impl relying.verify.accepted-presentation]
+    pub async fn accept_request(
+        &self,
+        presented: &Presented,
+    ) -> Result<Verified<AcceptedRequest>, Error> {
+        let token = presented.access_token().unwrap_or_default();
         for _ in 0..4 {
-            let outcome = self.core().decide_presented(presented, requirements, now());
+            let acceptance = self.core().accept_presented(presented, now());
+            let (claims, presentation) = match acceptance {
+                Acceptance::Accepted {
+                    claims,
+                    presentation,
+                } => (*claims, presentation),
+                Acceptance::Check { presentation } => match self.verify_centrally(token).await? {
+                    Some(claims) => (claims, presentation),
+                    None => return Ok(Verified::Invalid),
+                },
+                Acceptance::Invalid => return Ok(Verified::Invalid),
+                Acceptance::InvalidProof => return Ok(Verified::InvalidProof),
+                Acceptance::Need { needs } => {
+                    self.fetch_all(&needs).await?;
+                    continue;
+                }
+            };
+            return Ok(Verified::Valid(AcceptedRequest {
+                claims,
+                presentation,
+                access_token: token.to_owned(),
+            }));
+        }
+        Err(Error::Exhausted)
+    }
+
+    /// Decides `requirements` for a request [`RelyingClient::accept_request`]
+    /// accepted, once. Its token and session are checked again; its proof
+    /// isn't. A request decided before, or accepted too long ago, is denied
+    /// as `invalid_token`. Fails closed: an error means deny.
+    pub async fn decide_accepted(
+        &self,
+        accepted: &AcceptedRequest,
+        requirements: &Requirements,
+    ) -> Result<Decision, Error> {
+        self.decide_with(&accepted.access_token, requirements, |core| {
+            core.decide_accepted(accepted.presentation, requirements, now())
+        })
+        .await
+    }
+
+    /// Verifies a request's token, its session and any DPoP proof, without
+    /// deciding anything: for requests that need no decision, such as to
+    /// public routes. Fails closed: an error means deny.
+    pub async fn verify_request(
+        &self,
+        presented: &Presented,
+    ) -> Result<Verified<AccessClaims>, Error> {
+        for _ in 0..4 {
+            let verification = self.core().verify_presented(presented, now());
+            match verification {
+                Verification::Verified { claims } => return Ok(Verified::Valid(*claims)),
+                Verification::Invalid => return Ok(Verified::Invalid),
+                Verification::InvalidProof => return Ok(Verified::InvalidProof),
+                Verification::Need { needs } if needs.contains(&Need::Check) => {
+                    let token = presented.access_token().unwrap_or_default();
+                    return Ok(match self.verify_centrally(token).await? {
+                        Some(claims) => Verified::Valid(claims),
+                        None => Verified::Invalid,
+                    });
+                }
+                Verification::Need { needs } => self.fetch_all(&needs).await?,
+            }
+        }
+        Err(Error::Exhausted)
+    }
+
+    /// Asks the core with `ask` until it decides, fetching what it needs,
+    /// or asks the check API for `token` when the core can't decide.
+    async fn decide_with(
+        &self,
+        token: &str,
+        requirements: &Requirements,
+        mut ask: impl FnMut(&mut Relying) -> Outcome,
+    ) -> Result<Decision, Error> {
+        for _ in 0..4 {
+            let outcome = ask(&mut self.core());
             let needs = match outcome {
                 Outcome::Decided { decision } => return Ok(decision),
                 Outcome::Need { needs } => needs,
             };
             if needs.contains(&Need::Check) {
-                // The core has checked any DPoP proof; the check API takes
-                // the token alone.
-                let token = presented.access_token().unwrap_or_default();
                 return self.check(token, requirements).await;
             }
-            let results =
-                futures_util::future::join_all(needs.iter().map(|need| self.fetch(need))).await;
-            if let Some(error) = results.into_iter().find_map(Result::err) {
-                return Err(error);
-            }
+            self.fetch_all(&needs).await?;
         }
         Err(Error::Exhausted)
+    }
+
+    async fn fetch_all(&self, needs: &[Need]) -> Result<(), Error> {
+        let results =
+            futures_util::future::join_all(needs.iter().map(|need| self.fetch(need))).await;
+        results
+            .into_iter()
+            .find_map(Result::err)
+            .map_or(Ok(()), Err)
+    }
+
+    /// Verifies `token` through the check API, for when the caches can't
+    /// be trusted: its claims if the check API vouches for it.
+    async fn verify_centrally(&self, token: &str) -> Result<Option<AccessClaims>, Error> {
+        let any = Requirements {
+            token_kinds: Some(EVERY_TOKEN_KIND.into_iter().collect()),
+            ..Requirements::default()
+        };
+        let decision = self.check(token, &any).await?;
+        if matches!(
+            decision,
+            Decision::Deny {
+                reason: DenyReason::InvalidToken | DenyReason::InvalidDpopProof
+            }
+        ) {
+            return Ok(None);
+        }
+        // The check API vouched for the token; read its claims.
+        Ok(konklav_token::decode_claims_unverified(token))
     }
 
     /// Asks Konklav's check API, for when local caches can't be trusted,
