@@ -42,6 +42,20 @@ pub async fn holds(
         .contains(capability))
 }
 
+/// The control-plane capabilities `subject` holds through its global
+/// assignments.
+pub async fn held(
+    conn: &mut Connection,
+    subject: SubjectId,
+) -> Result<std::collections::BTreeSet<String>, ApiError> {
+    let input = compile_input::load(conn, subject, None).await?;
+    Ok(compile(&input.catalog, &input.assignments)
+        .global
+        .into_iter()
+        .filter(|action| action.starts_with(CAPABILITY_PREFIX))
+        .collect())
+}
+
 /// Whether `policies` allow any control-plane capability. Capabilities
 /// are only granted by name, never through groups.
 #[must_use]

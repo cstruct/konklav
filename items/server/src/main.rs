@@ -109,20 +109,21 @@ async fn main() -> ExitCode {
             allow_plaintext_passwords,
             paths,
         } => match load::<BootstrapContexts>(&cli) {
-            Ok((database, telemetry, mfa)) => {
+            Ok((database, telemetry, mfa, control)) => {
                 if let Err(code) = init_logs(&telemetry) {
                     return code;
                 }
                 let options = konklav_server::bootstrap::Options {
                     dry_run: *dry_run,
                     allow_plaintext_passwords: *allow_plaintext_passwords,
+                    metadata_limit: Some(control.metadata_limit()),
                 };
                 return bootstrap(database, mfa, paths, options).await;
             }
             Err(code) => return code,
         },
         Command::Export { out } => match load::<BootstrapContexts>(&cli) {
-            Ok((database, telemetry, mfa)) => {
+            Ok((database, telemetry, mfa, _)) => {
                 if let Err(code) = init_logs(&telemetry) {
                     return code;
                 }

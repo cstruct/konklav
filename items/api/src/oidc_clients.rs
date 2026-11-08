@@ -67,6 +67,10 @@ pub struct OidcClientDefinition {
     /// its tokens are sender-constrained.
     #[serde(default)]
     pub require_dpop: bool,
+    /// An object, opaque to Konklav.
+    #[serde(default = "crate::metadata::empty_object")]
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
 }
 
 fn default_scopes() -> Vec<String> {
@@ -85,6 +89,9 @@ pub struct OidcClient {
     pub definition: OidcClientDefinition,
     /// Whether a secret has been issued.
     pub has_secret: bool,
+    /// Changes whenever `metadata` does; send it as `If-Match` to patch
+    /// the metadata only if no one else has since.
+    pub metadata_etag: String,
     #[schema(required)]
     pub disabled_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,

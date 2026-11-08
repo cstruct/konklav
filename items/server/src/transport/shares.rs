@@ -25,6 +25,8 @@ pub(crate) fn share(share: Share) -> api::Share {
         accepted_at: share.accepted_at,
         revoked_at: share.revoked_at,
         revoked_by: share.revoked_by.map(share_side),
+        metadata_etag: crate::metadata::etag(&share.metadata),
+        metadata: share.metadata,
         created_at: share.created_at,
         updated_at: share.updated_at,
     }
@@ -84,11 +86,14 @@ mod tests {
             accepted_at: Some(chrono::Utc::now()),
             revoked_at: Some(chrono::Utc::now()),
             revoked_by: Some(Side::Recipient),
+            metadata: json!({"label": "Shared plan"}),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
         assert_eq!(
-            serde_json::to_value(super::share(share.clone())).unwrap(),
+            crate::transport::authz::tests::without_etag(
+                serde_json::to_value(super::share(share.clone())).unwrap()
+            ),
             serde_json::to_value(&share).unwrap()
         );
     }

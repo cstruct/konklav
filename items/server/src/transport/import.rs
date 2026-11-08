@@ -18,6 +18,7 @@ pub(crate) fn subject_record(record: &api::ImportedSubject) -> SubjectRecord {
             api::SubjectState::Active => SubjectState::Active,
             api::SubjectState::Disabled => SubjectState::Disabled,
         },
+        metadata: record.metadata.clone(),
     }
 }
 
@@ -28,6 +29,7 @@ pub(crate) fn credential_record(record: api::ImportedCredential) -> CredentialRe
         identifier: record.identifier,
         mfa_factors_required: record.mfa_factors_required,
         session_flags: record.session_flags,
+        metadata: record.metadata,
         material: match record.material {
             api::ImportedCredentialMaterial::Password { password_hash } => {
                 CredentialMaterial::Password { password_hash }

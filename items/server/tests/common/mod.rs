@@ -79,6 +79,7 @@ pub fn auth_context(signer: Signer) -> AuthContext {
         passkeys: None,
         trusted_proxies: Vec::new(),
         batches: konklav_server::batch_api::BatchLimits::DEFAULT,
+        metadata_limit: konklav_server::metadata::DEFAULT_LIMIT,
         dpop_urls: Vec::new(),
     }
 }

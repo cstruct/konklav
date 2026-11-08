@@ -68,6 +68,8 @@ pub struct Challenge {
     pub consumed_at: Option<DateTime<Utc>>,
     /// Set when an operator revoked it; a revoked challenge is also consumed.
     pub revoked_at: Option<DateTime<Utc>>,
+    /// An invite's metadata; empty for other purposes.
+    pub metadata: serde_json::Value,
 }
 
 impl Challenge {
@@ -94,6 +96,7 @@ struct Row {
     expires_at: DateTime<Utc>,
     consumed_at: Option<DateTime<Utc>>,
     revoked_at: Option<DateTime<Utc>>,
+    metadata: serde_json::Value,
 }
 
 impl From<Row> for Challenge {
@@ -113,6 +116,7 @@ impl From<Row> for Challenge {
             expires_at: row.expires_at,
             consumed_at: row.consumed_at,
             revoked_at: row.revoked_at,
+            metadata: row.metadata,
         }
     }
 }
@@ -132,6 +136,15 @@ pub struct NewChallenge {
 }
 
 pub async fn create(conn: &mut AsyncPgConnection, new: NewChallenge) -> StoreResult<Challenge> {
+    create_with_metadata(conn, new, &crate::metadata::empty()).await
+}
+
+/// [`create`] with metadata, which only invites carry.
+pub async fn create_with_metadata(
+    conn: &mut AsyncPgConnection,
+    new: NewChallenge,
+    metadata: &serde_json::Value,
+) -> StoreResult<Challenge> {
     Ok(diesel::insert_into(challenge::table)
         .values((
             challenge::id.eq(new.id),
@@ -144,6 +157,7 @@ pub async fn create(conn: &mut AsyncPgConnection, new: NewChallenge) -> StoreRes
             challenge::secret_hash.eq(&new.secret_hash),
             challenge::details.eq(&new.details),
             challenge::expires_at.eq(new.expires_at),
+            challenge::metadata.eq(metadata),
         ))
         .returning(Row::as_returning())
         .get_result(conn)
@@ -161,6 +175,52 @@ pub async fn get(conn: &mut AsyncPgConnection, id: uuid::Uuid) -> StoreResult<Ch
         .optional()?
         .map(Challenge::from)
         .ok_or(StoreError::NotFound)
+}
+
+/// Invites, newest first by id, optionally only those to `tenant` (its
+/// reference as the invite names it: a UUID, or `root` for the root
+/// tenant) or whose metadata contains `metadata`. Pass the last id of a
+/// page as `before` for the next.
+// r[impl metadata.filter]
+// r[impl metadata.invites]
+pub async fn list_invites(
+    conn: &mut AsyncPgConnection,
+    tenant: Option<konklav_core::TenantId>,
+    metadata: Option<&serde_json::Value>,
+    before: Option<uuid::Uuid>,
+    limit: i64,
+) -> StoreResult<Vec<Challenge>> {
+    use diesel::dsl::sql;
+    use diesel::sql_types::{Bool, Text};
+    let mut query = challenge::table
+        .filter(challenge::purpose.eq(Purpose::Invite.as_str()))
+        .into_boxed();
+    if let Some(tenant) = tenant {
+        let mut names = vec![tenant.to_string()];
+        if tenant == crate::tenants::ROOT {
+            names.push("root".into());
+        }
+        query = query.filter(
+            sql::<Bool>("(details ->> 'tenant') = any(")
+                .bind::<diesel::sql_types::Array<Text>, _>(names)
+                .sql(")"),
+        );
+    }
+    if let Some(metadata) = metadata {
+        query = query.filter(challenge::metadata.contains(metadata.clone()));
+    }
+    if let Some(before) = before {
+        query = query.filter(challenge::id.lt(before));
+    }
+    Ok(query
+        .order(challenge::id.desc())
+        .limit(limit)
+        .select(Row::as_select())
+        .load(conn)
+        .await?
+        .into_iter()
+        .map(Challenge::from)
+        .collect())
 }
 
 /// The newest usable challenge for `purpose` sent to `recipient`, and for

@@ -166,11 +166,12 @@ async fn read(conn: &mut Connection, secrets: &SecretBox) -> Result<Set, ExportE
     .into_iter()
     .map(str::to_owned)
     .chain(slot_columns)
+    .chain(["metadata".to_owned()])
     .collect();
     let tables = vec![
         (
             "subjects.csv",
-            table(&["id", "kind", "state"], &people.subjects),
+            table(&["id", "kind", "state", "metadata"], &people.subjects),
         ),
         (
             "credentials.csv",
@@ -223,12 +224,17 @@ async fn document(
         if tenant.state != tenants::TenantState::Active {
             report.leave_out("tenant states (written as active)");
         }
-        tenant_docs.push(Value::map([
+        let mut doc = vec![
             ("id", Value::text(tenant.id.to_string())),
             ("parent", Value::text(tenant_reference(tenant.parent_id))),
             ("facts", facts_value(&tenant.facts)?),
-            ("roles", roles_value(&tenant_roles)),
-        ]));
+        ];
+        // r[impl bootstrap.metadata]
+        if !is_empty(&tenant.metadata) {
+            doc.push(("metadata", metadata_value(&tenant.metadata)));
+        }
+        doc.push(("roles", roles_value(&tenant_roles)));
+        tenant_docs.push(Value::map(doc));
     }
     report.wrote("tenants", tenants.len());
     let template_docs: Vec<Value> = templates::list(conn)
@@ -291,6 +297,7 @@ async fn people(
                 SubjectState::Disabled => "disabled",
             }
             .to_owned(),
+            metadata_cell(&subject.metadata),
         ]);
         for credential in credentials::list_for_subject(conn, subject.id).await? {
             match credential_row(&credential) {
@@ -355,7 +362,7 @@ async fn memberships(
 ) -> Result<(Vec<String>, Vec<Vec<String>>), ExportError> {
     let mut kept = Vec::new();
     for tenant in tenants {
-        for membership in memberships::list_for_tenant(conn, tenant.id, false).await? {
+        for membership in memberships::list_for_tenant(conn, tenant.id, false, None).await? {
             if membership.state != MembershipState::Active {
                 report.leave_out("ended memberships");
             } else if membership.managed_by.is_some() {
@@ -384,6 +391,7 @@ async fn memberships(
             membership.id.to_string(),
             membership.subject_id.to_string(),
             membership.tenant_id.to_string(),
+            metadata_cell(&membership.metadata),
         ];
         for key in &fact_keys {
             row.push(match membership.facts.get(key) {
@@ -393,7 +401,12 @@ async fn memberships(
         }
         rows.push(row);
     }
-    let mut columns = vec!["id".to_owned(), "subject".into(), "tenant".into()];
+    let mut columns = vec![
+        "id".to_owned(),
+        "subject".into(),
+        "tenant".into(),
+        "metadata".into(),
+    ];
     columns.extend(fact_keys.iter().map(|key| format!("fact.{key}")));
     Ok((columns, rows))
 }
@@ -402,7 +415,7 @@ async fn all_tenants(conn: &mut Connection) -> Result<Vec<Tenant>, ExportError> 
     let mut all = Vec::new();
     let mut before = None;
     loop {
-        let page = tenants::list(conn, None, before, PAGE).await?;
+        let page = tenants::list(conn, None, None, before, PAGE).await?;
         let full = i64::try_from(page.len()) == Ok(PAGE);
         before = page.last().map(|t| t.id);
         all.extend(page.into_iter().filter(|t| t.id != ROOT));
@@ -550,7 +563,22 @@ fn credential_row(credential: &Credential) -> Result<Vec<String>, &'static str> 
         provider_subject,
     ];
     row.extend(slots);
+    row.push(metadata_cell(&credential.metadata));
     Ok(row)
+}
+
+fn is_empty(metadata: &serde_json::Value) -> bool {
+    metadata.as_object().is_none_or(serde_json::Map::is_empty)
+}
+
+/// A `metadata` cell: the object as JSON, or empty when it is.
+// r[impl bootstrap.metadata]
+fn metadata_cell(metadata: &serde_json::Value) -> String {
+    if is_empty(metadata) {
+        String::new()
+    } else {
+        metadata.to_string()
+    }
 }
 
 fn slot_cells(slot: &SecretSlotData) -> [String; 3] {

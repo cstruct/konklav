@@ -37,7 +37,7 @@ pub(crate) use konklav_api::Written;
 use crate::capabilities::Operator;
 use crate::db::Db;
 use crate::error::{ApiError, ApiJson, ErrorCode};
-use crate::{AppState, batch_api, capabilities, subject_api, transport};
+use crate::{AppState, batch_api, capabilities, metadata, subject_api, transport};
 
 /// Subjects and their credentials, with the `OpenAPI` description of each
 /// route taken from its handler's `#[utoipa::path]`.
@@ -75,12 +75,12 @@ pub(crate) fn signing_keys() -> OpenApiRouter<AppState> {
 /// control surface and its API document are both built from this list, so a
 /// route can't be served without being documented.
 // r[impl item.api.document]
-pub(crate) fn groups() -> [(OpenApiRouter<AppState>, &'static str); 11] {
+pub(crate) fn groups() -> Vec<(OpenApiRouter<AppState>, &'static str)> {
     use crate::{
-        control_authz, explain_api, import_api, invites, oidc_clients_api, registered_scopes_api,
-        shares_api,
+        control_authz, explain_api, import_api, invites, metadata_api, oidc_clients_api,
+        registered_scopes_api, shares_api,
     };
-    [
+    vec![
         (control_authz::tenancy(), capabilities::TENANTS),
         (subjects(), capabilities::SUBJECTS),
         (sessions(), capabilities::SESSIONS),
@@ -95,6 +95,11 @@ pub(crate) fn groups() -> [(OpenApiRouter<AppState>, &'static str); 11] {
         (invites::invites(), capabilities::INVITES),
         (oidc_clients_api::oidc_clients(), capabilities::CLIENTS),
         (import_api::import(), capabilities::IMPORT),
+        (metadata_api::subjects(), capabilities::SUBJECTS),
+        (metadata_api::tenancy(), capabilities::TENANTS),
+        (metadata_api::authz(), capabilities::AUTHZ),
+        (metadata_api::invites(), capabilities::INVITES),
+        (metadata_api::clients(), capabilities::CLIENTS),
     ]
 }
 
@@ -244,15 +249,14 @@ async fn list_subjects(
     Query(query): Query<SubjectQuery>,
 ) -> Result<Json<SubjectPage>, ApiError> {
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
+    let metadata = metadata::filter(query.metadata.as_deref())?;
     let mut conn = db.get().await?;
-    let subjects = subjects::list(
-        &mut conn,
-        query.kind.map(transport::store_subject_kind),
-        query.identifier.as_deref(),
-        query.before,
-        limit,
-    )
-    .await?;
+    let filter = subjects::SubjectFilter {
+        kind: query.kind.map(transport::store_subject_kind),
+        identifier: query.identifier.as_deref(),
+        metadata: metadata.as_ref(),
+    };
+    let subjects = subjects::list_by(&mut conn, filter, query.before, limit).await?;
     let next = (i64::try_from(subjects.len()) == Ok(limit))
         .then(|| subjects.last().map(|s| s.id))
         .flatten();
@@ -275,13 +279,16 @@ async fn list_subjects(
     ))]
 async fn create_subject(
     db: Db,
+    limit: metadata::Limit,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<CreateSubject>,
 ) -> Result<Response, ApiError> {
     let id = parse_id(&id, "subject id")?;
+    limit.check(&body.metadata)?;
     let mut conn = db.get().await?;
+    let kind = transport::store_subject_kind(body.kind);
     let (subject, created) =
-        subjects::create(&mut conn, id, transport::store_subject_kind(body.kind)).await?;
+        subjects::create_with_metadata(&mut conn, id, kind, &body.metadata).await?;
     let status = created_status(created);
     Ok((status, Json(transport::subject(&subject))).into_response())
 }
@@ -432,14 +439,17 @@ async fn password_hash_for(
         (status = 201, description = "Created. A secret key's secrets are in `secret_keys`, shown only once.", body = CreatedCredential),
         (status = 200, description = "Already existed with the same content. A secret key's new secrets are in `secret_keys`.", body = CreatedCredential),
     ))]
+// r[impl metadata.write.create]
 async fn create_credential(
     State(state): State<AppState>,
     db: Db,
+    limit: metadata::Limit,
     Extension(operator): Extension<Operator>,
     Path(subject_id): Path<String>,
     ApiJson(body): ApiJson<CreateCredential>,
 ) -> Result<(StatusCode, Json<CreatedCredential>), ApiError> {
     let subject_id: SubjectId = parse_id(&subject_id, "subject id")?;
+    let metadata = limit.checked(credential_metadata(&body))?;
     let mut conn = db.get().await?;
     let subject = subjects::get(&mut conn, subject_id)
         .await
@@ -460,6 +470,7 @@ async fn create_credential(
             password,
             password_hash,
             mfa_factors_required,
+            ..
         } => {
             if subject.kind != SubjectKind::Human {
                 return Err(ApiError::invalid_request(
@@ -482,15 +493,16 @@ async fn create_credential(
                 data: CredentialData::Password(PasswordData { hash }),
                 mfa_factors_required,
                 replaces: None,
+                metadata: konklav_store::metadata::empty(),
             };
             (new, None)
         }
-        CreateCredential::EmailLink { id, identifier }
-        | CreateCredential::PhoneOtp { id, identifier } => (
+        CreateCredential::EmailLink { id, identifier, .. }
+        | CreateCredential::PhoneOtp { id, identifier, .. } => (
             passwordless_credential(&subject, id, identifier, is_email)?,
             None,
         ),
-        CreateCredential::SecretKey { id, expires_at } => {
+        CreateCredential::SecretKey { id, expires_at, .. } => {
             if subject.kind != SubjectKind::Service {
                 return Err(ApiError::invalid_request(
                     "only service principals can have secret keys",
@@ -506,6 +518,7 @@ async fn create_credential(
                 data: CredentialData::SecretKey(SecretKeyData { a, b }),
                 mfa_factors_required: 0,
                 replaces: None,
+                metadata: konklav_store::metadata::empty(),
             };
             let keys = SecretKeys {
                 a: format!("{id}.{secret_a}"),
@@ -517,12 +530,13 @@ async fn create_credential(
             id,
             provider,
             subject: upstream,
+            ..
         } => (
             workload_credential(&state, &subject, id, provider, upstream)?,
             None,
         ),
     };
-    let credential = credentials::insert(&mut conn, new).await?;
+    let credential = credentials::insert(&mut conn, NewCredential { metadata, ..new }).await?;
     Ok((
         StatusCode::CREATED,
         Json(CreatedCredential {
@@ -530,6 +544,16 @@ async fn create_credential(
             secret_keys,
         }),
     ))
+}
+
+fn credential_metadata(body: &CreateCredential) -> &serde_json::Value {
+    match body {
+        CreateCredential::Password { metadata, .. }
+        | CreateCredential::SecretKey { metadata, .. }
+        | CreateCredential::EmailLink { metadata, .. }
+        | CreateCredential::PhoneOtp { metadata, .. }
+        | CreateCredential::Federated { metadata, .. } => metadata,
+    }
 }
 
 fn requested_id(body: &CreateCredential) -> Option<CredentialId> {
@@ -559,7 +583,10 @@ async fn repeat_credential(
             format!("credential {id} already exists with other content"),
         )
     };
-    if existing.subject_id != subject_id || existing.replaces.is_some() {
+    if existing.subject_id != subject_id
+        || existing.replaces.is_some()
+        || existing.metadata != *credential_metadata(&body)
+    {
         return Err(conflict());
     }
     if !existing.is_active() {
@@ -683,6 +710,7 @@ fn passwordless_credential(
         },
         mfa_factors_required: 0,
         replaces: None,
+        metadata: konklav_store::metadata::empty(),
     })
 }
 
@@ -815,6 +843,8 @@ async fn replace_password(
                     data: CredentialData::Password(PasswordData { hash }),
                     mfa_factors_required: old.mfa_factors_required,
                     replaces: Some(old_id),
+                    // r[impl metadata.write.create]
+                    metadata: old.metadata.clone(),
                 },
             )
             .await?;
@@ -1057,6 +1087,7 @@ fn workload_credential(
         }),
         mfa_factors_required: 0,
         replaces: None,
+        metadata: konklav_store::metadata::empty(),
     })
 }
 

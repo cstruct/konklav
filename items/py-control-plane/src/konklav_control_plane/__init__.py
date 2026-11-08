@@ -13,13 +13,15 @@ from ._async.auth import BearerToken, SecretKey
 from ._async.batch import Batch
 # r[impl item.py-control-plane.async-default]
 from ._async.client import ControlPlaneClient
-from ._common import Mode, Pending, Written
+from ._common import MetadataFilter, Mode, Pending, Written
 from .errors import (
     Conflict,
     Forbidden,
     InvalidRequest,
     KonklavError,
+    MetadataTooLarge,
     NotFound,
+    PreconditionFailed,
     RateLimited,
     Unauthenticated,
     Unavailable,
@@ -35,9 +37,12 @@ __all__ = [
     "Forbidden",
     "InvalidRequest",
     "KonklavError",
+    "MetadataFilter",
+    "MetadataTooLarge",
     "Mode",
     "NotFound",
     "Pending",
+    "PreconditionFailed",
     "RateLimited",
     "SecretKey",
     "Unauthenticated",

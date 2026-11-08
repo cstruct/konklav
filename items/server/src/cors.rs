@@ -112,7 +112,7 @@ async fn allowed(state: &AppState, origin: &HeaderValue) -> bool {
     let Ok(mut conn) = state.pool.get().await else {
         return false;
     };
-    let Ok(clients) = oidc_clients::list(&mut conn).await else {
+    let Ok(clients) = oidc_clients::list(&mut conn, None).await else {
         return false;
     };
     clients

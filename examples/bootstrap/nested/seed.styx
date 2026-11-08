@@ -1,7 +1,7 @@
 // A hand-written seed: a tenant tree, its roles and members, and an
 // operator. Records without ids are found by their natural keys, so this
 // file can be applied again without creating anything twice.
-format 1.0
+format 1.1
 id_namespace 3f1c9a52-6a1e-4d0b-9a0e-6c1d8f0b2e11
 catalog_file "../catalog.json"
 
@@ -17,6 +17,7 @@ global_roles ({key support, policies ({action konklav:subject:impersonate})})
 tenants ({
     key acme
     facts {seats 25}
+    metadata {billing_id acct-17}
     templates (reader)
     roles ({key editor, metadata {label Editor}, policies ({action document:write, scope_bound true})})
     children ({key acme-north})

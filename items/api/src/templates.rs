@@ -13,6 +13,9 @@ pub struct Template {
     /// An object, opaque to Konklav.
     #[schema(value_type = Object)]
     pub metadata: serde_json::Value,
+    /// Changes whenever `metadata` does; send it as `If-Match` to patch
+    /// the metadata only if no one else has since.
+    pub metadata_etag: String,
     pub policies: Vec<Policy>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

@@ -20,6 +20,12 @@ pub struct Tenant {
     pub state: TenantState,
     #[schema(value_type = Object)]
     pub facts: serde_json::Value,
+    /// An object, opaque to Konklav.
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
+    /// Changes whenever `metadata` does; send it as `If-Match` to patch
+    /// the metadata only if no one else has since.
+    pub metadata_etag: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -34,6 +40,10 @@ pub struct CreateTenant {
     /// Templates to instantiate roles from, atomically with the tenant.
     #[serde(default)]
     pub templates: Vec<String>,
+    /// An object, opaque to Konklav.
+    #[serde(default = "crate::metadata::empty_object")]
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
 }
 
 pub(crate) fn empty_object() -> serde_json::Value {
@@ -49,6 +59,9 @@ pub struct SetTenantState {
 #[into_params(parameter_in = Query)]
 pub struct TenantQuery {
     pub parent: Option<String>,
+    /// A JSON object of strings, numbers and booleans: only objects whose
+    /// metadata has each of its keys at the top level with an equal value.
+    pub metadata: Option<String>,
     pub before: Option<TenantId>,
     pub limit: Option<i64>,
 }
@@ -78,6 +91,12 @@ pub struct Membership {
     /// The identity provider whose claim mapping created it, if any.
     #[schema(required)]
     pub managed_by: Option<String>,
+    /// An object, opaque to Konklav.
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
+    /// Changes whenever `metadata` does; send it as `If-Match` to patch
+    /// the metadata only if no one else has since.
+    pub metadata_etag: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -90,15 +109,20 @@ pub struct CreateMembership {
     #[serde(default = "empty_object")]
     #[schema(value_type = Object)]
     pub facts: serde_json::Value,
+    /// An object, opaque to Konklav.
+    #[serde(default = "crate::metadata::empty_object")]
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
 }
 
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::IntoParams,
-)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct MembershipQuery {
     #[serde(default)]
     pub active: bool,
+    /// A JSON object of strings, numbers and booleans: only objects whose
+    /// metadata has each of its keys at the top level with an equal value.
+    pub metadata: Option<String>,
 }
 
 /// A membership with its role assignments.

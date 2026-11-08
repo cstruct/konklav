@@ -11,6 +11,7 @@ pub(crate) fn role(role: Role) -> api::Role {
         key: role.key,
         template: role.template,
         priority: role.priority,
+        metadata_etag: crate::metadata::etag(&role.metadata),
         metadata: role.metadata,
         policies: role.policies,
         builtin: role.builtin,
@@ -33,6 +34,7 @@ pub(crate) fn template(template: Template) -> api::Template {
         id: template.id,
         key: template.key,
         description: template.description,
+        metadata_etag: crate::metadata::etag(&template.metadata),
         metadata: template.metadata,
         policies: template.policies,
         created_at: template.created_at,
@@ -41,7 +43,7 @@ pub(crate) fn template(template: Template) -> api::Template {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use chrono::Utc;
     use konklav_authz::{Effect, Policy};
     use konklav_store::roles::Role;
@@ -72,7 +74,7 @@ mod tests {
             updated_at: Utc::now(),
         };
         assert_eq!(
-            serde_json::to_value(super::role(role.clone())).unwrap(),
+            without_etag(serde_json::to_value(super::role(role.clone())).unwrap()),
             serde_json::to_value(role).unwrap()
         );
         let template = Template {
@@ -85,8 +87,14 @@ mod tests {
             updated_at: Utc::now(),
         };
         assert_eq!(
-            serde_json::to_value(super::template(template.clone())).unwrap(),
+            without_etag(serde_json::to_value(super::template(template.clone())).unwrap()),
             serde_json::to_value(template).unwrap()
         );
+    }
+
+    /// The transport JSON without the entity tag, which only it has.
+    pub(crate) fn without_etag(mut value: serde_json::Value) -> serde_json::Value {
+        value.as_object_mut().unwrap().remove("metadata_etag");
+        value
     }
 }

@@ -150,6 +150,29 @@ await client.imports.subjects({"subjects": [{"id": person, "kind": "human"}]})
 `client.request(method, path, json=..., params=...)` sends anything else
 and returns the decoded body.
 
+### Metadata
+
+Subjects, credentials, invites, tenants, memberships, shares, OIDC clients,
+templates and roles carry `metadata`: a JSON object of your own that
+Konklav stores and never reads (it reaches no token or decision; data
+that should change access belongs in facts). Creates take it, every object
+shows it with its `metadata_etag`, and each of those namespaces has
+`patch_metadata`, a JSON merge patch that changes nothing else:
+
+```python
+key = await client.credentials.create(service, {"kind": "secret_key", "metadata": {"name": "Nightly sync"}})
+invite = await client.invites.create({"email": email, "metadata": {"tenant_id": "t-1", "invited_by": me}})
+page = await client.invites.list(metadata={"tenant_id": "t-1"})  # exact match on top-level keys
+current = await client.tenants.get(tenant)
+try:
+    await client.tenants.patch_metadata(tenant, {"plan": "pro", "trial": None}, if_match=current["metadata_etag"])
+except PreconditionFailed:
+    ...  # someone changed it since; read it again
+```
+
+`None` removes a key. Metadata over the server's size limit (16 KiB by
+default) raises `MetadataTooLarge`. Every list takes `metadata=`.
+
 ### Writes, cursors and repeats
 
 Writes that produce change-feed events return a `Written`: the resource as

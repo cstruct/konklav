@@ -443,6 +443,7 @@ async fn finish(
                         // r[impl federation.local-mfa]
                         mfa_factors_required: provider.settings.local_mfa_factors,
                         replaces: None,
+                        metadata: konklav_store::metadata::empty(),
                     },
                 )
                 .await
@@ -581,6 +582,7 @@ async fn provision(
                 }),
                 mfa_factors_required: settings.local_mfa_factors,
                 replaces: None,
+                metadata: konklav_store::metadata::empty(),
             },
         )
         .await?;

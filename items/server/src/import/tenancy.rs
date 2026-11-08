@@ -62,10 +62,12 @@ pub(crate) async fn create_tenant(
     id: TenantId,
     parent: TenantId,
     facts: &serde_json::Value,
+    metadata: &serde_json::Value,
     templates: &[String],
 ) -> Result<(Tenant, bool), ApiError> {
     validate_facts(conn, FactTarget::Tenant, facts).await?;
-    let (tenant, created) = tenants::create(conn, id, parent, facts).await?;
+    let (tenant, created) =
+        tenants::create_with_metadata(conn, id, parent, facts, metadata).await?;
     if created {
         roles::instantiate(conn, id, templates).await?;
     }
@@ -80,6 +82,7 @@ pub(crate) async fn create_membership(
     subject: SubjectId,
     tenant: TenantId,
     facts: &serde_json::Value,
+    metadata: &serde_json::Value,
 ) -> Result<(Membership, bool), ApiError> {
     subjects::get(conn, subject)
         .await
@@ -91,7 +94,7 @@ pub(crate) async fn create_membership(
         return Err(ApiError::new(ErrorCode::Conflict, "the tenant is deleted"));
     }
     validate_facts(conn, FactTarget::Membership, facts).await?;
-    Ok(memberships::create(conn, id, subject, tenant, facts).await?)
+    Ok(memberships::create_with_metadata(conn, id, subject, tenant, facts, metadata).await?)
 }
 
 /// Assigns the role `key` of the membership's tenant to the membership,

@@ -149,6 +149,11 @@ Terms are introduced in dependency order: each definition only uses terms define
   - Example: a membership fact `member_type=professional`, or a tenant fact `tenant_type=personal`.
   - Facts describe a subject's situation. They are not permissions.
 
+- `metadata`
+  - A JSON object a relying system stores on a Konklav object (a subject, credential, invite, tenant, membership, share, OIDC client, template or role) through the control plane, such as a secret key's display name.
+  - Konklav never interprets it: it is undeclared, untyped, and never reaches tokens or policy. Facts are the counterpart that does.
+  - `metadata etag`: an entity tag of an object's metadata, which a merge patch of the metadata can be made conditional on.
+
 - `portable fact`
   - A fact declared safe to copy into tokens, so that relying systems can read it without asking Konklav.
   - A `non-portable fact` stays inside Konklav, or inside the relying system that owns it.
@@ -409,6 +414,8 @@ Terms are introduced in dependency order: each definition only uses terms define
     - `scope.changed`
     - `signing_keys.changed`
     - `delivery.requested`
+    - `metadata.changed`
+    - `invite.redeemed`
 
 - `outbox`
   - The database table where events are written and kept for a retention period.

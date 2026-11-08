@@ -1,6 +1,7 @@
 //! Flat tables: one CSV file per kind of record, with a header row. Rows
 //! name other records by id. Empty cells are absent values, lists are
-//! separated by `|`, and facts are `fact.<key>` columns.
+//! separated by `|`, facts are `fact.<key>` columns, and metadata is a
+//! `metadata` column holding a JSON object.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -15,8 +16,8 @@ use crate::{Problem, line_of};
 /// The columns each table accepts, required ones first. Facts come on top.
 pub(crate) fn columns(table: &str) -> (&'static [&'static str], &'static [&'static str], bool) {
     match table {
-        "tenants.csv" => (&["id"], &["parent", "templates"], true),
-        "subjects.csv" => (&["id"], &["kind", "state"], false),
+        "tenants.csv" => (&["id"], &["parent", "templates", "metadata"], true),
+        "subjects.csv" => (&["id"], &["kind", "state", "metadata"], false),
         "credentials.csv" => (
             &["id", "subject", "kind"],
             &[
@@ -33,6 +34,7 @@ pub(crate) fn columns(table: &str) -> (&'static [&'static str], &'static [&'stat
                 "b_hash",
                 "b_created_at",
                 "b_expires_at",
+                "metadata",
             ],
             false,
         ),
@@ -41,7 +43,7 @@ pub(crate) fn columns(table: &str) -> (&'static [&'static str], &'static [&'stat
             &["seed_base32", "email", "active"],
             false,
         ),
-        "memberships.csv" => (&["id", "subject", "tenant"], &[], true),
+        "memberships.csv" => (&["id", "subject", "tenant"], &["metadata"], true),
         "assignments.csv" => (
             &["role"],
             &["membership", "subject", "scope_kind", "scope_id"],
@@ -102,6 +104,22 @@ impl Row<'_> {
 
     fn id(&mut self, column: &str) -> Id {
         Id::parse(&self.required(column))
+    }
+
+    /// The `metadata` column: a JSON object, empty when the cell is.
+    // r[impl bootstrap.metadata]
+    fn metadata(&mut self) -> serde_json::Value {
+        let Some(cell) = self.get("metadata") else {
+            return serde_json::json!({});
+        };
+        match serde_json::from_str::<serde_json::Value>(cell) {
+            Ok(value) if value.is_object() => value,
+            _ => {
+                self.problems
+                    .push(Problem::at(&self.at, "`metadata` must be a JSON object"));
+                serde_json::json!({})
+            }
+        }
     }
 
     fn optional_id(&self, column: &str) -> Option<Id> {
@@ -264,6 +282,7 @@ fn add_row(
                 parent: row.get("parent").map_or(TenantRef::Root, TenantRef::parse),
                 facts: row.facts(),
                 templates: row.list("templates"),
+                metadata: row.metadata(),
             };
             set.tenants.push(Located { value: tenant, at });
         }
@@ -285,12 +304,14 @@ fn add_row(
                 ],
                 Some(SubjectState::Active),
             );
+            let metadata = row.metadata();
             if let (Some(kind), Some(state)) = (kind, state) {
                 set.subjects.push(Located {
                     value: Subject {
                         key: SubjectRef::Id(id),
                         kind,
                         state,
+                        metadata,
                     },
                     at,
                 });
@@ -315,6 +336,7 @@ fn add_row(
                 subject: SubjectRef::Id(row.id("subject")),
                 tenant: TenantRef::parse(&row.required("tenant")),
                 facts: row.facts(),
+                metadata: row.metadata(),
             };
             set.memberships.push(Located {
                 value: membership,
@@ -515,5 +537,6 @@ fn credential(row: &mut Row<'_>) -> Option<Credential> {
         mfa_factors_required,
         session_flags: row.list("session_flags"),
         material,
+        metadata: row.metadata(),
     })
 }

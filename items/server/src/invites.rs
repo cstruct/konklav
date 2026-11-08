@@ -1,7 +1,7 @@
 //! Invites: an operator invites an email address, optionally into a tenant
 //! with roles; the recipient redeems the delivered token with a password.
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware;
 use axum::response::Response;
@@ -9,7 +9,7 @@ use axum::routing::post;
 use axum::{Json, Router};
 use chrono::{Duration, Utc};
 use diesel_async::AsyncConnection;
-use konklav_api::{CreateInvite, CreatedInvite, Invite, InviteState};
+use konklav_api::{CreateInvite, CreatedInvite, Invite, InvitePage, InviteQuery, InviteState};
 
 use crate::control_api::{Written, created_status};
 use crate::db::Db;
@@ -29,14 +29,14 @@ use utoipa_axum::routes;
 
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::subject_api::{SessionRequest, start_passwordless_session};
-use crate::{AppState, pacing};
+use crate::{AppState, metadata, pacing};
 
 /// Creating invites on the control plane, with the `OpenAPI` description
 /// taken from the handler's `#[utoipa::path]`. Redeeming one is on the
 /// subject-facing surface.
 pub(crate) fn invites() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .routes(routes!(create_invite))
+        .routes(routes!(create_invite, list_invites))
         .routes(routes!(get_invite))
         .routes(routes!(revoke_invite))
 }
@@ -74,10 +74,14 @@ fn empty_object() -> serde_json::Value {
         (status = 201, description = "Created; the token is delivered to the address, never returned", body = Written<CreatedInvite>),
         (status = 200, description = "Already existed with the same content; nothing is delivered again", body = Written<CreatedInvite>),
     ))]
+// r[impl metadata.write.create]
+// r[impl metadata.invites]
 async fn create_invite(
     db: Db,
+    limit: metadata::Limit,
     ApiJson(body): ApiJson<CreateInvite>,
 ) -> Result<(StatusCode, Json<Written<CreatedInvite>>), ApiError> {
+    limit.check(&body.metadata)?;
     if !body.email.contains('@') {
         return Err(ApiError::invalid_request("email must be an email address"));
     }
@@ -107,6 +111,7 @@ async fn create_invite(
                 return if existing.purpose == Purpose::Invite.as_str()
                     && existing.recipient == recipient
                     && existing.details == details
+                    && existing.metadata == body.metadata
                 {
                     Ok((existing.expires_at, false, None))
                 } else {
@@ -130,7 +135,7 @@ async fn create_invite(
             }
             // What Postgres stored, to the microsecond, so a repeat answers
             // the same `expires_at`.
-            let created = challenges::create(
+            let created = challenges::create_with_metadata(
                 conn,
                 NewChallenge {
                     id,
@@ -144,21 +149,10 @@ async fn create_invite(
                     details: details.clone(),
                     expires_at,
                 },
+                &body.metadata,
             )
             .await?;
-            events::append(
-                conn,
-                "delivery.requested",
-                serde_json::json!({
-                    "channel": "email",
-                    "recipient": recipient,
-                    "purpose": "invite",
-                    "subject": null,
-                    "material": {"token": format!("{id}.{secret}")},
-                    "expires_at": expires_at.timestamp(),
-                }),
-            )
-            .await?;
+            request_delivery(conn, &created, &secret).await?;
             Ok((
                 created.expires_at,
                 true,
@@ -176,6 +170,65 @@ async fn create_invite(
             cursor,
         }),
     ))
+}
+
+/// Asks for the invite's token to be delivered, with the invite's id and
+/// metadata so the deliverer can write the message.
+// r[impl metadata.invites]
+async fn request_delivery(
+    conn: &mut konklav_store::Connection,
+    invite: &challenges::Challenge,
+    secret: &str,
+) -> Result<(), ApiError> {
+    events::append(
+        conn,
+        "delivery.requested",
+        serde_json::json!({
+            "channel": "email",
+            "recipient": invite.recipient,
+            "purpose": "invite",
+            "subject": null,
+            "material": {"token": format!("{}.{secret}", invite.id)},
+            "expires_at": invite.expires_at.timestamp(),
+            "invite": invite.id,
+            "metadata": invite.metadata,
+        }),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Lists invites, newest first.
+///
+/// Optionally only those to one tenant, or whose metadata matches a filter.
+// r[impl metadata.invites]
+// r[impl metadata.filter]
+#[utoipa::path(get, path = "/invites", tag = "invites", params(InviteQuery),
+    responses((status = 200, body = InvitePage)))]
+async fn list_invites(
+    db: Db,
+    Query(query): Query<InviteQuery>,
+) -> Result<Json<InvitePage>, ApiError> {
+    let limit = query.limit.unwrap_or(50).clamp(1, 500);
+    let tenant = query
+        .tenant
+        .as_deref()
+        .map(|reference| {
+            tenants::parse_reference(reference)
+                .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))
+        })
+        .transpose()?;
+    let filter = metadata::filter(query.metadata.as_deref())?;
+    let mut conn = db.get().await?;
+    let found =
+        challenges::list_invites(&mut conn, tenant, filter.as_ref(), query.before, limit).await?;
+    let next = (i64::try_from(found.len()) == Ok(limit))
+        .then(|| found.last().map(|invite| invite.id))
+        .flatten();
+    Ok(Json(InvitePage {
+        invites: found.into_iter().map(invite).collect(),
+        next,
+    }))
 }
 
 /// Gets an invite, without its token.
@@ -227,7 +280,7 @@ async fn find_invite(
     }
 }
 
-fn invite(challenge: challenges::Challenge) -> Invite {
+pub(crate) fn invite(challenge: challenges::Challenge) -> Invite {
     let state = if challenge.revoked_at.is_some() {
         InviteState::Revoked
     } else if challenge.consumed_at.is_some() {
@@ -247,6 +300,8 @@ fn invite(challenge: challenges::Challenge) -> Invite {
         state,
         expires_at: challenge.expires_at,
         consumed_at: challenge.consumed_at,
+        metadata_etag: metadata::etag(&challenge.metadata),
+        metadata: challenge.metadata,
     }
 }
 
@@ -351,12 +406,26 @@ async fn redeem_invite(
                             data: CredentialData::Password(PasswordData { hash: new_hash }),
                             mfa_factors_required: 0,
                             replaces: None,
+                            metadata: konklav_store::metadata::empty(),
                         },
                     )
                     .await?
                 }
             };
-            join_invited_tenant(conn, &details, credential.subject_id).await?;
+            let membership = join_invited_tenant(conn, &details, credential.subject_id).await?;
+            // r[impl metadata.invites]
+            events::append(
+                conn,
+                "invite.redeemed",
+                serde_json::json!({
+                    "invite": id,
+                    "subject": credential.subject_id,
+                    "tenant": membership.as_ref().map(|m| m.tenant_id),
+                    "membership": membership.as_ref().map(|m| m.id),
+                    "metadata": challenge.metadata,
+                }),
+            )
+            .await?;
             Ok(credential)
         })
         .await?;
@@ -372,14 +441,15 @@ async fn redeem_invite(
     .await
 }
 
-/// Activates the membership an invite targets, if any, with its roles.
+/// Activates the membership an invite targets, if any, with its roles, and
+/// returns it.
 async fn join_invited_tenant(
     conn: &mut konklav_store::Connection,
     details: &InviteDetails,
     subject: SubjectId,
-) -> Result<(), ApiError> {
+) -> Result<Option<memberships::Membership>, ApiError> {
     let Some(reference) = &details.tenant else {
-        return Ok(());
+        return Ok(None);
     };
     let tenant = tenants::parse_reference(reference).ok_or_else(invalid_invite)?;
     // r[impl authn.invite.membership-id]
@@ -416,5 +486,5 @@ async fn join_invited_tenant(
         )
         .await?;
     }
-    Ok(())
+    Ok(Some(membership))
 }
