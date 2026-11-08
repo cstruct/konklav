@@ -21,7 +21,7 @@ resolver = "3"
 exclude = ["items/py"]
 
 [workspace.package]
-version = "1.5.0"
+version = "1.6.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -34,19 +34,19 @@ publish = false
 # version, which `mise run release:bump` sets along with the workspace version.
 konklav-api = { path = "items/api" }
 konklav-authn = { path = "items/authn" }
-konklav-authz = { version = "=1.5.0", path = "items/authz" }
-konklav-axum = { version = "=1.5.0", path = "items/axum" }
+konklav-authz = { version = "=1.6.0", path = "items/authz" }
+konklav-axum = { version = "=1.6.0", path = "items/axum" }
 konklav-bootstrap = { path = "items/bootstrap" }
 konklav-console = { path = "items/console" }
-konklav-core = { version = "=1.5.0", path = "items/core", default-features = false }
+konklav-core = { version = "=1.6.0", path = "items/core", default-features = false }
 konklav-examples = { path = "examples" }
 konklav-sso-example = { path = "examples/notes-app/rust" }
-konklav-relying = { version = "=1.5.0", path = "items/relying" }
-konklav-relying-client = { version = "=1.5.0", path = "items/relying-client" }
+konklav-relying = { version = "=1.6.0", path = "items/relying" }
+konklav-relying-client = { version = "=1.6.0", path = "items/relying-client" }
 konklav-server = { path = "items/server" }
 konklav-store = { path = "items/store" }
 konklav-test-support = { path = "items/test-support" }
-konklav-token = { version = "=1.5.0", path = "items/token" }
+konklav-token = { version = "=1.6.0", path = "items/token" }
 
 aes-gcm = "0.11.1"
 aws-lc-rs = "1.18.2"
