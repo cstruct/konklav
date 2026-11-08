@@ -15,7 +15,7 @@ class ActionEntry(TypedDict):
     name: str
 
 
-type BatchMethod = Literal['PUT', 'POST', 'DELETE']
+type BatchMethod = Literal['PUT', 'POST', 'PATCH', 'DELETE']
 """
 The methods a batch accepts: only writes.
 """
@@ -29,6 +29,11 @@ class BatchOperation(TypedDict):
     body: NotRequired[dict[str, Any] | None]
     """
     The operation's request body, if it takes one.
+    """
+    if_match: NotRequired[str | None]
+    """
+    The entity tag the operation would send alone as `If-Match`, such
+    as a `metadata_etag` for a metadata patch.
     """
     method: BatchMethod
     path: str
@@ -98,6 +103,10 @@ class Confinement(TypedDict):
 
 class CreateTenant(TypedDict):
     facts: NotRequired[dict[str, Any]]
+    metadata: NotRequired[dict[str, Any]]
+    """
+    An object, opaque to Konklav.
+    """
     parent: NotRequired[str | None]
     """
     The parent tenant (a UUID or `root`); `root` when absent.
@@ -290,7 +299,7 @@ type DenyReason = DenyReasonInvalidToken | DenyReasonInvalidDpopProof | DenyReas
 type Effect = Literal['allow', 'deny']
 
 
-type ErrorCode = Literal['NOT_FOUND', 'METHOD_NOT_ALLOWED', 'INVALID_REQUEST', 'CONFLICT', 'UNAUTHENTICATED', 'INVALID_CREDENTIALS', 'SESSION_ENDED', 'FORBIDDEN', 'RATE_LIMITED', 'OVERLOADED', 'SIGNING_KEY_UNAVAILABLE', 'CLAIMS_HOOK_UNAVAILABLE', 'INTERNAL', 'DATABASE_UNAVAILABLE', 'MIGRATIONS_PENDING']
+type ErrorCode = Literal['NOT_FOUND', 'METHOD_NOT_ALLOWED', 'INVALID_REQUEST', 'CONFLICT', 'PRECONDITION_FAILED', 'METADATA_TOO_LARGE', 'UNAUTHENTICATED', 'INVALID_CREDENTIALS', 'SESSION_ENDED', 'FORBIDDEN', 'RATE_LIMITED', 'OVERLOADED', 'SIGNING_KEY_UNAVAILABLE', 'CLAIMS_HOOK_UNAVAILABLE', 'INTERNAL', 'DATABASE_UNAVAILABLE', 'MIGRATIONS_PENDING']
 """
 Stable, machine-readable error codes. Never rename a variant: add a new
 one instead.
@@ -819,6 +828,11 @@ class Template(TypedDict):
     """
     An object, opaque to Konklav.
     """
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
+    """
     policies: list[Policy]
     updated_at: str
 
@@ -868,6 +882,15 @@ class WrittenCredential(TypedDict):
     id: CredentialId
     identifier: str
     kind: CredentialKind
+    metadata: dict[str, Any]
+    """
+    An object, opaque to Konklav.
+    """
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
+    """
     mfa_factors_required: int
     passkey: NotRequired[Passkey | None]
     replaces: CredentialId | None
@@ -892,6 +915,37 @@ class WrittenDeleted(TypedDict):
     cursor: NotRequired[Cursor | None]
 
 
+class WrittenInvite(TypedDict):
+    """
+    A write's result and the cursor of the last event it produced, if any.
+    """
+
+    consumed_at: str | None
+    """
+    When it was redeemed or revoked.
+    """
+    email: str
+    """
+    The invited address, normalized.
+    """
+    expires_at: str
+    id: str
+    membership: MembershipId | None
+    metadata: dict[str, Any]
+    """
+    An object, opaque to Konklav.
+    """
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
+    """
+    roles: list[str]
+    state: InviteState
+    tenant: str | None
+    cursor: NotRequired[Cursor | None]
+
+
 class WrittenMembership(TypedDict):
     """
     A write's result and the cursor of the last event it produced, if any.
@@ -903,6 +957,15 @@ class WrittenMembership(TypedDict):
     managed_by: str | None
     """
     The identity provider whose claim mapping created it, if any.
+    """
+    metadata: dict[str, Any]
+    """
+    An object, opaque to Konklav.
+    """
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
     """
     state: MembershipState
     subject_id: SubjectId
@@ -958,6 +1021,11 @@ class WrittenRole(TypedDict):
     """
     An object, opaque to Konklav.
     """
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
+    """
     policies: list[Policy]
     """
     The role's own policies, which override its template's.
@@ -980,6 +1048,15 @@ class WrittenSubject(TypedDict):
     created_at: str
     id: SubjectId
     kind: SubjectKind
+    metadata: dict[str, Any]
+    """
+    An object, opaque to Konklav.
+    """
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
+    """
     state: SubjectState
     cursor: NotRequired[Cursor | None]
 
@@ -997,6 +1074,11 @@ class WrittenTemplate(TypedDict):
     """
     An object, opaque to Konklav.
     """
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
+    """
     policies: list[Policy]
     updated_at: str
     cursor: NotRequired[Cursor | None]
@@ -1010,6 +1092,15 @@ class WrittenTenant(TypedDict):
     created_at: str
     facts: dict[str, Any]
     id: TenantId
+    metadata: dict[str, Any]
+    """
+    An object, opaque to Konklav.
+    """
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
+    """
     parent_id: TenantId | None
     state: TenantState
     updated_at: str
@@ -1111,6 +1202,7 @@ class CreateCredentialPassword(TypedDict):
     id: NotRequired[CredentialId | None]
     identifier: str
     kind: Literal['password']
+    metadata: NotRequired[dict[str, Any]]
     mfa_factors_required: NotRequired[int]
     password: NotRequired[str | None]
     password_hash: NotRequired[str | None]
@@ -1120,6 +1212,7 @@ class CreateCredentialSecretKey(TypedDict):
     expires_at: NotRequired[str | None]
     id: NotRequired[CredentialId | None]
     kind: Literal['secret_key']
+    metadata: NotRequired[dict[str, Any]]
 
 
 class CreateCredentialEmailLink(TypedDict):
@@ -1130,6 +1223,7 @@ class CreateCredentialEmailLink(TypedDict):
     id: NotRequired[CredentialId | None]
     identifier: str
     kind: Literal['email_link']
+    metadata: NotRequired[dict[str, Any]]
 
 
 class CreateCredentialPhoneOtp(TypedDict):
@@ -1140,6 +1234,7 @@ class CreateCredentialPhoneOtp(TypedDict):
     id: NotRequired[CredentialId | None]
     identifier: str
     kind: Literal['phone_otp']
+    metadata: NotRequired[dict[str, Any]]
 
 
 class CreateCredentialFederated(TypedDict):
@@ -1150,6 +1245,7 @@ class CreateCredentialFederated(TypedDict):
 
     id: NotRequired[CredentialId | None]
     kind: Literal['federated']
+    metadata: NotRequired[dict[str, Any]]
     provider: str
     subject: str
 
@@ -1177,6 +1273,11 @@ class CreateInvite(TypedDict):
     is safe; generated when absent.
     """
     membership: NotRequired[MembershipId | None]
+    metadata: NotRequired[dict[str, Any]]
+    """
+    An object, opaque to Konklav, delivered with the invite and handed
+    over on redemption.
+    """
     roles: NotRequired[list[str]]
     """
     Role keys in that tenant to assign.
@@ -1189,6 +1290,10 @@ class CreateInvite(TypedDict):
 
 class CreateMembership(TypedDict):
     facts: NotRequired[dict[str, Any]]
+    metadata: NotRequired[dict[str, Any]]
+    """
+    An object, opaque to Konklav.
+    """
     subject: SubjectId
     tenant: str
     """
@@ -1198,6 +1303,10 @@ class CreateMembership(TypedDict):
 
 class CreateSubject(TypedDict):
     kind: SubjectKind
+    metadata: NotRequired[dict[str, Any]]
+    """
+    An object, opaque to Konklav.
+    """
 
 
 class Credential(TypedDict):
@@ -1210,6 +1319,15 @@ class Credential(TypedDict):
     id: CredentialId
     identifier: str
     kind: CredentialKind
+    metadata: dict[str, Any]
+    """
+    An object, opaque to Konklav.
+    """
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
+    """
     mfa_factors_required: int
     passkey: NotRequired[Passkey | None]
     replaces: CredentialId | None
@@ -1296,6 +1414,11 @@ class ImportedCredentialMaterialSecretKey(TypedDict):
 class ImportedCredential1(TypedDict):
     id: CredentialId
     identifier: str
+    metadata: NotRequired[dict[str, Any]]
+    """
+    An object, opaque to Konklav; a re-import leaves an existing
+    record's metadata as it is.
+    """
     mfa_factors_required: NotRequired[int]
     session_flags: NotRequired[list[str]]
     """
@@ -1382,6 +1505,11 @@ class ImportedSubject(TypedDict):
 
     id: SubjectId
     kind: SubjectKind
+    metadata: NotRequired[dict[str, Any]]
+    """
+    An object, opaque to Konklav; a re-import leaves an existing
+    record's metadata as it is.
+    """
     state: NotRequired[SubjectState]
 
 
@@ -1401,9 +1529,23 @@ class Invite(TypedDict):
     expires_at: str
     id: str
     membership: MembershipId | None
+    metadata: dict[str, Any]
+    """
+    An object, opaque to Konklav.
+    """
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
+    """
     roles: list[str]
     state: InviteState
     tenant: str | None
+
+
+class InvitePage(TypedDict):
+    invites: list[Invite]
+    next: str | None
 
 
 class Membership(TypedDict):
@@ -1413,6 +1555,15 @@ class Membership(TypedDict):
     managed_by: str | None
     """
     The identity provider whose claim mapping created it, if any.
+    """
+    metadata: dict[str, Any]
+    """
+    An object, opaque to Konklav.
+    """
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
     """
     state: MembershipState
     subject_id: SubjectId
@@ -1474,6 +1625,10 @@ class OidcClientDefinition(TypedDict):
     login_url: NotRequired[str | None]
     """
     The client's own login page, instead of the provider's.
+    """
+    metadata: NotRequired[dict[str, Any]]
+    """
+    An object, opaque to Konklav.
     """
     post_logout_redirect_uris: NotRequired[list[str]]
     redirect_uris: list[str]
@@ -1654,6 +1809,11 @@ class Role(TypedDict):
     """
     An object, opaque to Konklav.
     """
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
+    """
     policies: list[Policy]
     """
     The role's own policies, which override its template's.
@@ -1823,6 +1983,15 @@ class Subject(TypedDict):
     created_at: str
     id: SubjectId
     kind: SubjectKind
+    metadata: dict[str, Any]
+    """
+    An object, opaque to Konklav.
+    """
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
+    """
     state: SubjectState
 
 
@@ -1847,6 +2016,15 @@ class Tenant(TypedDict):
     created_at: str
     facts: dict[str, Any]
     id: TenantId
+    metadata: dict[str, Any]
+    """
+    An object, opaque to Konklav.
+    """
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
+    """
     parent_id: TenantId | None
     state: TenantState
     updated_at: str
@@ -1867,6 +2045,27 @@ class WrittenCatalogDocument(TypedDict):
     groups: NotRequired[list[GroupEntry]]
     scope_kinds: NotRequired[list[ScopeKindEntry]]
     session_flags: NotRequired[list[SessionFlagEntry]]
+    cursor: NotRequired[Cursor | None]
+
+
+class WrittenOidcClient(OidcClientDefinition):
+    """
+    A write's result and the cursor of the last event it produced, if any.
+    """
+
+    created_at: str
+    disabled_at: str | None
+    has_secret: bool
+    """
+    Whether a secret has been issued.
+    """
+    id: str
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
+    """
+    updated_at: str
     cursor: NotRequired[Cursor | None]
 
 
@@ -1908,6 +2107,15 @@ class WrittenShare(ShareTerms):
     accepted_at: str | None
     created_at: str
     id: ShareId
+    metadata: dict[str, Any]
+    """
+    An object, opaque to Konklav.
+    """
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
+    """
     revoked_at: str | None
     revoked_by: ShareSide | None
     state: ShareState
@@ -1982,6 +2190,18 @@ class MembershipDetail(Membership):
     assignments: list[RoleAssignment]
 
 
+class OfferShare(ShareTerms):
+    """
+    A share's terms and its metadata, which isn't one of them: changing
+    only the metadata doesn't offer the share again.
+    """
+
+    metadata: NotRequired[dict[str, Any]]
+    """
+    An object, opaque to Konklav.
+    """
+
+
 class OidcClient(OidcClientDefinition):
     """
     A registered OIDC client, without its secret.
@@ -1994,6 +2214,11 @@ class OidcClient(OidcClientDefinition):
     Whether a secret has been issued.
     """
     id: str
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
+    """
     updated_at: str
 
 
@@ -2032,6 +2257,15 @@ class Share(ShareTerms):
     accepted_at: str | None
     created_at: str
     id: ShareId
+    metadata: dict[str, Any]
+    """
+    An object, opaque to Konklav.
+    """
+    metadata_etag: str
+    """
+    Changes whenever `metadata` does; send it as `If-Match` to patch
+    the metadata only if no one else has since.
+    """
     revoked_at: str | None
     revoked_by: ShareSide | None
     state: ShareState

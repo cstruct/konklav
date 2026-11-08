@@ -63,6 +63,7 @@ pub struct Subject {
     pub id: SubjectId,
     pub kind: SubjectKind,
     pub state: SubjectState,
+    pub metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -75,6 +76,7 @@ struct Row {
     state: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    metadata: serde_json::Value,
 }
 
 impl From<Row> for Subject {
@@ -83,6 +85,7 @@ impl From<Row> for Subject {
             id: row.id.into(),
             kind: SubjectKind::parse(&row.kind),
             state: SubjectState::parse(&row.state),
+            metadata: row.metadata,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }
@@ -100,19 +103,32 @@ pub async fn get(conn: &mut AsyncPgConnection, id: SubjectId) -> StoreResult<Sub
         .ok_or(StoreError::NotFound)
 }
 
-/// Creates a subject with a caller-supplied id. Repeating the call with the
-/// same kind returns the existing subject; a different kind is a conflict.
-/// Returns the subject and whether it was created.
-// r[impl platform.idempotency.client-ids]
+/// Creates a subject with a caller-supplied id and empty metadata; see
+/// [`create_with_metadata`].
 pub async fn create(
     conn: &mut AsyncPgConnection,
     id: SubjectId,
     kind: SubjectKind,
 ) -> StoreResult<(Subject, bool)> {
+    create_with_metadata(conn, id, kind, &crate::metadata::empty()).await
+}
+
+/// Creates a subject with a caller-supplied id. Repeating the call with the
+/// same kind and metadata returns the existing subject; anything else is a
+/// conflict. Returns the subject and whether it was created.
+// r[impl platform.idempotency.client-ids]
+// r[impl metadata.write.create]
+pub async fn create_with_metadata(
+    conn: &mut AsyncPgConnection,
+    id: SubjectId,
+    kind: SubjectKind,
+    metadata: &serde_json::Value,
+) -> StoreResult<(Subject, bool)> {
     let inserted = diesel::insert_into(subject::table)
         .values((
             subject::id.eq(id.as_uuid()),
             subject::kind.eq(kind.as_str()),
+            subject::metadata.eq(metadata),
         ))
         .on_conflict_do_nothing()
         .returning(Row::as_returning())
@@ -123,13 +139,17 @@ pub async fn create(
         return Ok((row.into(), true));
     }
     let existing = get(conn, id).await?;
-    if existing.kind == kind {
-        Ok((existing, false))
-    } else {
+    if existing.kind != kind {
         Err(StoreError::Conflict(format!(
             "subject {id} already exists as {}",
             existing.kind.as_str()
         )))
+    } else if existing.metadata != *metadata {
+        Err(StoreError::Conflict(format!(
+            "subject {id} already exists with other metadata"
+        )))
+    } else {
+        Ok((existing, false))
     }
 }
 
@@ -150,6 +170,16 @@ pub async fn set_state(
     Ok(previous)
 }
 
+/// What to list subjects by.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SubjectFilter<'a> {
+    pub kind: Option<SubjectKind>,
+    /// Holding an active credential with this login identifier.
+    pub identifier: Option<&'a str>,
+    /// Metadata containing this object of top-level scalars.
+    pub metadata: Option<&'a serde_json::Value>,
+}
+
 /// Subjects, newest first, optionally only those of `kind` or holding an
 /// active credential with this login identifier. Pass the last id of a page
 /// as `before` for the next.
@@ -160,8 +190,32 @@ pub async fn list(
     before: Option<SubjectId>,
     limit: i64,
 ) -> StoreResult<Vec<Subject>> {
+    let filter = SubjectFilter {
+        kind,
+        identifier,
+        metadata: None,
+    };
+    list_by(conn, filter, before, limit).await
+}
+
+/// [`list`] by a [`SubjectFilter`].
+// r[impl metadata.filter]
+pub async fn list_by(
+    conn: &mut AsyncPgConnection,
+    filter: SubjectFilter<'_>,
+    before: Option<SubjectId>,
+    limit: i64,
+) -> StoreResult<Vec<Subject>> {
     use crate::schema::credential;
+    let SubjectFilter {
+        kind,
+        identifier,
+        metadata,
+    } = filter;
     let mut query = subject::table.into_boxed();
+    if let Some(metadata) = metadata {
+        query = query.filter(subject::metadata.contains(metadata.clone()));
+    }
     if let Some(kind) = kind {
         query = query.filter(subject::kind.eq(kind.as_str()));
     }

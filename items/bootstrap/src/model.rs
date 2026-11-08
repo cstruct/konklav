@@ -198,6 +198,8 @@ pub struct Tenant {
     pub facts: Facts,
     /// Templates to derive roles from when the tenant is created.
     pub templates: Vec<String>,
+    /// A JSON object stored as the control plane's `metadata`.
+    pub metadata: serde_json::Value,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -217,6 +219,8 @@ pub struct Subject {
     pub key: SubjectRef,
     pub kind: SubjectKind,
     pub state: SubjectState,
+    /// A JSON object stored as the control plane's `metadata`.
+    pub metadata: serde_json::Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -255,6 +259,8 @@ pub struct Credential {
     /// Restrictive session flags every session started with it carries.
     pub session_flags: Vec<String>,
     pub material: CredentialMaterial,
+    /// A JSON object stored as the control plane's `metadata`.
+    pub metadata: serde_json::Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -280,6 +286,8 @@ pub struct Membership {
     pub subject: SubjectRef,
     pub tenant: TenantRef,
     pub facts: Facts,
+    /// A JSON object stored as the control plane's `metadata`.
+    pub metadata: serde_json::Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

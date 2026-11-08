@@ -932,6 +932,7 @@ async fn replace_password(
             data: CredentialData::Password(PasswordData { hash }),
             mfa_factors_required: old.mfa_factors_required,
             replaces: Some(old.id),
+            metadata: konklav_store::metadata::empty(),
         },
     )
     .await?)

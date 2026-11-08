@@ -167,6 +167,8 @@ async def test_a_rejected_bearer_token_is_not_retried():
         (404, "NOT_FOUND", errors.NotFound),
         (409, "CONFLICT", errors.Conflict),
         (400, "INVALID_REQUEST", errors.InvalidRequest),
+        (400, "METADATA_TOO_LARGE", errors.MetadataTooLarge),
+        (412, "PRECONDITION_FAILED", errors.PreconditionFailed),
         (401, "UNAUTHENTICATED", errors.Unauthenticated),
         (401, "INVALID_CREDENTIALS", errors.Unauthenticated),
         (401, "SESSION_ENDED", errors.Unauthenticated),
@@ -466,3 +468,41 @@ async def test_only_batches_with_a_key_are_retried_after_an_ambiguous_failure(wa
             async with client.batch() as batch:
                 batch.tenants.create("t", {})
     assert len(konklav.requests) == 1
+
+
+# r[verify metadata.write.precondition]
+async def test_a_metadata_patch_sends_its_precondition_as_if_match():
+    answer = lambda request: httpx.Response(200, json={"id": "i", "metadata": {}, "cursor": 3})  # noqa: E731
+    konklav = Konklav(answer, answer)
+    async with konklav.client() as client:
+        written = await client.invites.patch_metadata("i", {"tenant_id": None}, if_match="abc")
+        await client.invites.patch_metadata("i", {"tenant_id": "t"})
+    first, second = konklav.requests
+    assert (first.method, first.url.path) == ("PATCH", "/v1/invites/i/metadata")
+    assert first.headers["if-match"] == '"abc"'
+    assert json.loads(first.content) == {"tenant_id": None}, "null removes a key"
+    assert "if-match" not in second.headers
+    assert written.cursor == 3
+
+
+# r[verify metadata.write.precondition]
+async def test_a_batched_metadata_patch_carries_its_precondition():
+    konklav = Konklav(batch_answer((200, {"id": "s", "metadata": {"a": 1}}), cursor=4))
+    async with konklav.client() as client:
+        async with client.batch() as batch:
+            batch.subjects.patch_metadata("s", {"a": 1}, if_match="e1")
+    (request,) = konklav.requests
+    assert json.loads(request.content) == {
+        "operations": [
+            {"method": "PATCH", "path": "/subjects/s/metadata", "body": {"a": 1}, "if_match": "e1"},
+        ]
+    }
+
+
+# r[verify metadata.filter]
+async def test_metadata_filters_are_sent_as_a_json_object():
+    konklav = Konklav(lambda request: httpx.Response(200, json={"invites": [], "next": None}))
+    async with konklav.client() as client:
+        await client.invites.list(tenant="root", metadata={"tenant_id": "t-1", "seats": 3})
+    (request,) = konklav.requests
+    assert dict(request.url.params) == {"tenant": "root", "metadata": '{"seats":3,"tenant_id":"t-1"}'}

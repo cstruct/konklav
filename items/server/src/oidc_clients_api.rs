@@ -1,9 +1,9 @@
 //! Registering OIDC clients on the control plane.
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use diesel_async::AsyncConnection;
-use konklav_api::{self as api, OidcClientDefinition, OidcClientSecret};
+use konklav_api::{self as api, MetadataQuery, OidcClientDefinition, OidcClientSecret};
 use konklav_store::credentials::{self, CredentialData, CredentialKind};
 use konklav_store::oidc_clients::{self, ClientKind, IdTokenAlgorithm, OidcClient};
 use konklav_store::{sessions, subjects};
@@ -13,7 +13,7 @@ use utoipa_axum::routes;
 
 use crate::db::Db;
 use crate::error::{ApiError, ApiJson};
-use crate::{AppState, transport};
+use crate::{AppState, metadata, transport};
 
 /// OIDC clients, with the `OpenAPI` description of each route taken from
 /// its handler's `#[utoipa::path]`.
@@ -26,11 +26,16 @@ pub(crate) fn oidc_clients() -> OpenApiRouter<AppState> {
 
 /// Lists OIDC clients.
 #[utoipa::path(get, path = "/oidc/clients", operation_id = "list_oidc_clients", tag = "oidc-clients",
+    params(MetadataQuery),
     responses((status = 200, body = Vec<api::OidcClient>)))]
-async fn list(db: Db) -> Result<Json<Vec<api::OidcClient>>, ApiError> {
+async fn list(
+    db: Db,
+    Query(query): Query<MetadataQuery>,
+) -> Result<Json<Vec<api::OidcClient>>, ApiError> {
+    let filter = metadata::filter(query.metadata.as_deref())?;
     let mut conn = db.get().await?;
     Ok(Json(
-        oidc_clients::list(&mut conn)
+        oidc_clients::list(&mut conn, filter.as_ref())
             .await?
             .into_iter()
             .map(transport::oidc_client)
@@ -60,9 +65,11 @@ async fn get_client(db: Db, Path(id): Path<String>) -> Result<Json<api::OidcClie
 async fn put_client(
     State(state): State<AppState>,
     db: Db,
+    limit: metadata::Limit,
     Path(id): Path<String>,
     ApiJson(definition): ApiJson<OidcClientDefinition>,
 ) -> Result<Json<api::OidcClient>, ApiError> {
+    limit.check(&definition.metadata)?;
     let definition = transport::client_definition(definition);
     if !definition.scopes.iter().any(|s| s == "openid") {
         return Err(ApiError::invalid_request("clients need the openid scope"));
@@ -163,6 +170,7 @@ async fn bind_service_subject(
             data: CredentialData::Client,
             mfa_factors_required: 0,
             replaces: None,
+            metadata: konklav_store::metadata::empty(),
         },
     )
     .await?;

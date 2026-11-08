@@ -17,6 +17,7 @@ pub mod events;
 pub mod history;
 pub mod login_attempts;
 pub mod memberships;
+pub mod metadata;
 pub mod mfa;
 mod migrate;
 pub mod oidc_clients;

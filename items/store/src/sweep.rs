@@ -234,18 +234,19 @@ pub async fn history(
     .await?)
 }
 
-/// Erases the challenge material from stored delivery requests whose
-/// challenge expired before `now`.
+/// Erases the challenge material, and an invite's metadata, from stored
+/// delivery requests whose challenge expired before `now`.
 // r[impl retention.delivery-material]
+// r[impl metadata.erasure]
 pub async fn delivery_material(
     conn: &mut AsyncPgConnection,
     now: DateTime<Utc>,
     batch: i64,
 ) -> StoreResult<usize> {
     Ok(diesel::sql_query(
-        "update event set payload = payload - 'material' where cursor in (
+        "update event set payload = payload - array['material', 'metadata'] where cursor in (
              select cursor from event
-             where kind = 'delivery.requested' and payload ? 'material'
+             where kind = 'delivery.requested' and (payload ? 'material' or payload ? 'metadata')
                and coalesce((payload ->> 'expires_at')::bigint, 0) < extract(epoch from $1)
              limit $2
          )",

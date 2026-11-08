@@ -9,7 +9,7 @@ use diesel_async::AsyncConnection;
 use konklav_api::{
     self as api, AssignRole, CatalogDocument, CreateMembership, CreateTenant, Deleted,
     EntitlementQuery, Entitlements, ExplainQuery, Explanation, MembershipDetail, MembershipQuery,
-    PutRole, PutTemplate, SetTenantState, TenantPage, TenantQuery,
+    MetadataQuery, PutRole, PutTemplate, SetTenantState, TenantPage, TenantQuery,
 };
 use konklav_core::{MembershipId, SubjectId, TenantId};
 use konklav_store::catalog::{self, FactTarget};
@@ -27,7 +27,7 @@ use crate::control_api::{Written, created_status, parse_id};
 use crate::db::Db;
 use crate::error::{ApiError, ApiJson};
 use crate::import::{self, not_found_as, validate_facts};
-use crate::{AppState, capabilities, transport};
+use crate::{AppState, capabilities, metadata, transport};
 
 /// Tenants and memberships, with the `OpenAPI` description of each route
 /// taken from its handler's `#[utoipa::path]`.
@@ -113,10 +113,12 @@ async fn put_catalog(
     ))]
 async fn create_tenant(
     db: Db,
+    limit: metadata::Limit,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<CreateTenant>,
 ) -> Result<Response, ApiError> {
     let id: TenantId = parse_id(&id, "tenant id")?;
+    limit.check(&body.metadata)?;
     let parent = body
         .parent
         .as_deref()
@@ -124,8 +126,15 @@ async fn create_tenant(
     let mut conn = db.get().await?;
     let (tenant, created, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
-            let (tenant, created) =
-                import::create_tenant(conn, id, parent, &body.facts, &body.templates).await?;
+            let (tenant, created) = import::create_tenant(
+                conn,
+                id,
+                parent,
+                &body.facts,
+                &body.metadata,
+                &body.templates,
+            )
+            .await?;
             Ok((tenant, created, events::last_in_transaction(conn).await?))
         })
         .await?;
@@ -230,16 +239,25 @@ async fn set_tenant_state(
     ))]
 async fn create_membership(
     db: Db,
+    limit: metadata::Limit,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<CreateMembership>,
 ) -> Result<Response, ApiError> {
     let id: MembershipId = parse_id(&id, "membership id")?;
+    limit.check(&body.metadata)?;
     let tenant = tenant_ref(&body.tenant)?;
     let mut conn = db.get().await?;
     let (membership, created, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
-            let (membership, created) =
-                import::create_membership(conn, id, body.subject, tenant, &body.facts).await?;
+            let (membership, created) = import::create_membership(
+                conn,
+                id,
+                body.subject,
+                tenant,
+                &body.facts,
+                &body.metadata,
+            )
+            .await?;
             Ok((
                 membership,
                 created,
@@ -340,14 +358,19 @@ async fn end_membership(
 // --- Templates and roles ----------------------------------------------------
 
 /// Lists role templates.
-#[utoipa::path(get, path = "/templates", tag = "templates",
+#[utoipa::path(get, path = "/templates", tag = "templates", params(MetadataQuery),
     responses((status = 200, body = Vec<api::Template>)))]
-async fn list_templates(db: Db) -> Result<Json<Vec<api::Template>>, ApiError> {
+async fn list_templates(
+    db: Db,
+    Query(query): Query<MetadataQuery>,
+) -> Result<Json<Vec<api::Template>>, ApiError> {
+    let filter = metadata::filter(query.metadata.as_deref())?;
     let mut conn = db.get().await?;
     Ok(Json(
         templates::list(&mut conn)
             .await?
             .into_iter()
+            .filter(|template| metadata::matches(&template.metadata, filter.as_ref()))
             .map(transport::template)
             .collect(),
     ))
@@ -373,8 +396,10 @@ async fn put_template(
     db: Db,
     Extension(operator): Extension<Operator>,
     Path(key): Path<String>,
+    limit: metadata::Limit,
     ApiJson(body): ApiJson<PutTemplate>,
 ) -> Result<Json<Written<api::Template>>, ApiError> {
+    limit.check(&body.metadata)?;
     let mut conn = db.get().await?;
     let (template, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
@@ -405,15 +430,21 @@ async fn put_template(
 
 /// Lists a tenant's roles.
 #[utoipa::path(get, path = "/tenants/{id}/roles", tag = "roles",
-    params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
+    params(("id" = String, Path, description = "The tenant: a UUID or `root`"), MetadataQuery),
     responses((status = 200, body = Vec<api::Role>)))]
-async fn list_roles(db: Db, Path(tenant): Path<String>) -> Result<Json<Vec<api::Role>>, ApiError> {
+async fn list_roles(
+    db: Db,
+    Path(tenant): Path<String>,
+    Query(query): Query<MetadataQuery>,
+) -> Result<Json<Vec<api::Role>>, ApiError> {
     let tenant = tenant_ref(&tenant)?;
+    let filter = metadata::filter(query.metadata.as_deref())?;
     let mut conn = db.get().await?;
     Ok(Json(
         roles::list(&mut conn, tenant)
             .await?
             .into_iter()
+            .filter(|role| metadata::matches(&role.metadata, filter.as_ref()))
             .map(transport::role)
             .collect(),
     ))
@@ -447,9 +478,11 @@ async fn put_role(
     db: Db,
     Extension(operator): Extension<Operator>,
     Path((tenant, key)): Path<(String, String)>,
+    limit: metadata::Limit,
     ApiJson(body): ApiJson<PutRole>,
 ) -> Result<Json<Written<api::Role>>, ApiError> {
     let tenant = tenant_ref(&tenant)?;
+    limit.check(&body.metadata)?;
     let definition = transport::role_definition(body);
     let mut conn = db.get().await?;
     let (role, cursor) = conn
@@ -672,7 +705,8 @@ async fn list_tenants(
     let parent = query.parent.as_deref().map(tenant_ref).transpose()?;
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
     let mut conn = db.get().await?;
-    let tenants = tenants::list(&mut conn, parent, query.before, limit).await?;
+    let metadata = metadata::filter(query.metadata.as_deref())?;
+    let tenants = tenants::list(&mut conn, parent, metadata.as_ref(), query.before, limit).await?;
     let next = (i64::try_from(tenants.len()) == Ok(limit))
         .then(|| tenants.last().map(|t| t.id))
         .flatten();
@@ -692,8 +726,10 @@ async fn list_memberships(
     Query(query): Query<MembershipQuery>,
 ) -> Result<Json<Vec<api::Membership>>, ApiError> {
     let tenant = tenant_ref(&id)?;
+    let metadata = metadata::filter(query.metadata.as_deref())?;
     let mut conn = db.get().await?;
-    let memberships = memberships::list_for_tenant(&mut conn, tenant, query.active).await?;
+    let memberships =
+        memberships::list_for_tenant(&mut conn, tenant, query.active, metadata.as_ref()).await?;
     Ok(Json(
         memberships.into_iter().map(transport::membership).collect(),
     ))

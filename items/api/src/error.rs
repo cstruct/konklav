@@ -11,6 +11,11 @@ pub enum ErrorCode {
     MethodNotAllowed,
     InvalidRequest,
     Conflict,
+    /// An `If-Match` precondition didn't hold: the object changed since
+    /// its entity tag was read.
+    PreconditionFailed,
+    /// The write would leave an object's metadata over the size limit.
+    MetadataTooLarge,
     /// No usable credentials were presented (missing or invalid token).
     Unauthenticated,
     /// The login identifier, secret or credential is wrong. Deliberately
@@ -37,7 +42,8 @@ impl ErrorCode {
         match self {
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
-            Self::InvalidRequest => StatusCode::BAD_REQUEST,
+            Self::InvalidRequest | Self::MetadataTooLarge => StatusCode::BAD_REQUEST,
+            Self::PreconditionFailed => StatusCode::PRECONDITION_FAILED,
             Self::Conflict => StatusCode::CONFLICT,
             Self::Unauthenticated | Self::InvalidCredentials | Self::SessionEnded => {
                 StatusCode::UNAUTHORIZED

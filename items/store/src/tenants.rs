@@ -58,6 +58,7 @@ pub struct Tenant {
     pub parent_id: Option<TenantId>,
     pub state: TenantState,
     pub facts: serde_json::Value,
+    pub metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -71,6 +72,7 @@ struct Row {
     facts: serde_json::Value,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    metadata: serde_json::Value,
 }
 
 impl From<Row> for Tenant {
@@ -80,6 +82,7 @@ impl From<Row> for Tenant {
             parent_id: row.parent_id.map(Into::into),
             state: TenantState::parse(&row.state),
             facts: row.facts,
+            metadata: row.metadata,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }
@@ -111,16 +114,29 @@ pub async fn existing(
         .collect())
 }
 
-/// Creates a tenant under `parent` with a caller-supplied id. Repeating the
-/// call with the same parent returns the existing tenant; a different parent
-/// is a conflict. Returns the tenant and whether it was created.
-// r[impl tenant.tree.single-parent]
-// r[impl tenant.authority]
+/// Creates a tenant with empty metadata; see [`create_with_metadata`].
 pub async fn create(
     conn: &mut AsyncPgConnection,
     id: TenantId,
     parent: TenantId,
     facts: &serde_json::Value,
+) -> StoreResult<(Tenant, bool)> {
+    create_with_metadata(conn, id, parent, facts, &crate::metadata::empty()).await
+}
+
+/// Creates a tenant under `parent` with a caller-supplied id. Repeating the
+/// call with the same parent and metadata returns the existing tenant; a
+/// different parent or metadata is a conflict. Returns the tenant and
+/// whether it was created.
+// r[impl tenant.tree.single-parent]
+// r[impl tenant.authority]
+// r[impl metadata.write.create]
+pub async fn create_with_metadata(
+    conn: &mut AsyncPgConnection,
+    id: TenantId,
+    parent: TenantId,
+    facts: &serde_json::Value,
+    metadata: &serde_json::Value,
 ) -> StoreResult<(Tenant, bool)> {
     if id == ROOT {
         return Err(StoreError::Conflict(
@@ -141,6 +157,7 @@ pub async fn create(
             tenant::id.eq(id.as_uuid()),
             tenant::parent_id.eq(parent.as_uuid()),
             tenant::facts.eq(facts),
+            tenant::metadata.eq(metadata),
         ))
         .on_conflict_do_nothing()
         .returning(Row::as_returning())
@@ -151,12 +168,16 @@ pub async fn create(
         return Ok((row.into(), true));
     }
     let existing = get(conn, id).await?;
-    if existing.parent_id == Some(parent) {
-        Ok((existing, false))
-    } else {
+    if existing.parent_id != Some(parent) {
         Err(StoreError::Conflict(format!(
             "tenant {id} already exists under another parent"
         )))
+    } else if existing.metadata != *metadata {
+        Err(StoreError::Conflict(format!(
+            "tenant {id} already exists with other metadata"
+        )))
+    } else {
+        Ok((existing, false))
     }
 }
 
@@ -201,14 +222,20 @@ pub async fn set_facts(
         .ok_or(StoreError::NotFound)
 }
 
-/// Tenants, newest first, optionally only children of `parent`.
+/// Tenants, newest first, optionally only children of `parent` or those
+/// whose metadata contains `metadata`.
+// r[impl metadata.filter]
 pub async fn list(
     conn: &mut AsyncPgConnection,
     parent: Option<TenantId>,
+    metadata: Option<&serde_json::Value>,
     before: Option<TenantId>,
     limit: i64,
 ) -> StoreResult<Vec<Tenant>> {
     let mut query = tenant::table.into_boxed();
+    if let Some(metadata) = metadata {
+        query = query.filter(tenant::metadata.contains(metadata.clone()));
+    }
     if let Some(parent) = parent {
         query = query.filter(tenant::parent_id.eq(uuid::Uuid::from(parent)));
     }

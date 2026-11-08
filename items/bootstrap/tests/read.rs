@@ -46,6 +46,11 @@ fn the_nested_example_reads_into_records_with_natural_keys() {
     assert_eq!(tenants[0].parent, TenantRef::Root);
     assert_eq!(tenants[0].facts["seats"], FactValue::Text("25".into()));
     assert_eq!(
+        tenants[0].metadata,
+        serde_json::json!({"billing_id": "acct-17"})
+    );
+    assert_eq!(tenants[1].metadata, serde_json::json!({}));
+    assert_eq!(
         tenants[1].parent,
         TenantRef::Id(Id::External("acme".into()))
     );
@@ -53,7 +58,7 @@ fn the_nested_example_reads_into_records_with_natural_keys() {
     let ada = SubjectRef::Identifier("ada@acme.example".into());
     assert_eq!(set.subjects.len(), 3);
     assert_eq!(set.subjects[0].value.key, ada);
-    assert_eq!(set.subjects[0].at.line, 24, "where the member opens");
+    assert_eq!(set.subjects[0].at.line, 25, "where the member opens");
     assert!(matches!(
         set.credentials[0].value.material,
         CredentialMaterial::PasswordHash(_)
@@ -448,5 +453,77 @@ fn a_set_of_an_older_minor_format_reads() {
         );
         let set = read(&[scratch("older", &[("set.styx", &document)])]).unwrap();
         assert_eq!(set.subjects.len(), 1);
+    }
+}
+
+// r[verify bootstrap.metadata]
+#[test]
+fn format_1_1_reads_metadata_from_both_formats() {
+    let formats = examples().join("formats/1.1");
+    let nested = read(&[formats.join("nested/seed.styx")]).unwrap();
+    assert_eq!(
+        nested.tenants[0].value.metadata,
+        serde_json::json!({"billing_id": "acct-17", "plan": {"name": "team", "seats": "25"}})
+    );
+    let ada = &nested.subjects[0].value;
+    assert_eq!(
+        ada.metadata,
+        serde_json::json!({"locale": "sv-SE", "marketing": "false"})
+    );
+    assert_eq!(
+        nested.memberships[0].value.metadata,
+        serde_json::json!({"title": "Editor"})
+    );
+    let key = nested
+        .credentials
+        .iter()
+        .find(|c| matches!(c.value.material, CredentialMaterial::SecretKey { .. }))
+        .unwrap();
+    assert_eq!(
+        key.value.metadata,
+        serde_json::json!({"name": "Nightly sync", "rotate_every_days": "90"})
+    );
+    assert_eq!(
+        nested.credentials[0].value.metadata,
+        serde_json::json!({}),
+        "a shorthand credential has none"
+    );
+
+    let flat = read(&[formats.join("flat")]).unwrap();
+    assert_eq!(
+        flat.tenants[0].value.metadata,
+        serde_json::json!({"billing_id": "acct-1"})
+    );
+    assert_eq!(flat.tenants[1].value.metadata, serde_json::json!({}));
+    assert_eq!(
+        flat.subjects[0].value.metadata,
+        serde_json::json!({"locale": "en-GB", "tags": ["beta"]}),
+        "a CSV cell holds JSON, so its values keep their types"
+    );
+    assert_eq!(
+        flat.credentials[0].value.metadata,
+        serde_json::json!({"label": "Work laptop"})
+    );
+    assert_eq!(
+        flat.memberships[0].value.metadata,
+        serde_json::json!({"title": "Owner"})
+    );
+}
+
+// r[verify bootstrap.metadata]
+#[test]
+fn a_metadata_cell_must_hold_a_json_object() {
+    let (dir, problems) = problems_of(
+        "metadata-cell",
+        &[(
+            "subjects.csv",
+            "id,metadata\n0193b6a0-0000-7000-8000-000000000001,[1]\n0193b6a0-0000-7000-8000-000000000002,{nope\n",
+        )],
+    );
+    assert_eq!(problems.len(), 2, "{problems:#?}");
+    for (problem, line) in problems.iter().zip([2, 3]) {
+        let at = problem.at.as_ref().unwrap();
+        assert_eq!((at.file.clone(), at.line), (dir.join("subjects.csv"), line));
+        assert!(problem.message.contains("JSON object"), "{problem:?}");
     }
 }

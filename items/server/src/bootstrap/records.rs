@@ -41,6 +41,16 @@ fn invalid(message: impl Into<String>) -> ApiError {
 }
 
 impl Context<'_> {
+    /// Checks a record's metadata against the size limit, as a problem.
+    // r[impl bootstrap.metadata]
+    // r[impl metadata.limit]
+    fn metadata(&self, metadata: &serde_json::Value) -> Result<(), ApiError> {
+        self.options
+            .metadata_limit()
+            .check(metadata)
+            .map_err(|error| invalid(error.message))
+    }
+
     fn uuid(&self, id: &Id, kind: Kind) -> Result<uuid::Uuid, ApiError> {
         id.resolve(self.namespace, kind).ok_or_else(|| {
             invalid(format!(
@@ -149,9 +159,11 @@ pub(super) async fn catalog(
 // r[impl bootstrap.metadata]
 pub(super) async fn template(
     conn: &mut Connection,
+    context: &Context<'_>,
     template: &Located<konklav_bootstrap::Template>,
 ) -> Result<Outcome, ApiError> {
     let wanted = &template.value;
+    context.metadata(&wanted.metadata)?;
     let policies = policies(&wanted.policies);
     match templates::get(conn, &wanted.key).await {
         Ok(existing)
@@ -190,17 +202,24 @@ pub(super) async fn tenant(
     let parent = context.tenant(&tenant.value.parent)?;
     let facts =
         catalogs::typed_facts(catalog, FactTarget::Tenant, &tenant.value.facts).map_err(invalid)?;
-    let (existing, created) =
-        import::create_tenant(conn, id, parent, &facts, &tenant.value.templates).await?;
-    if created {
-        Ok(Outcome::Created)
-    } else if existing.parent_id == Some(parent) && existing.facts == facts {
-        Ok(Outcome::Skipped)
-    } else {
-        Err(conflict(format!(
-            "tenant {id} exists with another parent or other facts"
-        )))
+    let metadata = &tenant.value.metadata;
+    context.metadata(metadata)?;
+    if let Ok(existing) = tenants::get(conn, id).await
+        && (existing.parent_id != Some(parent)
+            || existing.facts != facts
+            || existing.metadata != *metadata)
+    {
+        return Err(conflict(format!(
+            "tenant {id} exists with another parent, other facts or other metadata"
+        )));
     }
+    let (_, created) =
+        import::create_tenant(conn, id, parent, &facts, metadata, &tenant.value.templates).await?;
+    Ok(if created {
+        Outcome::Created
+    } else {
+        Outcome::Skipped
+    })
 }
 
 // r[impl bootstrap.metadata]
@@ -211,6 +230,7 @@ pub(super) async fn role(
 ) -> Result<Outcome, ApiError> {
     let wanted = &role.value;
     let tenant = context.tenant(&wanted.tenant)?;
+    context.metadata(&wanted.metadata)?;
     let policies = policies(&wanted.policies);
     match roles::get(conn, tenant, &wanted.key).await {
         Ok(existing)
@@ -256,8 +276,15 @@ pub(super) async fn subject(
         konklav_bootstrap::SubjectState::Active => SubjectState::Active,
         konklav_bootstrap::SubjectState::Disabled => SubjectState::Disabled,
     };
+    let metadata = &subject.value.metadata;
+    context.metadata(metadata)?;
     conn.transaction::<_, ApiError, _>(async |conn| {
-        let (existing, created) = subjects::create(conn, id, kind).await?;
+        if let Ok(existing) = subjects::get(conn, id).await
+            && existing.metadata != *metadata
+        {
+            return Err(conflict(format!("subject {id} exists with other metadata")));
+        }
+        let (existing, created) = subjects::create_with_metadata(conn, id, kind, metadata).await?;
         if created {
             if state != SubjectState::Active {
                 subjects::set_state(conn, id, state).await?;
@@ -366,6 +393,7 @@ fn same_credential(
         && existing.identifier == credentials::normalize_identifier(identifier)
         && existing.mfa_factors_required == wanted.mfa_factors_required
         && existing.session_flags == wanted.session_flags
+        && existing.metadata == wanted.metadata
         && same_data
 }
 
@@ -375,6 +403,7 @@ pub(super) async fn credential(
     credential: &Located<konklav_bootstrap::Credential>,
 ) -> Result<Outcome, ApiError> {
     let wanted = &credential.value;
+    context.metadata(&wanted.metadata)?;
     let subject = context.subject(conn, &wanted.subject).await?;
     let (identifier, data) = material(context, wanted)?;
     let context = &*context;
@@ -411,7 +440,7 @@ pub(super) async fn credential(
                 return Ok(Outcome::Updated);
             }
             return Err(conflict(format!(
-                "credential {} exists with another subject, identifier or secret",
+                "credential {} exists with another subject, identifier, secret or metadata",
                 existing.id
             )));
         }
@@ -428,6 +457,7 @@ pub(super) async fn credential(
                 data: data.clone(),
                 mfa_factors_required: wanted.mfa_factors_required,
                 replaces: None,
+                metadata: wanted.metadata.clone(),
             },
         )
         .await?;
@@ -521,30 +551,40 @@ pub(super) async fn membership(
     let tenant = context.tenant(&wanted.tenant)?;
     let facts =
         catalogs::typed_facts(catalog, FactTarget::Membership, &wanted.facts).map_err(invalid)?;
+    let metadata = &wanted.metadata;
+    context.metadata(metadata)?;
     let context = &*context;
     conn.transaction::<_, ApiError, _>(async |conn| {
+        let same = |existing: &memberships::Membership| {
+            existing.facts == facts && existing.metadata == *metadata
+        };
         let id = match &wanted.id {
             Some(id) => context.uuid(id, Kind::Membership)?.into(),
             None => match memberships::find_active(conn, subject, tenant).await? {
-                Some(existing) if existing.facts == facts => return Ok(Outcome::Skipped),
+                Some(existing) if same(&existing) => return Ok(Outcome::Skipped),
                 Some(existing) => {
                     return Err(conflict(format!(
-                        "membership {} exists with other facts",
+                        "membership {} exists with other facts or metadata",
                         existing.id
                     )));
                 }
                 None => MembershipId::new_v7(),
             },
         };
-        let (existing, created) =
-            import::create_membership(conn, id, subject, tenant, &facts).await?;
-        if created {
-            Ok(Outcome::Created)
-        } else if existing.facts == facts {
-            Ok(Outcome::Skipped)
-        } else {
-            Err(conflict(format!("membership {id} exists with other facts")))
+        if let Ok(existing) = memberships::get(conn, id).await
+            && !same(&existing)
+        {
+            return Err(conflict(format!(
+                "membership {id} exists with other facts or metadata"
+            )));
         }
+        let (_, created) =
+            import::create_membership(conn, id, subject, tenant, &facts, metadata).await?;
+        Ok(if created {
+            Outcome::Created
+        } else {
+            Outcome::Skipped
+        })
     })
     .await
 }

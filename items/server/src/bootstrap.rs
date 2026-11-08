@@ -27,6 +27,18 @@ pub struct Options {
     pub dry_run: bool,
     /// Accept plaintext passwords, hashing them on the way in.
     pub allow_plaintext_passwords: bool,
+    /// The largest an object's metadata may be;
+    /// [`crate::metadata::DEFAULT_LIMIT`] when `None`.
+    pub metadata_limit: Option<usize>,
+}
+
+impl Options {
+    fn metadata_limit(self) -> crate::metadata::Limit {
+        crate::metadata::Limit(
+            self.metadata_limit
+                .unwrap_or(crate::metadata::DEFAULT_LIMIT),
+        )
+    }
 }
 
 /// What happened to one kind of record.
@@ -197,7 +209,9 @@ async fn apply(
     };
     for template in &set.templates {
         let outcome = conn
-            .transaction::<_, ApiError, _>(async |conn| records::template(conn, template).await)
+            .transaction::<_, ApiError, _>(async |conn| {
+                records::template(conn, context, template).await
+            })
             .await;
         report.record("templates", &template.at, outcome);
     }

@@ -18,6 +18,7 @@ mod explain;
 mod import;
 mod invites;
 mod keys;
+mod metadata;
 mod oidc_clients;
 mod registered_scopes;
 mod roles;
@@ -46,13 +47,14 @@ pub use import::{
     ImportedCredentialMaterial, ImportedFactor, ImportedFactorMaterial, ImportedSecretSlot,
     ImportedSession, ImportedSubject,
 };
-pub use invites::{CreateInvite, CreatedInvite, Invite, InviteState};
+pub use invites::{CreateInvite, CreatedInvite, Invite, InvitePage, InviteQuery, InviteState};
 pub use keys::{RevokedKey, SigningKey};
 pub use konklav_authz::{
     ActionExplanation, Check, Contribution, Decision, DecisionExplanation, DenyReason, Effect,
     Entitlements, Explanation, Group, Obligation, Policy, Reason, Requirements, Scope,
     ScopeRequirement, Shared, StepUp,
 };
+pub use metadata::MetadataQuery;
 pub use oidc_clients::{
     IdTokenAlgorithm, OidcClient, OidcClientDefinition, OidcClientKind, OidcClientSecret,
 };
@@ -65,7 +67,9 @@ pub use sessions::{
     ClientKind, RequestedClaims, RevokeSessions, RevokedSessions, Session, SessionFilter,
     SessionPage, SessionQuery, SessionStage,
 };
-pub use shares::{RevokeShare, Share, ShareList, ShareQuery, ShareSide, ShareState, ShareTerms};
+pub use shares::{
+    OfferShare, RevokeShare, Share, ShareList, ShareQuery, ShareSide, ShareState, ShareTerms,
+};
 pub use subjects::{
     CreateSubject, MfaFactor, MfaFactorKind, Subject, SubjectDetail, SubjectKind, SubjectPage,
     SubjectQuery, SubjectState,

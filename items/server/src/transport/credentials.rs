@@ -41,6 +41,8 @@ pub(crate) fn credential(credential: Credential) -> api::Credential {
         revoked_reason: credential.revoked_reason,
         break_glass: credential.break_glass,
         session_flags: credential.session_flags,
+        metadata_etag: crate::metadata::etag(&credential.metadata),
+        metadata: credential.metadata,
     }
 }
 

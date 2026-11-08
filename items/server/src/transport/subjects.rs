@@ -12,6 +12,8 @@ pub(crate) fn subject(subject: &Subject) -> api::Subject {
             SubjectState::Active => api::SubjectState::Active,
             SubjectState::Disabled => api::SubjectState::Disabled,
         },
+        metadata: subject.metadata.clone(),
+        metadata_etag: crate::metadata::etag(&subject.metadata),
         created_at: subject.created_at,
     }
 }

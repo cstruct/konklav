@@ -27,6 +27,11 @@ pub struct CreateInvite {
     /// Clamped to between 1 hour and 30 days.
     #[serde(default = "default_hours")]
     pub expires_in_hours: i64,
+    /// An object, opaque to Konklav, delivered with the invite and handed
+    /// over on redemption.
+    #[serde(default = "empty_object")]
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
 }
 
 fn default_hours() -> i64 {
@@ -69,4 +74,30 @@ pub struct Invite {
     /// When it was redeemed or revoked.
     #[schema(required)]
     pub consumed_at: Option<DateTime<Utc>>,
+    /// An object, opaque to Konklav.
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
+    /// Changes whenever `metadata` does; send it as `If-Match` to patch
+    /// the metadata only if no one else has since.
+    pub metadata_etag: String,
+}
+
+/// Which invites to list.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct InviteQuery {
+    /// Only invites to this tenant (a UUID or `root`).
+    pub tenant: Option<String>,
+    /// A JSON object of strings, numbers and booleans: only objects whose
+    /// metadata has each of its keys at the top level with an equal value.
+    pub metadata: Option<String>,
+    pub before: Option<uuid::Uuid>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct InvitePage {
+    pub invites: Vec<Invite>,
+    #[schema(required)]
+    pub next: Option<uuid::Uuid>,
 }

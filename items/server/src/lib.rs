@@ -27,6 +27,8 @@ mod import_api;
 mod invites;
 mod issue;
 pub mod keys;
+pub mod metadata;
+mod metadata_api;
 pub mod oidc;
 mod oidc_api;
 mod oidc_clients_api;
@@ -90,6 +92,8 @@ pub struct AuthContext {
     /// How large control-plane batches may be, and how long their
     /// idempotency keys are kept.
     pub batches: batch_api::BatchLimits,
+    /// The largest an object's metadata may be, in bytes of compact JSON.
+    pub metadata_limit: usize,
     /// Base URLs DPoP proofs to Konklav's own surfaces may name; the issuer
     /// when empty.
     pub dpop_urls: Vec<String>,
@@ -172,6 +176,7 @@ impl AuthContext {
             passkeys: None,
             trusted_proxies: Vec::new(),
             batches: control.batches(),
+            metadata_limit: control.metadata_limit(),
             dpop_urls: tokens.dpop_urls.clone(),
         }
     }

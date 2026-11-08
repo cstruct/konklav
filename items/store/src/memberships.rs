@@ -23,6 +23,7 @@ pub struct Membership {
     pub tenant_id: TenantId,
     pub state: MembershipState,
     pub facts: serde_json::Value,
+    pub metadata: serde_json::Value,
     /// The identity provider whose claim mapping created it, if any.
     pub managed_by: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -47,6 +48,7 @@ struct Row {
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     managed_by: Option<String>,
+    metadata: serde_json::Value,
 }
 
 impl From<Row> for Membership {
@@ -61,6 +63,7 @@ impl From<Row> for Membership {
                 MembershipState::Active
             },
             facts: row.facts,
+            metadata: row.metadata,
             managed_by: row.managed_by,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -112,6 +115,19 @@ pub async fn create(
     create_managed(conn, id, subject, tenant, facts, None).await
 }
 
+/// [`create`] with metadata, which a repeat must match.
+// r[impl metadata.write.create]
+pub async fn create_with_metadata(
+    conn: &mut AsyncPgConnection,
+    id: MembershipId,
+    subject: SubjectId,
+    tenant: TenantId,
+    facts: &serde_json::Value,
+    metadata: &serde_json::Value,
+) -> StoreResult<(Membership, bool)> {
+    insert(conn, id, subject, tenant, facts, metadata, None).await
+}
+
 /// [`create`], recording the identity provider whose claim mapping asked
 /// for the membership.
 pub async fn create_managed(
@@ -122,6 +138,19 @@ pub async fn create_managed(
     facts: &serde_json::Value,
     managed_by: Option<&str>,
 ) -> StoreResult<(Membership, bool)> {
+    let metadata = crate::metadata::empty();
+    insert(conn, id, subject, tenant, facts, &metadata, managed_by).await
+}
+
+async fn insert(
+    conn: &mut AsyncPgConnection,
+    id: MembershipId,
+    subject: SubjectId,
+    tenant: TenantId,
+    facts: &serde_json::Value,
+    metadata: &serde_json::Value,
+    managed_by: Option<&str>,
+) -> StoreResult<(Membership, bool)> {
     let inserted = diesel::insert_into(membership::table)
         .values((
             membership::id.eq(id.as_uuid()),
@@ -129,6 +158,7 @@ pub async fn create_managed(
             membership::tenant_id.eq(tenant.as_uuid()),
             membership::facts.eq(facts),
             membership::managed_by.eq(managed_by),
+            membership::metadata.eq(metadata),
         ))
         .on_conflict(membership::id)
         .do_nothing()
@@ -146,12 +176,16 @@ pub async fn create_managed(
         return Ok((row.into(), true));
     }
     let existing = get(conn, id).await?;
-    if existing.subject_id == subject && existing.tenant_id == tenant {
-        Ok((existing, false))
-    } else {
+    if existing.subject_id != subject || existing.tenant_id != tenant {
         Err(StoreError::Conflict(format!(
             "membership {id} already exists for another subject or tenant"
         )))
+    } else if existing.metadata != *metadata {
+        Err(StoreError::Conflict(format!(
+            "membership {id} already exists with other metadata"
+        )))
+    } else {
+        Ok((existing, false))
     }
 }
 
@@ -205,15 +239,21 @@ pub async fn list_for_subject(
         .collect())
 }
 
-/// A tenant's memberships, oldest first, optionally only active ones.
+/// A tenant's memberships, oldest first, optionally only active ones or
+/// those whose metadata contains `metadata`.
+// r[impl metadata.filter]
 pub async fn list_for_tenant(
     conn: &mut AsyncPgConnection,
     tenant: TenantId,
     active_only: bool,
+    metadata: Option<&serde_json::Value>,
 ) -> StoreResult<Vec<Membership>> {
     let mut query = membership::table
         .filter(membership::tenant_id.eq(tenant.as_uuid()))
         .into_boxed();
+    if let Some(metadata) = metadata {
+        query = query.filter(membership::metadata.contains(metadata.clone()));
+    }
     if active_only {
         query = query.filter(membership::state.eq("active"));
     }

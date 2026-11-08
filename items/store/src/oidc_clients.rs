@@ -51,6 +51,7 @@ impl IdTokenAlgorithm {
 
 /// What a client registration says, as written by the control plane.
 // r[impl oidc.provider.clients]
+// r[impl metadata.write.replace]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientDefinition {
     pub kind: ClientKind,
@@ -85,6 +86,9 @@ pub struct ClientDefinition {
     /// its tokens are sender-constrained.
     #[serde(default)]
     pub require_dpop: bool,
+    /// Opaque to Konklav; never read by the provider.
+    #[serde(default = "crate::metadata::empty")]
+    pub metadata: serde_json::Value,
 }
 
 fn default_scopes() -> Vec<String> {
@@ -173,6 +177,7 @@ struct Row {
     backchannel_logout_uri: Option<String>,
     require_pkce: bool,
     require_dpop: bool,
+    metadata: serde_json::Value,
 }
 
 impl From<Row> for OidcClient {
@@ -203,6 +208,7 @@ impl From<Row> for OidcClient {
                 backchannel_logout_uri: row.backchannel_logout_uri,
                 require_pkce: row.require_pkce,
                 require_dpop: row.require_dpop,
+                metadata: row.metadata,
             },
             has_secret: row.secret_hash.is_some(),
             secret_hash: row.secret_hash,
@@ -239,6 +245,7 @@ pub async fn put(
         oidc_client::backchannel_logout_uri.eq(&definition.backchannel_logout_uri),
         oidc_client::require_pkce.eq(definition.require_pkce),
         oidc_client::require_dpop.eq(definition.require_dpop),
+        oidc_client::metadata.eq(&definition.metadata),
     );
     diesel::insert_into(oidc_client::table)
         .values((oidc_client::id.eq(id), values.clone()))
@@ -267,8 +274,17 @@ pub async fn get(conn: &mut AsyncPgConnection, id: &str) -> StoreResult<OidcClie
         .ok_or(StoreError::NotFound)
 }
 
-pub async fn list(conn: &mut AsyncPgConnection) -> StoreResult<Vec<OidcClient>> {
-    Ok(oidc_client::table
+/// Every client by id, or only those whose metadata contains `metadata`.
+// r[impl metadata.filter]
+pub async fn list(
+    conn: &mut AsyncPgConnection,
+    metadata: Option<&serde_json::Value>,
+) -> StoreResult<Vec<OidcClient>> {
+    let mut query = oidc_client::table.into_boxed();
+    if let Some(metadata) = metadata {
+        query = query.filter(oidc_client::metadata.contains(metadata.clone()));
+    }
+    Ok(query
         .order(oidc_client::id.asc())
         .select(Row::as_select())
         .load(conn)

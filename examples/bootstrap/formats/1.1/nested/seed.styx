@@ -1,0 +1,34 @@
+// Format 1.1 adds metadata to tenants, subjects, members' memberships and
+// credentials. Pending until a release ships it.
+format 1.1
+id_namespace 7a2d0c4e-1b3f-4c8a-9e5d-2f6b8a1c3d40
+catalog_file "../catalog.json"
+
+templates ({key reader, metadata {label Reader}, policies ({action project:read})})
+
+tenants ({
+    key acme
+    templates (reader)
+    metadata {billing_id acct-17, plan {name team, seats 25}}
+    members ({
+        email ada@acme.example
+        email_link true
+        metadata {locale sv-SE, marketing false}
+        membership_metadata {title Editor}
+        roles (reader)
+    })
+})
+
+subjects ({
+    id svc-sync
+    kind service
+    metadata {owner "platform team"}
+    credentials ({
+        id key-sync
+        kind secret_key
+        identifier sync
+        metadata {name "Nightly sync", rotate_every_days 90}
+        a {hash "$argon2id$v=19$m=65536,t=3,p=4$8+FttqUgBxV0WJVJEoSFig$sTbjdRtZ6f7ZyvBNPA+oh9ju0QJs7jIKIFEyit//6T0", created_at 2026-01-01T00:00:00Z}
+        b {hash "$argon2id$v=19$m=65536,t=3,p=4$8+FttqUgBxV0WJVJEoSFig$sTbjdRtZ6f7ZyvBNPA+oh9ju0QJs7jIKIFEyit//6T0", created_at 2026-01-01T00:00:00Z}
+    })
+})

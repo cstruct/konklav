@@ -5,11 +5,11 @@ use konklav_api::{
     CreateInvite, CreatedCredential, CreatedInvite, DecisionExplanation, Deleted, Entitlements,
     ErrorCode, ErrorResponse, ExplainDecision, Explanation, IdTokenAlgorithm, ImportCredentials,
     ImportFactors, ImportSessions, ImportSubjects, Imported, ImportedCredentialMaterial, Invite,
-    MembershipDetail, OidcClient, OidcClientDefinition, OidcClientSecret, PutRole, PutTemplate,
-    Reason, RecordRegisteredScope, RegisteredScope, RegisteredScopeBatch, RegisteredScopeChanges,
-    RevokeSessions, RevokeShare, RevokedKey, RevokedSessions, Role, RotatedSlot, SessionPage,
-    Share, ShareList, ShareTerms, SigningKey, SlotExpiry, SubjectDetail, SubjectPage, Template,
-    TenantPage, Written,
+    InvitePage, MembershipDetail, OfferShare, OidcClient, OidcClientDefinition, OidcClientSecret,
+    PutRole, PutTemplate, Reason, RecordRegisteredScope, RegisteredScope, RegisteredScopeBatch,
+    RegisteredScopeChanges, RevokeSessions, RevokeShare, RevokedKey, RevokedSessions, Role,
+    RotatedSlot, SessionPage, Share, ShareList, ShareTerms, SigningKey, SlotExpiry, SubjectDetail,
+    SubjectPage, Template, TenantPage, Written,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -26,6 +26,8 @@ fn tenant(id: &str, parent: Option<&str>) -> Value {
         "parent_id": parent,
         "state": "active",
         "facts": {"plan": "pro"},
+        "metadata": {"billing_id": "b-1"},
+        "metadata_etag": "0123456789abcdef0123456789abcdef",
         "created_at": "2026-11-02T10:00:00Z",
         "updated_at": "2026-11-02T10:00:00Z",
     })
@@ -61,6 +63,8 @@ fn membership_details_round_trip_with_tagged_targets() {
         "state": "ended",
         "facts": {},
         "managed_by": null,
+        "metadata": {},
+        "metadata_etag": "0123456789abcdef0123456789abcdef",
         "created_at": "2026-11-02T10:00:00Z",
         "updated_at": "2026-11-02T11:00:00Z",
         "assignments": [{
@@ -90,6 +94,13 @@ fn error_responses_round_trip_and_map_to_statuses() {
         ErrorCode::SessionEnded.status(),
         http::StatusCode::UNAUTHORIZED
     );
+    assert_eq!(
+        ErrorCode::PreconditionFailed.status(),
+        http::StatusCode::PRECONDITION_FAILED
+    );
+    round_trips::<ErrorResponse>(&json!({
+        "error": {"code": "METADATA_TOO_LARGE", "message": "too large"},
+    }));
 }
 
 const SUBJECT: &str = "0195e0a0-0000-7000-8000-000000000004";
@@ -100,6 +111,8 @@ fn subject() -> Value {
         "id": SUBJECT,
         "kind": "service",
         "state": "active",
+        "metadata": {"locale": "sv-SE", "tags": ["beta"]},
+        "metadata_etag": "0123456789abcdef0123456789abcdef",
         "created_at": "2026-11-02T10:00:00Z",
     })
 }
@@ -117,6 +130,8 @@ fn credential(kind: &str) -> Value {
         "revoked_reason": null,
         "break_glass": false,
         "session_flags": [],
+        "metadata": {"name": "CI key"},
+        "metadata_etag": "0123456789abcdef0123456789abcdef",
     })
 }
 
@@ -161,17 +176,20 @@ fn credential_creations_round_trip_tagged_by_kind() {
         "password": "correct horse",
         "password_hash": null,
         "mfa_factors_required": 1,
+        "metadata": {"device": "laptop"},
     }));
     round_trips::<CreateCredential>(&json!({
         "kind": "secret_key",
         "id": CREDENTIAL,
         "expires_at": "2027-11-02T10:00:00Z",
+        "metadata": {"name": "Nightly sync", "rotate_every_days": 90},
     }));
     round_trips::<CreateCredential>(&json!({
-        "kind": "phone_otp", "id": null, "identifier": "+46700000000",
+        "kind": "phone_otp", "id": null, "identifier": "+46700000000", "metadata": {},
     }));
     round_trips::<CreateCredential>(&json!({
         "kind": "federated", "id": null, "provider": "okta", "subject": "workload",
+        "metadata": {},
     }));
     let defaulted: CreateCredential = serde_json::from_value(json!({
         "kind": "password", "identifier": "ada@example.com", "password": "correct horse",
@@ -181,8 +199,9 @@ fn credential_creations_round_trip_tagged_by_kind() {
         defaulted,
         CreateCredential::Password {
             mfa_factors_required: 0,
+            ref metadata,
             ..
-        }
+        } if *metadata == json!({})
     ));
 }
 
@@ -328,6 +347,7 @@ fn roles_and_templates_round_trip_with_their_policies() {
         "template": "reader",
         "priority": 5,
         "metadata": {"label": "Editor"},
+        "metadata_etag": "0123456789abcdef0123456789abcdef",
         "policies": policies(),
         "builtin": false,
         "created_at": "2026-11-02T10:00:00Z",
@@ -339,6 +359,7 @@ fn roles_and_templates_round_trip_with_their_policies() {
         "key": "reader",
         "description": "Reads",
         "metadata": {},
+        "metadata_etag": "0123456789abcdef0123456789abcdef",
         "policies": policies(),
         "created_at": "2026-11-02T10:00:00Z",
         "updated_at": "2026-11-02T10:00:00Z",
@@ -489,6 +510,8 @@ fn share(state: &str) -> Value {
         "accepted_at": "2026-11-02T11:00:00Z",
         "revoked_at": "2026-11-02T12:00:00Z",
         "revoked_by": "recipient",
+        "metadata": {"label": "Shared plan"},
+        "metadata_etag": "0123456789abcdef0123456789abcdef",
         "created_at": "2026-11-02T10:00:00Z",
         "updated_at": "2026-11-02T12:00:00Z",
     });
@@ -515,6 +538,11 @@ fn shares_round_trip_with_flattened_terms() {
     round_trips::<Written<Share>>(&written);
     round_trips::<ShareList>(&json!({"shares": [share("offered"), share("accepted")]}));
     round_trips::<RevokeShare>(&json!({"by": "owner"}));
+    let mut offer = share_terms();
+    offer["metadata"] = json!({"label": "Shared plan"});
+    round_trips::<OfferShare>(&offer);
+    let bare: OfferShare = reads(share_terms());
+    assert_eq!(bare.metadata, json!({}));
 }
 
 fn registered_scope(state: &str) -> Value {
@@ -560,6 +588,7 @@ fn invites_round_trip() {
         "facts": {"department": "ops"},
         "membership": "0195e0a0-0000-7000-8000-000000000003",
         "expires_in_hours": 24,
+        "metadata": {"tenant_id": "t-1", "invited_by": "u-9"},
     }));
     let minimal: CreateInvite = reads(json!({"email": "ada@example.com"}));
     assert_eq!((minimal.expires_in_hours, minimal.facts), (72, json!({})));
@@ -568,7 +597,7 @@ fn invites_round_trip() {
         "expires_at": "2026-11-05T10:00:00Z",
         "cursor": 9,
     }));
-    round_trips::<Invite>(&json!({
+    let invite = json!({
         "id": "0195e0a0-0000-7000-8000-00000000000c",
         "email": "ada@example.com",
         "tenant": "root",
@@ -577,7 +606,11 @@ fn invites_round_trip() {
         "state": "revoked",
         "expires_at": "2026-11-05T10:00:00Z",
         "consumed_at": "2026-11-04T10:00:00Z",
-    }));
+        "metadata": {"tenant_id": "t-1"},
+        "metadata_etag": "0123456789abcdef0123456789abcdef",
+    });
+    round_trips::<Invite>(&invite);
+    round_trips::<InvitePage>(&json!({"invites": [invite], "next": null}));
 }
 
 fn client_definition() -> Value {
@@ -596,6 +629,7 @@ fn client_definition() -> Value {
         "backchannel_logout_uri": "https://console.example.com/logout",
         "require_pkce": false,
         "require_dpop": true,
+        "metadata": {"owner": "web team"},
     })
 }
 
@@ -614,6 +648,7 @@ fn oidc_clients_round_trip_with_flattened_definitions() {
     let fields = json!({
         "id": "console",
         "has_secret": true,
+        "metadata_etag": "0123456789abcdef0123456789abcdef",
         "disabled_at": null,
         "created_at": "2026-11-02T10:00:00Z",
         "updated_at": "2026-11-02T10:00:00Z",
@@ -632,21 +667,23 @@ fn imports_round_trip_with_tagged_material() {
     let subject = "0195e0a0-0000-7000-8000-000000000001";
     let credential = "0195e0a0-0000-7000-8000-000000000002";
     round_trips::<ImportSubjects>(&json!({"subjects": [
-        {"id": subject, "kind": "service", "state": "active"},
-        {"id": "0195e0a0-0000-7000-8000-000000000003", "kind": "human", "state": "disabled"},
+        {"id": subject, "kind": "service", "state": "active", "metadata": {"team": "ops"}},
+        {"id": "0195e0a0-0000-7000-8000-000000000003", "kind": "human", "state": "disabled",
+         "metadata": {}},
     ]}));
     let slot = json!({"hash": "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA",
                       "created_at": "2026-01-01T00:00:00Z", "expires_at": null});
     round_trips::<ImportCredentials>(&json!({"credentials": [
         {"id": credential, "subject": subject, "identifier": credential,
-         "mfa_factors_required": 0, "session_flags": [], "kind": "secret_key", "a": slot, "b": slot},
+         "mfa_factors_required": 0, "session_flags": [], "metadata": {"name": "legacy"},
+         "kind": "secret_key", "a": slot, "b": slot},
         {"id": "0195e0a0-0000-7000-8000-000000000004", "subject": subject,
          "identifier": "legacy@example.com", "mfa_factors_required": 1,
-         "session_flags": ["personal_only"], "kind": "password",
+         "session_flags": ["personal_only"], "metadata": {}, "kind": "password",
          "password_hash": "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA"},
         {"id": "0195e0a0-0000-7000-8000-000000000005", "subject": subject,
          "identifier": "+46700000000", "mfa_factors_required": 0, "session_flags": [],
-         "kind": "phone_otp"},
+         "metadata": {}, "kind": "phone_otp"},
     ]}));
     let from_a_test: ImportCredentials = reads(json!({"credentials": [{
         "id": credential, "subject": subject, "identifier": "x@y",
@@ -687,6 +724,8 @@ fn batches_round_trip() {
     round_trips::<Batch>(&json!({"operations": [
         {"method": "PUT", "path": "/subjects/0195e0a0-0000-7000-8000-000000000001", "body": {"kind": "human"}},
         {"method": "DELETE", "path": "/assignments/0195e0a0-0000-7000-8000-000000000002"},
+        {"method": "PATCH", "path": "/invites/0195e0a0-0000-7000-8000-000000000003/metadata",
+         "body": {"tenant_id": "t-2"}, "if_match": "0123456789abcdef0123456789abcdef"},
     ]}));
     assert!(
         serde_json::from_value::<Batch>(
