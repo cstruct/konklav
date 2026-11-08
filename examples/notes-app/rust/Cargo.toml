@@ -1,0 +1,55 @@
+[package]
+name = "konklav-sso-example"
+description = "The single sign-on example's services in Rust: login application, app frontend and backend, admin page"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "sso-keys"
+path = "src/bin/keys.rs"
+
+[[bin]]
+name = "sso-setup"
+path = "src/bin/setup.rs"
+
+[[bin]]
+name = "sso-login"
+path = "src/bin/login.rs"
+
+[[bin]]
+name = "sso-app-frontend"
+path = "src/bin/app_frontend.rs"
+
+[[bin]]
+name = "sso-app-backend"
+path = "src/bin/app_backend.rs"
+
+[[bin]]
+name = "sso-admin"
+path = "src/bin/admin.rs"
+
+[dependencies]
+axum.workspace = true
+base64.workspace = true
+ed25519-dalek.workspace = true
+getrandom.workspace = true
+konklav-authz.workspace = true
+konklav-axum.workspace = true
+konklav-core.workspace = true
+konklav-relying.workspace = true
+konklav-relying-client = { workspace = true, features = ["redis"] }
+konklav-token.workspace = true
+p256 = { workspace = true, features = ["pkcs8", "pem", "std"] }
+redis.workspace = true
+reqwest = { workspace = true, features = ["json", "form", "query"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["time"] }
+uuid = { workspace = true, features = ["v4", "v5"] }
+
+[lints]
+workspace = true

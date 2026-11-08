@@ -6,7 +6,7 @@ build-backend = "uv_build"
 name = "konklav-fastapi"
 # Set by `mise run release:bump`, with the rest of the release, as is the
 # exact requirement on konklav-relying.
-version = "1.5.0"
+version = "1.6.0"
 description = "Konklav route policies for FastAPI: declare requirements on routes and routers, decided by the relying core"
 readme = "PYPI.md"
 license = "MIT"
@@ -14,7 +14,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.12"
 # The FastAPI range is tested at both ends in CI: this package reads how
 # FastAPI keeps the routes of included routers (see _routing.py).
-dependencies = ["konklav-relying==1.5.0", "fastapi>=0.143,<0.163"]
+dependencies = ["konklav-relying==1.6.0", "fastapi>=0.143,<0.163"]
 classifiers = [
     "Framework :: FastAPI",
     "Programming Language :: Python :: 3",

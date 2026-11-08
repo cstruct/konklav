@@ -1,0 +1,49 @@
+// Konklav for the single sign-on example. Paths are inside the container.
+
+listen {
+    subject "0.0.0.0:8080"
+    relying "0.0.0.0:8081"
+    control "0.0.0.0:8082"
+}
+
+database {
+    host postgres
+    port 5432
+    name konklav
+    user konklav
+    max_connections 10
+}
+
+telemetry {
+    service_name konklav-notes-app
+    logs {level "info"}
+}
+
+// The issuer is the login application's origin: it proxies the
+// subject-facing surface, so browsers see Konklav and the login page as one
+// origin. Proofs' `htu` name it too, since `tokens.dpop_urls` defaults to
+// the issuer and the allowed browser origins.
+tokens {
+    issuer "http://localhost:8000"
+    audience konklav
+    signing_key_file "/keys/signing-key.pem"
+    // Short, so the example refreshes often enough to see it.
+    access_ttl_seconds 300
+}
+
+// Only the login application signs people in to Konklav itself. Its
+// sessions must be bound to the page's DPoP key, and their refresh token
+// is an HttpOnly cookie on its origin.
+browser {
+    allowed_origins ("http://localhost:8000")
+    // Plain HTTP on localhost; use HTTPS and `true` anywhere else.
+    secure_cookies false
+    require_dpop true
+}
+
+oidc_provider {
+    id_token_key_file "/keys/id-token-key.pem"
+    login_url "http://localhost:8000/login"
+    // Every client, public or confidential, gets only DPoP-bound tokens.
+    require_dpop all
+}

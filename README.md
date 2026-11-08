@@ -124,6 +124,10 @@ one there instead of with `curl`.
 - **How it fits together:** the
   [overview](docs/architecture/overview.md), then the other notes in
   [`docs/architecture/`](docs/architecture/).
+- **A complete app:** the [notes app](examples/notes-app/README.md), in
+  Docker Compose: single sign-on to a browser app and an admin page with
+  DPoP-bound tokens, live roles, revocation and rate limits shared through
+  Valkey.
 - **Runnable scenarios:** [`examples/`](examples/README.md) has email-link
   sign-in with a delivery worker, one Konklav signing people in to another,
   and seeding a deployment.

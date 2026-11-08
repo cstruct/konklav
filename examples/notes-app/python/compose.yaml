@@ -1,0 +1,202 @@
+# The notes app: Konklav, a login application, a browser app with its API
+# (two replicas behind a load balancer, rate limited through Valkey), and an
+# admin page, in Python. See ../README.md.
+#
+#   docker compose -f examples/notes-app/python/compose.yaml up --build
+#
+# Then open http://localhost:3000 (the app) or http://localhost:4000 (admin).
+name: konklav-notes-app
+
+x-python: &python
+  image: konklav-notes-app-python:dev
+  build:
+    context: ../../..
+    dockerfile: examples/notes-app/python/Dockerfile
+  restart: on-failure
+
+# For the Python services: `docker compose up --wait` waits for these.
+x-healthcheck: &healthcheck
+  interval: 2s
+  timeout: 3s
+  retries: 90
+
+services:
+  postgres:
+    image: konklav-dev-postgres:18.6-jsonschema0.3.4
+    build: ../../../dev/postgres
+    environment:
+      POSTGRES_USER: konklav
+      POSTGRES_PASSWORD: konklav
+      POSTGRES_DB: konklav
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      # The app backend's own database, made on first start.
+      - ./notes-database.sql:/docker-entrypoint-initdb.d/notes-database.sql:ro
+    healthcheck:
+      # Over TCP: during first-start initialisation the server listens on
+      # its socket only, and a socket check would pass too early.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U konklav -d konklav"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  # The rate-limit store the app backend's replicas and the admin page share:
+  # Valkey, which speaks Redis' protocol. Rate-limit state expires on its
+  # own, so nothing is persisted.
+  valkey:
+    image: valkey/valkey:8.1-alpine
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  # Creates Konklav's token-signing key and ID-token key once.
+  keys:
+    <<: *python
+    restart: "no"
+    # Konklav's own user, so the keys can stay readable by it alone.
+    user: "65532:65532"
+    command: ["python", "/app/setup/keys.py", "/keys"]
+    volumes:
+      - konklav-keys:/keys
+
+  migrate:
+    image: konklav-notes-app-konklav:dev
+    build: ../../..
+    command: ["migrate"]
+    volumes: &konklav-files
+      - ../konklav/config.styx:/etc/konklav/config.styx:ro
+      - ../konklav/secrets.styx:/etc/konklav/secrets.styx:ro
+      - konklav-keys:/keys:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      keys: {condition: service_completed_successfully}
+
+  # Not published: browsers reach the subject-facing surface through the
+  # login application's origin, and the other two surfaces stay internal.
+  konklav:
+    image: konklav-notes-app-konklav:dev
+    build: ../../..
+    command: ["serve"]
+    volumes: *konklav-files
+    restart: on-failure
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  # Seeds the catalog, roles, people, OIDC clients and service principals,
+  # and writes the secrets the apps need to the shared volume.
+  setup:
+    <<: *python
+    restart: "no"
+    command: ["python", "/app/setup/setup.py"]
+    environment:
+      KONKLAV_SUBJECT_URL: http://konklav:8080
+      KONKLAV_CONTROL_URL: http://konklav:8082
+      KONKLAV_BOOTSTRAP_TOKEN: example-bootstrap-token-0123456789abcdef
+      SECRETS_FILE: /shared/secrets.json
+    volumes:
+      - shared:/shared
+    depends_on:
+      konklav: {condition: service_started}
+
+  # The login application. Serves the login page and proxies Konklav's
+  # subject-facing surface, so Konklav's issuer is this origin.
+  sso:
+    <<: *python
+    command: ["python", "/app/sso/app.py"]
+    environment:
+      KONKLAV_SUBJECT_URL: http://konklav:8080
+    ports: ["8000:8000"]
+    healthcheck:
+      <<: *healthcheck
+      # Through the proxy, so Konklav answers too.
+      test: ["CMD", "python", "/app/shared/healthcheck.py", "http://127.0.0.1:8000/.well-known/openid-configuration"]
+    depends_on:
+      setup: {condition: service_completed_successfully}
+
+  # The app's frontend: static files only. A public OIDC client.
+  app-frontend:
+    <<: *python
+    command: ["python", "/app/app-frontend/server.py"]
+    environment:
+      ISSUER: http://localhost:8000
+      CLIENT_ID: app
+      API_URL: http://localhost:3001
+    ports: ["3000:3000"]
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "/app/shared/healthcheck.py", "http://127.0.0.1:3000/config.json"]
+    depends_on:
+      setup: {condition: service_completed_successfully}
+
+  # The app's backend: a relying system for the `app-api` audience. Two
+  # replicas, behind `app-api`, which balances requests between them.
+  app-backend:
+    <<: *python
+    command: ["python", "/app/app-backend/api.py"]
+    deploy:
+      replicas: 2
+    environment:
+      ISSUER: http://localhost:8000
+      PUBLIC_URL: http://localhost:3001
+      FRONTEND_ORIGIN: http://localhost:3000
+      KONKLAV_SUBJECT_URL: http://konklav:8080
+      KONKLAV_RELYING_URL: http://konklav:8081
+      SECRETS_FILE: /shared/secrets.json
+      NOTES_DATABASE_URL: postgresql://notes:notes@postgres/notes
+      REDIS_URL: redis://valkey:6379
+      # The rate limit's `local_divisor`: keep it equal to `replicas`.
+      REPLICAS: "2"
+    volumes:
+      - shared:/shared:ro
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "/app/shared/healthcheck.py", "http://127.0.0.1:3001/healthz"]
+    depends_on:
+      setup: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+      # Started, not healthy: the backend runs without Valkey, counting in
+      # memory, and uses it once it answers.
+      valkey: {condition: service_started}
+
+  # The load balancer in front of the app backend's replicas: round robin
+  # over every address the `app-backend` name resolves to.
+  app-api:
+    image: caddy:2.10.2
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    ports: ["3001:3001"]
+    restart: on-failure
+    depends_on:
+      app-backend: {condition: service_healthy}
+
+  # The admin page: frontend and backend in one process. A confidential
+  # OIDC client whose tokens never leave the server.
+  admin:
+    <<: *python
+    command: ["python", "/app/admin/admin.py"]
+    environment:
+      ISSUER: http://localhost:8000
+      PUBLIC_URL: http://localhost:4000
+      KONKLAV_SUBJECT_URL: http://konklav:8080
+      KONKLAV_RELYING_URL: http://konklav:8081
+      KONKLAV_CONTROL_URL: http://konklav:8082
+      SECRETS_FILE: /shared/secrets.json
+      REDIS_URL: redis://valkey:6379
+    volumes:
+      - shared:/shared:ro
+    ports: ["4000:4000"]
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "/app/shared/healthcheck.py", "http://127.0.0.1:4000/"]
+    depends_on:
+      setup: {condition: service_completed_successfully}
+      valkey: {condition: service_started}
+
+volumes:
+  postgres-data:
+  konklav-keys:
+  shared:

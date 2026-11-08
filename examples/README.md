@@ -1,8 +1,22 @@
 # konklav-examples
 
-Runnable examples of Konklav deployments. Each scenario starts real `konklav-server` processes, every one on a fresh database and its own free ports, and drives them over HTTP the way an app, a browser or an operator would. The tests run the same scenarios, so the examples stay true.
+Runnable examples of Konklav deployments: one complete app, and scenarios that each show one feature.
+
+## The notes app
+
+[`notes-app/`](notes-app/README.md) is the showcase: one complete app in Docker Compose, in two versions, Python and Rust. Konklav signs people in once to a notes app, a browser page with its API, and to an admin page that manages people, roles and sessions. Every token is DPoP-bound, and none is stored in `localStorage` or `sessionStorage`. Both rate limit writes through Valkey, with `konklav-fastapi` in Python and `konklav-axum` in Rust; in Python the API also runs as two replicas behind a load balancer.
+
+```sh
+docker compose -f examples/notes-app/python/compose.yaml up --build
+```
+
+![The browser's login, app and admin pages, the services on the Compose network and Konklav's three surfaces](notes-app/diagrams/topology.svg)
+
+It leaves out what the scenarios below show: [federation](#federation), [bootstrap sets](#scenarios), [email delivery](#smtp-delivery), and [DPoP](#dpop) on its own, without a browser.
 
 ## Scenarios
+
+Each scenario starts real `konklav-server` processes, every one on a fresh database and its own free ports, and drives them over HTTP the way an app, a browser or an operator would. The tests run the same scenarios, so the examples stay true.
 
 | Example | What it shows |
 |---|---|
@@ -30,12 +44,6 @@ That starts the development Postgres, builds `konklav-server` and runs the scena
 ### `dpop`
 
 ![A browser app gets DPoP tokens with a proof; the relying system allows a fresh proof and refuses a replay and a bearer token; refresh works only with the app's key](diagrams/dpop.svg)
-
-## Single sign-on in Docker Compose
-
-[`sso-compose/`](sso-compose/README.md) runs Konklav with a login application, a browser app and its API, and an admin page, with `docker compose`, in two versions: Python and Rust. Every token is DPoP-bound, and none is stored in `localStorage` or `sessionStorage`.
-
-![The browser's login, app and admin pages, the four services on the Compose network and Konklav's three surfaces](sso-compose/diagrams/topology.svg)
 
 ## Python
 
@@ -105,7 +113,7 @@ Last run with suite release v5.3.4, both plans had no failures, and the Basic OP
 - `src/bin/test-server.rs`: starts one server for another language's tests, such as the Python control-plane client's integration tests. It prints the surfaces' URLs and the bootstrap token as one JSON line, and stops when its stdin closes.
 - `bootstrap/`: the example bootstrap sets, nested and flat, and under `bootstrap/formats/<version>/` the sets of each bootstrap format: a released one's are frozen and must keep reading and applying unchanged, and the pending one's grow with it until a release ships it.
 - `diagrams/`: the diagrams in this README.
-- `sso-compose/`: the Docker Compose example, with its own [README](sso-compose/README.md). Its Rust services are the `konklav-sso-example` crate.
+- `notes-app/`: the showcase app in Docker Compose, with its own [README](notes-app/README.md). Its Rust services are the `konklav-sso-example` crate. CI's Examples workflow starts its Python version and runs `notes-app/python/smoke.sh` against it.
 
 ## Testing
 
