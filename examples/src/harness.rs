@@ -72,12 +72,35 @@ pub struct Server {
     _db: TestDatabase,
 }
 
-/// Ports the OS says are free now, for a server to listen on soon.
+/// The ports [`free_ports`] picks from: below the ephemeral ranges of Linux
+/// (32768–60999) and macOS (49152–65535).
+const PORTS: std::ops::Range<u16> = 20_000..32_768;
+
+/// Ports that are free now, for a server to listen on soon.
+///
+/// The server binds them only after it starts, so they must stay free
+/// until then. A port the OS hands out for port 0 comes from the ephemeral
+/// range, which is also where outgoing connections get their local ports,
+/// so another test's connection could take one first. These come from
+/// below that range instead. They're picked at random, so test processes
+/// running side by side rarely pick the same one, and one process never
+/// picks a port twice.
 fn free_ports() -> Result<[u16; 3]> {
-    let listeners = [(); 3].map(|()| std::net::TcpListener::bind("127.0.0.1:0"));
+    static PICKED: std::sync::Mutex<std::collections::BTreeSet<u16>> =
+        std::sync::Mutex::new(std::collections::BTreeSet::new());
+    let mut picked = PICKED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut ports = [0; 3];
-    for (port, listener) in ports.iter_mut().zip(listeners) {
-        *port = listener?.local_addr()?.port();
+    for port in &mut ports {
+        *port = (0..1000)
+            .map(|_| PORTS.start + u16::from_le_bytes(random()) % (PORTS.end - PORTS.start))
+            .find(|&candidate| {
+                !picked.contains(&candidate)
+                    && std::net::TcpListener::bind(("127.0.0.1", candidate)).is_ok()
+            })
+            .ok_or_else(|| fail(format!("no free port in {PORTS:?}")))?;
+        picked.insert(*port);
     }
     Ok(ports)
 }
