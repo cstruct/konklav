@@ -318,6 +318,24 @@ pub async fn revoke(
     Ok(revoked > 0)
 }
 
+/// Replaces the secret of a challenge that is still usable, so only the
+/// new secret proves it. Returns false if it was consumed or expired.
+pub async fn replace_secret(
+    conn: &mut AsyncPgConnection,
+    id: uuid::Uuid,
+    secret_hash: &[u8],
+    now: DateTime<Utc>,
+) -> StoreResult<bool> {
+    let replaced = diesel::update(challenge::table.find(id))
+        .filter(challenge::consumed_at.is_null())
+        .filter(challenge::expires_at.gt(now))
+        .filter(challenge::attempts.lt(challenge::max_attempts))
+        .set(challenge::secret_hash.eq(secret_hash))
+        .execute(conn)
+        .await?;
+    Ok(replaced > 0)
+}
+
 /// Replaces a challenge's details.
 pub async fn set_details(
     conn: &mut AsyncPgConnection,

@@ -140,6 +140,8 @@ await client.explain.entitlement(person, action="document:read", tenant=tenant)
 await client.shares.offer(share, {"owner": a, "recipient": b, "scope": {"kind": "project", "id": "p-1"}, "actions": ["document:read"]})
 await client.registered_scopes.record("document", "d-1", {"tenant": tenant})
 await client.invites.create({"id": invite, "email": "new@example.com", "tenant": tenant, "roles": ["reader"]})
+link = await client.invites.create({"tenant": tenant, "public_metadata": {"inviter": "Ada"}})  # link-only
+link.value["token"]  # shown once: share it as a link; whoever holds it may redeem it
 
 # Sessions, signing keys, OIDC clients and imports
 await client.sessions.revoke({"subject": person})
@@ -172,6 +174,12 @@ except PreconditionFailed:
 
 `None` removes a key. Metadata over the server's size limit (16 KiB by
 default) raises `MetadataTooLarge`. Every list takes `metadata=`.
+
+An invite may also carry `public_metadata`, set when it is created: up to
+1 KiB that the subject-facing invite preview (`POST /v1/invites/preview`)
+shows to whoever holds the invite's token, before signing in, such as the
+inviter's name. It is the one thing you write here that people see; keep
+anything else in `metadata`.
 
 ### Writes, cursors and repeats
 

@@ -836,8 +836,8 @@
         "tags": [
           "invites"
         ],
-        "summary": "Invites someone to a tenant.",
-        "description": "The invite token is delivered (as `delivery.requested`) and never returned.\nIdempotent on a caller-chosen `id`: repeating the request with the same\ncontent returns 200 and delivers nothing again.",
+        "summary": "Invites someone, optionally to a tenant.",
+        "description": "With an `email`, the invite token is delivered (as `delivery.requested`)\nand never returned. Without one, the invite is link-only: nothing is\ndelivered, and `token` shows the token once, for the relying system to\nshare as a link that whoever holds it may redeem.\nIdempotent on a caller-chosen `id`: repeating the request with the same\ncontent returns 200 and delivers nothing again; for a pending link-only\ninvite it shows a new token and stops accepting the first.",
         "operationId": "create_invite",
         "requestBody": {
           "content": {
@@ -851,7 +851,7 @@
         },
         "responses": {
           "200": {
-            "description": "Already existed with the same content; nothing is delivered again",
+            "description": "Already existed with the same content; nothing is delivered again. A pending link-only invite's new token is in `token`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -861,7 +861,7 @@
             }
           },
           "201": {
-            "description": "Created; the token is delivered to the address, never returned",
+            "description": "Created. An emailed invite's token is delivered to the address, never returned; a link-only invite's is in `token`, shown only once.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4554,13 +4554,14 @@
       },
       "CreateInvite": {
         "type": "object",
-        "description": "Invites an email address, optionally into a tenant with roles.",
-        "required": [
-          "email"
-        ],
+        "description": "Invites someone, optionally into a tenant with roles: an email address,\nor, without one, whoever the relying system shares the invite's link\nwith (a link-only invite).",
         "properties": {
           "email": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The address to deliver the invite's token to. Without one, the\ninvite is link-only: nothing is delivered, and the response shows\nthe token once."
           },
           "expires_in_hours": {
             "type": "integer",
@@ -4593,6 +4594,10 @@
           "metadata": {
             "type": "object",
             "description": "An object, opaque to Konklav, delivered with the invite and handed\nover on redemption."
+          },
+          "public_metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav, of at most 1024 bytes, that the\ninvite's preview shows to whoever holds its token, before signing\nin. Put nothing here the holder of the link shouldn't see."
           },
           "roles": {
             "type": "array",
@@ -4699,7 +4704,7 @@
       },
       "CreatedInvite": {
         "type": "object",
-        "description": "A created invite. Its token is never returned: it is only delivered to\nthe invited address, as a `delivery.requested` event.",
+        "description": "A created invite. An emailed invite's token is never returned: it is\nonly delivered to the invited address, as a `delivery.requested` event.\nA link-only invite's token is shown here, once.",
         "required": [
           "invite_id",
           "expires_at"
@@ -4712,6 +4717,13 @@
           "invite_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A link-only invite's token, shown only once: Konklav keeps only its\nhash. Repeating the request shows a new one and stops accepting\nthis one, while the invite is pending. Absent for emailed invites."
           }
         }
       },
@@ -5853,7 +5865,8 @@
           "expires_at",
           "consumed_at",
           "metadata",
-          "metadata_etag"
+          "metadata_etag",
+          "public_metadata"
         ],
         "properties": {
           "consumed_at": {
@@ -5865,8 +5878,11 @@
             "description": "When it was redeemed or revoked."
           },
           "email": {
-            "type": "string",
-            "description": "The invited address, normalized."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The invited address, normalized; `null` for a link-only invite."
           },
           "expires_at": {
             "type": "string",
@@ -5893,6 +5909,10 @@
           "metadata_etag": {
             "type": "string",
             "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
+          },
+          "public_metadata": {
+            "type": "object",
+            "description": "What the invite's preview shows to whoever holds its token."
           },
           "roles": {
             "type": "array",
@@ -8262,7 +8282,7 @@
         "allOf": [
           {
             "type": "object",
-            "description": "A created invite. Its token is never returned: it is only delivered to\nthe invited address, as a `delivery.requested` event.",
+            "description": "A created invite. An emailed invite's token is never returned: it is\nonly delivered to the invited address, as a `delivery.requested` event.\nA link-only invite's token is shown here, once.",
             "required": [
               "invite_id",
               "expires_at"
@@ -8275,6 +8295,13 @@
               "invite_id": {
                 "type": "string",
                 "format": "uuid"
+              },
+              "token": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "A link-only invite's token, shown only once: Konklav keeps only its\nhash. Repeating the request shows a new one and stops accepting\nthis one, while the invite is pending. Absent for emailed invites."
               }
             }
           },
@@ -8467,7 +8494,8 @@
               "expires_at",
               "consumed_at",
               "metadata",
-              "metadata_etag"
+              "metadata_etag",
+              "public_metadata"
             ],
             "properties": {
               "consumed_at": {
@@ -8479,8 +8507,11 @@
                 "description": "When it was redeemed or revoked."
               },
               "email": {
-                "type": "string",
-                "description": "The invited address, normalized."
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The invited address, normalized; `null` for a link-only invite."
               },
               "expires_at": {
                 "type": "string",
@@ -8507,6 +8538,10 @@
               "metadata_etag": {
                 "type": "string",
                 "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
+              },
+              "public_metadata": {
+                "type": "object",
+                "description": "What the invite's preview shows to whoever holds its token."
               },
               "roles": {
                 "type": "array",

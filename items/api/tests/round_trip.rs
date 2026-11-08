@@ -5,11 +5,11 @@ use konklav_api::{
     CreateInvite, CreatedCredential, CreatedInvite, DecisionExplanation, Deleted, Entitlements,
     ErrorCode, ErrorResponse, ExplainDecision, Explanation, IdTokenAlgorithm, ImportCredentials,
     ImportFactors, ImportSessions, ImportSubjects, Imported, ImportedCredentialMaterial, Invite,
-    InvitePage, MembershipDetail, OfferShare, OidcClient, OidcClientDefinition, OidcClientSecret,
-    PutRole, PutTemplate, Reason, RecordRegisteredScope, RegisteredScope, RegisteredScopeBatch,
-    RegisteredScopeChanges, RevokeSessions, RevokeShare, RevokedKey, RevokedSessions, Role,
-    RotatedSlot, SessionPage, Share, ShareList, ShareTerms, SigningKey, SlotExpiry, SubjectDetail,
-    SubjectPage, Template, TenantPage, Written,
+    InvitePage, InvitePreview, MembershipDetail, OfferShare, OidcClient, OidcClientDefinition,
+    OidcClientSecret, PutRole, PutTemplate, Reason, RecordRegisteredScope, RegisteredScope,
+    RegisteredScopeBatch, RegisteredScopeChanges, RevokeSessions, RevokeShare, RevokedKey,
+    RevokedSessions, Role, RotatedSlot, SessionPage, Share, ShareList, ShareTerms, SigningKey,
+    SlotExpiry, SubjectDetail, SubjectPage, Template, TenantPage, Written,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -589,13 +589,29 @@ fn invites_round_trip() {
         "membership": "0195e0a0-0000-7000-8000-000000000003",
         "expires_in_hours": 24,
         "metadata": {"tenant_id": "t-1", "invited_by": "u-9"},
+        "public_metadata": {"inviter": "Ada"},
     }));
     let minimal: CreateInvite = reads(json!({"email": "ada@example.com"}));
     assert_eq!((minimal.expires_in_hours, minimal.facts), (72, json!({})));
+    assert_eq!(minimal.public_metadata, json!({}));
+    let link_only: CreateInvite = reads(json!({"tenant": "root"}));
+    assert_eq!(link_only.email, None);
     round_trips::<Written<CreatedInvite>>(&json!({
         "invite_id": "0195e0a0-0000-7000-8000-00000000000c",
         "expires_at": "2026-11-05T10:00:00Z",
         "cursor": 9,
+    }));
+    round_trips::<Written<CreatedInvite>>(&json!({
+        "invite_id": "0195e0a0-0000-7000-8000-00000000000c",
+        "expires_at": "2026-11-05T10:00:00Z",
+        "token": "0195e0a0-0000-7000-8000-00000000000c.secret",
+        "cursor": 9,
+    }));
+    round_trips::<InvitePreview>(&json!({
+        "state": "pending",
+        "expires_at": "2026-11-05T10:00:00Z",
+        "link_only": true,
+        "public_metadata": {"inviter": "Ada"},
     }));
     let invite = json!({
         "id": "0195e0a0-0000-7000-8000-00000000000c",
@@ -608,8 +624,12 @@ fn invites_round_trip() {
         "consumed_at": "2026-11-04T10:00:00Z",
         "metadata": {"tenant_id": "t-1"},
         "metadata_etag": "0123456789abcdef0123456789abcdef",
+        "public_metadata": {},
     });
     round_trips::<Invite>(&invite);
+    let mut link_only = invite.clone();
+    link_only["email"] = Value::Null;
+    round_trips::<Invite>(&link_only);
     round_trips::<InvitePage>(&json!({"invites": [invite], "next": null}));
 }
 

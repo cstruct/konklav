@@ -119,12 +119,19 @@ class CreateTenant(TypedDict):
 
 class CreatedInvite(TypedDict):
     """
-    A created invite. Its token is never returned: it is only delivered to
-    the invited address, as a `delivery.requested` event.
+    A created invite. An emailed invite's token is never returned: it is
+    only delivered to the invited address, as a `delivery.requested` event.
+    A link-only invite's token is shown here, once.
     """
 
     expires_at: str
     invite_id: str
+    token: NotRequired[str | None]
+    """
+    A link-only invite's token, shown only once: Konklav keeps only its
+    hash. Repeating the request shows a new one and stops accepting
+    this one, while the invite is pending. Absent for emailed invites.
+    """
 
 
 type CredentialId = str
@@ -869,6 +876,12 @@ class WrittenCreatedInvite(TypedDict):
 
     expires_at: str
     invite_id: str
+    token: NotRequired[str | None]
+    """
+    A link-only invite's token, shown only once: Konklav keeps only its
+    hash. Repeating the request shows a new one and stops accepting
+    this one, while the invite is pending. Absent for emailed invites.
+    """
     cursor: NotRequired[Cursor | None]
 
 
@@ -924,9 +937,9 @@ class WrittenInvite(TypedDict):
     """
     When it was redeemed or revoked.
     """
-    email: str
+    email: str | None
     """
-    The invited address, normalized.
+    The invited address, normalized; `null` for a link-only invite.
     """
     expires_at: str
     id: str
@@ -939,6 +952,10 @@ class WrittenInvite(TypedDict):
     """
     Changes whenever `metadata` does; send it as `If-Match` to patch
     the metadata only if no one else has since.
+    """
+    public_metadata: dict[str, Any]
+    """
+    What the invite's preview shows to whoever holds its token.
     """
     roles: list[str]
     state: InviteState
@@ -1255,10 +1272,17 @@ type CreateCredential = CreateCredentialPassword | CreateCredentialSecretKey | C
 
 class CreateInvite(TypedDict):
     """
-    Invites an email address, optionally into a tenant with roles.
+    Invites someone, optionally into a tenant with roles: an email address,
+    or, without one, whoever the relying system shares the invite's link
+    with (a link-only invite).
     """
 
-    email: str
+    email: NotRequired[str | None]
+    """
+    The address to deliver the invite's token to. Without one, the
+    invite is link-only: nothing is delivered, and the response shows
+    the token once.
+    """
     expires_in_hours: NotRequired[int]
     """
     Clamped to between 1 hour and 30 days.
@@ -1277,6 +1301,12 @@ class CreateInvite(TypedDict):
     """
     An object, opaque to Konklav, delivered with the invite and handed
     over on redemption.
+    """
+    public_metadata: NotRequired[dict[str, Any]]
+    """
+    An object, opaque to Konklav, of at most 1024 bytes, that the
+    invite's preview shows to whoever holds its token, before signing
+    in. Put nothing here the holder of the link shouldn't see.
     """
     roles: NotRequired[list[str]]
     """
@@ -1522,9 +1552,9 @@ class Invite(TypedDict):
     """
     When it was redeemed or revoked.
     """
-    email: str
+    email: str | None
     """
-    The invited address, normalized.
+    The invited address, normalized; `null` for a link-only invite.
     """
     expires_at: str
     id: str
@@ -1537,6 +1567,10 @@ class Invite(TypedDict):
     """
     Changes whenever `metadata` does; send it as `If-Match` to patch
     the metadata only if no one else has since.
+    """
+    public_metadata: dict[str, Any]
+    """
+    What the invite's preview shows to whoever holds its token.
     """
     roles: list[str]
     state: InviteState

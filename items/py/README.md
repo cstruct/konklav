@@ -191,6 +191,11 @@ caller chooses what a fake one claims:
   already exist, such as the account id a lookup by address returns. Pick a
   window that matches the age of the real records.
 
+An endpoint that creates a link-only invite (one without an address, whose
+token Konklav shows once for you to share) needs neither: no address is
+looked up, so its answer reveals nothing about who has an account. Return
+the invite's id and the link; whoever holds the link may redeem it.
+
 ```python
 >>> from konklav_relying import fake_uuid7
 >>> from konklav_relying.fake_ids import claimed_ms

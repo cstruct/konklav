@@ -445,15 +445,19 @@ pub fn explain_decision(
 
 // --- Invites -----------------------------------------------------------------
 
+/// An invite to `email`, or a link-only one when it is blank.
 #[must_use]
 pub fn create_invite(email: &str, tenant: &str, roles: &[String], hours: i64) -> Request {
     let tenant = (!tenant.trim().is_empty()).then(|| tenant.trim().to_owned());
-    Request::control(Method::Post, "/invites").json(json!({
-        "email": email.trim(),
+    let mut body = json!({
         "tenant": tenant,
         "roles": roles,
         "expires_in_hours": hours,
-    }))
+    });
+    if !email.trim().is_empty() {
+        body["email"] = json!(email.trim());
+    }
+    Request::control(Method::Post, "/invites").json(body)
 }
 
 // --- OIDC clients ------------------------------------------------------------
@@ -572,6 +576,16 @@ mod tests {
         assert_eq!(now.body.unwrap().get("at"), None);
         let then = explain_decision("s1", "t1", "", " 2026-11-01T12:00:00Z ", &requirements);
         assert_eq!(then.body.unwrap()["at"], "2026-11-01T12:00:00Z");
+    }
+
+    #[test]
+    fn invites_without_an_address_are_link_only() {
+        let link_only = create_invite(" ", "", &[], 72).body.unwrap();
+        assert_eq!(link_only.get("email"), None);
+        let emailed = create_invite(" ada@example.com ", "", &[], 72)
+            .body
+            .unwrap();
+        assert_eq!(emailed["email"], "ada@example.com");
     }
 
     #[test]

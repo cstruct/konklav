@@ -731,7 +731,12 @@ class Invites(_Resource[M]):
 
     @operation("create_invite")
     def create(self, body: types.CreateInvite) -> Any:
-        """The invite's token is delivered to the address, never returned."""
+        """With an `email`, the invite's token is delivered to the address and
+        never returned. Without one, the invite is link-only: nothing is
+        delivered, and the result's `token` shows the token once, for you to
+        share as a link. Repeating it with the same `id` shows a new token
+        while the invite is pending. `public_metadata` is what the invite's
+        preview shows to whoever holds the token, before signing in."""
         return self._do(Call("POST", path("invites"), json=body, create=True, written=True))
 
     @operation("list_invites")
