@@ -207,7 +207,25 @@ Metadata MUST be written only through the control plane, imports and
 bootstrap sets. The subject-facing and relying surfaces MUST NOT accept
 metadata and MUST NOT return it, not even a subject's own: an operator may
 write there what the subject shouldn't see. The change feed shows it only
-as `metadata.feed` allows.
+as `metadata.feed` allows. An invite's public metadata (`metadata.public`)
+is a separate field, not metadata, and is the one thing a relying system
+writes on the control plane that the subject-facing surface returns.
+
+r[metadata.public]
+An invite MAY carry public metadata: a JSON object, separate from its
+metadata, that the relying system writes for whoever holds the invite's
+token to see before signing in, such as the inviter's display name or the
+kind of access offered. It MUST be empty (`{}`) unless given, MUST be set
+only when the invite is created, through the control plane, where it is
+part of the content an idempotent repeat is compared on, and MUST be at
+most 1024 bytes of compact JSON in UTF-8, or the create MUST fail with
+`METADATA_TOO_LARGE`. The control plane MUST return it with the invite,
+and the subject-facing surface MUST return it only in the invite's preview
+(`authn.invite.preview`). It is opaque as metadata is (`metadata.opaque`),
+and MUST NOT be carried by events, tokens or anything else. Writing
+public metadata is opting in to showing it: a relying system MUST put
+nothing there that the holder of the link shouldn't see, since a link-only
+invite's link is a bearer link (`authn.invite.bearer`).
 
 r[metadata.write.create]
 Every control-plane operation that creates one of these objects MUST
@@ -456,6 +474,10 @@ Konklav MUST offer a bulk import of subjects, credentials, MFA factors and
 sessions that keeps the imported identifiers and can be re-run: records
 whose identifiers already exist are skipped. Import MUST require a
 dedicated control-plane capability.
+Invites, emailed or link-only, MUST NOT be imported, exported or part of a
+bootstrap set: they are short-lived challenges whose tokens Konklav keeps
+only hashed, so a copy elsewhere could never be redeemed. A relying system
+moving pending invites creates them again.
 
 r[import.metadata]
 Imported subjects and credentials MAY carry metadata, stored as

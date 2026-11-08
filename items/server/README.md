@@ -61,7 +61,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - listing and removing the caller's own passkeys (`GET /v1/passkeys`, `DELETE /v1/passkeys/{id}`)
 
   Each ceremony's `webauthn-rs` state lives in a single-use challenge until the second call; the stored key is versioned opaque JSON in the credential's data.
-- MFA (TOTP and email-code factors; partial sessions can list their active factors, and browsers get their cookie when MFA completes), step-up, magic-link and phone-code login, password reset and change, invite redemption, and impersonation. These emit `delivery.requested` for anything a relying system must send.
+- MFA (TOTP and email-code factors; partial sessions can list their active factors, and browsers get their cookie when MFA completes), step-up, magic-link and phone-code login, password reset and change, invite preview and redemption (`src/invites.rs`: an emailed invite with a password for its address; a link-only invite, a bearer link, by a signed-in subject or with an existing account's identifier and password, never creating an account; token checks counted per client address with the login address limits), and impersonation. These emit `delivery.requested` for anything a relying system must send.
 - Relying surface, for service principals only:
   - `/.well-known/jwks.json`
   - `/v1/entitlements/{subject}[/{tenant}]`
@@ -76,7 +76,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - memberships (create, facts, end, assignments)
   - templates and roles, where roles of `root` are global roles
   - global assignments
-  - invites (create, list by tenant or metadata, read without the token, and revoke; a revoked invite fails to redeem as an expired one does)
+  - invites (create, list by tenant or metadata, read without the token, and revoke; a revoked invite fails to redeem as an expired one does). Without an `email` an invite is link-only: nothing is delivered and the create shows its `token` once (a repeat shows a new one; batches replay it like secret keys). An invite may carry `public_metadata` (at most 1 KiB, set on create), which only the control plane and the invite preview show
   - an operator view of a subject's entitlements, with explanations (`/v1/subjects/{id}/explain`)
   - decision explanations (`POST /v1/subjects/{id}/explain-decision`), now or, with `history.enabled`, as of a past time (`at`, RFC 3339) within the history horizon
   - listings of subjects (by kind or login identifier), tenants (by parent) and a tenant's memberships
@@ -177,6 +177,7 @@ mise run test
   - history: decisions explained as of a past time, the history horizon, disabling, and sweeping old row versions (`tests/history.rs`)
   - the bootstrap command, applying both example sets and every frozen set of a released format, re-runs, dry runs, conflicts and located problems, registered scopes in batches with one event, and an exported set bootstrapping an empty database unchanged (`tests/bootstrap.rs`)
   - idempotent creates for credentials, password replacement, assignments and invites (`tests/idempotency.rs`)
+  - link-only invites: the token shown once and anew on a repeat, bearer redemption signed in or with an existing account's password, the preview with public metadata and revoked invites indistinguishable from unknown tokens, per-address limits on token checks (`tests/invites.rs`)
   - metadata: creates, lists and filters for every kind of object, merge patches with preconditions (alone and in batches), the size limit, nothing on the subject-facing or relying surfaces or in tokens, `metadata.changed` and its withholding on the feed, invite delivery and redemption, history, imports and erasure (`tests/metadata.rs`); bootstrap and export of format 1.1's metadata (`tests/bootstrap.rs`)
   - batches: references to earlier creates, failures that leave no trace, per-operation capabilities, limits, bulk endpoints inside a batch, a batch cut off by the request timeout, and idempotency keys with their secrets and lifetimes (`tests/batch.rs`). The test harness also checks each batch result against its own operation's schema.
 - Indirect coverage: none yet.

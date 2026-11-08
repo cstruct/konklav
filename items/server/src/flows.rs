@@ -273,7 +273,7 @@ async fn full_session(
 
 /// Authenticates a full session that may change the subject's own
 /// authentication: not one started by impersonation.
-async fn own_session(
+pub(crate) async fn own_session(
     state: &AppState,
     conn: &mut Connection,
     headers: &HeaderMap,

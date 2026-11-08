@@ -61,12 +61,46 @@ principals holding `konklav:delivery:read` see those events, and the
 material is stripped once the challenge has expired. Start endpoints always
 answer 202, so they reveal nothing about which identifiers exist.
 
+### Link-only invites
+
+An emailed invite proves an address: the token goes only to that address,
+so whoever redeems it owns it, and redeeming it may create an account for
+it. A link-only invite has no address. Konklav shows its token once, when
+it is created, and the relying system shares the link, for example by
+copy-paste or a QR code. Whoever holds the link redeems it:
+
+- signed in, with any method, by sending the session's access token with
+  the token alone. No session is started and the caller's isn't changed:
+  restrictive flags can only be set when a session starts, so a login
+  application that wants, say, a personal-only session asks for the flag
+  when the person signs in.
+- or with the identifier and password of an existing account, which is
+  checked as a password login would check it and starts a session the same
+  way, `client`, `flags` and MFA included.
+
+A link-only invite never creates an account. Nobody proved an address, and
+a bearer link's holder could claim anyone's, then appear to the inviter
+under someone else's name. Someone without an account signs up through the
+relying system first. For the same reason an emailed invite's token is
+never returned for a "copy link": that would let whoever got it create the
+account for the address.
+
+`POST /v1/invites/preview` lets a login application show what an invite is
+for before sign-in: pending or redeemed, its expiry, whether it is
+link-only, and its public metadata, a small object the relying system set
+for exactly this, such as the inviter's name. Anything else fails as
+redeeming it would, so a revoked invite looks expired, or like a token that
+never existed. Previews and redemptions are paced, and every token check
+counts against the client address's failed-attempt limits, shared with
+logins. Nothing limits checks per invite, since that would let anyone who
+knows an invite's id lock it out; 256-bit secrets make guessing hopeless.
+
 ## Response pacing
 
 Endpoints whose timing could reveal whether an identifier exists are paced.
 These are first-factor login, MFA completion, step-up, the passwordless and
-password-reset start and complete pairs, password change and invite
-redemption:
+password-reset start and complete pairs, password change, and invite
+redemption and preview:
 
 - A middleware starts a timer of 1.5 s ± 0.25 s (configurable under
   `pacing`) when the request arrives, and responds when both the timer and

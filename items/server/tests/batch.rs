@@ -533,6 +533,45 @@ async fn a_repeat_shows_new_secrets() {
     assert_eq!(stored, 0, "secrets aren't remembered");
 }
 
+// r[verify platform.batch.idempotency-key]
+// r[verify authn.invite.link-only]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_repeat_shows_a_link_only_invite_a_new_token() {
+    let app = TestApp::new().await;
+    let operations = json!([{"method": "POST", "path": "/invites", "body": {}}]);
+    let first = keyed(&app, "k-invite", operations.clone()).await;
+    assert_eq!(first.status, StatusCode::OK, "{:?}", first.body);
+    let again = keyed(&app, "k-invite", operations).await;
+    assert_eq!(again.status, StatusCode::OK, "{:?}", again.body);
+    let (first, again) = (
+        &first.body["results"][0]["body"],
+        &again.body["results"][0]["body"],
+    );
+    assert_eq!(again["invite_id"], first["invite_id"], "the same invite");
+    assert_ne!(again["token"], first["token"]);
+    let preview = |token: &Value| {
+        let app = &app;
+        let body = json!({"token": token});
+        async move { app.post("/v1/invites/preview", body).await }
+    };
+    assert_eq!(preview(&again["token"]).await.status, StatusCode::OK);
+    assert_eq!(preview(&first["token"]).await.code(), "INVALID_CREDENTIALS");
+    assert_eq!(
+        count(
+            &app,
+            "select count(*) as count from challenge where purpose = 'invite'"
+        )
+        .await,
+        1
+    );
+    let stored = count(
+        &app,
+        "select count(*) as count from batch_result where answer::text like '%\"token\": \"%'",
+    )
+    .await;
+    assert_eq!(stored, 0, "tokens aren't remembered");
+}
+
 // r[verify platform.batch.key-lifetime]
 // r[verify retention.batch-results]
 #[tokio::test(flavor = "multi_thread")]

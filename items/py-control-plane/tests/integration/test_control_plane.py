@@ -214,6 +214,12 @@ async def test_shares_registered_scopes_and_invites(konklav):
         assert invite.value["invite_id"] and invite.cursor is not None
         assert "token" not in invite.value
 
+        link = await client.invites.create({"tenant": recipient, "public_metadata": {"inviter": "Ada"}})
+        assert link.value["token"].startswith(link.value["invite_id"] + ".")
+        shown = await client.invites.get(link.value["invite_id"])
+        assert (shown["email"], shown["public_metadata"]) == (None, {"inviter": "Ada"})
+        assert (await client.invites.revoke(link.value["invite_id"]))["state"] == "revoked"
+
 
 async def test_oidc_clients(konklav):
     async with operator(konklav) as client:
