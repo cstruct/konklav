@@ -164,6 +164,11 @@ one there instead of with `curl`.
   on the change feed for a relying system's worker to send.
 - **Control plane:** authorized by `konklav:` capabilities, with listings,
   entitlement explanations and an operators' console.
+- **Erasure and personal data reports:** an operator can erase a subject,
+  which removes the personal data Konklav holds and tells relying systems
+  through the change feed, and can read everything held about a subject as
+  one report. Konklav holds no profile data, so each relying system erases
+  its own. See [erasure](docs/architecture/erasure.md).
 - **Import:** a bulk import API and a `bootstrap` command that keep existing
   ids and can be re-run, including Argon2 password hashes, MFA seeds and
   sessions.

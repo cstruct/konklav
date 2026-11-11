@@ -250,3 +250,88 @@ personal data that erasure removes and the report shows, or data that
 erasure removes and the report leaves out, with the reason. It compares
 that list with the schema, so a migration that adds a column fails the
 test until someone has decided how erasure and the report treat it.
+
+## Handling an erasure request
+
+What an operator does when someone asks to be forgotten. The steps work
+the same in the console, over the control-plane API and with the Python
+control-plane client.
+
+1. **Find the subject.** Search by login identifier in the console, or
+   `GET /v1/subjects?identifier=`. Check that it is the person asking and
+   not someone who shares an address.
+2. **Take the personal data report if you need one.** After erasure there
+   is nothing left to report. The report is also the answer to a request
+   for access, for Konklav's part.
+3. **Settle what the relying systems need settled.** Open orders, legal
+   holds and the like are theirs to know. Konklav checks none of it.
+4. **Clear what blocks the erasure.**
+   - A service principal that an OIDC client authenticates as: disable the
+     client first.
+   - An operator: the erasure needs `konklav:control:all`, and someone
+     else has to do it, since nobody can erase their own subject.
+5. **Erase.** `POST /v1/subjects/{id}/erase`, or **Erase…** on the
+   subject's page in the console. It needs `konklav:subjects:erase`. It
+   takes effect at once and can't be undone.
+6. **Check that the relying systems followed.** They hear `subject.erased`
+   on the change feed. `GET /v1/erased-subjects` on the relying surface
+   lists the subject from then on, so a system that was down catches up
+   when it returns.
+
+### What is left afterwards, and for how long
+
+| What | Holds | Goes when |
+| --- | --- | --- |
+| The erased subject | Id, kind, state, times | Never. It keeps the id from being used again. |
+| The subject's ended sessions | Ids and times | After `retention.sessions_days` (default 30). |
+| Events about the subject | Ids | After `feed.retention_hours`. |
+| Row versions in history | Ids | After `history.retention_days` (default 90), when history is enabled. |
+| Login attempts by address alone | A client address, tied to no subject | When the rate-limit window passes. |
+
+None of these needs anything from the operator.
+
+### What the operator has to handle
+
+- **Backups, replicas and write-ahead log archives** still hold the
+  person until they expire under their own retention. If a backup from
+  before an erasure is restored, the erasure is undone, and so is
+  Konklav's record of it. Keep the ids of erased subjects somewhere
+  outside that database, such as the erasure request's ticket, and erase
+  them again after a restore.
+- **Bootstrap sets** written by `export` before the erasure still hold
+  the person. Delete them or export again. Loading an old set into the
+  same database is refused for the erased subject, but loading it into an
+  empty database would bring the person back.
+- **Messages already sent** for the subject's delivery requests, such as
+  emails with sign-in links, are with the mail provider and the recipient.
+- **Telemetry already exported** holds subject ids but never login
+  identifiers or addresses (`r[telemetry.privacy]`).
+- **Relying systems** that don't consume the change feed have to be told
+  some other way.
+
+If the person comes back later, they sign up as a new subject. Nothing
+links it to the erased one.
+
+## Compatibility
+
+Erasure arrived in release 1.7.0. Clients written against earlier
+releases meet four things they didn't before:
+
+- **A third subject state.** A subject's `state` may be `erased`, and
+  subjects carry `erased_at`. Code that matches on the state has to
+  handle the new value.
+- **A new feed kind.** `subject.erased` appears on the change feed.
+  Relying SDKs from before 1.7.0 ignore it. Their caches still come out
+  right, because the `session.changed` and `entitlements.changed` events
+  of the same erasure empty them, but the relying system isn't told to
+  delete its own data. Upgrade the SDK to hear it.
+- **A new capability.** `konklav:subjects:erase` is separate from
+  `konklav:subjects:manage`, so operators who manage subjects can't erase
+  them until a role grants it. `konklav:control:all`, and with it the
+  built-in `konklav.admin` role, covers it.
+- **Sessions without a credential.** An ended session of an erased subject
+  has `credential_id: null`.
+
+Two additions change nothing for existing clients: a federated credential
+shows `federated` with the provider's account, and an MFA factor may carry
+`removed_at`.
