@@ -5,7 +5,17 @@ from typing import Any
 import httpx
 import pytest
 
-from konklav_relying import AccessToken, Decision, DenyReason, InvalidDpopProof, Policy, RelyingClient
+from konklav_relying import (
+    AccessToken,
+    Decision,
+    DenyReason,
+    Erased,
+    ErasureNotice,
+    ErasuresMissed,
+    InvalidDpopProof,
+    Policy,
+    RelyingClient,
+)
 from support import AUDIENCE, ISSUER, DpopKey, FakeKonklav, Keys
 
 
@@ -301,6 +311,83 @@ def test_typed_variants_decide_route_policies() -> None:
                     requirements=requirements,
                 )
             ) == decision
+        finally:
+            await client.stop()
+
+    asyncio.run(scenario())
+
+
+# r[verify relying.erasure.notify]
+# r[verify relying.erasure.reset]
+def test_erasures_reach_the_handler_and_the_list_catches_up() -> None:
+    async def scenario() -> None:
+        keys = Keys()
+        subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
+        fake = FakeKonklav(keys, subject, tenant, session)
+        notices: asyncio.Queue[ErasureNotice] = asyncio.Queue()
+        failing = True
+
+        async def on_erasure(notice: ErasureNotice) -> None:
+            await notices.put(notice)
+            if failing:
+                raise RuntimeError("the relying system's database is down")
+
+        client = RelyingClient(
+            relying_url="http://konklav",
+            subject_url="http://konklav",
+            key_id="key",
+            secret="secret",
+            issuer=ISSUER,
+            audience=AUDIENCE,
+            http=httpx.AsyncClient(transport=httpx.MockTransport(fake.handle)),
+            on_erasure=on_erasure,
+            heartbeat_ms=500,
+            debounce_ms=50,
+        )
+        token = keys.token(subject=subject, session=session, tenant=tenant)
+        requirements = {"tenant": ["project:read"]}
+
+        async def next_notice() -> ErasureNotice:
+            return await asyncio.wait_for(notices.get(), timeout=5)
+
+        await client.start()
+        try:
+            await until_trusted(client)
+            # A stream starts by naming its position; a client with none of
+            # its own can't know what it missed.
+            fake.push("position", {})
+            assert await next_notice() == ErasuresMissed(since=None)
+            assert await client.decide(token, requirements) == {"decision": "allow"}
+
+            # Konklav revokes the sessions, then reports the erasure. A
+            # handler that fails doesn't stop the next notice.
+            fake.session_revoked = True
+            fake.session_version = 2
+            fake.actions = []
+            fake.push("session.changed", fake.session_state())
+            cursor = fake.push("subject.erased", {"subject": subject, "erased_at": 1_800_000_000})
+            assert await next_notice() == Erased(subject=subject, erased_at=1_800_000_000)
+            assert await client.await_cursor(cursor)
+            assert await client.decide(token, requirements) == {"decision": "deny", "reason": "invalid_token"}
+
+            failing = False
+            fake.push("reset", {})
+            missed = await next_notice()
+            assert isinstance(missed, ErasuresMissed)
+            assert missed.since is not None
+
+            # Catching up pages through the list.
+            other = str(uuid.uuid4())
+            fake.erased = [
+                {"subject": subject, "erased_at": 1_800_000_000},
+                {"subject": other, "erased_at": 1_800_000_050},
+            ]
+            assert await client.erased_subjects() == [
+                Erased(subject=subject, erased_at=1_800_000_000),
+                Erased(subject=other, erased_at=1_800_000_050),
+            ]
+            assert await client.erased_subjects(since=1_800_000_050) == [Erased(subject=other, erased_at=1_800_000_050)]
+            assert await client.erased_subjects(since=1_900_000_000) == []
         finally:
             await client.stop()
 

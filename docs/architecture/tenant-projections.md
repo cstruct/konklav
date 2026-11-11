@@ -31,6 +31,10 @@ for the feed (read-your-writes by construction).
 - **State changes** (suspend, delete) arrive through `tenant.changed`, and
   the projection follows. Each side decides when to hard-delete its own
   data.
+- **Erased subjects.** A relying system that keeps anything keyed by
+  subject id removes it when Konklav erases the subject. The signal and
+  how to catch up on it are described in
+  [erasure](erasure.md#relying-systems).
 
 ## Signup flows
 

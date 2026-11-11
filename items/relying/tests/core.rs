@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ed25519_dalek::SigningKey;
 use konklav_authz::{Decision, DenyReason, EntitlementSet, Entitlements, Requirements};
-use konklav_core::feed::{FeedEvent, SessionChanged};
+use konklav_core::feed::{FeedEvent, SessionChanged, SubjectErased};
 use konklav_core::{Cursor, SessionId, SubjectId, TenantId};
-use konklav_relying::{Config, Key, Need, Outcome, Relying};
+use konklav_relying::{Config, ErasureNotice, Key, Need, Outcome, Relying};
 use konklav_token::{AccessClaims, Jwk, JwkSet, Signer, TokenKind};
 use serde_json::json;
 
@@ -118,13 +118,19 @@ impl Fixture {
         self.core.decide(&token, &reading(), None, now)
     }
 
-    fn event(&mut self, cursor: i64, kind: &str, payload: serde_json::Value, now: u64) {
+    fn event(
+        &mut self,
+        cursor: i64,
+        kind: &str,
+        payload: serde_json::Value,
+        now: u64,
+    ) -> Option<ErasureNotice> {
         let event = FeedEvent {
             cursor: Cursor::new(cursor),
             kind: kind.into(),
             payload,
         };
-        self.core.on_feed_event(&event, now).unwrap();
+        self.core.on_feed_event(&event, now).unwrap()
     }
 }
 
@@ -928,5 +934,77 @@ fn tenant_facts_are_decided_from_the_cached_tenant_facts() {
                 }
             }
         }
+    );
+}
+
+// r[verify relying.erasure.notify]
+#[test]
+fn an_erasure_drops_the_subjects_caches_and_is_handed_to_the_host() {
+    let mut f = Fixture::new();
+    f.warm(T0);
+    let other = Key {
+        subject: SubjectId::new_v7(),
+        tenant: Some(f.tenant),
+    };
+    let mut theirs = f.set(&["project:read"], 1);
+    theirs.subject_id = other.subject;
+    f.core.on_entitlements(theirs, T0);
+    assert_eq!(f.decide(1, T0), allowed());
+    assert_eq!(f.event(5, "tenant.changed", json!({}), T0 + 1), None);
+
+    let erased_at = i64::try_from(T0 / 1000).unwrap();
+    let payload = json!({"subject": f.subject, "erased_at": erased_at});
+    let erased = ErasureNotice::Erased(SubjectErased {
+        subject: f.subject,
+        erased_at,
+    });
+    assert_eq!(
+        f.event(6, "subject.erased", payload.clone(), T0 + 2),
+        Some(erased)
+    );
+
+    // Nothing of the subject is left to decide from, and nobody else's
+    // caches were touched.
+    assert_eq!(
+        needs(&f.decide(1, T0 + 3)),
+        vec![
+            Need::Session { session: f.session },
+            Need::Entitlements { key: f.key() }
+        ]
+    );
+    assert!(f.core.entitlements(other, T0 + 3).is_ok());
+
+    // The feed is at-least-once: a repeat is handed over again.
+    assert_eq!(f.event(6, "subject.erased", payload, T0 + 4), Some(erased));
+
+    let malformed = FeedEvent {
+        cursor: Cursor::new(7),
+        kind: "subject.erased".into(),
+        payload: json!({"subject": "nobody"}),
+    };
+    assert!(f.core.on_feed_event(&malformed, T0 + 5).is_err());
+}
+
+// r[verify relying.erasure.reset]
+#[test]
+fn the_host_hears_when_erasures_may_have_been_missed() {
+    let mut f = Fixture::new();
+    // A stream that starts without a position of this core's own has
+    // skipped everything before it.
+    assert_eq!(
+        f.event(10, "position", json!({}), T0),
+        Some(ErasureNotice::Missed { since: None })
+    );
+    assert_eq!(f.event(11, "tenant.changed", json!({}), T0 + 5_000), None);
+    // Resuming from its own cursor skips nothing.
+    assert_eq!(f.event(11, "position", json!({}), T0 + 6_000), None);
+
+    // A reset says since when: the time the last event was applied.
+    let applied = i64::try_from((T0 + 6_000) / 1000).unwrap();
+    assert_eq!(
+        f.event(40, "reset", json!({}), T0 + 90_000),
+        Some(ErasureNotice::Missed {
+            since: Some(applied)
+        })
     );
 }

@@ -156,7 +156,9 @@ r[relying.erasure.reset]
 On a `reset` event, the relying SDK MUST tell the host that erasures may
 have been missed, with the time of the last event it had applied, so the
 relying system can read the erased subjects since then
-(`subject.erasure.list`).
+(`subject.erasure.list`). It MUST tell the host the same, without a time,
+when it starts following the feed without a position of its own, because
+it can't know what happened before.
 
 r[relying.fallback.lag]
 If the feed connection is lost, or no event or heartbeat arrives for three

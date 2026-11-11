@@ -8,6 +8,10 @@
 //! admin page removes, or a session it ends, stops working here within
 //! about a second.
 //!
+//! Each note remembers the subject who wrote it. When Konklav erases a
+//! subject, the relying client says so and the backend deletes that
+//! person's notes.
+//!
 //! Adding notes is rate limited per person, through Valkey, and in memory
 //! while Valkey is unavailable.
 
@@ -27,10 +31,11 @@ use konklav_axum::{
     Denied, Forbidden, IdentityToken, Konklav, Policy, RoutePolicy, RouteRateLimit, RouterPolicy,
     Scheme, Unauthenticated,
 };
+use konklav_core::SubjectId;
 use konklav_relying_client::rate_limit::{
     RateLimit, RateLimitConfig, RateLimitWindow, StoreSecret,
 };
-use konklav_relying_client::{Presented, RelyingClient, RequestDescriptor};
+use konklav_relying_client::{ErasureNotice, Presented, RelyingClient, RequestDescriptor};
 use konklav_sso_example::{env, relying_client, secrets, serve};
 use konklav_token::TokenKind;
 use serde::{Deserialize, Serialize};
@@ -43,6 +48,9 @@ struct Note {
     text: String,
     author: String,
     at: u128,
+    /// Who wrote the note, so it can be deleted when Konklav erases them.
+    #[serde(skip)]
+    subject: Option<SubjectId>,
 }
 
 struct App {
@@ -185,8 +193,34 @@ async fn add_note(
         text,
         author: token.sub.to_string().chars().take(8).collect(),
         at: now_ms(),
+        subject: Some(token.sub),
     });
     (StatusCode::CREATED, Json(json!({"ok": true}))).into_response()
+}
+
+/// Removes what this relying system holds about erased subjects: their
+/// notes. The notes live in memory, so a restart has none to catch up on;
+/// a relying system with a database would also keep the time it has handled
+/// erasures up to and read `erased_subjects` from there when it starts, as
+/// the Python version does.
+async fn forget_erased(app: Arc<App>) {
+    let mut erasures = app.konklav.erasures();
+    while let Some(notice) = erasures.recv().await {
+        let erased = match notice {
+            ErasureNotice::Erased(erased) => vec![erased],
+            // The feed couldn't resume where this client left off, so some
+            // erasures may never arrive on it: read them from Konklav.
+            ErasureNotice::Missed { since } => match app.konklav.erased_subjects(since).await {
+                Ok(erased) => erased,
+                Err(error) => {
+                    eprintln!("could not read the erased subjects: {error}");
+                    continue;
+                }
+            },
+        };
+        let mut notes = app.notes.lock().expect("notes");
+        notes.retain(|note| !erased.iter().any(|e| note.subject == Some(e.subject)));
+    }
 }
 
 /// CORS for the frontend's origin only, with the `Authorization` and `DPoP`
@@ -267,8 +301,11 @@ async fn main() {
             text: "Welcome! Editors can add notes.".into(),
             author: "the example".into(),
             at: now_ms(),
+            subject: None,
         }])),
     });
+
+    tokio::spawn(forget_erased(app.clone()));
 
     // The app's sign-in gives identity tokens: it selects no tenant.
     let notes_api = RouterPolicy::new(Policy::new().token_kinds([TokenKind::Identity]));

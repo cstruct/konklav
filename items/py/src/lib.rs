@@ -176,11 +176,18 @@ impl Core {
 
     /// Applies a feed event (the JSON `data` of an SSE event). Raises
     /// `ValueError` for malformed events; reconnect rather than skip them.
-    fn on_feed_event(&mut self, event: &str, now: u64) -> PyResult<()> {
+    ///
+    /// Returns an erasure notice for the relying system, or `None`:
+    /// `{"notice": "erased", "subject": ..., "erased_at": ...}` or
+    /// `{"notice": "missed", "since": ...}`.
+    fn on_feed_event(&mut self, event: &str, now: u64) -> PyResult<Option<String>> {
         let event: FeedEvent = parse(event, "feed event")?;
         self.inner
             .on_feed_event(&event, now)
-            .map_err(|e| PyValueError::new_err(format!("malformed feed event: {e}")))
+            .map_err(|e| PyValueError::new_err(format!("malformed feed event: {e}")))?
+            .as_ref()
+            .map(dump)
+            .transpose()
     }
 
     fn await_cursor(&mut self, cursor: i64) -> bool {

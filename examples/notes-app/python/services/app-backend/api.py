@@ -7,6 +7,11 @@ request from entitlements it keeps fresh from Konklav's change feed, so a
 role the admin page removes, or a session it ends, stops working here
 within about a second.
 
+Each note remembers the subject who wrote it. When Konklav erases a
+subject, the relying client says so and the backend deletes that person's
+notes; when the client may have missed erasures, such as at every start,
+the backend reads the erased subjects from Konklav instead.
+
 Compose runs two replicas behind a load balancer. Adding notes is rate
 limited per person, through Valkey so the replicas count together, and in
 each replica's memory while Valkey is unavailable.
@@ -36,7 +41,7 @@ from konklav_fastapi import (
     RouteRateLimit,
     Unauthenticated,
 )
-from konklav_relying import KonklavError, RateLimit, RateLimitWindow, RelyingClient
+from konklav_relying import Erased, ErasuresMissed, KonklavError, RateLimit, RateLimitWindow, RelyingClient
 
 from example import secrets, split_key
 
@@ -44,6 +49,32 @@ PUBLIC_URL = os.environ["PUBLIC_URL"]
 ACTIONS = ["notes:read", "notes:write"]
 # Which replica answered, so the page can show the load balancer at work.
 REPLICA = socket.gethostname()
+
+
+
+async def on_erasure(notice: Erased | ErasuresMissed) -> None:
+    """Removes what this relying system holds about erased subjects: their
+    notes. Both replicas hear of every erasure, and deleting twice is
+    harmless."""
+    if isinstance(notice, Erased):
+        await forget([notice.subject])
+        return
+    # Erasures may have been missed. `erasures.through` is the time this
+    # database has handled them up to; only reading Konklav's list moves it,
+    # so a notice that failed above is caught here next time.
+    db = notes_db()
+    through = await db.fetchval("SELECT through FROM erasures")
+    erased = await konklav.erased_subjects(since=through)
+    await forget([e.subject for e in erased])
+    if erased:
+        await db.execute("UPDATE erasures SET through = $1", max(e.erased_at for e in erased))
+
+
+async def forget(subjects: list[str]) -> None:
+    deleted = await notes_db().execute("DELETE FROM notes WHERE subject = ANY($1::text[])", subjects)
+    if subjects:
+        print(f"erased {len(subjects)} subject(s): {deleted}", flush=True)
+
 
 SECRETS = secrets()
 key_id, secret = split_key(SECRETS["app_api_key"])
@@ -55,6 +86,7 @@ konklav = RelyingClient(
     issuer=os.environ["ISSUER"],
     # The `app` OIDC client's tokens carry this audience.
     audience="app-api",
+    on_erasure=on_erasure,
 )
 
 
@@ -99,6 +131,12 @@ async def open_database() -> asyncpg.Pool:
             )
             """
         )
+        # Who wrote the note, so it can be deleted when Konklav erases them.
+        await connection.execute("ALTER TABLE notes ADD COLUMN IF NOT EXISTS subject text")
+        # One row: the time (Unix seconds) erasures are handled up to.
+        await connection.execute("CREATE TABLE IF NOT EXISTS erasures (through bigint)")
+        if await connection.fetchval("SELECT count(*) FROM erasures") == 0:
+            await connection.execute("INSERT INTO erasures (through) VALUES (NULL)")
         if await connection.fetchval("SELECT count(*) FROM notes") == 0:
             await connection.execute(
                 "INSERT INTO notes (text, author) VALUES ($1, $2)", "Welcome! Editors can add notes.", "the example"
@@ -137,7 +175,9 @@ async def add_note(request: Request, token: IdentityToken) -> Any:
     text = str((await request.json()).get("text", "")).strip()[:200]
     if not text:
         return JSONResponse({"message": "a note needs text"}, status_code=400)
-    await notes_db().execute("INSERT INTO notes (text, author) VALUES ($1, $2)", text, token.sub[:8])
+    await notes_db().execute(
+        "INSERT INTO notes (text, author, subject) VALUES ($1, $2, $3)", text, token.sub[:8], token.sub
+    )
     return {"ok": True, "replica": REPLICA}
 
 

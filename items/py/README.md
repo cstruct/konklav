@@ -10,9 +10,10 @@ Python bindings for the relying core, plus an asyncio/httpx host.
   - Runs background refreshes.
   - Decides locally, falling back to `/v1/check` when caches can't be trusted.
   - Offers `await_cursor` for read-your-writes.
+  - Hands erasures to the relying system: `on_erasure` is awaited with `Erased` for each subject Konklav erases and with `ErasuresMissed` when some may have been missed, which includes every start; `erased_subjects(since)` reads the erased subjects from Konklav to catch up ([erasure](../../docs/architecture/erasure.md#through-the-relying-sdk)).
 - `konklav_relying.policy`: route policies (`Policy`, `StepUp`), which state an operation's requirements with scope ids unresolved, merge across nested layers and resolve to the requirements JSON. Frozen dataclasses and the standard library only, so framework integrations can build on it.
 - `konklav_relying.rate_limit`: `RateLimit.add(key)`, raising `RateLimited`, over `_core.RateLimiterCore`. With the `redis` extra it shares limits through a `redis.asyncio` client the application owns, and answers from memory while Redis fails or is slow.
-- `konklav_relying.results`: typed results (`Decision`, `DenyReason`, `AccessToken`) read from the JSON the core and Konklav return.
+- `konklav_relying.results`: typed results (`Decision`, `DenyReason`, `AccessToken`, and the erasure notices `Erased` and `ErasuresMissed`) read from the JSON the core and Konklav return.
 - `konklav_relying.pacing` and `konklav_relying.fake_ids`: pacing (`Pacing`, `paced`) and fake ids (`fake_uuid7`), so that a relying system's own endpoints don't reveal by their timing or their ids whether a record exists. Standard library only.
 
 No decision logic lives in Python: a route policy only builds requirements.
@@ -52,6 +53,23 @@ decision = await client.decide(token, {"scopes": [{"kind": "project", "id": proj
 For sender-constrained (DPoP) tokens, `decide_request` and `verify_request` take the request's raw `Authorization` and `DPoP` headers, its method, and the public URL the client addressed (behind a proxy, not the upstream one). A deny with reason `invalid_dpop_proof`, or `InvalidDpopProof` from `verify_request`, should be answered with 401 and `WWW-Authenticate: DPoP error="invalid_dpop_proof"`.
 
 A request's DPoP proof is answered once, so a host that needs the verified token before it can state the requirements doesn't call `verify_request` and then `decide_request`. Instead it calls `accept_request`, which verifies the token, its session and its proof and returns an `AcceptedRequest` with the `AccessToken`, then decides once with `decide_accepted` (or `decide_accepted_typed`). That decision rechecks the session but not the proof.
+
+### Erasure
+
+A relying system that keeps data about subjects passes `on_erasure`:
+
+```python
+async def on_erasure(notice: Erased | ErasuresMissed) -> None:
+    if isinstance(notice, Erased):
+        await delete_everything_about(notice.subject)
+    else:
+        for erased in await client.erased_subjects(since=await stored_watermark()):
+            await delete_everything_about(erased.subject)
+
+client = RelyingClient(..., on_erasure=on_erasure)
+```
+
+The handler is awaited one notice at a time. `Erased` may repeat. `ErasuresMissed` comes when the feed couldn't resume where the client left off, and at every start, since the client can't know what happened while it wasn't running. A handler that raises is logged and its notice isn't repeated, so keep the time erasures are handled up to in your own storage and read `erased_subjects` from there on `ErasuresMissed`. The client drops its own cached sessions and entitlement sets for the subject before calling the handler.
 
 ### Route policies
 
@@ -268,7 +286,7 @@ mise run py:build   # build the sdist and a wheel into dist/
   - the core through the binding: decisions, revocations, flags, tenant facts, check fallback, input validation, DPoP proofs
   - route policies and typed results, with the doctests in this README and in `policy.py`, `results.py`, `pacing.py` and `fake_ids.py`
   - pacing (lower bounds only, so a loaded machine can't fail them; errors and cancellation) and fake ids (layout, random bits, claimed times)
-  - the client against an httpx mock of Konklav with a live SSE feed: fallback, local decisions, invalidation, revocation, unknown sessions
+  - the client against an httpx mock of Konklav with a live SSE feed: fallback, local decisions, invalidation, revocation, unknown sessions, erasure notices and reading the erased subjects
 
 ## Traceability and related docs
 

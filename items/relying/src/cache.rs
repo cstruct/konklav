@@ -5,7 +5,7 @@ use konklav_authz::{
     evaluate,
 };
 use konklav_core::feed::{
-    EntitlementsChanged, FeedEvent, FeedPayload, ScopeChanged, SessionChanged,
+    EntitlementsChanged, FeedEvent, FeedPayload, ScopeChanged, SessionChanged, SubjectErased,
 };
 use konklav_core::{Cursor, SessionId, SubjectId, TenantId};
 use konklav_token::{AccessClaims, JwkSet, VerifyOptions};
@@ -105,6 +105,25 @@ pub struct Work {
 
 /// The request a token was presented with: the method and the URL the
 /// client addressed, which a DPoP proof must name.
+/// What a feed event means for the data the relying system itself keeps
+/// about subjects. The core has dealt with its own caches already; the host
+/// binding hands the notice to the relying system.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "notice", rename_all = "snake_case")]
+pub enum ErasureNotice {
+    /// Konklav erased the subject. The same erasure may be handed over more
+    /// than once.
+    Erased(SubjectErased),
+    /// Erasures may have been missed, so the relying system should read the
+    /// erased subjects from Konklav.
+    Missed {
+        /// When this core applied its last feed event before the gap, in
+        /// Unix seconds by the host's clock; `None` when it had applied
+        /// none, as when the relying system has just started.
+        since: Option<i64>,
+    },
+}
+
 // r[impl item.relying.request-descriptor]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestDescriptor {
@@ -184,6 +203,9 @@ struct Feed {
     connected: bool,
     last_seen: u64,
     cursor: Option<Cursor>,
+    /// When the last event was applied, for telling the host since when
+    /// erasures may have been missed.
+    applied_at: Option<u64>,
 }
 
 /// The relying core's state. See the crate docs for how hosts drive it.
@@ -804,10 +826,18 @@ impl Relying {
 
     /// Applies one feed event. Malformed events of known kinds are an error,
     /// and the host should reconnect so it doesn't skip an invalidation.
+    ///
+    /// Returns what the host must pass on to the relying system, if
+    /// anything.
     // r[impl relying.feed.consume]
     // r[impl relying.cache.session-immediate]
-    pub fn on_feed_event(&mut self, event: &FeedEvent, now: u64) -> Result<(), serde_json::Error> {
+    pub fn on_feed_event(
+        &mut self,
+        event: &FeedEvent,
+        now: u64,
+    ) -> Result<Option<ErasureNotice>, serde_json::Error> {
         self.feed.last_seen = now;
+        let mut notice = None;
         match event.parse()? {
             FeedPayload::SessionChanged(state) => self.on_session(state),
             FeedPayload::EntitlementsChanged(changed) => {
@@ -816,6 +846,13 @@ impl Relying {
             FeedPayload::SigningKeysChanged(_) => self.jwks_wanted = true,
             FeedPayload::ScopeChanged(changed) => {
                 self.invalidate_scopes(&changed, event.cursor, now);
+            }
+            // r[impl relying.erasure.notify]
+            FeedPayload::SubjectErased(erased) => {
+                self.sessions
+                    .retain(|_, session| session.subject != erased.subject);
+                self.entries.retain(|key, _| key.subject != erased.subject);
+                notice = Some(ErasureNotice::Erased(erased));
             }
             // r[impl relying.feed.reset]
             FeedPayload::Reset => {
@@ -830,13 +867,32 @@ impl Relying {
                 for entry in self.scopes.values_mut() {
                     entry.stale.get_or_insert((now, event.cursor));
                 }
+                // r[impl relying.erasure.reset]
+                notice = Some(ErasureNotice::Missed {
+                    since: self.applied_seconds(),
+                });
             }
-            // The cursor below is all a position carries.
+            // The cursor below is all a position carries. A stream that
+            // starts at a position without resuming from one of this core's
+            // own has skipped whatever happened before it.
             // r[impl relying.feed.position]
-            FeedPayload::Position | FeedPayload::Other => {}
+            // r[impl relying.erasure.reset]
+            FeedPayload::Position => {
+                if self.feed.cursor.is_none() {
+                    notice = Some(ErasureNotice::Missed { since: None });
+                }
+            }
+            FeedPayload::Other => {}
         }
         self.feed.cursor = Some(event.cursor);
-        Ok(())
+        self.feed.applied_at = Some(now);
+        Ok(notice)
+    }
+
+    fn applied_seconds(&self) -> Option<i64> {
+        self.feed
+            .applied_at
+            .map(|at| i64::try_from(at / 1000).unwrap_or(i64::MAX))
     }
 
     fn invalidate(&mut self, changed: &EntitlementsChanged, cursor: Cursor, now: u64) {

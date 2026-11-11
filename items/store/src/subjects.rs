@@ -210,6 +210,65 @@ pub async fn list(
         .collect())
 }
 
+/// An erased subject's id and when it was erased.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ErasedSubject {
+    pub id: SubjectId,
+    pub erased_at: DateTime<Utc>,
+}
+
+/// Erased subjects in the order they were erased, ties by id, optionally
+/// only those erased at or after `since`. Pass the last id of a page as
+/// `after` for the next: the page then starts behind that subject, however
+/// many were erased at the same instant.
+///
+/// [`StoreError::NotFound`] when `after` isn't an erased subject.
+// r[impl subject.erasure.list]
+pub async fn erased(
+    conn: &mut AsyncPgConnection,
+    since: Option<DateTime<Utc>>,
+    after: Option<SubjectId>,
+    limit: i64,
+) -> StoreResult<Vec<ErasedSubject>> {
+    let mut query = subject::table
+        .filter(subject::erased_at.is_not_null())
+        .into_boxed();
+    if let Some(since) = since {
+        query = query.filter(subject::erased_at.ge(since));
+    }
+    if let Some(after) = after {
+        let after = uuid::Uuid::from(after);
+        let at: Option<DateTime<Utc>> = subject::table
+            .find(after)
+            .select(subject::erased_at)
+            .first::<Option<DateTime<Utc>>>(conn)
+            .await
+            .optional()?
+            .flatten();
+        let at = at.ok_or(StoreError::NotFound)?;
+        query = query.filter(
+            subject::erased_at
+                .gt(at)
+                .or(subject::erased_at.eq(at).and(subject::id.gt(after))),
+        );
+    }
+    let rows: Vec<(uuid::Uuid, Option<DateTime<Utc>>)> = query
+        .order((subject::erased_at.asc(), subject::id.asc()))
+        .limit(limit)
+        .select((subject::id, subject::erased_at))
+        .load(conn)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id, erased_at)| {
+            Some(ErasedSubject {
+                id: id.into(),
+                erased_at: erased_at?,
+            })
+        })
+        .collect())
+}
+
 /// What [`erase`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Erasure {

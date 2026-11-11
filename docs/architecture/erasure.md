@@ -131,15 +131,61 @@ A relying system that keeps anything keyed by subject id should:
    idempotent, because the feed is at-least-once and catching up can
    repeat an erasure.
 3. Catch up after a `reset`, or after any outage longer than feed
-   retention, with `GET /v1/subjects/erased?since=` on the relying
+   retention, with `GET /v1/erased-subjects?since=` on the relying
    surface. The list covers every erasure there has ever been, in the
    order they happened, so a system that was away for a year reads a year
    of it.
 
-The relying SDK does the cache side itself: on `subject.erased` it drops
-the subject's cached sessions and entitlement sets before handing the
-event to the host. Decisions need nothing special, because an erased
-subject has no sessions and an empty entitlement set.
+The list's entries have the form of the event's payload: `subject` and
+`erased_at`, in seconds. `since` is in seconds too and inclusive, so a
+system can pass the time of the last event it applied and get the erasure
+at that very second again rather than miss it. A full page ends with
+`next`, which goes into `after` for the page behind it.
+
+The path isn't under `/v1/subjects`, because the control-plane surface has
+`/v1/subjects/{id}` and surfaces that share a listener must not overlap.
+
+### Through the relying SDK
+
+The relying core does the cache side itself: on `subject.erased` it drops
+the subject's cached sessions and entitlement sets, and then returns an
+erasure notice for the host binding to hand to the relying system.
+Decisions need nothing special, because an erased subject has no sessions
+and an empty entitlement set.
+
+There are two notices:
+
+- **Erased**, with the subject and the time. The relying system deletes
+  its data about the subject.
+- **Missed**: erasures may have been missed, so the relying system should
+  read the list. The core gives it on a `reset`, with the time it applied
+  its last event (by the host's clock), and when it starts following the
+  feed with no position of its own, without a time. The second case is
+  every start of the process: the bindings keep their feed position in
+  memory, so they can't know what happened while they weren't running.
+
+| Binding | Notices | Reading the list |
+| --- | --- | --- |
+| `konklav-relying-client` (Rust) | `RelyingClient::erasures()`, a channel of `ErasureNotice`; ask for it before `start()` | `RelyingClient::erased_subjects(since)` |
+| `konklav-relying` (Python) | `RelyingClient(on_erasure=...)`, awaited with `Erased` or `ErasuresMissed`, one at a time | `RelyingClient.erased_subjects(since)` |
+
+`konklav-axum` and `konklav-fastapi` add nothing of their own: the
+application holds the client they are given.
+
+Notices aren't durable. They are lost with the process, and the Python
+client logs a handler that raises and moves on. A relying system that
+must not miss an erasure therefore keeps, in its own storage, the time it
+has handled erasures up to:
+
+1. On **Missed**, read the list from the stored time, delete, and store
+   the latest `erased_at` read. Only this step moves the stored time.
+2. On **Erased**, delete. This is the fast path, and may fail without
+   harm, since the next read of the list repeats it.
+
+A deployment that restarts rarely can also run step 1 on a schedule. The
+Python notes app ([examples/notes-app](../../examples/notes-app)) does
+exactly this for its notes; the Rust one keeps notes in memory and so has
+nothing to catch up on after a restart.
 
 Usually the relying system is also where erasure starts, since it owns the
 relationship with the person and knows what must be settled first. Its

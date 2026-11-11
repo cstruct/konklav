@@ -10,7 +10,7 @@ use ed25519_dalek::SigningKey;
 use konklav_authz::{Decision, DenyReason, Requirements};
 use konklav_core::Cursor;
 use konklav_relying::Config;
-use konklav_relying_client::{ClientConfig, RelyingClient};
+use konklav_relying_client::{ClientConfig, ErasureNotice, RelyingClient};
 use konklav_server::config::Listen;
 use konklav_server::feed::FeedHub;
 use konklav_server::keys::ConfiguredKeys;
@@ -142,6 +142,8 @@ struct World {
     token: String,
     session: String,
     membership: String,
+    /// The human the token is for.
+    human: String,
 }
 
 async fn world() -> World {
@@ -250,6 +252,7 @@ async fn world() -> World {
         token: selected["access_token"].as_str().unwrap().to_owned(),
         session: selected["session_id"].as_str().unwrap().to_owned(),
         membership,
+        human: human.to_string(),
         client,
         config,
         server,
@@ -685,5 +688,73 @@ async fn accepted_requests_are_decided_once() {
     assert_eq!(
         world.client.verify_request(&bearer_as_dpop).await.unwrap(),
         Verified::InvalidProof
+    );
+}
+
+// r[verify relying.erasure.notify]
+// r[verify relying.erasure.reset]
+#[tokio::test(flavor = "multi_thread")]
+async fn erasures_reach_the_host_live_and_through_the_list() {
+    let world = world().await;
+    let client = RelyingClient::new(world.config.clone());
+    let mut erasures = client.erasures();
+    let _tasks = client.start();
+    until_trusted(&client).await;
+    let next = async |erasures: &mut tokio::sync::mpsc::UnboundedReceiver<ErasureNotice>| {
+        tokio::time::timeout(Duration::from_secs(5), erasures.recv())
+            .await
+            .expect("an erasure notice within 5s")
+            .expect("the client is still running")
+    };
+
+    // A client that has just started can't know what it missed.
+    assert_eq!(
+        next(&mut erasures).await,
+        ErasureNotice::Missed { since: None }
+    );
+    assert_eq!(client.erased_subjects(None).await.unwrap(), vec![]);
+    assert_eq!(
+        client.decide(&world.token, &reading()).await.unwrap(),
+        Decision::allow()
+    );
+
+    let erased = world
+        .server
+        .control(
+            Method::POST,
+            &format!("/v1/subjects/{}/erase", world.human),
+            json!({}),
+        )
+        .await;
+    let ErasureNotice::Erased(notice) = next(&mut erasures).await else {
+        panic!("expected the erasure");
+    };
+    assert_eq!(notice.subject.to_string(), world.human);
+    // By the time the host hears of it, the client decides nothing from
+    // what it had cached about the subject.
+    assert_eq!(
+        client.decide(&world.token, &reading()).await.unwrap(),
+        Decision::Deny {
+            reason: DenyReason::InvalidToken
+        }
+    );
+    let cursor = Cursor::new(erased["cursor"].as_i64().unwrap());
+    assert!(client.await_cursor(cursor, Duration::from_secs(5)).await);
+
+    // Catching up reads the same erasure, from any time at or before it.
+    assert_eq!(client.erased_subjects(None).await.unwrap(), vec![notice]);
+    assert_eq!(
+        client
+            .erased_subjects(Some(notice.erased_at))
+            .await
+            .unwrap(),
+        vec![notice]
+    );
+    assert_eq!(
+        client
+            .erased_subjects(Some(notice.erased_at + 3600))
+            .await
+            .unwrap(),
+        vec![]
     );
 }

@@ -331,6 +331,8 @@ async def list_users(request: Request) -> Response:
     keys = await role_ids()
     users = []
     async for subject in control.subjects.iter(kind="human"):
+        if subject["state"] == "erased":
+            continue
         detail, assignments = await asyncio.gather(
             control.subjects.get(subject["id"]), control.assignments.list_global(subject["id"])
         )
@@ -400,9 +402,17 @@ async def sign_out_user(request: Request) -> Response:
 async def set_state(request: Request) -> Response:
     session, _ = await authorize(request)
     subject, action = request.path_params["subject"], request.path_params["action"]
-    if action not in ("disable", "enable"):
+    if action not in ("disable", "enable", "erase"):
         raise Refused(404, "not found")
-    if action == "disable":
+    if action == "erase":
+        # Konklav removes what it holds about the person and says so on the
+        # change feed, where the app backend hears it and deletes their
+        # notes. Konklav refuses a caller erasing itself; this caller is
+        # the page's service principal, so the page checks for the admin.
+        if subject == session.sub:
+            raise Refused(400, "you can't erase yourself")
+        await settled(await control.subjects.erase(subject))
+    elif action == "disable":
         if subject == session.sub:
             raise Refused(400, "you can't disable yourself")
         await settled(await control.subjects.disable(subject))

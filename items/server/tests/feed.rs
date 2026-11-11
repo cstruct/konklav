@@ -300,3 +300,61 @@ async fn change_feed_streams_are_capped() {
         "closing a stream frees its slot"
     );
 }
+
+// r[verify feed.subject-erased]
+// r[verify subject.erasure.list]
+#[tokio::test(flavor = "multi_thread")]
+async fn an_erasure_streams_live_and_is_still_listed_after_a_reset() {
+    let app = TestApp::new().await;
+    let running = app.serve().await;
+    let service = app.service_token().await;
+    let ada = app.human("ada@example.com", PASSWORD).await;
+    login(&app, "ada@example.com").await;
+
+    let url = format!("http://{}/v1/events", running.relying);
+    let mut feed = SseReader::open(&url, &service, Some("0")).await;
+    let erased = app
+        .control(Method::POST, &format!("/v1/subjects/{ada}/erase"), None)
+        .await;
+    assert_eq!(erased.status, StatusCode::OK, "{:?}", erased.body);
+
+    // The erasure comes last, after what it caused.
+    let mut seen = Vec::new();
+    let event = loop {
+        let event = feed.next().await;
+        if event.event == "subject.erased" {
+            break event;
+        }
+        if event.data["payload"].to_string().contains(&ada) {
+            seen.push(event.event);
+        }
+    };
+    assert_eq!(event.id, Some(erased.body["cursor"].to_string()));
+    assert_eq!(event.data["payload"]["subject"], ada);
+    assert!(
+        seen.iter().any(|kind| kind == "session.changed"),
+        "{seen:?}"
+    );
+
+    // A consumer that was away for longer than retention is told to reset,
+    // and reads what it missed from the list, which is never pruned.
+    {
+        let mut conn = app.db.pool().get().await.unwrap();
+        konklav_store::events::prune_before(
+            &mut conn,
+            chrono::Utc::now() + chrono::Duration::seconds(1),
+            1000,
+        )
+        .await
+        .unwrap();
+    }
+    let mut feed = SseReader::open(&url, &service, Some("1")).await;
+    assert_eq!(feed.next().await.event, "reset");
+    let listed = app
+        .with_bearer(Method::GET, "/v1/erased-subjects?since=0", &service)
+        .await;
+    assert_eq!(
+        listed.body,
+        json!({"subjects": [event.data["payload"]], "next": null})
+    );
+}

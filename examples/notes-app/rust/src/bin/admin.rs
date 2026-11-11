@@ -649,6 +649,9 @@ async fn list_users(State(admin): State<Arc<Admin>>, request: Asked) -> Answer {
         let page = control.get(&page_path).await?;
         for subject in page["subjects"].as_array().into_iter().flatten() {
             let id = subject["id"].as_str().unwrap_or_default();
+            if subject["state"] == "erased" {
+                continue;
+            }
             let (detail_path, assignments_path) = (
                 format!("/subjects/{id}"),
                 format!("/subjects/{id}/global-assignments"),
@@ -775,7 +778,7 @@ async fn set_role(
     Ok(Json(json!({"ok": true})).into_response())
 }
 
-/// `sign-out` (every session), `disable` or `enable`.
+/// `sign-out` (every session), `disable`, `enable` or `erase`.
 async fn act_on_user(
     State(admin): State<Arc<Admin>>,
     Path((subject, action)): Path<(String, String)>,
@@ -799,7 +802,15 @@ async fn act_on_user(
                 "you can't disable yourself",
             ));
         }
-        "disable" | "enable" => {
+        // Konklav refuses a caller erasing itself; this caller is the page's
+        // service principal, so the page checks for the admin.
+        "erase" if subject == session.sub => {
+            return Err(refused(StatusCode::BAD_REQUEST, "you can't erase yourself"));
+        }
+        // `erase` removes what Konklav holds about the person and says so
+        // on the change feed, where the app backend hears it and deletes
+        // their notes.
+        "disable" | "enable" | "erase" => {
             control
                 .call(Method::POST, &format!("/subjects/{subject}/{action}"), None)
                 .await?

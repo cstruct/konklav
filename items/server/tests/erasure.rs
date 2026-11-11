@@ -389,3 +389,242 @@ async fn a_service_principal_behind_a_client_is_erased_only_once_the_client_is_d
         .await;
     assert_eq!(enabled.code(), "SUBJECT_ERASED", "{:?}", enabled.body);
 }
+
+async fn erased_page(app: &TestApp, token: &str, query: &str) -> Reply {
+    let reply = app
+        .with_bearer(Method::GET, &format!("/v1/erased-subjects{query}"), token)
+        .await;
+    assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+    reply
+}
+
+fn listed(page: &Reply) -> Vec<String> {
+    page.body["subjects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["subject"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+// r[verify subject.erasure.list]
+#[tokio::test(flavor = "multi_thread")]
+async fn relying_systems_page_through_every_erasure_in_order() {
+    let app = TestApp::new().await;
+    let consumer = app.service_token().await;
+    let first = app.human("first@example.com", PASSWORD).await;
+    let kept = app.human("kept@example.com", PASSWORD).await;
+    // The two in the batch are erased at the same instant, so paging has to
+    // tell them apart by more than the time.
+    let mut together = [
+        app.human("second@example.com", PASSWORD).await,
+        app.human("third@example.com", PASSWORD).await,
+    ];
+    together.sort();
+    let last = app.human("last@example.com", PASSWORD).await;
+
+    assert_eq!(
+        erased_page(&app, &consumer, "").await.body["subjects"],
+        json!([])
+    );
+
+    let before = chrono::Utc::now().timestamp();
+    assert_eq!(erase(&app, &first).await.status, StatusCode::OK);
+    let batch = app
+        .control(
+            Method::POST,
+            "/v1/batch",
+            Some(json!({"operations": [
+                {"method": "POST", "path": format!("/subjects/{}/erase", together[1])},
+                {"method": "POST", "path": format!("/subjects/{}/erase", together[0])},
+            ]})),
+        )
+        .await;
+    assert_eq!(batch.status, StatusCode::OK, "{:?}", batch.body);
+    assert_eq!(erase(&app, &last).await.status, StatusCode::OK);
+    let order = [
+        first.clone(),
+        together[0].clone(),
+        together[1].clone(),
+        last.clone(),
+    ];
+
+    let all = erased_page(&app, &consumer, "").await;
+    assert_eq!(listed(&all), order);
+    assert!(all.body["next"].is_null(), "{:?}", all.body);
+    assert!(!listed(&all).contains(&kept));
+    let entry = &all.body["subjects"][1];
+    assert_eq!(
+        entry.as_object().unwrap().keys().collect::<Vec<_>>(),
+        ["erased_at", "subject"],
+        "the same form as a subject.erased event's payload"
+    );
+    assert_eq!(entry["erased_at"], all.body["subjects"][2]["erased_at"]);
+    assert!(entry["erased_at"].as_i64().unwrap() >= before);
+
+    // One at a time, each page starting behind the last subject of the one
+    // before.
+    let mut paged = Vec::new();
+    let mut query = "?limit=1".to_owned();
+    loop {
+        let page = erased_page(&app, &consumer, &query).await;
+        paged.extend(listed(&page));
+        match page.body["next"].as_str() {
+            Some(next) => query = format!("?limit=1&after={next}"),
+            None => break,
+        }
+    }
+    assert_eq!(paged, order);
+
+    // `since` is inclusive, and leaves out what was erased earlier.
+    let since = erased_page(&app, &consumer, &format!("?since={before}")).await;
+    assert_eq!(listed(&since), order);
+    let later = chrono::Utc::now().timestamp() + 60;
+    let none = erased_page(&app, &consumer, &format!("?since={later}")).await;
+    assert_eq!(none.body, json!({"subjects": [], "next": null}));
+
+    // A subject that isn't erased marks no position.
+    let stray = app
+        .with_bearer(
+            Method::GET,
+            &format!("/v1/erased-subjects?after={kept}"),
+            &consumer,
+        )
+        .await;
+    assert_eq!(stray.code(), "INVALID_REQUEST", "{:?}", stray.body);
+
+    // Like the rest of the relying surface, only for service principals.
+    let human = app.login("kept@example.com", PASSWORD).await.body["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let forbidden = app
+        .with_bearer(Method::GET, "/v1/erased-subjects", &human)
+        .await;
+    assert_eq!(forbidden.code(), "FORBIDDEN");
+    let anonymous = app
+        .send(Method::GET, "/v1/erased-subjects", &[], None)
+        .await;
+    assert_eq!(anonymous.code(), "UNAUTHENTICATED");
+}
+
+/// An app with a catalog, a `reader` template allowing `project:read`,
+/// and a tenant with a role from it: the app and the tenant's id.
+async fn app_with_a_tenant() -> (TestApp, String) {
+    let app = TestApp::new().await;
+    let catalog = app
+        .control(
+            Method::PUT,
+            "/v1/catalog",
+            Some(json!({
+                "actions": [{"name": "project:read"}],
+                "groups": [],
+                "scope_kinds": [],
+                "facts": [],
+                "session_flags": []
+            })),
+        )
+        .await;
+    assert_eq!(catalog.status, StatusCode::OK, "{:?}", catalog.body);
+    app.control(
+        Method::PUT,
+        "/v1/templates/reader",
+        Some(json!({"policies": [{"action": "project:read", "effect": "allow"}]})),
+    )
+    .await;
+    let tenant = uuid::Uuid::now_v7().to_string();
+    let created = app
+        .control(
+            Method::PUT,
+            &format!("/v1/tenants/{tenant}"),
+            Some(json!({"templates": ["reader"]})),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+    (app, tenant)
+}
+
+// r[verify subject.erasure.entitlements]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_relying_surface_answers_for_an_erased_subject_as_for_one_holding_nothing() {
+    let (app, tenant) = app_with_a_tenant().await;
+    let ada = app.human("ada@example.com", PASSWORD).await;
+    let idle = app.human("idle@example.com", PASSWORD).await;
+    let membership = uuid::Uuid::now_v7();
+    let joined = app
+        .control(
+            Method::PUT,
+            &format!("/v1/memberships/{membership}"),
+            Some(json!({"subject": ada, "tenant": tenant})),
+        )
+        .await;
+    assert_eq!(joined.status, StatusCode::CREATED, "{:?}", joined.body);
+    let assigned = app
+        .control(
+            Method::POST,
+            &format!("/v1/memberships/{membership}/assignments"),
+            Some(json!({"role": "reader"})),
+        )
+        .await;
+    assert_eq!(assigned.status, StatusCode::CREATED, "{:?}", assigned.body);
+
+    let identity = app.login("ada@example.com", PASSWORD).await.body["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let auth = format!("Bearer {identity}");
+    let selected = app
+        .send(
+            Method::POST,
+            "/v1/login/tenant",
+            &[("authorization", &auth)],
+            Some(json!({"tenant": tenant})),
+        )
+        .await;
+    assert_eq!(selected.status, StatusCode::OK, "{:?}", selected.body);
+    let token = selected.body["access_token"].as_str().unwrap().to_owned();
+
+    let consumer = app.service_token().await;
+    let service = format!("Bearer {consumer}");
+    let check = async || {
+        let reply = app
+            .send(
+                Method::POST,
+                "/v1/check",
+                &[("authorization", &service)],
+                Some(json!({"token": token, "requirements": {"tenant": ["project:read"]}})),
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+        reply.body
+    };
+    let entitlements = async |subject: &str, tenant: Option<&str>| {
+        let uri = match tenant {
+            Some(tenant) => format!("/v1/entitlements/{subject}/{tenant}"),
+            None => format!("/v1/entitlements/{subject}"),
+        };
+        let mut reply = app.with_bearer(Method::GET, &uri, &consumer).await;
+        assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+        let set = reply.body.as_object_mut().unwrap();
+        set.remove("subject_id");
+        set.remove("revision");
+        reply.body
+    };
+    assert_eq!(check().await["decision"], "allow");
+    assert_eq!(
+        entitlements(&ada, Some(&tenant)).await["tenant"],
+        json!(["project:read"])
+    );
+
+    assert_eq!(erase(&app, &ada).await.status, StatusCode::OK);
+
+    assert_eq!(
+        check().await,
+        json!({"decision": "deny", "reason": "invalid_token", "revision": null})
+    );
+    for scope in [Some(tenant.as_str()), None] {
+        let erased = entitlements(&ada, scope).await;
+        assert_eq!(erased, entitlements(&idle, scope).await, "{scope:?}");
+        assert_eq!(erased["tenant"], json!([]), "{erased:?}");
+    }
+}
