@@ -9,6 +9,9 @@ pub const CONTROL_ALL: &str = "konklav:control:all";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Capability {
     Subjects,
+    /// Erasing subjects, apart from managing them because it can't be
+    /// undone.
+    Erase,
     Tenants,
     Authz,
     Sessions,
@@ -18,8 +21,9 @@ pub enum Capability {
 }
 
 impl Capability {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Subjects,
+        Self::Erase,
         Self::Tenants,
         Self::Authz,
         Self::Sessions,
@@ -33,6 +37,7 @@ impl Capability {
     pub const fn action(self) -> &'static str {
         match self {
             Self::Subjects => "konklav:subjects:manage",
+            Self::Erase => "konklav:subjects:erase",
             Self::Tenants => "konklav:tenants:manage",
             Self::Authz => "konklav:authz:manage",
             Self::Sessions => "konklav:sessions:manage",
@@ -46,7 +51,8 @@ impl Capability {
     #[must_use]
     pub const fn describes(self) -> &'static str {
         match self {
-            Self::Subjects => "Subjects and their credentials",
+            Self::Subjects => "Subjects, their credentials and personal data reports",
+            Self::Erase => "Erasing subjects",
             Self::Tenants => "Tenants and memberships",
             Self::Authz => "Catalog, templates, roles, assignments and entitlements",
             Self::Sessions => "Listing and revoking sessions",
@@ -113,6 +119,10 @@ mod tests {
         let people = Grants::held(["konklav:subjects:manage".to_owned()]);
         assert!(people.allows(Capability::Subjects));
         assert!(!people.allows(Capability::Sessions));
+        assert!(
+            !people.allows(Capability::Erase),
+            "managing subjects doesn't let an operator erase them"
+        );
 
         let root = Grants::held([CONTROL_ALL.to_owned()]);
         assert!(Capability::ALL.iter().all(|c| root.allows(*c)));

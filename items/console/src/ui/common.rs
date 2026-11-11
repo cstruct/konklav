@@ -66,6 +66,34 @@ pub fn confirm(message: &str) -> bool {
     window().confirm_with_message(message).unwrap_or(false)
 }
 
+/// Hands the operator `text` as a file to save, named `name`. Returns
+/// whether the browser took it.
+pub fn save_file(name: &str, media_type: &str, text: &str) -> bool {
+    use wasm_bindgen::{JsCast, JsValue};
+    use web_sys::{Blob, BlobPropertyBag, HtmlElement, Url};
+
+    let options = BlobPropertyBag::new();
+    options.set_type(media_type);
+    let parts = js_sys::Array::of1(&JsValue::from_str(text));
+    let Ok(url) = Blob::new_with_str_sequence_and_options(&parts, &options)
+        .and_then(|blob| Url::create_object_url_with_blob(&blob))
+    else {
+        return false;
+    };
+    // The object URL is left to the page's unloading: revoking it here can
+    // cancel the download in some browsers.
+    document()
+        .create_element("a")
+        .ok()
+        .and_then(|link| {
+            link.set_attribute("href", &url).ok()?;
+            link.set_attribute("download", name).ok()?;
+            link.dyn_into::<HtmlElement>().ok()
+        })
+        .map(|link| link.click())
+        .is_some()
+}
+
 #[component]
 pub fn Id(#[prop(into)] id: String) -> impl IntoView {
     view! { <code class="id" title=id.clone()>{short(&id)}</code> }
