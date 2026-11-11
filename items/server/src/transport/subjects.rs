@@ -11,8 +11,10 @@ pub(crate) fn subject(subject: &Subject) -> api::Subject {
         state: match subject.state {
             SubjectState::Active => api::SubjectState::Active,
             SubjectState::Disabled => api::SubjectState::Disabled,
+            SubjectState::Erased => api::SubjectState::Erased,
         },
         created_at: subject.created_at,
+        erased_at: subject.erased_at,
     }
 }
 

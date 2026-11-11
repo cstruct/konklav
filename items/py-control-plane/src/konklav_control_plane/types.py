@@ -290,7 +290,7 @@ type DenyReason = DenyReasonInvalidToken | DenyReasonInvalidDpopProof | DenyReas
 type Effect = Literal['allow', 'deny']
 
 
-type ErrorCode = Literal['NOT_FOUND', 'METHOD_NOT_ALLOWED', 'INVALID_REQUEST', 'CONFLICT', 'UNAUTHENTICATED', 'INVALID_CREDENTIALS', 'SESSION_ENDED', 'FORBIDDEN', 'RATE_LIMITED', 'OVERLOADED', 'SIGNING_KEY_UNAVAILABLE', 'CLAIMS_HOOK_UNAVAILABLE', 'INTERNAL', 'DATABASE_UNAVAILABLE', 'MIGRATIONS_PENDING']
+type ErrorCode = Literal['NOT_FOUND', 'METHOD_NOT_ALLOWED', 'INVALID_REQUEST', 'CONFLICT', 'SUBJECT_ERASED', 'UNAUTHENTICATED', 'INVALID_CREDENTIALS', 'SESSION_ENDED', 'FORBIDDEN', 'RATE_LIMITED', 'OVERLOADED', 'SIGNING_KEY_UNAVAILABLE', 'CLAIMS_HOOK_UNAVAILABLE', 'INTERNAL', 'DATABASE_UNAVAILABLE', 'MIGRATIONS_PENDING']
 """
 Stable, machine-readable error codes. Never rename a variant: add a new
 one instead.
@@ -803,7 +803,7 @@ Whether a subject is a person or software.
 """
 
 
-type SubjectState = Literal['active', 'disabled']
+type SubjectState = Literal['active', 'disabled', 'erased']
 
 
 class Template(TypedDict):
@@ -978,6 +978,10 @@ class WrittenSubject(TypedDict):
     """
 
     created_at: str
+    erased_at: str | None
+    """
+    When the subject was erased, if it was.
+    """
     id: SubjectId
     kind: SubjectKind
     state: SubjectState
@@ -1710,7 +1714,7 @@ class Session(TypedDict):
     auth_time: str
     client_kind: ClientKind
     created_at: str
-    credential_id: CredentialId
+    credential_id: CredentialId | None
     dpop_jkt: NotRequired[str | None]
     """
     The DPoP key thumbprint of a bound session.
@@ -1821,6 +1825,10 @@ class Shared(TypedDict):
 
 class Subject(TypedDict):
     created_at: str
+    erased_at: str | None
+    """
+    When the subject was erased, if it was.
+    """
     id: SubjectId
     kind: SubjectKind
     state: SubjectState

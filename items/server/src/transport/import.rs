@@ -17,6 +17,8 @@ pub(crate) fn subject_record(record: &api::ImportedSubject) -> SubjectRecord {
         state: match record.state {
             api::SubjectState::Active => SubjectState::Active,
             api::SubjectState::Disabled => SubjectState::Disabled,
+            // Refused when written: only erasure erases a subject.
+            api::SubjectState::Erased => SubjectState::Erased,
         },
     }
 }

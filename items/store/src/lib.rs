@@ -49,8 +49,35 @@ pub enum StoreError {
     /// A write to something only Konklav defines, such as a built-in role.
     #[error("reserved: {0}")]
     Reserved(String),
+    /// A write that would change an erased subject or attach something to
+    /// it. Erasure is final.
+    #[error("the subject is erased")]
+    SubjectErased,
     #[error("database error: {0}")]
-    Database(#[from] diesel::result::Error),
+    Database(#[source] diesel::result::Error),
+}
+
+/// The constraint name the database's erasure guards raise with.
+const ERASED_CONSTRAINT: &str = "subject_erased";
+
+/// Whether the database refused a write because it names an erased subject.
+fn names_erased_subject(error: &diesel::result::Error) -> bool {
+    matches!(
+        error,
+        diesel::result::Error::DatabaseError(_, info)
+            if info.constraint_name() == Some(ERASED_CONSTRAINT)
+    )
+}
+
+// r[impl subject.erasure.blocks-writes]
+impl From<diesel::result::Error> for StoreError {
+    fn from(error: diesel::result::Error) -> Self {
+        if names_erased_subject(&error) {
+            Self::SubjectErased
+        } else {
+            Self::Database(error)
+        }
+    }
 }
 
 impl StoreError {
@@ -60,7 +87,7 @@ impl StoreError {
                 diesel::result::DatabaseErrorKind::UniqueViolation,
                 _,
             ) => Self::Conflict(format!("{what} already exists")),
-            other => Self::Database(other),
+            other => other.into(),
         }
     }
 
@@ -69,6 +96,9 @@ impl StoreError {
     /// database error.
     fn from_constraint(error: diesel::result::Error) -> Self {
         use diesel::result::DatabaseErrorKind as Kind;
+        if names_erased_subject(&error) {
+            return Self::SubjectErased;
+        }
         match error {
             diesel::result::Error::DatabaseError(
                 Kind::UniqueViolation | Kind::ForeignKeyViolation | Kind::CheckViolation,

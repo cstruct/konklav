@@ -198,6 +198,17 @@ class Subjects(_Resource[M]):
     def enable(self, id: str) -> Any:
         return self._do(Call("POST", path("subjects", id, "enable"), written=True))
 
+    @overload
+    async def erase(self: Subjects[Direct], id: str) -> Written[types.Subject]: ...
+
+    @overload
+    def erase(self: Subjects[Batched], id: str) -> Pending[Written[types.Subject]]: ...
+
+    @operation("erase_subject")
+    def erase(self, id: str) -> Any:
+        """Removes all personal data held about the subject. This can't be undone."""
+        return self._do(Call("POST", path("subjects", id, "erase"), written=True))
+
 
 class Credentials(_Resource[M]):
     @overload

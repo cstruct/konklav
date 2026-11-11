@@ -11,6 +11,9 @@ pub enum ErrorCode {
     MethodNotAllowed,
     InvalidRequest,
     Conflict,
+    /// The request would change an erased subject or attach something to
+    /// it. Erasure is final, so retrying can't succeed.
+    SubjectErased,
     /// No usable credentials were presented (missing or invalid token).
     Unauthenticated,
     /// The login identifier, secret or credential is wrong. Deliberately
@@ -38,7 +41,7 @@ impl ErrorCode {
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::InvalidRequest => StatusCode::BAD_REQUEST,
-            Self::Conflict => StatusCode::CONFLICT,
+            Self::Conflict | Self::SubjectErased => StatusCode::CONFLICT,
             Self::Unauthenticated | Self::InvalidCredentials | Self::SessionEnded => {
                 StatusCode::UNAUTHORIZED
             }

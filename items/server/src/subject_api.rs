@@ -580,8 +580,12 @@ pub(crate) async fn still_valid(
     conn: &mut Connection,
     session: &Session,
 ) -> Result<bool, ApiError> {
+    // Only an ended session lacks a credential: erasure deleted it.
+    let Some(credential) = session.credential_id else {
+        return Ok(false);
+    };
     let subject = subjects::get(conn, session.subject_id).await?;
-    let credential = credentials::get(conn, session.credential_id).await?;
+    let credential = credentials::get(conn, credential).await?;
     if subject.state == SubjectState::Active && credential.is_active() {
         return Ok(true);
     }

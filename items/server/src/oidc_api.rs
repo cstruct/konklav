@@ -1250,7 +1250,7 @@ async fn start_client_session(
                     dpop_jkt: dpop_jkt.map(str::to_owned),
                     id,
                     subject_id: parent.subject_id,
-                    credential_id: parent.credential_id,
+                    credential_id: parent.credential()?,
                     stage: Stage::Identity,
                     client_kind: SessionClient::Native,
                     amr: parent.amr.clone(),
@@ -1297,7 +1297,7 @@ async fn tokens_for(
         .filter(|scope| *scope == "groups")
         .cloned()
         .collect();
-    let credential = credentials::get(conn, session.credential_id).await?;
+    let credential = credentials::get(conn, session.credential()?).await?;
     let claims = oidc::claims(
         conn,
         client,
@@ -1778,8 +1778,12 @@ async fn peer_subject(
     let Some(latest) = sessions::latest_for_client(&mut conn, &client.id, subject).await? else {
         return Ok(unknown());
     };
+    // An erased subject's sessions have ended and lost their credential.
+    let Some(credential) = latest.credential_id else {
+        return Ok(unknown());
+    };
     let principal = konklav_store::subjects::get(&mut conn, subject).await?;
-    let credential = credentials::get(&mut conn, latest.credential_id).await?;
+    let credential = credentials::get(&mut conn, credential).await?;
     let selection = Selection {
         scopes: &client.scopes,
         claims: &[],
@@ -1958,7 +1962,7 @@ async fn userinfo(
         }
         (None, Scheme::Bearer) => {}
     }
-    let credential = credentials::get(&mut conn, session.credential_id)
+    let credential = credentials::get(&mut conn, session.credential().map_err(ApiError::from)?)
         .await
         .map_err(ApiError::from)?;
     let selection = Selection {

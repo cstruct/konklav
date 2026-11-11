@@ -115,3 +115,7 @@ period they were current. Adding a tracked table is a row in
 The outbox, revoked sessions, used challenges, superseded credentials and
 row versions that stopped being current are pruned by a background job
 according to configured retention periods.
+
+Retention deletes rows because of their age. Removing one person's data
+on request is [erasure](erasure.md), which doesn't wait for any of these
+periods and also reaches into row versions and stored events.

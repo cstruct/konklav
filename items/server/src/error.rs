@@ -86,6 +86,10 @@ impl From<StoreError> for ApiError {
             StoreError::NotFound => Self::new(ErrorCode::NotFound, "not found"),
             StoreError::Conflict(message) => Self::new(ErrorCode::Conflict, message),
             StoreError::Reserved(message) => Self::new(ErrorCode::InvalidRequest, message),
+            // r[impl subject.erasure.blocks-writes]
+            StoreError::SubjectErased => {
+                Self::new(ErrorCode::SubjectErased, "the subject is erased")
+            }
             StoreError::Database(error) => Self::internal(error),
         }
     }

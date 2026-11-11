@@ -34,7 +34,10 @@ pub struct RequestedClaims {
 pub struct Session {
     pub id: SessionId,
     pub subject_id: SubjectId,
-    pub credential_id: CredentialId,
+    /// The credential the session was established with. Null only for an
+    /// ended session of an erased subject.
+    #[schema(required)]
+    pub credential_id: Option<CredentialId>,
     #[schema(required)]
     pub tenant_id: Option<TenantId>,
     #[schema(required)]

@@ -90,7 +90,8 @@ instances on one database, at most one sweeper MUST run at a time.
 r[retention.challenges]
 A challenge MUST be deleted once it has expired, but not before the longest
 send-limit window has passed since it was created, since send limits count
-challenges.
+challenges. Erasure deletes an erased subject's challenges at once
+(`subject.erasure.removes`).
 
 r[retention.batch-results]
 A remembered batch answer MUST be deleted once its idempotency key's
@@ -148,7 +149,9 @@ trusted.
 r[history.as-of]
 Reading the state as of a time within the history horizon MUST return
 exactly the row versions that were current then, and MUST NOT change the
-current state.
+current state. The one difference is that the memberships of a subject
+erased since then are returned without their facts
+(`subject.erasure.history`).
 
 ## Telemetry
 
@@ -312,7 +315,9 @@ r[import.idempotent]
 Konklav MUST offer a bulk import of subjects, credentials, MFA factors and
 sessions that keeps the imported identifiers and can be re-run: records
 whose identifiers already exist are skipped. Import MUST require a
-dedicated control-plane capability.
+dedicated control-plane capability. A record for an erased subject MUST be
+reported as `SUBJECT_ERASED` and MUST NOT change it
+(`subject.erasure.blocks-writes`).
 
 r[import.credentials]
 Imported password and secret-key credentials MUST be accepted as Argon2
@@ -474,8 +479,9 @@ roles, subjects, credentials with their hashes, MFA factors, memberships,
 role assignments and active registered scopes as a bootstrap set that
 `bootstrap` applies to an empty database without problems or conflicts, so
 that exporting that database writes the same set. It MUST read the database directly, never
-the control plane, and MUST NOT write sessions or signing keys. It MUST
-report what it left out because a bootstrap set can't hold it.
+the control plane, and MUST NOT write sessions, signing keys or erased
+subjects. It MUST report what it left out because a bootstrap set can't
+hold it.
 
 r[bootstrap.export.registered]
 Export MUST write every active registered scope with its tenant and

@@ -101,6 +101,7 @@ fn subject() -> Value {
         "kind": "service",
         "state": "active",
         "created_at": "2026-11-02T10:00:00Z",
+        "erased_at": null,
     })
 }
 

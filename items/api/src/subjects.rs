@@ -17,6 +17,9 @@ pub enum SubjectKind {
 pub enum SubjectState {
     Active,
     Disabled,
+    /// Final: the subject's personal data was removed, and only its id,
+    /// kind and this state are left.
+    Erased,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -25,6 +28,9 @@ pub struct Subject {
     pub kind: SubjectKind,
     pub state: SubjectState,
     pub created_at: DateTime<Utc>,
+    /// When the subject was erased, if it was.
+    #[schema(required)]
+    pub erased_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::IntoParams)]

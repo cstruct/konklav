@@ -43,8 +43,9 @@ Every subject MUST have a kind, `human` or `service`. Service subjects MUST
 NOT authenticate with interactive credentials.
 
 r[subject.state]
-A subject MUST be either `active` or `disabled`. Disabling a subject MUST
-revoke all of its sessions and block new ones.
+A subject MUST be `active`, `disabled` or `erased`. Disabling a subject MUST
+revoke all of its sessions and block new ones. An erased subject MUST stay
+erased: it MUST NOT be enabled or disabled.
 
 r[subject.no-profile]
 Konklav MUST NOT be the system of record for subject profile data such as
@@ -62,7 +63,8 @@ A login identifier MUST be unique among active credentials of the same kind.
 
 r[credential.history]
 Credential replacement and revocation MUST preserve history. A credential
-MUST NOT be overwritten in place.
+MUST NOT be overwritten in place. Erasure (`subject.erasure.removes`) is the
+only operation that removes credentials.
 
 r[credential.password.hashing]
 Password credentials MUST be stored with a memory-hard password hash
@@ -138,6 +140,105 @@ type MUST fail.
 r[fact.unique-keys]
 A fact key MUST be declared for at most one target (tenant, membership or
 share), so that tokens can carry tenant and membership facts side by side.
+
+## Erasure
+
+r[subject.erasure.operation]
+The control plane MUST offer an operation that erases one subject. It MUST
+require a capability of its own, since it can't be undone, and it is a
+change of the subject's state under `authz.control-plane.escalation`. A
+caller MUST NOT be able to erase its own subject.
+
+r[subject.erasure.removes]
+Erasing a subject MUST leave Konklav holding none of its personal data. It
+MUST:
+- revoke the subject's sessions and the sessions started from them, such
+  as impersonation sessions, and erase the claims an identity provider
+  passed and the key thumbprint from each
+- delete its credentials, its MFA factors and the challenges made for it,
+  or sent to one of its recipients without naming a subject
+- delete the login attempts recorded for its login identifiers
+- end its memberships and remove their facts
+- delete its role assignments, global ones included
+- delete the stored `delivery.requested` events made for it, or sent to
+  one of its recipients without naming a subject
+- delete the remembered batch answers that name it or one of its login
+  identifiers
+
+r[subject.erasure.history]
+Erasure MUST also remove the facts from every row version of the subject's
+memberships, at once and whatever history's retention is.
+
+r[subject.erasure.tombstone]
+An erased subject MUST keep its id, kind and state `erased`, with the time
+of erasure, and nothing else. Its id MUST NOT be given to another subject,
+and creating a subject with that id MUST fail with `SUBJECT_ERASED`.
+
+r[subject.erasure.atomic]
+Erasure MUST happen in one transaction, together with the events it
+causes. A failed erasure MUST change nothing.
+
+r[subject.erasure.idempotent]
+Erasing an erased subject MUST succeed, change nothing and append no
+events.
+
+r[subject.erasure.blocks-writes]
+Every later operation that would give an erased subject a credential, MFA
+factor, membership, role assignment, challenge or session MUST fail with `SUBJECT_ERASED`, whichever way it arrives: the control
+plane, a batch, an import, a bootstrap set or an identity provider's claim
+mapping.
+
+r[subject.erasure.identifier-released]
+After erasure, each of the subject's login identifiers MUST be free for
+another subject to take, and authenticating with one MUST fail exactly as
+for a login identifier Konklav has never seen
+(`platform.error.no-enumeration`).
+
+r[subject.erasure.bound-client]
+Erasing a service principal that an OIDC client authenticates as MUST fail
+with a conflict until the client is disabled. Enabling such a client again
+MUST fail with `SUBJECT_ERASED`.
+
+r[subject.erasure.event]
+Erasure MUST append one `subject.erased` event after the `session.changed`
+and `entitlements.changed` events it causes.
+
+r[subject.erasure.list]
+The relying surface MUST let a service principal read the erased subjects'
+ids with their times of erasure, ordered by that time, in pages, from a
+time the caller gives. It MUST cover every erasure there has ever been, so
+that a relying system can catch up however long it was away.
+
+r[subject.erasure.entitlements]
+The relying surface MUST answer for an erased subject as for any subject
+that holds nothing: an empty entitlement set and denied checks.
+
+## Personal data reports
+
+r[subject.report.contents]
+The control plane MUST offer a personal data report for one subject,
+holding:
+- the subject
+- its credentials: kind, login identifier, times, and for a federated
+  credential the provider with what it reported, for a passkey its label
+- its MFA factors: kind and, for an email factor, the address
+- its memberships with their facts, and its role assignments
+- its sessions that have not been deleted: times, authentication methods,
+  client kind, OIDC client and the claims an identity provider passed
+- its challenges that have not been deleted: purpose, recipient and times
+
+r[subject.report.no-secrets]
+A personal data report MUST NOT hold password hashes, secret keys, MFA
+seeds, passkey key material, refresh-token hashes or challenge material.
+
+r[subject.report.erased]
+The personal data report of an erased subject MUST hold only what
+`subject.erasure.tombstone` keeps.
+
+r[subject.report.complete]
+Every place Konklav stores personal data MUST be covered by both
+`subject.erasure.removes` and `subject.report.contents`. Adding such a
+place without deciding both MUST fail verification.
 
 r[fact.portability]
 Every fact key MUST be declared portable or non-portable. Only portable

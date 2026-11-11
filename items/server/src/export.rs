@@ -16,7 +16,7 @@
 //!
 //! What it leaves out, and reports: sessions, signing keys, OIDC clients and
 //! the `client` credentials they bind, passkeys (a bootstrap set can't hold
-//! them), revoked credentials, ended memberships, tenant states, removed
+//! them), erased subjects, revoked credentials, ended memberships, tenant states, removed
 //! registered scopes, and records an identity provider's claim mapping
 //! manages, which it makes again.
 
@@ -279,6 +279,11 @@ async fn people(
 ) -> Result<People, ExportError> {
     let mut people = People::default();
     for subject in all_subjects(conn).await? {
+        // An erased subject holds nothing a bootstrap set could carry.
+        if subject.state == SubjectState::Erased {
+            report.leave_out("erased subjects");
+            continue;
+        }
         people.subjects.push(vec![
             subject.id.to_string(),
             match subject.kind {
@@ -286,11 +291,7 @@ async fn people(
                 SubjectKind::Service => "service",
             }
             .to_owned(),
-            match subject.state {
-                SubjectState::Active => "active",
-                SubjectState::Disabled => "disabled",
-            }
-            .to_owned(),
+            subject.state.as_str().to_owned(),
         ]);
         for credential in credentials::list_for_subject(conn, subject.id).await? {
             match credential_row(&credential) {

@@ -584,7 +584,7 @@ async fn complete_mfa(
         .filter(|f| f.active)
         .ok_or_else(invalid_code)?;
     let amr = verify_factor(&state, &mut conn, &factor, &body.code).await?;
-    let credential = credentials::get(&mut conn, session.credential_id).await?;
+    let credential = credentials::get(&mut conn, session.credential()?).await?;
     let required = usize::try_from(credential.mfa_factors_required)
         .unwrap_or(1)
         .max(1);
@@ -1079,7 +1079,7 @@ async fn impersonate(
             subject_id: target.id,
             // The impersonator's credential: the target's credentials were
             // never presented.
-            credential_id: parent.credential_id,
+            credential_id: parent.credential()?,
             stage: Stage::Identity,
             client_kind: parent.client_kind,
             amr: parent.amr.clone(),

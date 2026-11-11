@@ -56,6 +56,11 @@ pub(crate) fn subjects() -> OpenApiRouter<AppState> {
         .routes(routes!(set_slot_expiry))
 }
 
+/// Erasure, apart from [`subjects`] because it needs its own capability.
+pub(crate) fn erasure() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(erase_subject))
+}
+
 /// Sessions, described like [`subjects`].
 pub(crate) fn sessions() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -75,7 +80,7 @@ pub(crate) fn signing_keys() -> OpenApiRouter<AppState> {
 /// control surface and its API document are both built from this list, so a
 /// route can't be served without being documented.
 // r[impl item.api.document]
-pub(crate) fn groups() -> [(OpenApiRouter<AppState>, &'static str); 11] {
+pub(crate) fn groups() -> [(OpenApiRouter<AppState>, &'static str); 12] {
     use crate::{
         control_authz, explain_api, import_api, invites, oidc_clients_api, registered_scopes_api,
         shares_api,
@@ -83,6 +88,7 @@ pub(crate) fn groups() -> [(OpenApiRouter<AppState>, &'static str); 11] {
     [
         (control_authz::tenancy(), capabilities::TENANTS),
         (subjects(), capabilities::SUBJECTS),
+        (erasure(), capabilities::SUBJECTS_ERASE),
         (sessions(), capabilities::SESSIONS),
         (signing_keys(), capabilities::KEYS),
         (control_authz::authz(), capabilities::AUTHZ),
@@ -361,6 +367,49 @@ async fn enable_subject(
     Path(id): Path<String>,
 ) -> Result<Json<Written<api::Subject>>, ApiError> {
     set_subject_state(&db, operator, &id, SubjectState::Active).await
+}
+
+/// Erases a subject.
+///
+/// Removes all personal data Konklav holds about the subject, for good: its
+/// credentials, MFA factors, challenges, role assignments and membership
+/// facts, in history and stored events too. Its sessions and memberships
+/// end. The subject stays, as `erased`, and its id is never used again.
+/// Relying systems learn of it from a `subject.erased` event.
+///
+/// Erasing an erased subject changes nothing and returns it without a
+/// cursor. A service principal that an OIDC client authenticates as can't
+/// be erased until the client is disabled.
+// r[impl subject.erasure.operation]
+#[utoipa::path(post, path = "/subjects/{id}/erase", tag = "subjects", params(("id" = SubjectId, Path)),
+    responses(
+        (status = 200, body = Written<api::Subject>),
+        (status = 409, description = "An OIDC client authenticates as the subject", body = api::ErrorResponse),
+    ))]
+async fn erase_subject(
+    db: Db,
+    Extension(operator): Extension<Operator>,
+    Path(id): Path<String>,
+) -> Result<Json<Written<api::Subject>>, ApiError> {
+    let id: SubjectId = parse_id(&id, "subject id")?;
+    if operator.subject == Some(id) {
+        return Err(ApiError::new(
+            ErrorCode::Forbidden,
+            "an operator can't erase their own subject",
+        ));
+    }
+    let mut conn = db.get().await?;
+    operator.may_change(&mut conn, id).await?;
+    let erasure = subjects::erase(&mut conn, id)
+        .await
+        .map_err(|error| match error {
+            StoreError::NotFound => ApiError::not_found("subject"),
+            other => other.into(),
+        })?;
+    Ok(Json(Written {
+        value: transport::subject(&erasure.subject),
+        cursor: erasure.cursor,
+    }))
 }
 
 // --- Credentials ------------------------------------------------------------

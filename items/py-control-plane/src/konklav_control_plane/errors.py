@@ -41,7 +41,7 @@ class NotFound(KonklavError):
 
 
 class Conflict(KonklavError):
-    """`CONFLICT`."""
+    """`CONFLICT`, or `SUBJECT_ERASED` for a write to an erased subject; `code` says which."""
 
 
 class InvalidRequest(KonklavError):
@@ -80,6 +80,7 @@ class Unavailable(KonklavError):
 _BY_CODE: dict[str, type[KonklavError]] = {
     "NOT_FOUND": NotFound,
     "CONFLICT": Conflict,
+    "SUBJECT_ERASED": Conflict,
     "INVALID_REQUEST": InvalidRequest,
     "UNAUTHENTICATED": Unauthenticated,
     "INVALID_CREDENTIALS": Unauthenticated,
