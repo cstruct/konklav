@@ -46,10 +46,10 @@ r[authn.pacing]
 Endpoints whose response time could reveal whether a login identifier,
 subject or credential exists (first-factor login, MFA completion, step-up,
 starting and completing passwordless login and password reset, password
-change and invite redemption) MUST NOT respond before a configured floor
-plus or minus a random jitter, measured from the request's arrival. The
-work and the wait MUST run concurrently, so the floor adds no latency when
-the work takes longer.
+change, and invite redemption and preview) MUST NOT respond before a
+configured floor plus or minus a random jitter, measured from the
+request's arrival. The work and the wait MUST run concurrently, so the
+floor adds no latency when the work takes longer.
 
 ## MFA and step-up
 
@@ -343,6 +343,76 @@ An operator MUST be able to revoke an invite that hasn't been redeemed.
 Redeeming a revoked invite MUST fail exactly as redeeming an expired one
 does. Revoking an invite again MUST change nothing, and revoking a redeemed
 invite MUST fail with a typed conflict.
+
+### Emailed and link-only invites
+
+An invite is either *emailed*, to an address Konklav asks to have the token
+delivered to, or *link-only*, with no address: the relying system shares
+the link itself, for example by copy-paste or as a QR code.
+
+r[authn.invite.emailed]
+An emailed invite's token MUST only be delivered (`challenge.delivery.event`)
+and MUST NOT be returned, not even when it is created. Holding the token is
+what proves the address: redeeming it links a password credential for the
+address to a new subject, or proves the existing one's password. A token
+returned to the relying system for a "copy link" would let whoever got the
+link create an account for an address nobody proved; a relying system that
+wants a link to share creates a link-only invite instead.
+
+r[authn.invite.link-only]
+Creating an invite without an address MUST deliver nothing and MUST return
+the invite's token in the response that creates it, once, as a new secret
+key's secrets are (`platform.idempotency.client-ids`). Konklav keeps only
+its hash. An identical repeat of a pending link-only invite MUST show a new
+token and stop accepting the first; a repeat of one that is no longer
+pending MUST show none.
+
+r[authn.invite.bearer]
+A link-only invite MUST be redeemable by whoever holds its token: there is
+no address to match, so the link is a bearer link, and the relying system
+decides who it shares it with. It MUST be redeemable either
+- by a signed-in subject, with a full session (identity or tenant stage)
+  of a human subject that isn't impersonated, whatever method it signed in
+  or signed up with: the session's subject redeems it, and no session is
+  started or changed, so a session that should carry restrictive flags
+  asks for them when it signs in (`session.flags.origin`); or
+- without a session, with the login identifier and password of an existing
+  password credential, checked exactly as a password login checks them
+  (`authn.login.rate-limit`, `authn.login.timing`,
+  `platform.error.no-enumeration`, `credential.mfa-requirement`), which
+  then starts a session as the password login would, with the `client` and
+  `flags` of `authn.login.session-request`.
+
+Redeeming a link-only invite MUST NOT create a subject or credential: no
+address was proved, and the holder of a bearer link could claim anyone's.
+Someone without an account signs up first, through the relying system, and
+then redeems the invite signed in. An emailed invite MUST be redeemed only
+as `authn.invite.redeem` describes, never by a signed-in subject or with a
+login identifier.
+
+r[authn.invite.token-limits]
+Every check of an invite token, to redeem or to preview it, MUST count as
+an attempt from the client's address, failed until the token proves valid,
+toward the per-address limits of `authn.login.rate-limit`, so one source
+can't try many tokens. An attempt MUST count while it is being checked, so
+concurrent checks can't exceed the limit. Konklav MUST NOT limit checks per
+invite, which would let anyone who knows an invite's id lock it out.
+Redeeming and previewing invites MUST be paced (`authn.pacing`).
+
+r[authn.invite.preview]
+The subject-facing surface MUST let anyone holding an invite token, signed
+in or not, preview the invite before redeeming it, so that a login
+application can show what it is for. A pending or redeemed invite's
+preview MUST give its state, its expiry, whether it is link-only, and its
+public metadata (`metadata.public`), and nothing else: not its address,
+tenant, roles, membership or metadata. An unknown, expired, used-up or
+revoked token MUST fail exactly as redeeming it fails, so a preview can't
+tell a revoked invite from an expired or unknown one
+(`authn.invite.revoke`). Previewing MUST NOT change the invite.
+
+r[authn.invite.redeemed-event]
+Redeeming an invite of either kind MUST emit `invite.redeemed`
+(`metadata.invites`), with the subject that redeemed it.
 
 r[authn.reset-password]
 Password reset MUST go through a challenge, and completing it MUST revoke

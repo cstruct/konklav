@@ -8,7 +8,7 @@
 use axum::Json;
 use axum::extract::{Path, Query};
 use diesel_async::AsyncConnection;
-use konklav_api::{RevokeShare, Share, ShareList, ShareQuery, ShareTerms};
+use konklav_api::{OfferShare, RevokeShare, Share, ShareList, ShareQuery};
 use konklav_core::ShareId;
 use konklav_store::catalog::FactTarget;
 use konklav_store::shares;
@@ -20,7 +20,7 @@ use crate::control_api::{Written, parse_id};
 use crate::db::Db;
 use crate::error::{ApiError, ApiJson};
 use crate::import::{not_found_as, validate_facts};
-use crate::{AppState, transport};
+use crate::{AppState, metadata, transport};
 
 /// Shares, with the `OpenAPI` description of each route taken from its
 /// handler's `#[utoipa::path]`.
@@ -39,20 +39,24 @@ fn share_id(value: &str) -> Result<ShareId, ApiError> {
 /// Offers a share or changes its terms.
 ///
 /// Changing the terms of a share that isn't revoked offers it again, so the
-/// recipient must accept it again.
+/// recipient must accept it again. Its metadata isn't one of its terms:
+/// changing only the metadata replaces it without offering the share again.
 // r[impl authz.share.shape]
 // r[impl authz.share.attributes]
+// r[impl metadata.write.replace]
 #[utoipa::path(put, path = "/shares/{id}", operation_id = "offer_share", tag = "shares",
     params(("id" = ShareId, Path, description = "Chosen by the caller")),
-    request_body = ShareTerms,
+    request_body = OfferShare,
     responses((status = 200, body = Written<Share>)))]
 async fn offer(
     db: Db,
+    limit: metadata::Limit,
     Path(id): Path<String>,
-    ApiJson(terms): ApiJson<ShareTerms>,
+    ApiJson(body): ApiJson<OfferShare>,
 ) -> Result<Json<Written<Share>>, ApiError> {
     let id = share_id(&id)?;
-    let terms = transport::share_terms(terms);
+    limit.check(&body.metadata)?;
+    let terms = transport::share_terms(body.terms);
     if terms.owner == terms.recipient {
         return Err(ApiError::invalid_request(
             "a tenant can't share with itself",
@@ -89,7 +93,7 @@ async fn offer(
                 &serde_json::Value::Object(terms.attributes.clone()),
             )
             .await?;
-            let share = shares::offer(conn, id, &terms).await?;
+            let share = shares::offer(conn, id, &terms, &body.metadata).await?;
             Ok((share, events::last_in_transaction(conn).await?))
         })
         .await?;
@@ -178,9 +182,10 @@ async fn list(
     let tenant = tenants::parse_reference(&tenant)
         .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
     let side = query.side.map(transport::store_share_side);
+    let filter = metadata::filter(query.metadata.as_deref())?;
     let mut conn = db.get().await?;
     Ok(Json(ShareList {
-        shares: shares::list(&mut conn, tenant, side)
+        shares: shares::list(&mut conn, tenant, side, filter.as_ref())
             .await?
             .into_iter()
             .map(transport::share)

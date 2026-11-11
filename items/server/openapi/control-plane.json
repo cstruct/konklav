@@ -58,7 +58,7 @@
           "batch"
         ],
         "summary": "Applies operations in order, all or nothing.",
-        "description": "Each operation is a `PUT`, `POST` or `DELETE` with the path (without\n`/v1`) and body it takes alone, and is authorized against the caller's own\ncapabilities. On success, `results` holds what each answered; on failure\nnothing is committed and the error is the failing operation's, with its\nposition as `error.operation`. With an `idempotency_key`, repeating the\nbatch answers what it first answered, with new secrets where that answer\nshowed some.",
+        "description": "Each operation is a `PUT`, `POST`, `PATCH` or `DELETE` with the path (without\n`/v1`) and body it takes alone, and is authorized against the caller's own\ncapabilities. On success, `results` holds what each answered; on failure\nnothing is committed and the error is the failing operation's, with its\nposition as `error.operation`. With an `idempotency_key`, repeating the\nbatch answers what it first answered, with new secrets where that answer\nshowed some.",
         "operationId": "apply_batch",
         "requestBody": {
           "content": {
@@ -199,6 +199,81 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Credential"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:subjects:manage"
+      }
+    },
+    "/v1/credentials/{id}/metadata": {
+      "patch": {
+        "tags": [
+          "credentials"
+        ],
+        "summary": "Merge-patches a credential's metadata.",
+        "description": "As for subjects.",
+        "operationId": "patch_credential_metadata",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/CredentialId"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "A `metadata_etag`",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/merge-patch+json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The patched object, with its metadata's new entity tag also as `ETag`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Credential"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "`If-Match` didn't match: the metadata changed since it was read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -689,12 +764,80 @@
       }
     },
     "/v1/invites": {
+      "get": {
+        "tags": [
+          "invites"
+        ],
+        "summary": "Lists invites, newest first.",
+        "description": "Optionally only those to one tenant, or whose metadata matches a filter.",
+        "operationId": "list_invites",
+        "parameters": [
+          {
+            "name": "tenant",
+            "in": "query",
+            "description": "Only invites to this tenant (a UUID or `root`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "metadata",
+            "in": "query",
+            "description": "A JSON object of strings, numbers and booleans: only objects whose\nmetadata has each of its keys at the top level with an equal value.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitePage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:invites:manage"
+      },
       "post": {
         "tags": [
           "invites"
         ],
-        "summary": "Invites someone to a tenant.",
-        "description": "The invite token is delivered (as `delivery.requested`) and never returned.\nIdempotent on a caller-chosen `id`: repeating the request with the same\ncontent returns 200 and delivers nothing again.",
+        "summary": "Invites someone, optionally to a tenant.",
+        "description": "With an `email`, the invite token is delivered (as `delivery.requested`)\nand never returned. Without one, the invite is link-only: nothing is\ndelivered, and `token` shows the token once, for the relying system to\nshare as a link that whoever holds it may redeem.\nIdempotent on a caller-chosen `id`: repeating the request with the same\ncontent returns 200 and delivers nothing again; for a pending link-only\ninvite it shows a new token and stops accepting the first.",
         "operationId": "create_invite",
         "requestBody": {
           "content": {
@@ -708,7 +851,7 @@
         },
         "responses": {
           "200": {
-            "description": "Already existed with the same content; nothing is delivered again",
+            "description": "Already existed with the same content; nothing is delivered again. A pending link-only invite's new token is in `token`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -718,7 +861,7 @@
             }
           },
           "201": {
-            "description": "Created; the token is delivered to the address, never returned",
+            "description": "Created. An emailed invite's token is delivered to the address, never returned; a link-only invite's is in `token`, shown only once.",
             "content": {
               "application/json": {
                 "schema": {
@@ -765,6 +908,82 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Invite"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:invites:manage"
+      }
+    },
+    "/v1/invites/{id}/metadata": {
+      "patch": {
+        "tags": [
+          "invites"
+        ],
+        "summary": "Merge-patches an invite's metadata.",
+        "description": "As for subjects. The patched metadata is what redemption hands over.",
+        "operationId": "patch_invite_metadata",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "A `metadata_etag`",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/merge-patch+json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The patched object, with its metadata's new entity tag also as `ETag`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Invite"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "`If-Match` didn't match: the metadata changed since it was read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1095,6 +1314,81 @@
         "x-konklav-capability": "konklav:tenants:manage"
       }
     },
+    "/v1/memberships/{id}/metadata": {
+      "patch": {
+        "tags": [
+          "memberships"
+        ],
+        "summary": "Merge-patches a membership's metadata.",
+        "description": "As for subjects.",
+        "operationId": "patch_membership_metadata",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/MembershipId"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "A `metadata_etag`",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/merge-patch+json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The patched object, with its metadata's new entity tag also as `ETag`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Membership"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "`If-Match` didn't match: the metadata changed since it was read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
+      }
+    },
     "/v1/oidc/clients": {
       "get": {
         "tags": [
@@ -1102,6 +1396,17 @@
         ],
         "summary": "Lists OIDC clients.",
         "operationId": "list_oidc_clients",
+        "parameters": [
+          {
+            "name": "metadata",
+            "in": "query",
+            "description": "A JSON object of strings, numbers and booleans, such as\n`{\"tenant_id\":\"t-1\"}`: only objects whose metadata has each of its\nkeys at the top level with an equal value.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -1246,6 +1551,82 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OidcClient"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:clients:manage"
+      }
+    },
+    "/v1/oidc/clients/{id}/metadata": {
+      "patch": {
+        "tags": [
+          "oidc-clients"
+        ],
+        "summary": "Merge-patches an OIDC client's metadata.",
+        "description": "As for subjects; the registration is otherwise untouched.",
+        "operationId": "patch_oidc_client_metadata",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The client id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "A `metadata_etag`",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/merge-patch+json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The patched object, with its metadata's new entity tag also as `ETag`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_OidcClient"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "`If-Match` didn't match: the metadata changed since it was read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1662,7 +2043,7 @@
           "shares"
         ],
         "summary": "Offers a share or changes its terms.",
-        "description": "Changing the terms of a share that isn't revoked offers it again, so the\nrecipient must accept it again.",
+        "description": "Changing the terms of a share that isn't revoked offers it again, so the\nrecipient must accept it again. Its metadata isn't one of its terms:\nchanging only the metadata replaces it without offering the share again.",
         "operationId": "offer_share",
         "parameters": [
           {
@@ -1679,7 +2060,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ShareTerms"
+                "$ref": "#/components/schemas/OfferShare"
               }
             }
           },
@@ -1733,6 +2114,81 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Written_Share"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
+      }
+    },
+    "/v1/shares/{id}/metadata": {
+      "patch": {
+        "tags": [
+          "shares"
+        ],
+        "summary": "Merge-patches a share's metadata.",
+        "description": "As for subjects. The share isn't offered again: metadata isn't one of\nits terms.",
+        "operationId": "patch_share_metadata",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ShareId"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "A `metadata_etag`",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/merge-patch+json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The patched object, with its metadata's new entity tag also as `ETag`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Share"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "`If-Match` didn't match: the metadata changed since it was read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1899,6 +2355,15 @@
             "name": "identifier",
             "in": "query",
             "description": "A login identifier (email address, phone number or key id).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "metadata",
+            "in": "query",
+            "description": "A JSON object of strings, numbers and booleans: only objects whose\nmetadata has each of its keys at the top level with an equal value.",
             "required": false,
             "schema": {
               "type": "string"
@@ -2514,6 +2979,81 @@
         "x-konklav-capability": "konklav:authz:manage"
       }
     },
+    "/v1/subjects/{id}/metadata": {
+      "patch": {
+        "tags": [
+          "subjects"
+        ],
+        "summary": "Merge-patches a subject's metadata.",
+        "description": "An RFC 7396 merge patch: members replace the metadata's, `null` removes\none. With `If-Match`, only if the metadata's entity tag still matches.",
+        "operationId": "patch_subject_metadata",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectId"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "A `metadata_etag`",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/merge-patch+json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The patched object, with its metadata's new entity tag also as `ETag`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Subject"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "`If-Match` didn't match: the metadata changed since it was read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:subjects:manage"
+      }
+    },
     "/v1/subjects/{id}/personal-data": {
       "get": {
         "tags": [
@@ -2563,6 +3103,17 @@
         ],
         "summary": "Lists role templates.",
         "operationId": "list_templates",
+        "parameters": [
+          {
+            "name": "metadata",
+            "in": "query",
+            "description": "A JSON object of strings, numbers and booleans, such as\n`{\"tenant_id\":\"t-1\"}`: only objects whose metadata has each of its\nkeys at the top level with an equal value.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -2680,6 +3231,81 @@
         "x-konklav-capability": "konklav:authz:manage"
       }
     },
+    "/v1/templates/{key}/metadata": {
+      "patch": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Merge-patches a template's metadata.",
+        "description": "As for subjects; the template's policies and roles are untouched.",
+        "operationId": "patch_template_metadata",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "A `metadata_etag`",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/merge-patch+json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The patched object, with its metadata's new entity tag also as `ETag`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Template"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "`If-Match` didn't match: the metadata changed since it was read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
+      }
+    },
     "/v1/tenants": {
       "get": {
         "tags": [
@@ -2691,6 +3317,15 @@
           {
             "name": "parent",
             "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "metadata",
+            "in": "query",
+            "description": "A JSON object of strings, numbers and booleans: only objects whose\nmetadata has each of its keys at the top level with an equal value.",
             "required": false,
             "schema": {
               "type": "string"
@@ -2919,6 +3554,15 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "metadata",
+            "in": "query",
+            "description": "A JSON object of strings, numbers and booleans: only objects whose\nmetadata has each of its keys at the top level with an equal value.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2930,6 +3574,82 @@
                   "items": {
                     "$ref": "#/components/schemas/Membership"
                   }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
+      }
+    },
+    "/v1/tenants/{id}/metadata": {
+      "patch": {
+        "tags": [
+          "tenants"
+        ],
+        "summary": "Merge-patches a tenant's metadata.",
+        "description": "As for subjects.",
+        "operationId": "patch_tenant_metadata",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The tenant: a UUID or `root`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "A `metadata_etag`",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/merge-patch+json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The patched object, with its metadata's new entity tag also as `ETag`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Tenant"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "`If-Match` didn't match: the metadata changed since it was read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -2961,6 +3681,15 @@
             "in": "path",
             "description": "The tenant: a UUID or `root`",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "metadata",
+            "in": "query",
+            "description": "A JSON object of strings, numbers and booleans, such as\n`{\"tenant_id\":\"t-1\"}`: only objects whose metadata has each of its\nkeys at the top level with an equal value.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -3150,6 +3879,90 @@
         "x-konklav-capability": "konklav:authz:manage"
       }
     },
+    "/v1/tenants/{id}/roles/{key}/metadata": {
+      "patch": {
+        "tags": [
+          "roles"
+        ],
+        "summary": "Merge-patches a role's metadata.",
+        "description": "As for subjects; the role's policies are untouched. Built-in roles\ncan't be patched.",
+        "operationId": "patch_role_metadata",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The tenant: a UUID or `root`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "A `metadata_etag`",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/merge-patch+json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The patched object, with its metadata's new entity tag also as `ETag`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Role"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "`If-Match` didn't match: the metadata changed since it was read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:authz:manage"
+      }
+    },
     "/v1/tenants/{id}/shares": {
       "get": {
         "tags": [
@@ -3174,6 +3987,15 @@
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/ShareSide"
+            }
+          },
+          {
+            "name": "metadata",
+            "in": "query",
+            "description": "A JSON object of strings, numbers and booleans: only objects whose\nmetadata has each of its keys at the top level with an equal value.",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -3436,6 +4258,7 @@
         "enum": [
           "PUT",
           "POST",
+          "PATCH",
           "DELETE"
         ]
       },
@@ -3453,6 +4276,13 @@
               "null"
             ],
             "description": "The operation's request body, if it takes one."
+          },
+          "if_match": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The entity tag the operation would send alone as `If-Match`, such\nas a `metadata_etag` for a metadata patch."
           },
           "method": {
             "$ref": "#/components/schemas/BatchMethod"
@@ -3655,6 +4485,9 @@
                   "password"
                 ]
               },
+              "metadata": {
+                "type": "object"
+              },
               "mfa_factors_required": {
                 "type": "integer",
                 "format": "int32"
@@ -3702,6 +4535,9 @@
                 "enum": [
                   "secret_key"
                 ]
+              },
+              "metadata": {
+                "type": "object"
               }
             }
           },
@@ -3732,6 +4568,9 @@
                 "enum": [
                   "email_link"
                 ]
+              },
+              "metadata": {
+                "type": "object"
               }
             }
           },
@@ -3762,6 +4601,9 @@
                 "enum": [
                   "phone_otp"
                 ]
+              },
+              "metadata": {
+                "type": "object"
               }
             }
           },
@@ -3791,6 +4633,9 @@
                   "federated"
                 ]
               },
+              "metadata": {
+                "type": "object"
+              },
               "provider": {
                 "type": "string"
               },
@@ -3803,13 +4648,14 @@
       },
       "CreateInvite": {
         "type": "object",
-        "description": "Invites an email address, optionally into a tenant with roles.",
-        "required": [
-          "email"
-        ],
+        "description": "Invites someone, optionally into a tenant with roles: an email address,\nor, without one, whoever the relying system shares the invite's link\nwith (a link-only invite).",
         "properties": {
           "email": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The address to deliver the invite's token to. Without one, the\ninvite is link-only: nothing is delivered, and the response shows\nthe token once."
           },
           "expires_in_hours": {
             "type": "integer",
@@ -3839,6 +4685,14 @@
               }
             ]
           },
+          "metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav, delivered with the invite and handed\nover on redemption."
+          },
+          "public_metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav, of at most 1024 bytes, that the\ninvite's preview shows to whoever holds its token, before signing\nin. Put nothing here the holder of the link shouldn't see."
+          },
           "roles": {
             "type": "array",
             "items": {
@@ -3865,6 +4719,10 @@
           "facts": {
             "type": "object"
           },
+          "metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav."
+          },
           "subject": {
             "$ref": "#/components/schemas/SubjectId"
           },
@@ -3882,6 +4740,10 @@
         "properties": {
           "kind": {
             "$ref": "#/components/schemas/SubjectKind"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav."
           }
         }
       },
@@ -3890,6 +4752,10 @@
         "properties": {
           "facts": {
             "type": "object"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav."
           },
           "parent": {
             "type": [
@@ -3932,7 +4798,7 @@
       },
       "CreatedInvite": {
         "type": "object",
-        "description": "A created invite. Its token is never returned: it is only delivered to\nthe invited address, as a `delivery.requested` event.",
+        "description": "A created invite. An emailed invite's token is never returned: it is\nonly delivered to the invited address, as a `delivery.requested` event.\nA link-only invite's token is shown here, once.",
         "required": [
           "invite_id",
           "expires_at"
@@ -3945,6 +4811,13 @@
           "invite_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A link-only invite's token, shown only once: Konklav keeps only its\nhash. Repeating the request shows a new one and stops accepting\nthis one, while the invite is pending. Absent for emailed invites."
           }
         }
       },
@@ -3962,7 +4835,9 @@
           "revoked_at",
           "revoked_reason",
           "break_glass",
-          "session_flags"
+          "session_flags",
+          "metadata",
+          "metadata_etag"
         ],
         "properties": {
           "break_glass": {
@@ -3991,6 +4866,14 @@
           },
           "kind": {
             "$ref": "#/components/schemas/CredentialKind"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav."
+          },
+          "metadata_etag": {
+            "type": "string",
+            "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
           },
           "mfa_factors_required": {
             "type": "integer",
@@ -4442,6 +5325,8 @@
           "INVALID_REQUEST",
           "CONFLICT",
           "SUBJECT_ERASED",
+          "PRECONDITION_FAILED",
+          "METADATA_TOO_LARGE",
           "UNAUTHENTICATED",
           "INVALID_CREDENTIALS",
           "SESSION_ENDED",
@@ -4788,6 +5673,10 @@
               "identifier": {
                 "type": "string"
               },
+              "metadata": {
+                "type": "object",
+                "description": "An object, opaque to Konklav; a re-import leaves an existing\nrecord's metadata as it is."
+              },
               "mfa_factors_required": {
                 "type": "integer",
                 "format": "int32"
@@ -5092,6 +5981,10 @@
           "kind": {
             "$ref": "#/components/schemas/SubjectKind"
           },
+          "metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav; a re-import leaves an existing\nrecord's metadata as it is."
+          },
           "state": {
             "$ref": "#/components/schemas/SubjectState"
           }
@@ -5108,7 +6001,10 @@
           "membership",
           "state",
           "expires_at",
-          "consumed_at"
+          "consumed_at",
+          "metadata",
+          "metadata_etag",
+          "public_metadata"
         ],
         "properties": {
           "consumed_at": {
@@ -5120,8 +6016,11 @@
             "description": "When it was redeemed or revoked."
           },
           "email": {
-            "type": "string",
-            "description": "The invited address, normalized."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The invited address, normalized; `null` for a link-only invite."
           },
           "expires_at": {
             "type": "string",
@@ -5141,6 +6040,18 @@
               }
             ]
           },
+          "metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav."
+          },
+          "metadata_etag": {
+            "type": "string",
+            "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
+          },
+          "public_metadata": {
+            "type": "object",
+            "description": "What the invite's preview shows to whoever holds its token."
+          },
           "roles": {
             "type": "array",
             "items": {
@@ -5155,6 +6066,28 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "InvitePage": {
+        "type": "object",
+        "required": [
+          "invites",
+          "next"
+        ],
+        "properties": {
+          "invites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Invite"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           }
         }
       },
@@ -5177,6 +6110,8 @@
           "state",
           "facts",
           "managed_by",
+          "metadata",
+          "metadata_etag",
           "created_at",
           "updated_at"
         ],
@@ -5197,6 +6132,14 @@
               "null"
             ],
             "description": "The identity provider whose claim mapping created it, if any."
+          },
+          "metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav."
+          },
+          "metadata_etag": {
+            "type": "string",
+            "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
           },
           "state": {
             "$ref": "#/components/schemas/MembershipState"
@@ -5325,6 +6268,23 @@
           }
         }
       },
+      "OfferShare": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ShareTerms"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "metadata": {
+                "type": "object",
+                "description": "An object, opaque to Konklav."
+              }
+            }
+          }
+        ],
+        "description": "A share's terms and its metadata, which isn't one of them: changing\nonly the metadata doesn't offer the share again."
+      },
       "OidcClient": {
         "allOf": [
           {
@@ -5335,6 +6295,7 @@
             "required": [
               "id",
               "has_secret",
+              "metadata_etag",
               "disabled_at",
               "created_at",
               "updated_at"
@@ -5357,6 +6318,10 @@
               },
               "id": {
                 "type": "string"
+              },
+              "metadata_etag": {
+                "type": "string",
+                "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
               },
               "updated_at": {
                 "type": "string",
@@ -5405,6 +6370,10 @@
               "null"
             ],
             "description": "The client's own login page, instead of the provider's."
+          },
+          "metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav."
           },
           "post_logout_redirect_uris": {
             "type": "array",
@@ -6074,6 +7043,7 @@
           "id",
           "purpose",
           "recipient",
+          "metadata",
           "created_at",
           "expires_at",
           "consumed_at",
@@ -6098,6 +7068,10 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "What a relying system stored on an invite; empty for other\nchallenges."
           },
           "purpose": {
             "type": "string",
@@ -6334,6 +7308,7 @@
           "template",
           "priority",
           "metadata",
+          "metadata_etag",
           "policies",
           "builtin",
           "created_at",
@@ -6358,6 +7333,10 @@
           "metadata": {
             "type": "object",
             "description": "An object, opaque to Konklav."
+          },
+          "metadata_etag": {
+            "type": "string",
+            "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
           },
           "policies": {
             "type": "array",
@@ -6965,6 +7944,8 @@
               "accepted_at",
               "revoked_at",
               "revoked_by",
+              "metadata",
+              "metadata_etag",
               "created_at",
               "updated_at"
             ],
@@ -6982,6 +7963,14 @@
               },
               "id": {
                 "$ref": "#/components/schemas/ShareId"
+              },
+              "metadata": {
+                "type": "object",
+                "description": "An object, opaque to Konklav."
+              },
+              "metadata_etag": {
+                "type": "string",
+                "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
               },
               "revoked_at": {
                 "type": [
@@ -7259,6 +8248,8 @@
           "id",
           "kind",
           "state",
+          "metadata",
+          "metadata_etag",
           "created_at",
           "erased_at"
         ],
@@ -7280,6 +8271,14 @@
           },
           "kind": {
             "$ref": "#/components/schemas/SubjectKind"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav."
+          },
+          "metadata_etag": {
+            "type": "string",
+            "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
           },
           "state": {
             "$ref": "#/components/schemas/SubjectState"
@@ -7370,6 +8369,7 @@
           "key",
           "description",
           "metadata",
+          "metadata_etag",
           "policies",
           "created_at",
           "updated_at"
@@ -7393,6 +8393,10 @@
             "type": "object",
             "description": "An object, opaque to Konklav."
           },
+          "metadata_etag": {
+            "type": "string",
+            "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
+          },
           "policies": {
             "type": "array",
             "items": {
@@ -7412,6 +8416,8 @@
           "parent_id",
           "state",
           "facts",
+          "metadata",
+          "metadata_etag",
           "created_at",
           "updated_at"
         ],
@@ -7425,6 +8431,14 @@
           },
           "id": {
             "$ref": "#/components/schemas/TenantId"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "An object, opaque to Konklav."
+          },
+          "metadata_etag": {
+            "type": "string",
+            "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
           },
           "parent_id": {
             "oneOf": [
@@ -7589,7 +8603,7 @@
         "allOf": [
           {
             "type": "object",
-            "description": "A created invite. Its token is never returned: it is only delivered to\nthe invited address, as a `delivery.requested` event.",
+            "description": "A created invite. An emailed invite's token is never returned: it is\nonly delivered to the invited address, as a `delivery.requested` event.\nA link-only invite's token is shown here, once.",
             "required": [
               "invite_id",
               "expires_at"
@@ -7602,6 +8616,13 @@
               "invite_id": {
                 "type": "string",
                 "format": "uuid"
+              },
+              "token": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "A link-only invite's token, shown only once: Konklav keeps only its\nhash. Repeating the request shows a new one and stops accepting\nthis one, while the invite is pending. Absent for emailed invites."
               }
             }
           },
@@ -7639,7 +8660,9 @@
               "revoked_at",
               "revoked_reason",
               "break_glass",
-              "session_flags"
+              "session_flags",
+              "metadata",
+              "metadata_etag"
             ],
             "properties": {
               "break_glass": {
@@ -7668,6 +8691,14 @@
               },
               "kind": {
                 "$ref": "#/components/schemas/CredentialKind"
+              },
+              "metadata": {
+                "type": "object",
+                "description": "An object, opaque to Konklav."
+              },
+              "metadata_etag": {
+                "type": "string",
+                "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
               },
               "mfa_factors_required": {
                 "type": "integer",
@@ -7780,6 +8811,105 @@
         ],
         "description": "A write's result and the cursor of the last event it produced, if any."
       },
+      "Written_Invite": {
+        "allOf": [
+          {
+            "type": "object",
+            "description": "An invite, without its token.",
+            "required": [
+              "id",
+              "email",
+              "tenant",
+              "roles",
+              "membership",
+              "state",
+              "expires_at",
+              "consumed_at",
+              "metadata",
+              "metadata_etag",
+              "public_metadata"
+            ],
+            "properties": {
+              "consumed_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time",
+                "description": "When it was redeemed or revoked."
+              },
+              "email": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The invited address, normalized; `null` for a link-only invite."
+              },
+              "expires_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "membership": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/MembershipId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "metadata": {
+                "type": "object",
+                "description": "An object, opaque to Konklav."
+              },
+              "metadata_etag": {
+                "type": "string",
+                "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
+              },
+              "public_metadata": {
+                "type": "object",
+                "description": "What the invite's preview shows to whoever holds its token."
+              },
+              "roles": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "state": {
+                "$ref": "#/components/schemas/InviteState"
+              },
+              "tenant": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
+      },
       "Written_Membership": {
         "allOf": [
           {
@@ -7791,6 +8921,8 @@
               "state",
               "facts",
               "managed_by",
+              "metadata",
+              "metadata_etag",
               "created_at",
               "updated_at"
             ],
@@ -7812,6 +8944,14 @@
                 ],
                 "description": "The identity provider whose claim mapping created it, if any."
               },
+              "metadata": {
+                "type": "object",
+                "description": "An object, opaque to Konklav."
+              },
+              "metadata_etag": {
+                "type": "string",
+                "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
+              },
               "state": {
                 "$ref": "#/components/schemas/MembershipState"
               },
@@ -7826,6 +8966,73 @@
                 "format": "date-time"
               }
             }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
+      },
+      "Written_OidcClient": {
+        "allOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OidcClientDefinition"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "id",
+                  "has_secret",
+                  "metadata_etag",
+                  "disabled_at",
+                  "created_at",
+                  "updated_at"
+                ],
+                "properties": {
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "disabled_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
+                  },
+                  "has_secret": {
+                    "type": "boolean",
+                    "description": "Whether a secret has been issued."
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "metadata_etag": {
+                    "type": "string",
+                    "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            ],
+            "description": "A registered OIDC client, without its secret."
           },
           {
             "type": "object",
@@ -7996,6 +9203,7 @@
               "template",
               "priority",
               "metadata",
+              "metadata_etag",
               "policies",
               "builtin",
               "created_at",
@@ -8020,6 +9228,10 @@
               "metadata": {
                 "type": "object",
                 "description": "An object, opaque to Konklav."
+              },
+              "metadata_etag": {
+                "type": "string",
+                "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
               },
               "policies": {
                 "type": "array",
@@ -8146,6 +9358,8 @@
                   "accepted_at",
                   "revoked_at",
                   "revoked_by",
+                  "metadata",
+                  "metadata_etag",
                   "created_at",
                   "updated_at"
                 ],
@@ -8163,6 +9377,14 @@
                   },
                   "id": {
                     "$ref": "#/components/schemas/ShareId"
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "description": "An object, opaque to Konklav."
+                  },
+                  "metadata_etag": {
+                    "type": "string",
+                    "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
                   },
                   "revoked_at": {
                     "type": [
@@ -8219,6 +9441,8 @@
               "id",
               "kind",
               "state",
+              "metadata",
+              "metadata_etag",
               "created_at",
               "erased_at"
             ],
@@ -8240,6 +9464,14 @@
               },
               "kind": {
                 "$ref": "#/components/schemas/SubjectKind"
+              },
+              "metadata": {
+                "type": "object",
+                "description": "An object, opaque to Konklav."
+              },
+              "metadata_etag": {
+                "type": "string",
+                "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
               },
               "state": {
                 "$ref": "#/components/schemas/SubjectState"
@@ -8274,6 +9506,7 @@
               "key",
               "description",
               "metadata",
+              "metadata_etag",
               "policies",
               "created_at",
               "updated_at"
@@ -8296,6 +9529,10 @@
               "metadata": {
                 "type": "object",
                 "description": "An object, opaque to Konklav."
+              },
+              "metadata_etag": {
+                "type": "string",
+                "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
               },
               "policies": {
                 "type": "array",
@@ -8336,6 +9573,8 @@
               "parent_id",
               "state",
               "facts",
+              "metadata",
+              "metadata_etag",
               "created_at",
               "updated_at"
             ],
@@ -8349,6 +9588,14 @@
               },
               "id": {
                 "$ref": "#/components/schemas/TenantId"
+              },
+              "metadata": {
+                "type": "object",
+                "description": "An object, opaque to Konklav."
+              },
+              "metadata_etag": {
+                "type": "string",
+                "description": "Changes whenever `metadata` does; send it as `If-Match` to patch\nthe metadata only if no one else has since."
               },
               "parent_id": {
                 "oneOf": [

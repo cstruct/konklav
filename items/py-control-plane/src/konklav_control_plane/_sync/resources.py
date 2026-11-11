@@ -18,7 +18,7 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, overload
 
 from .. import types
-from .._common import Call, Mode, Pending, Written, operation, path
+from .._common import Call, MetadataFilter, Mode, Pending, Written, metadata_filter, operation, path
 
 if TYPE_CHECKING:
     from .batch import Batch
@@ -54,14 +54,26 @@ class Tenants(_Resource[M]):
 
     @operation("list_tenants")
     def list(
-        self: Tenants[Direct], *, parent: str | None = None, before: str | None = None, limit: int | None = None
+        self: Tenants[Direct],
+        *,
+        parent: str | None = None,
+        metadata: MetadataFilter | None = None,
+        before: str | None = None,
+        limit: int | None = None,
     ) -> types.TenantPage:
-        params = {"parent": parent, "before": before, "limit": limit}
+        params = {"parent": parent, "metadata": metadata_filter(metadata), "before": before, "limit": limit}
         return cast(types.TenantPage, self._direct._get(path("tenants"), params))
 
-    def iter(self: Tenants[Direct], *, parent: str | None = None, limit: int | None = None) -> Iterator[types.Tenant]:
-        """Every tenant, page after page."""
-        for tenant in self._direct._pages(path("tenants"), "tenants", {"parent": parent, "limit": limit}):
+    def iter(
+        self: Tenants[Direct],
+        *,
+        parent: str | None = None,
+        metadata: MetadataFilter | None = None,
+        limit: int | None = None,
+    ) -> Iterator[types.Tenant]:
+        """Every matching tenant, page after page."""
+        params = {"parent": parent, "metadata": metadata_filter(metadata), "limit": limit}
+        for tenant in self._direct._pages(path("tenants"), "tenants", params):
             yield cast(types.Tenant, tenant)
 
     @operation("get_tenant")
@@ -98,11 +110,37 @@ class Tenants(_Resource[M]):
     def set_state(self, id: str, body: types.SetTenantState) -> Any:
         return self._do(Call("PUT", path("tenants", id, "state"), json=body, written=True))
 
+    @overload
+    def patch_metadata(
+        self: Tenants[Direct], id: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Written[types.Tenant]: ...
+
+    @overload
+    def patch_metadata(
+        self: Tenants[Batched], id: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Pending[Written[types.Tenant]]: ...
+
+    # r[impl metadata.write.patch]
+    @operation("patch_tenant_metadata")
+    def patch_metadata(self, id: str, body: dict[str, Any], *, if_match: str | None = None) -> Any:
+        """Merge-patches the metadata (RFC 7396): keys replace the metadata's,
+        and `None` removes one. With `if_match`, a `metadata_etag` read
+        earlier, only if no one has changed the metadata since; otherwise
+        `PreconditionFailed` is raised."""
+        return self._do(Call("PATCH", path("tenants", id, "metadata"), json=body, written=True, if_match=if_match))
+
 
 class Memberships(_Resource[M]):
     @operation("list_memberships")
-    def list(self: Memberships[Direct], tenant: str, *, active: bool | None = None) -> builtins.list[types.Membership]:
-        response = self._direct._get(path("tenants", tenant, "memberships"), {"active": active})
+    def list(
+        self: Memberships[Direct],
+        tenant: str,
+        *,
+        active: bool | None = None,
+        metadata: MetadataFilter | None = None,
+    ) -> builtins.list[types.Membership]:
+        params = {"active": active, "metadata": metadata_filter(metadata)}
+        response = self._direct._get(path("tenants", tenant, "memberships"), params)
         return cast(builtins.list[types.Membership], response)
 
     @operation("get_membership")
@@ -139,6 +177,25 @@ class Memberships(_Resource[M]):
     def set_facts(self, id: str, body: dict[str, Any]) -> Any:
         return self._do(Call("PUT", path("memberships", id, "facts"), json=body, written=True))
 
+    @overload
+    def patch_metadata(
+        self: Memberships[Direct], id: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Written[types.Membership]: ...
+
+    @overload
+    def patch_metadata(
+        self: Memberships[Batched], id: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Pending[Written[types.Membership]]: ...
+
+    # r[impl metadata.write.patch]
+    @operation("patch_membership_metadata")
+    def patch_metadata(self, id: str, body: dict[str, Any], *, if_match: str | None = None) -> Any:
+        """Merge-patches the metadata (RFC 7396): keys replace the metadata's,
+        and `None` removes one. With `if_match`, a `metadata_etag` read
+        earlier, only if no one has changed the metadata since; otherwise
+        `PreconditionFailed` is raised."""
+        return self._do(Call("PATCH", path("memberships", id, "metadata"), json=body, written=True, if_match=if_match))
+
 
 class Subjects(_Resource[M]):
     @operation("list_subjects")
@@ -147,10 +204,17 @@ class Subjects(_Resource[M]):
         *,
         kind: types.SubjectKind | None = None,
         identifier: str | None = None,
+        metadata: MetadataFilter | None = None,
         before: str | None = None,
         limit: int | None = None,
     ) -> types.SubjectPage:
-        params = {"kind": kind, "identifier": identifier, "before": before, "limit": limit}
+        params = {
+            "kind": kind,
+            "identifier": identifier,
+            "metadata": metadata_filter(metadata),
+            "before": before,
+            "limit": limit,
+        }
         return cast(types.SubjectPage, self._direct._get(path("subjects"), params))
 
     def iter(
@@ -158,10 +222,11 @@ class Subjects(_Resource[M]):
         *,
         kind: types.SubjectKind | None = None,
         identifier: str | None = None,
+        metadata: MetadataFilter | None = None,
         limit: int | None = None,
     ) -> Iterator[types.Subject]:
         """Every matching subject, page after page."""
-        params = {"kind": kind, "identifier": identifier, "limit": limit}
+        params = {"kind": kind, "identifier": identifier, "metadata": metadata_filter(metadata), "limit": limit}
         for subject in self._direct._pages(path("subjects"), "subjects", params):
             yield cast(types.Subject, subject)
 
@@ -214,6 +279,25 @@ class Subjects(_Resource[M]):
     def erase(self, id: str) -> Any:
         """Removes all personal data held about the subject. This can't be undone."""
         return self._do(Call("POST", path("subjects", id, "erase"), written=True))
+
+    @overload
+    def patch_metadata(
+        self: Subjects[Direct], id: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Written[types.Subject]: ...
+
+    @overload
+    def patch_metadata(
+        self: Subjects[Batched], id: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Pending[Written[types.Subject]]: ...
+
+    # r[impl metadata.write.patch]
+    @operation("patch_subject_metadata")
+    def patch_metadata(self, id: str, body: dict[str, Any], *, if_match: str | None = None) -> Any:
+        """Merge-patches the metadata (RFC 7396): keys replace the metadata's,
+        and `None` removes one. With `if_match`, a `metadata_etag` read
+        earlier, only if no one has changed the metadata since; otherwise
+        `PreconditionFailed` is raised."""
+        return self._do(Call("PATCH", path("subjects", id, "metadata"), json=body, written=True, if_match=if_match))
 
 
 class Credentials(_Resource[M]):
@@ -302,6 +386,25 @@ class Credentials(_Resource[M]):
     def set_session_flags(self, id: str, body: types.SessionFlags) -> Any:
         return self._do(Call("PUT", path("credentials", id, "session-flags"), json=body))
 
+    @overload
+    def patch_metadata(
+        self: Credentials[Direct], id: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Written[types.Credential]: ...
+
+    @overload
+    def patch_metadata(
+        self: Credentials[Batched], id: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Pending[Written[types.Credential]]: ...
+
+    # r[impl metadata.write.patch]
+    @operation("patch_credential_metadata")
+    def patch_metadata(self, id: str, body: dict[str, Any], *, if_match: str | None = None) -> Any:
+        """Merge-patches the metadata (RFC 7396): keys replace the metadata's,
+        and `None` removes one. With `if_match`, a `metadata_etag` read
+        earlier, only if no one has changed the metadata since; otherwise
+        `PreconditionFailed` is raised."""
+        return self._do(Call("PATCH", path("credentials", id, "metadata"), json=body, written=True, if_match=if_match))
+
 
 class Sessions(_Resource[M]):
     @operation("list_sessions")
@@ -380,8 +483,9 @@ class Catalog(_Resource[M]):
 
 class Templates(_Resource[M]):
     @operation("list_templates")
-    def list(self: Templates[Direct]) -> builtins.list[types.Template]:
-        return cast(builtins.list[types.Template], self._direct._get(path("templates")))
+    def list(self: Templates[Direct], *, metadata: MetadataFilter | None = None) -> builtins.list[types.Template]:
+        response = self._direct._get(path("templates"), {"metadata": metadata_filter(metadata)})
+        return cast(builtins.list[types.Template], response)
 
     @operation("get_template")
     def get(self: Templates[Direct], key: str) -> types.Template:
@@ -397,13 +501,35 @@ class Templates(_Resource[M]):
     def put(self, key: str, body: types.PutTemplate) -> Any:
         return self._do(Call("PUT", path("templates", key), json=body, written=True))
 
+    @overload
+    def patch_metadata(
+        self: Templates[Direct], key: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Written[types.Template]: ...
+
+    @overload
+    def patch_metadata(
+        self: Templates[Batched], key: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Pending[Written[types.Template]]: ...
+
+    # r[impl metadata.write.patch]
+    @operation("patch_template_metadata")
+    def patch_metadata(self, key: str, body: dict[str, Any], *, if_match: str | None = None) -> Any:
+        """Merge-patches the metadata (RFC 7396): keys replace the metadata's,
+        and `None` removes one. With `if_match`, a `metadata_etag` read
+        earlier, only if no one has changed the metadata since; otherwise
+        `PreconditionFailed` is raised."""
+        return self._do(Call("PATCH", path("templates", key, "metadata"), json=body, written=True, if_match=if_match))
+
 
 class Roles(_Resource[M]):
     """A tenant's roles; the root tenant's are global roles."""
 
     @operation("list_roles")
-    def list(self: Roles[Direct], tenant: str) -> builtins.list[types.Role]:
-        return cast(builtins.list[types.Role], self._direct._get(path("tenants", tenant, "roles")))
+    def list(
+        self: Roles[Direct], tenant: str, *, metadata: MetadataFilter | None = None
+    ) -> builtins.list[types.Role]:
+        response = self._direct._get(path("tenants", tenant, "roles"), {"metadata": metadata_filter(metadata)})
+        return cast(builtins.list[types.Role], response)
 
     @operation("get_role")
     def get(self: Roles[Direct], tenant: str, key: str) -> types.Role:
@@ -428,6 +554,25 @@ class Roles(_Resource[M]):
     @operation("delete_role")
     def delete(self, tenant: str, key: str) -> Any:
         return self._do(Call("DELETE", path("tenants", tenant, "roles", key), written=True))
+
+    @overload
+    def patch_metadata(
+        self: Roles[Direct], tenant: str, key: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Written[types.Role]: ...
+
+    @overload
+    def patch_metadata(
+        self: Roles[Batched], tenant: str, key: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Pending[Written[types.Role]]: ...
+
+    # r[impl metadata.write.patch]
+    @operation("patch_role_metadata")
+    def patch_metadata(self, tenant: str, key: str, body: dict[str, Any], *, if_match: str | None = None) -> Any:
+        """Merge-patches the metadata (RFC 7396): keys replace the metadata's,
+        and `None` removes one. With `if_match`, a `metadata_etag` read
+        earlier, only if no one has changed the metadata since; otherwise
+        `PreconditionFailed` is raised."""
+        return self._do(Call("PATCH", path("tenants", tenant, "roles", key, "metadata"), json=body, written=True, if_match=if_match))
 
 
 class Assignments(_Resource[M]):
@@ -493,8 +638,15 @@ class Explain(_Resource[M]):
 
 class Shares(_Resource[M]):
     @operation("list_shares")
-    def list(self: Shares[Direct], tenant: str, *, side: types.ShareSide | None = None) -> types.ShareList:
-        response = self._direct._get(path("tenants", tenant, "shares"), {"side": side})
+    def list(
+        self: Shares[Direct],
+        tenant: str,
+        *,
+        side: types.ShareSide | None = None,
+        metadata: MetadataFilter | None = None,
+    ) -> types.ShareList:
+        params = {"side": side, "metadata": metadata_filter(metadata)}
+        response = self._direct._get(path("tenants", tenant, "shares"), params)
         return cast(types.ShareList, response)
 
     @operation("get_share")
@@ -502,14 +654,16 @@ class Shares(_Resource[M]):
         return cast(types.Share, self._direct._get(path("shares", id)))
 
     @overload
-    def offer(self: Shares[Direct], id: str, body: types.ShareTerms) -> Written[types.Share]: ...
+    def offer(self: Shares[Direct], id: str, body: types.OfferShare) -> Written[types.Share]: ...
 
     @overload
-    def offer(self: Shares[Batched], id: str, body: types.ShareTerms) -> Pending[Written[types.Share]]: ...
+    def offer(self: Shares[Batched], id: str, body: types.OfferShare) -> Pending[Written[types.Share]]: ...
 
     @operation("offer_share")
-    def offer(self, id: str, body: types.ShareTerms) -> Any:
-        """Offers a share, or changes its terms, which offers it again."""
+    def offer(self, id: str, body: types.OfferShare) -> Any:
+        """Offers a share, or changes its terms, which offers it again. Its
+        `metadata` isn't one of its terms: changing only that replaces it
+        without offering the share again."""
         return self._do(Call("PUT", path("shares", id), json=body, written=True))
 
     @overload
@@ -531,6 +685,25 @@ class Shares(_Resource[M]):
     @operation("revoke_share")
     def revoke(self, id: str, body: types.RevokeShare) -> Any:
         return self._do(Call("POST", path("shares", id, "revoke"), json=body, written=True))
+
+    @overload
+    def patch_metadata(
+        self: Shares[Direct], id: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Written[types.Share]: ...
+
+    @overload
+    def patch_metadata(
+        self: Shares[Batched], id: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Pending[Written[types.Share]]: ...
+
+    # r[impl metadata.write.patch]
+    @operation("patch_share_metadata")
+    def patch_metadata(self, id: str, body: dict[str, Any], *, if_match: str | None = None) -> Any:
+        """Merge-patches the metadata (RFC 7396): keys replace the metadata's,
+        and `None` removes one. With `if_match`, a `metadata_etag` read
+        earlier, only if no one has changed the metadata since; otherwise
+        `PreconditionFailed` is raised."""
+        return self._do(Call("PATCH", path("shares", id, "metadata"), json=body, written=True, if_match=if_match))
 
 
 class RegisteredScopes(_Resource[M]):
@@ -575,8 +748,39 @@ class Invites(_Resource[M]):
 
     @operation("create_invite")
     def create(self, body: types.CreateInvite) -> Any:
-        """The invite's token is delivered to the address, never returned."""
+        """With an `email`, the invite's token is delivered to the address and
+        never returned. Without one, the invite is link-only: nothing is
+        delivered, and the result's `token` shows the token once, for you to
+        share as a link. Repeating it with the same `id` shows a new token
+        while the invite is pending. `public_metadata` is what the invite's
+        preview shows to whoever holds the token, before signing in."""
         return self._do(Call("POST", path("invites"), json=body, create=True, written=True))
+
+    @operation("list_invites")
+    def list(
+        self: Invites[Direct],
+        *,
+        tenant: str | None = None,
+        metadata: MetadataFilter | None = None,
+        before: str | None = None,
+        limit: int | None = None,
+    ) -> types.InvitePage:
+        """Invites, newest first, optionally only those to `tenant` or whose
+        metadata matches, such as `metadata={"tenant_id": "t-1"}`."""
+        params = {"tenant": tenant, "metadata": metadata_filter(metadata), "before": before, "limit": limit}
+        return cast(types.InvitePage, self._direct._get(path("invites"), params))
+
+    def iter(
+        self: Invites[Direct],
+        *,
+        tenant: str | None = None,
+        metadata: MetadataFilter | None = None,
+        limit: int | None = None,
+    ) -> Iterator[types.Invite]:
+        """Every matching invite, page after page."""
+        params = {"tenant": tenant, "metadata": metadata_filter(metadata), "limit": limit}
+        for invite in self._direct._pages(path("invites"), "invites", params):
+            yield cast(types.Invite, invite)
 
     @operation("get_invite")
     def get(self: Invites[Direct], id: str) -> types.Invite:
@@ -595,11 +799,31 @@ class Invites(_Resource[M]):
         can't be revoked."""
         return self._do(Call("POST", path("invites", id, "revoke")))
 
+    @overload
+    def patch_metadata(
+        self: Invites[Direct], id: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Written[types.Invite]: ...
+
+    @overload
+    def patch_metadata(
+        self: Invites[Batched], id: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Pending[Written[types.Invite]]: ...
+
+    # r[impl metadata.write.patch]
+    @operation("patch_invite_metadata")
+    def patch_metadata(self, id: str, body: dict[str, Any], *, if_match: str | None = None) -> Any:
+        """Merge-patches the metadata (RFC 7396): keys replace the metadata's,
+        and `None` removes one. With `if_match`, a `metadata_etag` read
+        earlier, only if no one has changed the metadata since; otherwise
+        `PreconditionFailed` is raised."""
+        return self._do(Call("PATCH", path("invites", id, "metadata"), json=body, written=True, if_match=if_match))
+
 
 class OidcClients(_Resource[M]):
     @operation("list_oidc_clients")
-    def list(self: OidcClients[Direct]) -> builtins.list[types.OidcClient]:
-        return cast(builtins.list[types.OidcClient], self._direct._get(path("oidc", "clients")))
+    def list(self: OidcClients[Direct], *, metadata: MetadataFilter | None = None) -> builtins.list[types.OidcClient]:
+        response = self._direct._get(path("oidc", "clients"), {"metadata": metadata_filter(metadata)})
+        return cast(builtins.list[types.OidcClient], response)
 
     @operation("get_oidc_client")
     def get(self: OidcClients[Direct], id: str) -> types.OidcClient:
@@ -636,6 +860,25 @@ class OidcClients(_Resource[M]):
     def new_secret(self, id: str) -> Any:
         """The secret is shown only this once; the previous one stops working."""
         return self._do(Call("POST", path("oidc", "clients", id, "secret")))
+
+    @overload
+    def patch_metadata(
+        self: OidcClients[Direct], id: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Written[types.OidcClient]: ...
+
+    @overload
+    def patch_metadata(
+        self: OidcClients[Batched], id: str, body: dict[str, Any], *, if_match: str | None = None
+    ) -> Pending[Written[types.OidcClient]]: ...
+
+    # r[impl metadata.write.patch]
+    @operation("patch_oidc_client_metadata")
+    def patch_metadata(self, id: str, body: dict[str, Any], *, if_match: str | None = None) -> Any:
+        """Merge-patches the metadata (RFC 7396): keys replace the metadata's,
+        and `None` removes one. With `if_match`, a `metadata_etag` read
+        earlier, only if no one has changed the metadata since; otherwise
+        `PreconditionFailed` is raised."""
+        return self._do(Call("PATCH", path("oidc", "clients", id, "metadata"), json=body, written=True, if_match=if_match))
 
 
 class Imports(_Resource[M]):

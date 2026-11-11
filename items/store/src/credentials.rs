@@ -221,6 +221,7 @@ pub struct Credential {
     pub break_glass: bool,
     /// Restrictive session flags every session started with it carries.
     pub session_flags: Vec<String>,
+    pub metadata: serde_json::Value,
 }
 
 impl Credential {
@@ -250,6 +251,7 @@ struct Row {
     revoked_reason: Option<String>,
     break_glass: bool,
     session_flags: Vec<String>,
+    metadata: serde_json::Value,
 }
 
 impl TryFrom<Row> for Credential {
@@ -268,6 +270,7 @@ impl TryFrom<Row> for Credential {
             revoked_reason: row.revoked_reason,
             break_glass: row.break_glass,
             session_flags: row.session_flags,
+            metadata: row.metadata,
         })
     }
 }
@@ -298,6 +301,7 @@ pub struct NewCredential {
     pub data: CredentialData,
     pub mfa_factors_required: i16,
     pub replaces: Option<CredentialId>,
+    pub metadata: serde_json::Value,
 }
 
 // r[impl credential.linked]
@@ -312,6 +316,7 @@ pub async fn insert(conn: &mut AsyncPgConnection, new: NewCredential) -> StoreRe
             credential::data.eq(new.data.to_json()),
             credential::mfa_factors_required.eq(new.mfa_factors_required),
             credential::replaces.eq(new.replaces.map(uuid::Uuid::from)),
+            credential::metadata.eq(&new.metadata),
         ))
         .returning(Row::as_returning())
         .get_result(conn)
@@ -446,6 +451,7 @@ pub async fn insert_if_absent(
             credential::data.eq(new.data.to_json()),
             credential::mfa_factors_required.eq(new.mfa_factors_required),
             credential::replaces.eq(new.replaces.map(uuid::Uuid::from)),
+            credential::metadata.eq(&new.metadata),
         ))
         .on_conflict(credential::id)
         .do_nothing()

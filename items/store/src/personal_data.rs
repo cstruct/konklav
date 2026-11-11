@@ -6,7 +6,7 @@
 
 use chrono::{DateTime, Utc};
 use diesel::prelude::*;
-use diesel::sql_types::{Array, Bool, Nullable, Text, Timestamptz, Uuid};
+use diesel::sql_types::{Array, Bool, Jsonb, Nullable, Text, Timestamptz, Uuid};
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use konklav_core::SubjectId;
 
@@ -36,7 +36,7 @@ pub struct PersonalData {
 }
 
 /// A challenge, without its secret and its details.
-#[derive(Debug, Clone, PartialEq, Eq, QueryableByName)]
+#[derive(Debug, Clone, PartialEq, QueryableByName)]
 pub struct Challenge {
     #[diesel(sql_type = Uuid)]
     pub id: uuid::Uuid,
@@ -44,6 +44,10 @@ pub struct Challenge {
     pub purpose: String,
     #[diesel(sql_type = Text)]
     pub recipient: String,
+    /// What a relying system stored on an invite; empty for other
+    /// challenges.
+    #[diesel(sql_type = Jsonb)]
+    pub metadata: serde_json::Value,
     #[diesel(sql_type = Timestamptz)]
     pub created_at: DateTime<Utc>,
     #[diesel(sql_type = Timestamptz)]
@@ -111,16 +115,11 @@ pub async fn of(conn: &mut AsyncPgConnection, id: SubjectId) -> StoreResult<Pers
     let subject_id = uuid::Uuid::from(id);
     let recipients = subjects::recipients(conn, subject_id).await?;
     // The same rows `subjects::erase` deletes.
-    let challenges = diesel::sql_query(
-        "select id, purpose, recipient, created_at, expires_at, consumed_at, revoked_at
-         from challenge
-         where subject_id = $1
-            or credential_id in (select id from credential where subject_id = $1)
-            or mfa_factor_id in (select id from mfa_factor where subject_id = $1)
-            or session_id in (select id from session where subject_id = $1)
-            or (subject_id is null and recipient = any($2))
-         order by created_at, id",
-    )
+    let challenges = diesel::sql_query(format!(
+        "select id, purpose, recipient, metadata, created_at, expires_at, consumed_at, revoked_at
+         from challenge where {} order by created_at, id",
+        subjects::CHALLENGES
+    ))
     .bind::<Uuid, _>(subject_id)
     .bind::<Array<Text>, _>(&recipients)
     .get_results(conn)

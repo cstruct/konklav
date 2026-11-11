@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import random
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -71,9 +72,14 @@ class Call:
     params: Mapping[str, Any] | None = None
     create: bool = False
     written: bool = False
+    if_match: str | None = None
 
     def query(self) -> dict[str, Any]:
         return {name: value for name, value in (self.params or {}).items() if value is not None}
+
+    def headers(self) -> dict[str, str]:
+        """The call's own headers: `If-Match` when it has a precondition."""
+        return {"if-match": f'"{self.if_match}"'} if self.if_match is not None else {}
 
     def operation(self) -> dict[str, Any]:
         """The call as an operation of a batch."""
@@ -81,6 +87,8 @@ class Call:
         operation: dict[str, Any] = {"method": self.method, "path": f"{self.path}?{query}" if query else self.path}
         if self.json is not None:
             operation["body"] = self.json
+        if self.if_match is not None:
+            operation["if_match"] = self.if_match
         return operation
 
     def result(self, status: int, body: Any) -> Any:
@@ -148,6 +156,17 @@ def operation(operation_id: str) -> Callable[[F], F]:
         return method
 
     return mark
+
+
+MetadataFilter = Mapping[str, str | int | float | bool]
+"""A list's metadata filter: only objects whose metadata has each key at its
+top level with an equal value."""
+
+
+# r[impl metadata.filter]
+def metadata_filter(metadata: MetadataFilter | None) -> str | None:
+    """A metadata filter as the `metadata` query parameter: a JSON object."""
+    return None if metadata is None else json.dumps(dict(metadata), separators=(",", ":"), sort_keys=True)
 
 
 def path(*segments: str) -> str:

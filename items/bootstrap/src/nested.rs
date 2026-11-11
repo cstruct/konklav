@@ -102,6 +102,7 @@ struct TenantDoc {
     /// For top-level tenants only: a tenant id or `root` (the default).
     parent: Option<String>,
     facts: Option<BTreeMap<String, facet_value::Value>>,
+    metadata: Option<BTreeMap<String, facet_value::Value>>,
     templates: Option<Vec<String>>,
     roles: Option<Vec<Spanned<RoleDoc>>>,
     children: Option<Vec<Spanned<TenantDoc>>>,
@@ -132,6 +133,7 @@ struct CredentialDoc {
     provider_subject: Option<String>,
     a: Option<SlotDoc>,
     b: Option<SlotDoc>,
+    metadata: Option<BTreeMap<String, facet_value::Value>>,
 }
 
 #[derive(Debug, Facet)]
@@ -173,6 +175,7 @@ struct SubjectDoc {
     credentials: Option<Vec<Spanned<CredentialDoc>>>,
     factors: Option<Vec<Spanned<FactorDoc>>>,
     global_roles: Option<Vec<String>>,
+    metadata: Option<BTreeMap<String, facet_value::Value>>,
 }
 
 #[derive(Debug, Facet)]
@@ -190,10 +193,13 @@ struct MemberDoc {
     credentials: Option<Vec<Spanned<CredentialDoc>>>,
     factors: Option<Vec<Spanned<FactorDoc>>>,
     global_roles: Option<Vec<String>>,
+    /// The subject's metadata.
+    metadata: Option<BTreeMap<String, facet_value::Value>>,
     /// The membership's id; without one, the membership is the subject's
     /// active one in the tenant.
     membership: Option<String>,
     facts: Option<BTreeMap<String, facet_value::Value>>,
+    membership_metadata: Option<BTreeMap<String, facet_value::Value>>,
     /// Role keys of the tenant, assigned tenant-wide.
     roles: Option<Vec<String>>,
     scoped_roles: Option<Vec<ScopedRoleDoc>>,
@@ -215,10 +221,12 @@ impl MemberDoc {
                 credentials: self.credentials,
                 factors: self.factors,
                 global_roles: self.global_roles,
+                metadata: self.metadata,
             },
             MembershipParts {
                 id: self.membership,
                 facts: self.facts,
+                metadata: self.membership_metadata,
                 roles: self.roles.unwrap_or_default(),
                 scoped_roles: self.scoped_roles.unwrap_or_default(),
             },
@@ -229,6 +237,7 @@ impl MemberDoc {
 struct MembershipParts {
     id: Option<String>,
     facts: Option<BTreeMap<String, facet_value::Value>>,
+    metadata: Option<BTreeMap<String, facet_value::Value>>,
     roles: Vec<String>,
     scoped_roles: Vec<ScopedRoleDoc>,
 }
@@ -520,6 +529,7 @@ impl Reader<'_> {
             }
         };
         let facts = self.facts(&at, doc.facts);
+        let metadata = self.metadata(&at, doc.metadata);
         let here = TenantRef::Id(id.clone());
         self.set.tenants.push(Located {
             value: Tenant {
@@ -527,6 +537,7 @@ impl Reader<'_> {
                 parent,
                 facts,
                 templates: doc.templates.unwrap_or_default(),
+                metadata,
             },
             at,
         });
@@ -557,6 +568,7 @@ impl Reader<'_> {
         parts: MembershipParts,
     ) {
         let facts = self.facts(at, parts.facts);
+        let metadata = self.metadata(at, parts.metadata);
         let id = parts.id.as_deref().map(Id::parse);
         let target = match &id {
             Some(id) => MembershipRef::Id(id.clone()),
@@ -571,6 +583,7 @@ impl Reader<'_> {
                 subject,
                 tenant,
                 facts,
+                metadata,
             },
             at: at.clone(),
         });
@@ -619,6 +632,7 @@ impl Reader<'_> {
             }
         };
         let mfa = doc.mfa_factors_required.unwrap_or(0);
+        let metadata = self.metadata(at, doc.metadata.clone());
         let mut credentials = self.shorthand_credentials(at, &doc, mfa)?;
         for credential in doc.credentials.unwrap_or_default() {
             let at = self.at(&credential);
@@ -650,10 +664,13 @@ impl Reader<'_> {
                 key: key.clone(),
                 kind,
                 state,
+                metadata,
             },
             at: at.clone(),
         });
-        for (at, id, identifier, material, mfa_factors_required, session_flags) in credentials {
+        for (at, id, identifier, material, mfa_factors_required, session_flags, metadata) in
+            credentials
+        {
             self.set.credentials.push(Located {
                 value: Credential {
                     id,
@@ -662,6 +679,7 @@ impl Reader<'_> {
                     mfa_factors_required,
                     session_flags,
                     material,
+                    metadata,
                 },
                 at,
             });
@@ -697,6 +715,7 @@ impl Reader<'_> {
             CredentialMaterial,
             i16,
             Vec<String>,
+            serde_json::Value,
         )>,
     > {
         let mut credentials = Vec::new();
@@ -726,6 +745,7 @@ impl Reader<'_> {
                     material,
                     mfa,
                     Vec::new(),
+                    serde_json::json!({}),
                 ));
             }
         } else if doc.password_hash.is_some() || doc.password.is_some() || doc.email_link.is_some()
@@ -741,6 +761,7 @@ impl Reader<'_> {
                 CredentialMaterial::PhoneOtp,
                 mfa,
                 Vec::new(),
+                serde_json::json!({}),
             ));
         }
         Some(credentials)
@@ -788,7 +809,9 @@ impl Reader<'_> {
         CredentialMaterial,
         i16,
         Vec<String>,
+        serde_json::Value,
     )> {
+        let metadata = self.metadata(at, doc.metadata);
         let material = match doc.kind.as_str() {
             "password" => match (doc.password_hash, doc.password) {
                 (Some(hash), None) => CredentialMaterial::PasswordHash(hash),
@@ -856,6 +879,7 @@ impl Reader<'_> {
             material,
             doc.mfa_factors_required.unwrap_or(0),
             doc.session_flags.unwrap_or_default(),
+            metadata,
         ))
     }
 }

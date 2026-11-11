@@ -30,7 +30,7 @@ Out of scope: anything that needs the database, such as finding natural keys, co
 ### Nested (Styx)
 
 ```styx
-format 1.0                                          // the bootstrap format version; see below
+format 1.1                                          // the bootstrap format version; see below
 id_namespace 3f1c9a52-6a1e-4d0b-9a0e-6c1d8f0b2e11   // needed for external ids and tenant keys
 catalog_file "catalog.json"                         // relative to this file
 
@@ -40,6 +40,7 @@ global_roles ({key support, policies ({action konklav:subject:impersonate})})
 tenants ({
     key acme                        // or `id`; a top-level tenant may name a `parent`
     facts {seats 25}
+    metadata {billing_id acct-17}   // opaque to Konklav
     templates (reader)           // roles to derive when the tenant is created
     roles ({key editor, policies ({action document:write, scope_bound true})})
     children ({key acme-north})
@@ -49,6 +50,8 @@ tenants ({
         roles (reader)
         scoped_roles ({role editor, scope_kind project, scope_id p-1})
         facts {member_type professional}
+        metadata {locale sv-SE}     // the subject's
+        membership_metadata {title Editor}
     })
     registered_scopes ({kind document, id d-1, containers ({kind project, id p-1})})
 })
@@ -61,25 +64,25 @@ registered_scopes ({kind patient, id p-1, tenant acme, containers ({kind workspa
 - **Members and subjects** take:
   - `id`, `kind` (`human` or `service`) and `state` (`active` or `disabled`)
   - the shorthands `email` (with `password_hash`, `password` or `email_link true`) and `phone`
-  - `credentials`, `factors` and `global_roles`
-- **Members also take** `membership` (its id), `facts`, `roles` and `scoped_roles`.
-- **Credentials** have a `kind`: `password`, `secret_key` (slots `a` and `b`), `email_link`, `phone_otp` or `federated` (with `provider` and `provider_subject`). `session_flags` lists restrictive catalog flags every session started with the credential carries.
+  - `credentials`, `factors`, `global_roles` and `metadata`
+- **Members also take** `membership` (its id), `facts`, `membership_metadata`, `roles` and `scoped_roles`.
+- **Credentials** have a `kind`: `password`, `secret_key` (slots `a` and `b`), `email_link`, `phone_otp` or `federated` (with `provider` and `provider_subject`). `session_flags` lists restrictive catalog flags every session started with the credential carries, and `metadata` is the credential's.
 - **Factors** are `kind totp` with `seed_base32`, or `kind email_code` with `email`.
 - **Registered scopes** take `kind`, `id` and `containers` (each a `kind` and an `id`, possibly none). Inside a tenant they belong to it; at the top level they name a `tenant` (an id, a key or `root`). Kinds and ids are opaque and used as written, never resolved.
-- **Templates and roles** take `metadata`, an object stored as the control plane's `metadata`. Styx scalars are text, so its values become JSON strings, and sequences and objects become arrays and objects.
+- **Tenants, subjects, members, credentials, templates and roles** take `metadata`, an object stored as the control plane's `metadata` (members also `membership_metadata`, the membership's). Styx scalars are text, so its values become JSON strings, and sequences and objects become arrays and objects. The server reports metadata over its size limit as a problem.
 - **Unknown keys** are errors.
 
 ### Flat (CSV)
 
-Every table has a header row. Rows name other records by id. An empty cell is an absent value, lists are separated by `|`, and facts are `fact.<key>` columns. Unknown columns are errors.
+Every table has a header row. Rows name other records by id. An empty cell is an absent value, lists are separated by `|`, facts are `fact.<key>` columns, and `metadata` holds a JSON object. Unknown columns are errors.
 
 | Table | Required columns | Optional columns |
 |---|---|---|
-| `tenants.csv` | `id` | `parent` (an id or `root`), `templates`, `fact.*` |
-| `subjects.csv` | `id` | `kind`, `state` |
-| `credentials.csv` | `id`, `subject`, `kind` | `identifier`, `password_hash`, `password`, `mfa_factors_required`, `session_flags`, `provider`, `provider_subject`, `a_hash`, `a_created_at`, `a_expires_at`, `b_hash`, `b_created_at`, `b_expires_at` |
+| `tenants.csv` | `id` | `parent` (an id or `root`), `templates`, `metadata`, `fact.*` |
+| `subjects.csv` | `id` | `kind`, `state`, `metadata` |
+| `credentials.csv` | `id`, `subject`, `kind` | `identifier`, `password_hash`, `password`, `mfa_factors_required`, `session_flags`, `provider`, `provider_subject`, `a_hash`, `a_created_at`, `a_expires_at`, `b_hash`, `b_created_at`, `b_expires_at`, `metadata` |
 | `mfa_factors.csv` | `id`, `subject`, `kind` | `seed_base32`, `email`, `active` |
-| `memberships.csv` | `id`, `subject`, `tenant` | `fact.*` |
+| `memberships.csv` | `id`, `subject`, `tenant` | `metadata`, `fact.*` |
 | `assignments.csv` | `role` | `membership` or `subject` (a global role), `scope_kind`, `scope_id` |
 | `registered_scopes.csv` | `kind`, `id`, `tenant` | `containers` |
 | `sessions.csv` | `id`, `subject`, `credential`, `stage`, `auth_time`, `version`, `refresh_hash`, `expires_at` | `tenant`, `membership`, `client_kind`, `amr`, `flags`, `impersonator`, `revoked_at` |
@@ -90,7 +93,7 @@ CSV can't declare an id namespace, templates or roles. Put those in a `.styx` fi
 
 ### Format versions
 
-The tables, columns and keys above are bootstrap format 1.0. The format has its own `major.minor` version, apart from Konklav's release version:
+The tables, columns and keys above are bootstrap format 1.1, which added metadata to 1.0. The format has its own `major.minor` version, apart from Konklav's release version:
 
 - **A minor version** only adds: a new optional table, column or key. Every set of an older minor version is still a valid set of the newer one.
 - **A major version** is anything else: removing or renaming a table, column or key, making one required, or changing what a value means.

@@ -273,7 +273,7 @@ async fn full_session(
 
 /// Authenticates a full session that may change the subject's own
 /// authentication: not one started by impersonation.
-async fn own_session(
+pub(crate) async fn own_session(
     state: &AppState,
     conn: &mut Connection,
     headers: &HeaderMap,
@@ -932,6 +932,7 @@ async fn replace_password(
             data: CredentialData::Password(PasswordData { hash }),
             mfa_factors_required: old.mfa_factors_required,
             replaces: Some(old.id),
+            metadata: konklav_store::metadata::empty(),
         },
     )
     .await?)

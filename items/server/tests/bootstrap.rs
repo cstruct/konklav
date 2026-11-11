@@ -840,3 +840,114 @@ async fn every_frozen_set_of_a_released_format_still_applies() {
         );
     }
 }
+
+// r[verify bootstrap.metadata]
+// r[verify metadata.limit]
+#[tokio::test(flavor = "multi_thread")]
+async fn metadata_is_applied_compared_exported_and_limited() {
+    let formats = examples().join("formats/1.1");
+    // Two sets, each with its own namespace and catalog file.
+    let sets = [formats.join("nested"), formats.join("flat")];
+    let apply_both = async |app: &TestApp, options: Options| {
+        let mut reports = Vec::new();
+        for set in &sets {
+            reports.push(apply(app, std::slice::from_ref(set), options).await);
+        }
+        reports
+    };
+    let app = TestApp::new().await;
+    for report in apply_both(&app, Options::default()).await {
+        assert!(report.committed, "{report}");
+    }
+    let namespace: uuid::Uuid = "7a2d0c4e-1b3f-4c8a-9e5d-2f6b8a1c3d40".parse().unwrap();
+    let acme = konklav_bootstrap::derive(namespace, konklav_bootstrap::Kind::Tenant, "acme");
+    let tenant = app
+        .control(Method::GET, &format!("/v1/tenants/{acme}"), None)
+        .await;
+    assert_eq!(
+        tenant.body["metadata"],
+        serde_json::json!({"billing_id": "acct-17", "plan": {"name": "team", "seats": "25"}})
+    );
+    let service =
+        konklav_bootstrap::derive(namespace, konklav_bootstrap::Kind::Subject, "svc-sync");
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{service}"), None)
+        .await;
+    assert_eq!(
+        detail.body["metadata"],
+        serde_json::json!({"owner": "platform team"})
+    );
+    assert_eq!(
+        detail.body["credentials"][0]["metadata"],
+        serde_json::json!({"name": "Nightly sync", "rotate_every_days": "90"})
+    );
+
+    // Metadata is part of a record's content.
+    let changed = app
+        .send(
+            Method::PATCH,
+            &format!("/v1/tenants/{acme}/metadata"),
+            &[(
+                "authorization",
+                &format!("Bearer {}", common::CONTROL_TOKEN),
+            )],
+            Some(serde_json::json!({"billing_id": "acct-18"})),
+        )
+        .await;
+    assert_eq!(changed.status, StatusCode::OK, "{:?}", changed.body);
+    let again = apply(&app, &sets[..1], Options::default()).await;
+    assert_eq!(tally(&again, "tenants").conflicts, 1, "{again}");
+
+    // Export writes it, and a copy exports the same set.
+    let fresh = TestApp::new().await;
+    for report in apply_both(&fresh, Options::default()).await {
+        assert!(report.committed, "{report}");
+    }
+    let dir = std::env::temp_dir().join(format!("konklav-export-{}", uuid::Uuid::now_v7()));
+    konklav_server::export::run(
+        fresh.db.pool(),
+        &fresh.state.auth.secrets,
+        &dir.join("first"),
+    )
+    .await
+    .unwrap();
+    let files = read_dir(&dir.join("first"));
+    assert!(
+        files["set.styx"].contains("billing_id"),
+        "{}",
+        files["set.styx"]
+    );
+    assert!(files["subjects.csv"].contains("platform team"));
+    assert!(files["credentials.csv"].contains("Nightly sync"));
+    assert!(files["memberships.csv"].contains("Owner"));
+    let copy = TestApp::new().await;
+    let applied = apply(&copy, &[dir.join("first")], Options::default()).await;
+    assert!(
+        applied.committed && applied.conflicts.is_empty(),
+        "{applied}"
+    );
+    konklav_server::export::run(
+        copy.db.pool(),
+        &copy.state.auth.secrets,
+        &dir.join("second"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(read_dir(&dir.join("second")), files);
+
+    // Metadata over the limit is a problem, and nothing is applied.
+    let limited = TestApp::new().await;
+    let options = Options {
+        metadata_limit: Some(16),
+        ..Options::default()
+    };
+    let refused = apply(&limited, &sets[..1], options).await;
+    assert!(!refused.committed);
+    assert!(
+        refused
+            .problems
+            .iter()
+            .any(|p| p.message.contains("more than the 16 allowed")),
+        "{refused}"
+    );
+}

@@ -48,6 +48,16 @@ class InvalidRequest(KonklavError):
     """`INVALID_REQUEST`."""
 
 
+class MetadataTooLarge(InvalidRequest):
+    """`METADATA_TOO_LARGE`: the write would leave an object's metadata over
+    the server's size limit."""
+
+
+class PreconditionFailed(KonklavError):
+    """`PRECONDITION_FAILED`: the metadata changed since the `metadata_etag`
+    given as `if_match` was read. Read it again and redo the change."""
+
+
 class Unauthenticated(KonklavError):
     """`UNAUTHENTICATED`, `INVALID_CREDENTIALS` or `SESSION_ENDED`."""
 
@@ -82,6 +92,8 @@ _BY_CODE: dict[str, type[KonklavError]] = {
     "CONFLICT": Conflict,
     "SUBJECT_ERASED": Conflict,
     "INVALID_REQUEST": InvalidRequest,
+    "METADATA_TOO_LARGE": MetadataTooLarge,
+    "PRECONDITION_FAILED": PreconditionFailed,
     "UNAUTHENTICATED": Unauthenticated,
     "INVALID_CREDENTIALS": Unauthenticated,
     "SESSION_ENDED": Unauthenticated,

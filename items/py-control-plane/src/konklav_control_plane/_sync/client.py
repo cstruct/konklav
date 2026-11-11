@@ -167,7 +167,9 @@ class ControlPlaneClient:
 
     def _call(self, call: Call) -> Any:
         """Sends `call` and returns what its method returns."""
-        response = self._send(call.method, f"{self._url}{call.path}", json=call.json, params=call.query())
+        response = self._send(
+            call.method, f"{self._url}{call.path}", json=call.json, params=call.query(), headers=call.headers()
+        )
         result = call.result(response.status_code, response.json() if response.content else None)
         if isinstance(result, Written):
             self._saw(result.cursor)
@@ -201,6 +203,7 @@ class ControlPlaneClient:
         *,
         json: Any = None,
         params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
         authenticate: bool = True,
         retry_as: str | None = None,
     ) -> httpx.Response:
@@ -209,13 +212,13 @@ class ControlPlaneClient:
         attempt = 0
         relogged = False
         while True:
-            headers = {}
+            sent = dict(headers or {})
             if authenticate:
-                headers["authorization"] = f"Bearer {self._auth.token(self)}"
+                sent["authorization"] = f"Bearer {self._auth.token(self)}"
             cause: Exception | None = None
             try:
                 response = self._http.request(
-                    method, url, json=json, params=params, headers=headers
+                    method, url, json=json, params=params, headers=sent
                 )
             except httpx.TransportError as error:
                 failure = KonklavError(f"Konklav couldn't be reached: {error}")

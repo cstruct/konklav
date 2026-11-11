@@ -8,6 +8,7 @@ use konklav_store::challenges::{self, NewChallenge, Purpose};
 use konklav_store::credentials::{
     self, CredentialData, CredentialKind, FederatedData, NewCredential, PasswordData,
 };
+use konklav_store::metadata::{self, Object};
 use konklav_store::mfa::{self, EmailCodeData, FactorData};
 use konklav_store::personal_data::PersonalData;
 use konklav_store::roles::{self, AssignmentTarget, RoleDefinition};
@@ -36,12 +37,15 @@ struct Person {
     earlier_fact: String,
     claim: String,
     thumbprint: String,
+    metadata: String,
+    earlier_metadata: String,
+    invite_metadata: String,
     credential: CredentialId,
     membership: MembershipId,
 }
 
 impl Person {
-    fn needles(&self) -> [&str; 8] {
+    fn needles(&self) -> [&str; 11] {
         [
             &self.email,
             &self.provider_subject,
@@ -51,6 +55,9 @@ impl Person {
             &self.fact,
             &self.earlier_fact,
             &self.thumbprint,
+            &self.metadata,
+            &self.earlier_metadata,
+            &self.invite_metadata,
         ]
     }
 }
@@ -65,6 +72,7 @@ async fn password(conn: &mut Connection, subject: SubjectId, email: &str) -> Cre
             data: CredentialData::Password(PasswordData { hash: HASH.into() }),
             mfa_factors_required: 0,
             replaces: None,
+            metadata: metadata::empty(),
         },
     )
     .await
@@ -139,6 +147,9 @@ async fn person(conn: &mut Connection, tenant: TenantId, name: &str) -> Person {
         earlier_fact: format!("{name}-earlier-fact"),
         claim: format!("{name} Lovelace"),
         thumbprint: format!("{name}-key-thumbprint"),
+        metadata: format!("{name}-current-metadata"),
+        earlier_metadata: format!("{name}-earlier-metadata"),
+        invite_metadata: format!("{name}-invite-metadata"),
         credential: CredentialId::new_v7(),
         membership: MembershipId::new_v7(),
     };
@@ -158,6 +169,7 @@ async fn person(conn: &mut Connection, tenant: TenantId, name: &str) -> Person {
             }),
             mfa_factors_required: 0,
             replaces: None,
+            metadata: metadata::empty(),
         },
     )
     .await
@@ -171,6 +183,7 @@ async fn person(conn: &mut Connection, tenant: TenantId, name: &str) -> Person {
             data: CredentialData::PhoneOtp,
             mfa_factors_required: 0,
             replaces: None,
+            metadata: metadata::empty(),
         },
     )
     .await
@@ -212,6 +225,41 @@ async fn person(conn: &mut Connection, tenant: TenantId, name: &str) -> Person {
         member.id,
         AssignmentTarget::Membership(person.membership),
         None,
+    )
+    .await
+    .unwrap();
+
+    // Metadata on the subject, a credential and the membership, written
+    // twice: the earlier value lives on in history and in stored events.
+    for (object, object_id) in [
+        (Object::Subject, id.to_string()),
+        (Object::Credential, person.credential.to_string()),
+        (Object::Membership, person.membership.to_string()),
+    ] {
+        for value in [&person.earlier_metadata, &person.metadata] {
+            metadata::write(conn, object, &object_id, &json!({"note": value}))
+                .await
+                .unwrap();
+        }
+    }
+    // A link-only invite the person redeemed: nothing on the challenge
+    // names them, only the event does.
+    let mut invite = challenge(None, "");
+    invite.purpose = Purpose::Invite;
+    let invite_metadata = json!({"for": person.invite_metadata});
+    let invite = challenges::create_with_metadata(conn, invite, &invite_metadata)
+        .await
+        .unwrap();
+    events::append(
+        conn,
+        "invite.redeemed",
+        json!({
+            "invite": invite.id,
+            "subject": id,
+            "tenant": tenant,
+            "membership": person.membership,
+            "metadata": invite_metadata,
+        }),
     )
     .await
     .unwrap();
@@ -381,9 +429,12 @@ async fn erasure_leaves_no_personal_data_and_touches_no_one_else() {
     assert_eq!(kept[0].identity_claims, None);
     assert_eq!(kept[0].dpop_jkt, None);
 
+    assert_eq!(erased.metadata, json!({}));
+
     let membership = memberships::get(&mut conn, ada.membership).await.unwrap();
     assert!(!membership.is_active());
     assert_eq!(membership.facts, json!({}));
+    assert_eq!(membership.metadata, json!({}));
     assert_eq!(
         roles::assignments_of_membership(&mut conn, ada.membership)
             .await
@@ -557,6 +608,7 @@ async fn nothing_can_be_attached_to_an_erased_subject() {
                 data: CredentialData::Password(PasswordData { hash: HASH.into() }),
                 mfa_factors_required: 0,
                 replaces: None,
+                metadata: metadata::empty(),
             },
         )
         .await,
@@ -764,12 +816,12 @@ async fn the_personal_data_read_finds_what_erasure_removes_and_no_one_elses() {
     let held = personal_data::of(&mut conn, ada.id).await.unwrap();
     assert_eq!(held.subject.id, ada.id);
     let text = format!("{held:?}");
-    // Facts a membership had earlier are in history only, which the read
-    // leaves out.
+    // Facts and metadata from earlier are in history and stored events
+    // only, which the read leaves out.
     for needle in ada.needles() {
         assert_eq!(
             text.contains(needle),
-            needle != ada.earlier_fact,
+            needle != ada.earlier_fact && needle != ada.earlier_metadata,
             "{needle} in the personal data"
         );
     }
@@ -895,7 +947,7 @@ const DECISIONS: &[Table] = &[
             "consumed_at",
             "revoked_at",
         ],
-        personal: &["recipient"],
+        personal: &["recipient", "metadata"],
         unreported: &[
             ("secret_hash", "a secret"),
             (
@@ -927,7 +979,7 @@ const DECISIONS: &[Table] = &[
             "break_glass",
             "session_flags",
         ],
-        personal: &["identifier", "data"],
+        personal: &["identifier", "data", "metadata"],
         unreported: &[],
     },
     Table {
@@ -936,14 +988,14 @@ const DECISIONS: &[Table] = &[
         personal: &[],
         unreported: &[],
     },
-    // Every other payload holds identifiers only.
+    // Payloads of other kinds hold identifiers only.
     Table {
         name: "event",
         plain: &["cursor", "kind", "created_at"],
         personal: &[],
         unreported: &[(
             "payload",
-            "a `delivery.requested` payload repeats a challenge's recipient, which the report shows, with its material",
+            "a `delivery.requested` payload repeats a challenge's recipient, which the report shows, with its material; `metadata.changed` and `invite.redeemed` payloads hold metadata the report shows where it still holds",
         )],
     },
     Table {
@@ -983,7 +1035,7 @@ const DECISIONS: &[Table] = &[
             "updated_at",
             "managed_by",
         ],
-        personal: &["facts"],
+        personal: &["facts", "metadata"],
         unreported: &[],
     },
     // `data` is reported in part: an email factor's address, never a seed.
@@ -1023,6 +1075,7 @@ const DECISIONS: &[Table] = &[
             "backchannel_logout_uri",
             "require_pkce",
             "require_dpop",
+            "metadata",
         ],
         personal: &[],
         unreported: &[],
@@ -1086,14 +1139,14 @@ const DECISIONS: &[Table] = &[
         personal: &[],
         unreported: &[],
     },
-    // Only memberships' versions hold personal data: their facts.
+    // Memberships' versions hold facts and metadata, subjects' metadata.
     Table {
         name: "row_version",
         plain: &["id", "relation", "key", "valid_from", "valid_until"],
         personal: &[],
         unreported: &[(
             "data",
-            "facts a membership had earlier; the report shows what holds now",
+            "facts and metadata from earlier; the report shows what holds now",
         )],
     },
     // Erasure revokes the sessions and clears the two personal columns; the
@@ -1154,6 +1207,7 @@ const DECISIONS: &[Table] = &[
             "revoked_by",
             "created_at",
             "updated_at",
+            "metadata",
         ],
         personal: &[],
         unreported: &[],
@@ -1188,7 +1242,7 @@ const DECISIONS: &[Table] = &[
             "updated_at",
             "erased_at",
         ],
-        personal: &[],
+        personal: &["metadata"],
         unreported: &[],
     },
     Table {
@@ -1210,7 +1264,8 @@ const DECISIONS: &[Table] = &[
         personal: &[],
         unreported: &[],
     },
-    // Tenant facts describe a tenant, not a subject (`subject.erasure.removes`).
+    // Tenant facts and metadata describe a tenant, not a subject
+    // (`subject.erasure.removes`).
     Table {
         name: "tenant",
         plain: &[
@@ -1220,6 +1275,7 @@ const DECISIONS: &[Table] = &[
             "facts",
             "created_at",
             "updated_at",
+            "metadata",
         ],
         personal: &[],
         unreported: &[],

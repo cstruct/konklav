@@ -41,10 +41,11 @@ transaction:
 | Credentials, MFA factors | Deleted. This is the only operation that deletes a credential (`r[credential.history]`). |
 | Challenges | Deleted, both those made for the subject and those sent to one of its recipients without naming a subject, such as an invite. |
 | Login attempts | Deleted for the subject's login identifiers. |
-| Memberships | Ended, and their facts removed. |
+| Memberships | Ended, and their facts and metadata removed. |
+| Metadata | Removed from the subject and its memberships. The metadata of its credentials and invites goes with them. |
 | Role assignments | Deleted, global ones included. |
-| History | Every row version of the subject's memberships loses its facts. |
-| Stored events | `delivery.requested` events for the subject, or to one of its recipients without naming a subject, are deleted. Gaps in the feed's cursors are normal, so consumers notice nothing. |
+| History | Every row version of the subject's memberships loses its facts and metadata, and every row version of the subject its metadata. |
+| Stored events | `delivery.requested` events for the subject, or to one of its recipients without naming a subject, are deleted. So are earlier `metadata.changed` events about the subject, its credentials, memberships and invites. `invite.redeemed` events for the subject keep their ids and lose the invite's metadata. Gaps in the feed's cursors are normal, so consumers notice nothing. |
 | Remembered batch answers | Deleted where they name the subject or one of its recipients, or were remembered for it as the caller. |
 | The subject | Becomes `erased`, with the time. |
 
@@ -91,6 +92,29 @@ Facts are catalog data, and Konklav can't tell `member_type` from
 every deployment would have to get right, erasure removes every fact on
 the subject's memberships. Tenant facts and share facts are left alone:
 they describe a tenant or a share, not this subject.
+
+### Why all metadata goes
+
+Metadata is opaque to Konklav (`r[metadata.opaque]`), and relying systems
+put it on subjects, credentials, memberships and invites so that they need
+no table of their own. Whatever it holds, it is about that subject, so
+erasure treats it like membership facts and removes all of it. The
+metadata of tenants, shares, OIDC clients, roles and templates describes
+those objects and stays.
+
+Without erasure, a copy of metadata may live as long as history, the feed
+or a delivery request keeps it (`r[metadata.erasure]`). Erasure doesn't
+wait for that: it removes the copies in the same transaction. The
+statements that empty the subject's and memberships' metadata emit
+`metadata.changed` events of their own, which carry empty metadata and
+stay, so a relying system that mirrors metadata sees it go.
+
+An invite counts as the subject's when it was made for the subject, was
+sent to one of its addresses without naming a subject, or was redeemed by
+it. Only the `invite.redeemed` event records who redeemed a link-only
+invite, so once the feed has dropped that event, an invite still waiting
+for challenge retention is no longer tied to anyone and stays until that
+retention removes it.
 
 ### History
 
@@ -214,13 +238,13 @@ snapshot. It needs `konklav:subjects:manage`.
 
 | Part | What it shows |
 | --- | --- |
-| `subject` | Id, kind, state and times. |
-| `credentials` | Kind, login identifier and times, revoked ones included. A federated credential shows the provider, the provider's `sub` and the email address it reported. A passkey shows its label. |
+| `subject` | Id, kind, state, times and metadata. |
+| `credentials` | Kind, login identifier, times and metadata, revoked ones included. A federated credential shows the provider, the provider's `sub` and the email address it reported. A passkey shows its label. |
 | `mfa_factors` | Kind and, for an email factor, the address. Removed factors are included, since their rows stay until erasure. |
-| `memberships` | Tenant, state and facts, ended ones included. |
+| `memberships` | Tenant, state, facts and metadata, ended ones included. |
 | `role_assignments` | Global ones and those of the subject's memberships. |
 | `sessions` | Every session retention hasn't deleted: times, authentication methods, client kind, OIDC client, the claims an identity provider passed and the DPoP key thumbprint. |
-| `challenges` | Purpose, recipient and times, for the challenges erasure would delete. |
+| `challenges` | Purpose, recipient and times, for the challenges erasure would delete, and an invite's metadata. |
 | `login_attempts` | Time, kind of credential, login identifier, outcome and client address, for the attempts erasure would delete. |
 
 It never shows hashes, seeds, key material or challenge material. For an
@@ -228,8 +252,9 @@ erased subject every list is empty.
 
 Three things Konklav holds are left out on purpose:
 
-- **Facts a membership had earlier**, which history keeps as row versions.
-  The report shows the facts that hold now.
+- **Facts and metadata from earlier**, which history keeps as row versions
+  and the feed as `metadata.changed` events. The report shows what holds
+  now.
 - **Stored `delivery.requested` events.** Each repeats the recipient of a
   challenge the report already shows, next to material that must not be
   shown.

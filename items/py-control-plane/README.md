@@ -142,6 +142,8 @@ await client.explain.entitlement(person, action="document:read", tenant=tenant)
 await client.shares.offer(share, {"owner": a, "recipient": b, "scope": {"kind": "project", "id": "p-1"}, "actions": ["document:read"]})
 await client.registered_scopes.record("document", "d-1", {"tenant": tenant})
 await client.invites.create({"id": invite, "email": "new@example.com", "tenant": tenant, "roles": ["reader"]})
+link = await client.invites.create({"tenant": tenant, "public_metadata": {"inviter": "Ada"}})  # link-only
+link.value["token"]  # shown once: share it as a link; whoever holds it may redeem it
 
 # Sessions, signing keys, OIDC clients and imports
 await client.sessions.revoke({"subject": person})
@@ -151,6 +153,35 @@ await client.imports.subjects({"subjects": [{"id": person, "kind": "human"}]})
 
 `client.request(method, path, json=..., params=...)` sends anything else
 and returns the decoded body.
+
+### Metadata
+
+Subjects, credentials, invites, tenants, memberships, shares, OIDC clients,
+templates and roles carry `metadata`: a JSON object of your own that
+Konklav stores and never reads (it reaches no token or decision; data
+that should change access belongs in facts). Creates take it, every object
+shows it with its `metadata_etag`, and each of those namespaces has
+`patch_metadata`, a JSON merge patch that changes nothing else:
+
+```python
+key = await client.credentials.create(service, {"kind": "secret_key", "metadata": {"name": "Nightly sync"}})
+invite = await client.invites.create({"email": email, "metadata": {"tenant_id": "t-1", "invited_by": me}})
+page = await client.invites.list(metadata={"tenant_id": "t-1"})  # exact match on top-level keys
+current = await client.tenants.get(tenant)
+try:
+    await client.tenants.patch_metadata(tenant, {"plan": "pro", "trial": None}, if_match=current["metadata_etag"])
+except PreconditionFailed:
+    ...  # someone changed it since; read it again
+```
+
+`None` removes a key. Metadata over the server's size limit (16 KiB by
+default) raises `MetadataTooLarge`. Every list takes `metadata=`.
+
+An invite may also carry `public_metadata`, set when it is created: up to
+1 KiB that the subject-facing invite preview (`POST /v1/invites/preview`)
+shows to whoever holds the invite's token, before signing in, such as the
+inviter's name. It is the one thing you write here that people see; keep
+anything else in `metadata`.
 
 ### Writes, cursors and repeats
 

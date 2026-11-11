@@ -44,6 +44,14 @@ async fn authentication_endpoints_wait_out_the_floor_whether_or_not_identifiers_
             "/v1/password-reset/start",
             json!({"identifier": "unknown@example.com"}),
         ),
+        (
+            "/v1/invites/preview",
+            json!({"token": format!("{}.unknown", uuid::Uuid::now_v7())}),
+        ),
+        (
+            "/v1/invites/redeem",
+            json!({"token": format!("{}.unknown", uuid::Uuid::now_v7()), "password": "x"}),
+        ),
     ] {
         let (reply, took) = timed(app.post(uri, body)).await;
         assert!(

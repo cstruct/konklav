@@ -9,7 +9,15 @@ import uuid
 import httpx
 import pytest
 
-from konklav_control_plane import BearerToken, ControlPlaneClient, Forbidden, NotFound, SecretKey
+from konklav_control_plane import (
+    BearerToken,
+    ControlPlaneClient,
+    Forbidden,
+    MetadataTooLarge,
+    NotFound,
+    PreconditionFailed,
+    SecretKey,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -206,6 +214,12 @@ async def test_shares_registered_scopes_and_invites(konklav):
         assert invite.value["invite_id"] and invite.cursor is not None
         assert "token" not in invite.value
 
+        link = await client.invites.create({"tenant": recipient, "public_metadata": {"inviter": "Ada"}})
+        assert link.value["token"].startswith(link.value["invite_id"] + ".")
+        shown = await client.invites.get(link.value["invite_id"])
+        assert (shown["email"], shown["public_metadata"]) == (None, {"inviter": "Ada"})
+        assert (await client.invites.revoke(link.value["invite_id"]))["state"] == "revoked"
+
 
 async def test_oidc_clients(konklav):
     async with operator(konklav) as client:
@@ -349,3 +363,30 @@ async def test_batches(konklav):
         async with ControlPlaneClient(konklav["control"], auth=auth) as service_client:
             with pytest.raises(Forbidden):
                 await service_client.subjects.list()
+
+
+# r[verify metadata.write.patch]
+# r[verify metadata.write.precondition]
+# r[verify metadata.filter]
+async def test_metadata(konklav):
+    async with operator(konklav) as client:
+        id = await tenant(client, metadata={"billing_id": "b-1"})
+        current = await client.tenants.get(id)
+        assert current["metadata"] == {"billing_id": "b-1"}
+        patched = await client.tenants.patch_metadata(
+            id, {"plan": "pro", "billing_id": None}, if_match=current["metadata_etag"]
+        )
+        assert patched.value["metadata"] == {"plan": "pro"}
+        with pytest.raises(PreconditionFailed):
+            await client.tenants.patch_metadata(id, {"plan": "free"}, if_match=current["metadata_etag"])
+        with pytest.raises(MetadataTooLarge):
+            await client.tenants.patch_metadata(id, {"note": "x" * 20000})
+        page = await client.tenants.list(metadata={"plan": "pro"})
+        assert [t["id"] for t in page["tenants"]] == [id]
+
+        invite = await client.invites.create({"email": f"{new_id()}@example.com", "metadata": {"tenant_id": id}})
+        invites = await client.invites.list(metadata={"tenant_id": id})
+        assert [i["id"] for i in invites["invites"]] == [invite.value["invite_id"]]
+        async with client.batch() as batch:
+            pending = batch.invites.patch_metadata(invite.value["invite_id"], {"invited_by": "u-1"})
+        assert pending.result.value["metadata"] == {"tenant_id": id, "invited_by": "u-1"}

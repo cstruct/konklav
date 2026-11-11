@@ -91,6 +91,12 @@ pub struct Credential {
     pub revoked_reason: Option<String>,
     pub break_glass: bool,
     pub session_flags: Vec<String>,
+    /// An object, opaque to Konklav.
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
+    /// Changes whenever `metadata` does; send it as `If-Match` to patch
+    /// the metadata only if no one else has since.
+    pub metadata_etag: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -105,23 +111,35 @@ pub enum CreateCredential {
         password_hash: Option<String>,
         #[serde(default)]
         mfa_factors_required: i16,
+        #[serde(default = "crate::metadata::empty_object")]
+        #[schema(value_type = Object)]
+        metadata: serde_json::Value,
     },
     #[schema(title = "CreateCredentialSecretKey")]
     SecretKey {
         id: Option<CredentialId>,
         expires_at: Option<DateTime<Utc>>,
+        #[serde(default = "crate::metadata::empty_object")]
+        #[schema(value_type = Object)]
+        metadata: serde_json::Value,
     },
     /// Log in with a magic link sent to `identifier`, an email address.
     #[schema(title = "CreateCredentialEmailLink")]
     EmailLink {
         id: Option<CredentialId>,
         identifier: String,
+        #[serde(default = "crate::metadata::empty_object")]
+        #[schema(value_type = Object)]
+        metadata: serde_json::Value,
     },
     /// Log in with a code sent to `identifier`, an E.164 phone number.
     #[schema(title = "CreateCredentialPhoneOtp")]
     PhoneOtp {
         id: Option<CredentialId>,
         identifier: String,
+        #[serde(default = "crate::metadata::empty_object")]
+        #[schema(value_type = Object)]
+        metadata: serde_json::Value,
     },
     /// A workload identity at an identity provider: tokens it issues for
     /// `subject` sign the service principal in with the JWT bearer grant.
@@ -130,6 +148,9 @@ pub enum CreateCredential {
         id: Option<CredentialId>,
         provider: String,
         subject: String,
+        #[serde(default = "crate::metadata::empty_object")]
+        #[schema(value_type = Object)]
+        metadata: serde_json::Value,
     },
 }
 

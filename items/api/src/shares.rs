@@ -61,6 +61,12 @@ pub struct Share {
     pub revoked_at: Option<DateTime<Utc>>,
     #[schema(required)]
     pub revoked_by: Option<ShareSide>,
+    /// An object, opaque to Konklav.
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
+    /// Changes whenever `metadata` does; send it as `If-Match` to patch
+    /// the metadata only if no one else has since.
+    pub metadata_etag: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -71,13 +77,26 @@ pub struct RevokeShare {
     pub by: ShareSide,
 }
 
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::IntoParams,
-)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct ShareQuery {
     /// Only shares where the tenant is on this side; both when absent.
     pub side: Option<ShareSide>,
+    /// A JSON object of strings, numbers and booleans: only objects whose
+    /// metadata has each of its keys at the top level with an equal value.
+    pub metadata: Option<String>,
+}
+
+/// A share's terms and its metadata, which isn't one of them: changing
+/// only the metadata doesn't offer the share again.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct OfferShare {
+    #[serde(flatten)]
+    pub terms: ShareTerms,
+    /// An object, opaque to Konklav.
+    #[serde(default = "crate::metadata::empty_object")]
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]

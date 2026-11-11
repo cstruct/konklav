@@ -1,9 +1,9 @@
-//! Inviting people by email.
+//! Inviting people by email, or with a link-only invite to share.
 
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
 
-use super::common::{Field, Gated, Problem, invalid_input, timestamp};
+use super::common::{Field, Gated, Problem, Secret, invalid_input, timestamp};
 use super::console::use_console;
 use crate::api::endpoints::{self, list};
 use crate::api::types::CreatedInvite;
@@ -39,10 +39,11 @@ pub fn Invites() -> impl IntoView {
         <Gated capability=Capability::Invites>
             <p class="muted">
                 "Konklav doesn't send email: the invite token goes out as a delivery request on the change feed, "
-                "for a relying system to deliver."
+                "for a relying system to deliver. Without an address the invite is link-only: its token is shown "
+                "here once, and whoever holds it can redeem it."
             </p>
             <form class="card" on:submit=submit>
-                <Field label="Email address" value=email kind="email"/>
+                <Field label="Email address" value=email kind="email" placeholder="none, for a link-only invite"/>
                 <div class="row">
                     <Field label="Tenant to join" value=tenant placeholder="none; a UUID or root"/>
                     <Field label="Roles in that tenant" value=roles placeholder="comma-separated keys"/>
@@ -51,8 +52,9 @@ pub fn Invites() -> impl IntoView {
                 <Problem error/>
                 {move || created.get().map(|invite| view! {
                     <p class="notice">
-                        "Invite " <code>{invite.invite_id}</code> " requested; it expires " {timestamp(&invite.expires_at)} "."
+                        "Invite " <code>{invite.invite_id.clone()}</code> " requested; it expires " {timestamp(&invite.expires_at)} "."
                     </p>
+                    {invite.token.map(|token| view! { <Secret label="The invite's token" value=token/> })}
                 })}
                 <button type="submit">"Invite"</button>
             </form>

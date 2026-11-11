@@ -86,6 +86,7 @@ diesel::table! {
         expires_at -> Timestamptz,
         consumed_at -> Nullable<Timestamptz>,
         revoked_at -> Nullable<Timestamptz>,
+        metadata -> Jsonb,
     }
 }
 
@@ -112,6 +113,7 @@ diesel::table! {
         revoked_reason -> Nullable<Text>,
         break_glass -> Bool,
         session_flags -> Array<Text>,
+        metadata -> Jsonb,
     }
 }
 
@@ -160,6 +162,7 @@ diesel::table! {
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
         managed_by -> Nullable<Text>,
+        metadata -> Jsonb,
     }
 }
 
@@ -197,6 +200,7 @@ diesel::table! {
         backchannel_logout_uri -> Nullable<Text>,
         require_pkce -> Bool,
         require_dpop -> Bool,
+        metadata -> Jsonb,
     }
 }
 
@@ -315,6 +319,7 @@ diesel::table! {
         revoked_by -> Nullable<Text>,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
+        metadata -> Jsonb,
     }
 }
 
@@ -344,6 +349,7 @@ diesel::table! {
         state -> Text,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
+        metadata -> Jsonb,
         erased_at -> Nullable<Timestamptz>,
     }
 }
@@ -376,6 +382,7 @@ diesel::table! {
         facts -> Jsonb,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
+        metadata -> Jsonb,
     }
 }
 

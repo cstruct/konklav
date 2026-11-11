@@ -28,6 +28,10 @@ pub struct BatchOperation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
     pub body: Option<serde_json::Value>,
+    /// The entity tag the operation would send alone as `If-Match`, such
+    /// as a `metadata_etag` for a metadata patch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub if_match: Option<String>,
 }
 
 /// The methods a batch accepts: only writes.
@@ -36,6 +40,7 @@ pub struct BatchOperation {
 pub enum BatchMethod {
     Put,
     Post,
+    Patch,
     Delete,
 }
 

@@ -61,7 +61,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - listing and removing the caller's own passkeys (`GET /v1/passkeys`, `DELETE /v1/passkeys/{id}`)
 
   Each ceremony's `webauthn-rs` state lives in a single-use challenge until the second call; the stored key is versioned opaque JSON in the credential's data.
-- MFA (TOTP and email-code factors; partial sessions can list their active factors, and browsers get their cookie when MFA completes), step-up, magic-link and phone-code login, password reset and change, invite redemption, and impersonation. These emit `delivery.requested` for anything a relying system must send.
+- MFA (TOTP and email-code factors; partial sessions can list their active factors, and browsers get their cookie when MFA completes), step-up, magic-link and phone-code login, password reset and change, invite preview and redemption (`src/invites.rs`: an emailed invite with a password for its address; a link-only invite, a bearer link, by a signed-in subject or with an existing account's identifier and password, never creating an account; token checks counted per client address with the login address limits), and impersonation. These emit `delivery.requested` for anything a relying system must send.
 - Relying surface, for service principals only:
   - `/.well-known/jwks.json`
   - `/v1/entitlements/{subject}[/{tenant}]`
@@ -79,11 +79,12 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - memberships (create, facts, end, assignments)
   - templates and roles, where roles of `root` are global roles
   - global assignments
-  - invites (create, read without the token, and revoke; a revoked invite fails to redeem as an expired one does)
+  - invites (create, list by tenant or metadata, read without the token, and revoke; a revoked invite fails to redeem as an expired one does). Without an `email` an invite is link-only: nothing is delivered and the create shows its `token` once (a repeat shows a new one; batches replay it like secret keys). An invite may carry `public_metadata` (at most 1 KiB, set on create), which only the control plane and the invite preview show
   - an operator view of a subject's entitlements, with explanations (`/v1/subjects/{id}/explain`)
   - decision explanations (`POST /v1/subjects/{id}/explain-decision`), now or, with `history.enabled`, as of a past time (`at`, RFC 3339) within the history horizon
   - listings of subjects (by kind or login identifier), tenants (by parent) and a tenant's memberships
-  - batches (`POST /v1/batch`, `src/batch_api.rs`): `PUT`, `POST` and `DELETE` operations applied in order in one transaction, all or nothing. Each runs through the control-plane router on the batch's connection (handlers get theirs through `src/db.rs`), so it is guarded, parsed and answered as it is alone. A failure answers the failing operation's error with its position as `error.operation`. A batch may carry an idempotency key: a committed batch's answer is kept per caller in `batch_result`, without the secrets it showed, and a repeat answers it, running only the operations that showed secrets again so they show new ones.
+  - metadata (`src/metadata.rs`, `src/metadata_api.rs`): an opaque JSON object on subjects, credentials, invites, tenants, memberships, shares, OIDC clients, templates and roles. Creates take it, and PUTs that replace a definition replace it. `PATCH …/metadata` merge-patches it (RFC 7396), with an optional `If-Match` on the object's `metadata_etag`, a hash of the metadata's canonical JSON, under a row lock. Every list takes `metadata=<JSON object of scalars>`, matched with `@>` (GIN-indexed for subjects, tenants, memberships and invites). Triggers emit `metadata.changed`; the feed withholds its `metadata`, and an `invite.redeemed`'s, from consumers without the capability that manages the object. An invite's delivery request carries its metadata, erased with the material. Konklav never reads it: no token, claim, decision or entitlement set sees it.
+  - batches (`POST /v1/batch`, `src/batch_api.rs`): `PUT`, `POST`, `PATCH` and `DELETE` operations (an operation's `if_match` is sent as `If-Match`) applied in order in one transaction, all or nothing. Each runs through the control-plane router on the batch's connection (handlers get theirs through `src/db.rs`), so it is guarded, parsed and answered as it is alone. A failure answers the failing operation's error with its position as `error.operation`. A batch may carry an idempotency key: a committed batch's answer is kept per caller in `batch_result`, without the secrets it showed, and a repeat answers it, running only the operations that showed secrets again so they show new ones.
 
   Every create takes an id the caller chooses and is idempotent on it: an identical repeat answers `200` and applies nothing again (a repeated invite isn't delivered again, a repeated secret key gets new secrets), and conflicting content answers `CONFLICT`. That is what lets a batch's later operations name what earlier ones create.
 
@@ -99,7 +100,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - `history`: `enabled` (default off) and `retention_days` (default 90). Applied at startup, so every instance on a database must agree; turning it off discards what was recorded
   - `browser`: allowed origins, cookie security, `require_dpop` (refuse browser sessions that aren't bound to a DPoP key), and the `passkeys` section (relying party ID and name, origins)
   - `oidc_provider`: the ID-token keys, login URL, claims hook, `dpop_max_age_seconds` (how old a DPoP proof may be, default 60) and `require_dpop` (`none`, `public_clients` or `all`: which clients need DPoP on top of those registered with `require_dpop`)
-  - `control`: the bootstrap token (secret), and batches: `batch_max_operations` (default 100), `batch_key_seconds` (how long an idempotency key is kept, default 600) and `batch_key_max_seconds` (the longest a batch may ask for, default 3600)
+  - `control`: the bootstrap token (secret), batches: `batch_max_operations` (default 100), `batch_key_seconds` (how long an idempotency key is kept, default 600) and `batch_key_max_seconds` (the longest a batch may ask for, default 3600), and `metadata_max_bytes`, the largest an object's metadata may be as compact JSON (default 16384; `bootstrap` reads it too)
 
   The development config is in `config/dev.styx` and `config/dev.secrets.styx`.
 - HTTP: health endpoints at the root; versioned endpoints under `/v1`. Each surface's routes are in `src/surface.rs`.
@@ -179,6 +180,8 @@ mise run test
   - history: decisions explained as of a past time, the history horizon, disabling, and sweeping old row versions (`tests/history.rs`)
   - the bootstrap command, applying both example sets and every frozen set of a released format, re-runs, dry runs, conflicts and located problems, registered scopes in batches with one event, and an exported set bootstrapping an empty database unchanged (`tests/bootstrap.rs`)
   - idempotent creates for credentials, password replacement, assignments and invites (`tests/idempotency.rs`)
+  - link-only invites: the token shown once and anew on a repeat, bearer redemption signed in or with an existing account's password, the preview with public metadata and revoked invites indistinguishable from unknown tokens, per-address limits on token checks (`tests/invites.rs`)
+  - metadata: creates, lists and filters for every kind of object, merge patches with preconditions (alone and in batches), the size limit, nothing on the subject-facing or relying surfaces or in tokens, `metadata.changed` and its withholding on the feed, invite delivery and redemption, history, imports and erasure (`tests/metadata.rs`); bootstrap and export of format 1.1's metadata (`tests/bootstrap.rs`)
   - batches: references to earlier creates, failures that leave no trace, per-operation capabilities, limits, bulk endpoints inside a batch, a batch cut off by the request timeout, and idempotency keys with their secrets and lifetimes (`tests/batch.rs`). The test harness also checks each batch result against its own operation's schema.
 - Indirect coverage: none yet.
 

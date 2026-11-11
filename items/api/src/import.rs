@@ -27,6 +27,11 @@ pub struct ImportedSubject {
     pub kind: SubjectKind,
     #[serde(default = "active")]
     pub state: SubjectState,
+    /// An object, opaque to Konklav; a re-import leaves an existing
+    /// record's metadata as it is.
+    #[serde(default = "crate::metadata::empty_object")]
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
 }
 
 fn active() -> SubjectState {
@@ -79,6 +84,11 @@ pub struct ImportedCredential {
     /// Restrictive session flags every session started with it carries.
     #[serde(default)]
     pub session_flags: Vec<String>,
+    /// An object, opaque to Konklav; a re-import leaves an existing
+    /// record's metadata as it is.
+    #[serde(default = "crate::metadata::empty_object")]
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
     #[serde(flatten)]
     pub material: ImportedCredentialMaterial,
 }

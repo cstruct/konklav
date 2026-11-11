@@ -877,6 +877,7 @@ async fn a_service_principals_report_shows_its_keys_and_workload_without_secrets
                 }),
                 mfa_factors_required: 0,
                 replaces: None,
+                metadata: konklav_store::metadata::empty(),
             },
         )
         .await
@@ -906,4 +907,75 @@ async fn a_service_principals_report_shows_its_keys_and_workload_without_secrets
         assert!(!text.contains(secret), "slot {slot}'s secret in the report");
     }
     assert!(!text.contains("hash"), "{text}");
+}
+
+// r[verify subject.erasure.metadata]
+// r[verify subject.report.contents]
+// r[verify subject.erasure.blocks-writes]
+#[tokio::test(flavor = "multi_thread")]
+async fn metadata_is_reported_then_erased_and_can_not_be_written_back() {
+    let (app, tenant) = app_with_a_tenant().await;
+    let ada = app.human("ada@example.com", PASSWORD).await;
+    let membership = uuid::Uuid::now_v7().to_string();
+    let joined = app
+        .control(
+            Method::PUT,
+            &format!("/v1/memberships/{membership}"),
+            Some(json!({"subject": ada, "tenant": tenant})),
+        )
+        .await;
+    assert!(joined.status.is_success(), "{:?}", joined.body);
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{ada}"), None)
+        .await;
+    let credential = detail.body["credentials"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let paths = [
+        format!("/v1/subjects/{ada}/metadata"),
+        format!("/v1/credentials/{credential}/metadata"),
+        format!("/v1/memberships/{membership}/metadata"),
+    ];
+    for path in &paths {
+        let written = app
+            .control(Method::PATCH, path, Some(json!({"crm": "ada-in-the-crm"})))
+            .await;
+        assert_eq!(written.status, StatusCode::OK, "{path}: {:?}", written.body);
+    }
+
+    let report = personal_data(&app, &ada).await;
+    assert_eq!(report.status, StatusCode::OK, "{:?}", report.body);
+    let held = json!({"crm": "ada-in-the-crm"});
+    assert_eq!(report.body["subject"]["metadata"], held);
+    assert_eq!(report.body["credentials"][0]["metadata"], held);
+    assert_eq!(report.body["memberships"][0]["metadata"], held);
+
+    assert_eq!(erase(&app, &ada).await.status, StatusCode::OK);
+
+    let subject = app
+        .control(Method::GET, &format!("/v1/subjects/{ada}"), None)
+        .await;
+    assert_eq!(subject.body["metadata"], json!({}));
+    let kept = app
+        .control(Method::GET, &format!("/v1/memberships/{membership}"), None)
+        .await;
+    assert_eq!(kept.body["state"], "ended");
+    assert_eq!(kept.body["metadata"], json!({}));
+
+    for path in [&paths[0], &paths[2]] {
+        let refused = app
+            .control(Method::PATCH, path, Some(json!({"crm": "back again"})))
+            .await;
+        assert_eq!(
+            refused.code(),
+            "SUBJECT_ERASED",
+            "{path}: {:?}",
+            refused.body
+        );
+    }
+    let gone = app
+        .control(Method::PATCH, &paths[1], Some(json!({"crm": "back again"})))
+        .await;
+    assert_eq!(gone.code(), "NOT_FOUND", "{:?}", gone.body);
 }

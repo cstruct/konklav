@@ -165,9 +165,17 @@ MUST:
 - delete the remembered batch answers that name it or one of its login
   identifiers
 
+r[subject.erasure.metadata]
+Erasure MUST remove the metadata of the subject, of its credentials, of
+its memberships and of the invites among the challenges it deletes, which
+include the invites the subject redeemed. It MUST remove that metadata
+from stored `metadata.changed` and `invite.redeemed` events too, at once,
+without waiting for the retention that `metadata.erasure` allows.
+
 r[subject.erasure.history]
-Erasure MUST also remove the facts from every row version of the subject's
-memberships, at once and whatever history's retention is.
+Erasure MUST also remove the facts and the metadata from every row version
+of the subject's memberships, and the metadata from every row version of
+the subject, at once and whatever history's retention is.
 
 r[subject.erasure.tombstone]
 An erased subject MUST keep its id, kind and state `erased`, with the time
@@ -218,16 +226,18 @@ that holds nothing: an empty entitlement set and denied checks.
 r[subject.report.contents]
 The control plane MUST offer a personal data report for one subject,
 holding:
-- the subject
-- its credentials: kind, login identifier, times, and for a federated
-  credential the provider with what it reported, for a passkey its label
+- the subject, with its metadata
+- its credentials: kind, login identifier, times, metadata, and for a
+  federated credential the provider with what it reported, for a passkey
+  its label
 - its MFA factors, removed ones included: kind and, for an email factor,
   the address
-- its memberships with their facts, and its role assignments
+- its memberships with their facts and metadata, and its role assignments
 - its sessions that have not been deleted: times, authentication methods,
   client kind, OIDC client, the claims an identity provider passed and the
   key thumbprint
-- the challenges that erasure would delete: purpose, recipient and times
+- the challenges that erasure would delete: purpose, recipient, times
+  and, for an invite, its metadata
 - the login attempts that erasure would delete: time, kind of credential,
   login identifier, outcome and address
 

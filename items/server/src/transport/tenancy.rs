@@ -5,12 +5,17 @@ use konklav_store::memberships::{Membership, MembershipState};
 use konklav_store::roles::{AssignmentTarget, RoleAssignment};
 use konklav_store::tenants::{Tenant, TenantState};
 
+/// A tenant as the control plane shows it, with its metadata and the
+/// metadata's entity tag, as every object with metadata is shown.
+// r[impl metadata.read]
 pub(crate) fn tenant(tenant: Tenant) -> api::Tenant {
     api::Tenant {
         id: tenant.id,
         parent_id: tenant.parent_id,
         state: tenant_state(tenant.state),
         facts: tenant.facts,
+        metadata_etag: crate::metadata::etag(&tenant.metadata),
+        metadata: tenant.metadata,
         created_at: tenant.created_at,
         updated_at: tenant.updated_at,
     }
@@ -43,6 +48,8 @@ pub(crate) fn membership(membership: Membership) -> api::Membership {
         },
         facts: membership.facts,
         managed_by: membership.managed_by,
+        metadata_etag: crate::metadata::etag(&membership.metadata),
+        metadata: membership.metadata,
         created_at: membership.created_at,
         updated_at: membership.updated_at,
     }

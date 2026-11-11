@@ -27,7 +27,7 @@ pub struct FormatVersion {
 
 /// The format this crate reads, up to and including, and `export` writes.
 // r[impl bootstrap.format.version]
-pub const FORMAT: FormatVersion = FormatVersion { major: 1, minor: 0 };
+pub const FORMAT: FormatVersion = FormatVersion { major: 1, minor: 1 };
 
 /// What a set that declares no format is.
 pub const UNDECLARED: FormatVersion = FormatVersion { major: 1, minor: 0 };

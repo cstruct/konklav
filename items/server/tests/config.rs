@@ -565,6 +565,7 @@ fn bootstrap_tokens_must_be_long_and_may_expire() {
             batch_max_operations: 100,
             batch_key_seconds: 600,
             batch_key_max_seconds: 3600,
+            metadata_max_bytes: 16384,
         }),
     };
     assert!(config("short", None).bootstrap_expiry().is_err());

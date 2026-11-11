@@ -75,10 +75,12 @@ create trigger session_impersonator_not_erased before insert on session
 for each row execute function subject_not_erased('impersonator_subject_id');
 create trigger membership_subject_not_erased before insert on membership
 for each row execute function subject_not_erased('subject_id');
--- An erased subject's memberships are ended and hold no facts. Updates that
--- keep them so, such as a statement over a whole tenant, pass.
+-- An erased subject's memberships are ended and hold no facts and no
+-- metadata. Updates that keep them so, such as a statement over a whole
+-- tenant, pass.
 create trigger membership_subject_stays_erased before update on membership
-for each row when (new.state = 'active' or new.facts <> '{}'::jsonb)
+for each row
+when (new.state = 'active' or new.facts <> '{}'::jsonb or new.metadata <> '{}'::jsonb)
 execute function subject_not_erased('subject_id');
 create trigger role_assignment_subject_not_erased before insert or update on role_assignment
 for each row execute function subject_not_erased('subject_id');
@@ -107,7 +109,10 @@ before insert or update on role_assignment
 for each row when (new.membership_id is not null)
 execute function role_assignment_member_not_erased();
 
--- Erasure finds a membership's row versions by key, and stored delivery
--- requests by kind.
+-- Erasure finds a subject's and a membership's row versions by key, and
+-- the stored events that can hold personal data by kind: delivery requests,
+-- and the two that carry metadata.
 create index row_version_key_idx on row_version (relation, key);
 create index event_delivery_idx on event (cursor) where kind = 'delivery.requested';
+create index event_metadata_idx on event (cursor)
+    where kind in ('metadata.changed', 'invite.redeemed');

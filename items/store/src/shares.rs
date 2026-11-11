@@ -79,6 +79,7 @@ pub struct Share {
     pub accepted_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
     pub revoked_by: Option<Side>,
+    pub metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -102,6 +103,7 @@ struct Row {
     revoked_by: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    metadata: serde_json::Value,
 }
 
 impl Row {
@@ -137,6 +139,7 @@ impl Row {
                     Side::Owner
                 }
             }),
+            metadata: self.metadata,
             created_at: self.created_at,
             updated_at: self.updated_at,
         }
@@ -186,14 +189,19 @@ pub async fn get(conn: &mut AsyncPgConnection, id: ShareId) -> StoreResult<Share
 }
 
 /// Shares `tenant` owns or receives, newest first; only one side when
-/// `side` is given.
+/// `side` is given, and only those whose metadata contains `metadata`.
+// r[impl metadata.filter]
 pub async fn list(
     conn: &mut AsyncPgConnection,
     tenant: TenantId,
     side: Option<Side>,
+    metadata: Option<&serde_json::Value>,
 ) -> StoreResult<Vec<Share>> {
     let tenant = tenant.as_uuid();
     let mut query = share::table.select(Row::as_select()).into_boxed();
+    if let Some(metadata) = metadata {
+        query = query.filter(share::metadata.contains(metadata.clone()));
+    }
     query = match side {
         Some(Side::Owner) => query.filter(share::owner_tenant_id.eq(tenant)),
         Some(Side::Recipient) => query.filter(share::recipient_tenant_id.eq(tenant)),
@@ -209,16 +217,19 @@ pub async fn list(
 
 /// Offers a share, or changes the terms of one that isn't revoked, which
 /// offers it again until it is accepted anew. Offering the same terms again
-/// changes nothing. A share's owner can't change.
+/// changes nothing but the metadata, which isn't one of the terms. A
+/// share's owner can't change.
 ///
 /// It writes several rows: run it in a transaction.
 // r[impl authz.share.shape]
 // r[impl authz.share.acceptance]
 // r[impl authz.share.unique]
+// r[impl metadata.write.replace]
 pub async fn offer(
     conn: &mut AsyncPgConnection,
     id: ShareId,
     terms: &ShareTerms,
+    metadata: &serde_json::Value,
 ) -> StoreResult<Share> {
     if terms.actions.is_empty() {
         return Err(StoreError::Conflict(
@@ -239,6 +250,16 @@ pub async fn offer(
                 return Err(StoreError::Conflict("a share's owner can't change".into()));
             }
             if existing.terms == *terms {
+                if existing.metadata != *metadata {
+                    crate::metadata::write(
+                        conn,
+                        crate::metadata::Object::Share,
+                        &id.to_string(),
+                        metadata,
+                    )
+                    .await?;
+                    return get(conn, id).await;
+                }
                 return Ok(existing.clone());
             }
         }
@@ -257,6 +278,7 @@ pub async fn offer(
             share::attributes.eq(serde_json::Value::Object(terms.attributes.clone())),
             share::valid_from.eq(terms.valid_from),
             share::valid_until.eq(terms.valid_until),
+            share::metadata.eq(metadata),
         );
         let written = if existing.is_some() {
             diesel::update(share::table.find(id.as_uuid()))

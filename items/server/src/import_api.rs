@@ -16,7 +16,7 @@ use utoipa_axum::routes;
 use crate::db::Db;
 use crate::error::{ApiError, ApiJson};
 use crate::import::{self, Outcome};
-use crate::{AppState, transport};
+use crate::{AppState, metadata, transport};
 
 /// The import routes, with the `OpenAPI` description of each taken from
 /// its handler's `#[utoipa::path]`.
@@ -44,8 +44,12 @@ fn count(result: &mut Imported, outcome: Outcome) {
     responses((status = 200, body = Imported)))]
 async fn import_subjects(
     db: Db,
+    limit: metadata::Limit,
     ApiJson(body): ApiJson<ImportSubjects>,
 ) -> Result<Json<Imported>, ApiError> {
+    for subject in &body.subjects {
+        limit.check(&subject.metadata)?;
+    }
     let records: Vec<_> = body
         .subjects
         .iter()
@@ -73,8 +77,12 @@ async fn import_subjects(
     responses((status = 200, body = Imported)))]
 async fn import_credentials(
     db: Db,
+    limit: metadata::Limit,
     ApiJson(body): ApiJson<ImportCredentials>,
 ) -> Result<Json<Imported>, ApiError> {
+    for credential in &body.credentials {
+        limit.check(&credential.metadata)?;
+    }
     let mut conn = db.get().await?;
     let records = body
         .credentials

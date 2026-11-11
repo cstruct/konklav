@@ -70,7 +70,7 @@ pub(crate) struct Dispatch(pub(crate) Router);
 
 /// Applies operations in order, all or nothing.
 ///
-/// Each operation is a `PUT`, `POST` or `DELETE` with the path (without
+/// Each operation is a `PUT`, `POST`, `PATCH` or `DELETE` with the path (without
 /// `/v1`) and body it takes alone, and is authorized against the caller's own
 /// capabilities. On success, `results` holds what each answered; on failure
 /// nothing is committed and the error is the failing operation's, with its
@@ -223,8 +223,10 @@ struct Rerun {
     operation: BatchOperation,
 }
 
-/// Fields of operation results that hold secrets shown only once.
-const SECRETS: [&str; 3] = ["secret_keys", "secret_key", "client_secret"];
+/// Fields of operation results that hold secrets shown only once: a
+/// secret key's, an OIDC client's and a link-only invite's token.
+// r[impl authn.invite.link-only]
+const SECRETS: [&str; 4] = ["secret_keys", "secret_key", "client_secret", "token"];
 
 impl Stored {
     fn of(operations: &[BatchOperation], answer: &Written<BatchResults>) -> Self {
@@ -246,12 +248,13 @@ impl Stored {
                 continue;
             }
             let mut operation = operation.clone();
-            // A credential created without an id is created again under the
-            // one it got, which shows new secrets for it.
-            if let (Some(serde_json::Value::Object(body)), Some(id)) =
-                (&mut operation.body, result.body["credential"].get("id"))
-            {
-                body.insert("id".into(), id.clone());
+            // A credential or invite created without an id is created again
+            // under the one it got, which shows new secrets for it.
+            let id = result.body["credential"]
+                .get("id")
+                .or_else(|| result.body.get("invite_id"));
+            if let (Some(serde_json::Value::Object(body)), Some(id)) = (&mut operation.body, id) {
+                body.entry("id").or_insert_with(|| id.clone());
             }
             reruns.push(Rerun { index, operation });
         }
@@ -399,11 +402,20 @@ async fn dispatch(
     let method = match operation.method {
         BatchMethod::Put => Method::PUT,
         BatchMethod::Post => Method::POST,
+        BatchMethod::Patch => Method::PATCH,
         BatchMethod::Delete => Method::DELETE,
     };
     let mut request = Request::builder().method(method).uri(&operation.path);
     if let Some(authorization) = headers.get(header::AUTHORIZATION) {
         request = request.header(header::AUTHORIZATION, authorization);
+    }
+    if let Some(tag) = &operation.if_match {
+        let value = if tag.starts_with('"') || tag == "*" {
+            tag.clone()
+        } else {
+            format!("\"{tag}\"")
+        };
+        request = request.header(header::IF_MATCH, value);
     }
     let body = match &operation.body {
         Some(body) => {

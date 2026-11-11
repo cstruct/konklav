@@ -14,6 +14,8 @@ pub(crate) fn subject(subject: &Subject) -> api::Subject {
             SubjectState::Disabled => api::SubjectState::Disabled,
             SubjectState::Erased => api::SubjectState::Erased,
         },
+        metadata: subject.metadata.clone(),
+        metadata_etag: crate::metadata::etag(&subject.metadata),
         created_at: subject.created_at,
         erased_at: subject.erased_at,
     }
@@ -80,6 +82,7 @@ pub(crate) fn personal_data_report(held: PersonalData) -> api::PersonalDataRepor
                 id: challenge.id,
                 purpose: challenge.purpose,
                 recipient: challenge.recipient,
+                metadata: challenge.metadata,
                 created_at: challenge.created_at,
                 expires_at: challenge.expires_at,
                 consumed_at: challenge.consumed_at,

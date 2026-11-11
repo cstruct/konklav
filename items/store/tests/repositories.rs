@@ -30,6 +30,7 @@ async fn password(conn: &mut Connection, subject: SubjectId, email: &str) -> Cre
             data: CredentialData::Password(PasswordData { hash: HASH.into() }),
             mfa_factors_required: 0,
             replaces: None,
+            metadata: konklav_store::metadata::empty(),
         },
     )
     .await
@@ -224,6 +225,7 @@ async fn secret_keys_round_trip_through_the_schema() {
             data: data.clone(),
             mfa_factors_required: 0,
             replaces: None,
+            metadata: konklav_store::metadata::empty(),
         },
     )
     .await
@@ -253,6 +255,7 @@ async fn passkeys_are_found_by_their_exact_credential_id() {
             }),
             mfa_factors_required: 0,
             replaces: None,
+            metadata: konklav_store::metadata::empty(),
         },
     )
     .await
@@ -293,6 +296,7 @@ async fn federated_credentials_are_found_by_provider_and_case_sensitive_subject(
             data: account("AbC"),
             mfa_factors_required: 0,
             replaces: None,
+            metadata: konklav_store::metadata::empty(),
         },
     )
     .await
@@ -337,6 +341,7 @@ async fn identifiers_are_unique_among_active_credentials() {
             data: CredentialData::Password(PasswordData { hash: HASH.into() }),
             mfa_factors_required: 0,
             replaces: None,
+            metadata: konklav_store::metadata::empty(),
         },
     )
     .await;

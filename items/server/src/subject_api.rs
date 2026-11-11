@@ -221,10 +221,7 @@ pub(crate) async fn begin_attempt(
         limited |= login_attempts::failures_since(conn, kind, identifier, since).await? > limit;
     }
     if let Some(address) = &address {
-        for (window, limit) in ADDRESS_LIMITS {
-            let since = now - Duration::seconds(window);
-            limited |= login_attempts::address_failures_since(conn, address, since).await? > limit;
-        }
+        limited |= address_limited(conn, address).await?;
     }
     if limited {
         login_attempts::forget(conn, id).await?;
@@ -234,6 +231,41 @@ pub(crate) async fn begin_attempt(
         ));
     }
     Ok(Attempt { id })
+}
+
+/// Records a check of an invite token from `address` and refuses it if
+/// the address has had too many failures. As with logins, the check counts
+/// as a failure while it runs. Invites themselves aren't limited, so no one
+/// can lock a real invite out by trying wrong secrets for its id.
+// r[impl authn.invite.token-limits]
+pub(crate) async fn begin_token_attempt(
+    conn: &mut Connection,
+    invite: uuid::Uuid,
+    address: ClientAddress,
+) -> Result<Attempt, ApiError> {
+    let address = address.key();
+    let id = login_attempts::begin_invite_token(conn, invite, address.as_deref()).await?;
+    if let Some(address) = &address
+        && address_limited(conn, address).await?
+    {
+        login_attempts::forget(conn, id).await?;
+        return Err(ApiError::new(
+            ErrorCode::RateLimited,
+            "too many failed attempts; try again later",
+        ));
+    }
+    Ok(Attempt { id })
+}
+
+async fn address_limited(conn: &mut Connection, address: &str) -> Result<bool, ApiError> {
+    let now = Utc::now();
+    for (window, limit) in ADDRESS_LIMITS {
+        let since = now - Duration::seconds(window);
+        if login_attempts::address_failures_since(conn, address, since).await? > limit {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Only requestable (restrictive) catalog flags may be asked for at login.
@@ -444,54 +476,8 @@ async fn login_password(
 ) -> Result<Response, ApiError> {
     let mut conn = state.pool.get().await?;
     let browser = body.session.check(&state, &mut conn, &headers).await?;
-    let kind = CredentialKind::Password;
-    let attempt = begin_attempt(&mut conn, kind, &body.identifier, address).await?;
-
-    let credential = credentials::find_active(&mut conn, kind, &body.identifier).await?;
-    let subject = match &credential {
-        Some(credential) => Some(subjects::get(&mut conn, credential.subject_id).await?),
-        None => None,
-    };
-    let hash = match &credential {
-        Some(Credential {
-            data: CredentialData::Password(data),
-            ..
-        }) => Some(data.hash.clone()),
-        _ => None,
-    };
-    let password = body.password.clone();
-    let check = state
-        .auth
-        .hashing(move |hasher| match hash {
-            Some(hash) => hasher.verify(&password, &hash),
-            None => {
-                hasher.verify_dummy(&password);
-                PasswordCheck::Mismatch
-            }
-        })
-        .await?;
-
-    // Passwords are interactive, so service principals can't use them.
-    let usable = subject
-        .as_ref()
-        .is_some_and(|s| s.state == SubjectState::Active && s.kind == SubjectKind::Human);
-    let succeeded = usable && matches!(check, PasswordCheck::Match { .. });
-    attempt.finish(&mut conn, succeeded).await?;
-    // r[impl platform.error.no-enumeration]
-    let (Some(credential), true) = (credential, succeeded) else {
-        return Err(invalid_credentials());
-    };
-
-    if check == (PasswordCheck::Match { needs_rehash: true }) {
-        let password = body.password;
-        let hash = state
-            .auth
-            .hashing(move |hasher| hasher.hash(&password))
-            .await?;
-        let data = CredentialData::Password(credentials::PasswordData { hash });
-        credentials::set_data(&mut conn, credential.id, &data).await?;
-    }
-
+    let credential =
+        check_password(&state, &mut conn, &body.identifier, body.password, address).await?;
     start_session(
         &state,
         &mut conn,
@@ -503,6 +489,65 @@ async fn login_password(
         dpop_jkt,
     )
     .await
+}
+
+/// Checks a login identifier and password as password login does,
+/// counting the attempt, and returns the active password credential of an
+/// active human subject they prove. Every failure answers alike.
+pub(crate) async fn check_password(
+    state: &AppState,
+    conn: &mut Connection,
+    identifier: &str,
+    password: String,
+    address: ClientAddress,
+) -> Result<Credential, ApiError> {
+    let kind = CredentialKind::Password;
+    let attempt = begin_attempt(conn, kind, identifier, address).await?;
+
+    let credential = credentials::find_active(conn, kind, identifier).await?;
+    let subject = match &credential {
+        Some(credential) => Some(subjects::get(conn, credential.subject_id).await?),
+        None => None,
+    };
+    let hash = match &credential {
+        Some(Credential {
+            data: CredentialData::Password(data),
+            ..
+        }) => Some(data.hash.clone()),
+        _ => None,
+    };
+    let candidate = password.clone();
+    let check = state
+        .auth
+        .hashing(move |hasher| match hash {
+            Some(hash) => hasher.verify(&candidate, &hash),
+            None => {
+                hasher.verify_dummy(&candidate);
+                PasswordCheck::Mismatch
+            }
+        })
+        .await?;
+
+    // Passwords are interactive, so service principals can't use them.
+    let usable = subject
+        .as_ref()
+        .is_some_and(|s| s.state == SubjectState::Active && s.kind == SubjectKind::Human);
+    let succeeded = usable && matches!(check, PasswordCheck::Match { .. });
+    attempt.finish(conn, succeeded).await?;
+    // r[impl platform.error.no-enumeration]
+    let (Some(credential), true) = (credential, succeeded) else {
+        return Err(invalid_credentials());
+    };
+
+    if check == (PasswordCheck::Match { needs_rehash: true }) {
+        let hash = state
+            .auth
+            .hashing(move |hasher| hasher.hash(&password))
+            .await?;
+        let data = CredentialData::Password(credentials::PasswordData { hash });
+        credentials::set_data(conn, credential.id, &data).await?;
+    }
+    Ok(credential)
 }
 
 /// `POST /v1/login/secret-key`: service principals exchange a secret key

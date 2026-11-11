@@ -153,6 +153,168 @@ current state. The one difference is that the memberships of a subject
 erased since then are returned without their facts
 (`subject.erasure.history`).
 
+## Metadata
+
+Relying systems keep data of their own about Konklav's objects, such as a
+secret key's display name or the account an invite is for. Metadata lets
+Konklav store that data with the object, so the relying system needs no
+table of its own that has to follow Konklav's ids and be erased
+separately, without Konklav knowing what the data means.
+
+r[metadata.objects]
+These objects MUST carry metadata:
+- subjects
+- credentials of every kind
+- invites
+- tenants
+- memberships
+- shares
+- OIDC clients
+- templates
+- roles
+
+An object's metadata MUST be empty (`{}`) unless written.
+
+These objects MUST NOT carry metadata:
+- sessions, which are many, short-lived and created by logins, not by the
+  control plane
+- role assignments, which only relate a role to a membership or subject;
+  data about why they exist belongs on the membership, the subject or the
+  role
+- MFA factors, which subjects manage through the subject-facing surface,
+  where metadata can't be written
+- signing keys, which are Konklav's own and mean nothing to a relying
+  system
+- the action catalog and registered scopes, which mirror what the relying
+  system already owns: its vocabulary and its resources
+
+r[metadata.opaque]
+Metadata MUST be a JSON object, and Konklav MUST NOT interpret it: it
+MUST NOT copy metadata into tokens, ID tokens, userinfo, entitlement sets
+or the claims hook's input, and MUST NOT consult it in any decision,
+requirement, confinement or compilation. This is what sets metadata apart
+from facts: facts are declared in the catalog, typed, and feed policy
+(portable facts reach tokens, tenant fact requirements and confinements
+match them), while metadata is undeclared, untyped and never reaches
+policy. Data that should change what someone may do belongs in facts.
+
+r[metadata.limit]
+An object's metadata MUST be at most a configured size, 16384 bytes by
+default, measured as compact JSON in UTF-8. Every write that would leave
+an object with larger metadata MUST fail with `METADATA_TOO_LARGE` and
+change nothing, whatever the path: a create, a replace, a merge patch, an
+import or a bootstrap set.
+
+r[metadata.control-plane-only]
+Metadata MUST be written only through the control plane, imports and
+bootstrap sets. The subject-facing and relying surfaces MUST NOT accept
+metadata and MUST NOT return it, not even a subject's own: an operator may
+write there what the subject shouldn't see. The change feed shows it only
+as `metadata.feed` allows. An invite's public metadata (`metadata.public`)
+is a separate field, not metadata, and is the one thing a relying system
+writes on the control plane that the subject-facing surface returns.
+
+r[metadata.public]
+An invite MAY carry public metadata: a JSON object, separate from its
+metadata, that the relying system writes for whoever holds the invite's
+token to see before signing in, such as the inviter's display name or the
+kind of access offered. It MUST be empty (`{}`) unless given, MUST be set
+only when the invite is created, through the control plane, where it is
+part of the content an idempotent repeat is compared on, and MUST be at
+most 1024 bytes of compact JSON in UTF-8, or the create MUST fail with
+`METADATA_TOO_LARGE`. The control plane MUST return it with the invite,
+and the subject-facing surface MUST return it only in the invite's preview
+(`authn.invite.preview`). It is opaque as metadata is (`metadata.opaque`),
+and MUST NOT be carried by events, tokens or anything else. Writing
+public metadata is opting in to showing it: a relying system MUST put
+nothing there that the holder of the link shouldn't see, since a link-only
+invite's link is a bearer link (`authn.invite.bearer`).
+
+r[metadata.write.create]
+Every control-plane operation that creates one of these objects MUST
+accept its metadata, which is part of the content an idempotent repeat
+(`platform.idempotency.client-ids`) is compared on. Objects that
+authentication creates on its own (a subject and credential an invite
+redemption creates, a passkey a subject registers, a federated login's
+credential or membership) start with empty metadata. A password
+credential that replaces another MUST take over the replaced one's
+metadata.
+
+r[metadata.write.replace]
+An operation that replaces an object's definition (writing a template, a
+role, an OIDC client registration or a share's terms) MUST replace its
+metadata with the given one, empty when absent. A share's metadata is not
+one of its terms: changing only its metadata MUST NOT offer it again.
+
+r[metadata.write.patch]
+The control plane MUST offer, for every object with metadata, a JSON merge
+patch (RFC 7396) of its metadata that changes nothing else about the
+object. The patch MUST be a JSON object, and the result MUST satisfy
+`metadata.limit`. Built-in roles MUST NOT be patched (`authz.role.builtin`).
+
+r[metadata.write.precondition]
+Every object with metadata MUST show an entity tag of its metadata,
+`metadata_etag`, which changes whenever its metadata does. A merge patch
+MAY carry an `If-Match` header with an entity tag; when it doesn't match
+the object's current one, the patch MUST fail with `PRECONDITION_FAILED`
+and change nothing. Checking the tag and writing MUST be atomic, so of two
+patches made from the same tag, only the first succeeds.
+
+r[metadata.read]
+Every control-plane operation that returns one of these objects, on its
+own or in a list, MUST return its metadata and entity tag.
+
+r[metadata.filter]
+Every control-plane list of these objects MUST accept a metadata filter: a
+JSON object whose values are strings, numbers or booleans. It MUST list
+only the objects whose metadata has each of the filter's keys at its top
+level with an equal value. Konklav MUST offer no other querying of
+metadata. Lists that grow with the number of people or tenants (subjects,
+tenants, memberships and invites) MUST answer a filter from an index.
+
+r[metadata.events]
+Every change of an object's metadata MUST emit a `metadata.changed` event
+in the same transaction, naming the object's kind and id and carrying its
+new metadata. Creating an object with metadata that isn't empty is such a
+change, and so is deleting one, whose event carries `null`. Kinds are
+`subject`, `credential`, `invite`, `tenant`, `membership`, `share`,
+`oidc_client`, `template` and `role`.
+
+r[metadata.feed]
+The change feed MUST withhold the `metadata` of an event about an object
+from consumers that couldn't read the object on the control plane: those
+that hold neither `konklav:control:all` nor the capability that manages
+its kind (`konklav:subjects:manage` for subjects and credentials,
+`konklav:tenants:manage` for tenants and memberships,
+`konklav:authz:manage` for templates, roles and shares,
+`konklav:invites:manage` for invites, `konklav:clients:manage` for OIDC
+clients). Such consumers still see the event, without the metadata. An
+invite's delivery request is the one exception (`metadata.invites`).
+
+r[metadata.invites]
+An invite's `delivery.requested` event MUST carry the invite's id and
+metadata, so the consumer that delivers it can write the message. The
+metadata MUST be erased from the event with the challenge material
+(`retention.delivery-material`). Redeeming an invite MUST emit an
+`invite.redeemed` event in the redemption's transaction, carrying the
+invite's id, the subject that redeemed it, the tenant and membership it
+joined (`null` without one) and the invite's metadata, which
+`metadata.feed` withholds as for any other invite event. The control plane
+MUST list invites, newest first and paged, optionally only those to one
+tenant or with matching metadata.
+
+r[metadata.history]
+Metadata MUST be recorded in history like any other content of the rows
+history records (`history.record`).
+
+r[metadata.erasure]
+Metadata MUST be stored with its object and deleted with it. No copy MUST
+outlive the object for longer than the retention of what holds it:
+history's (`retention.history`), the change feed's (`feed.retention`) or a
+delivery request's material (`retention.delivery-material`). Erasing a
+subject removes the metadata that is the subject's from all of these at
+once (`subject.erasure.metadata`).
+
 ## Telemetry
 
 Konklav exports telemetry over OTLP to any collector or backend that
@@ -270,7 +432,8 @@ Either every operation is applied or none is.
 r[platform.batch.operations]
 Each operation in a batch MUST name a method, a control-plane path without
 its version prefix (with an optional query string), and the request body
-the operation takes on its own. A batch MUST accept only `PUT`, `POST` and
+the operation takes on its own, and MAY carry the entity tag it would send
+alone as `If-Match`. A batch MUST accept only `PUT`, `POST`, `PATCH` and
 `DELETE` operations, and MUST NOT contain a batch.
 
 r[platform.batch.same-as-alone]
@@ -318,6 +481,15 @@ whose identifiers already exist are skipped. Import MUST require a
 dedicated control-plane capability. A record for an erased subject MUST be
 reported as `SUBJECT_ERASED` and MUST NOT change it
 (`subject.erasure.blocks-writes`).
+Invites, emailed or link-only, MUST NOT be imported, exported or part of a
+bootstrap set: they are short-lived challenges whose tokens Konklav keeps
+only hashed, so a copy elsewhere could never be redeemed. A relying system
+moving pending invites creates them again.
+
+r[import.metadata]
+Imported subjects and credentials MAY carry metadata, stored as
+`metadata.write.create` describes and limited by `metadata.limit`. A
+re-import MUST NOT change the metadata of a record that exists.
 
 r[import.credentials]
 Imported password and secret-key credentials MUST be accepted as Argon2
@@ -389,10 +561,14 @@ subjects, credentials (federated ones included), MFA factors, memberships,
 membership and global role assignments, registered scopes, and sessions.
 
 r[bootstrap.metadata]
-Templates and roles in a bootstrap set MAY carry metadata, a JSON object.
-It MUST be stored as the control plane stores a template's or role's
-metadata, and it is part of the record's content when a run compares the
-record with a stored one.
+Templates, roles, tenants, subjects, credentials and memberships in a
+bootstrap set MAY carry metadata, a JSON object: a key in nested
+documents, and a column holding the object as JSON in flat tables. It
+MUST be stored as the control plane stores the object's metadata, a run
+MUST report metadata larger than `metadata.limit` allows as a problem, and
+metadata is part of the record's content when a run compares the record
+with a stored one. Export MUST write every record's metadata that isn't
+empty.
 
 r[bootstrap.ids]
 Every record's identifier MUST be resolved the same way in both formats:

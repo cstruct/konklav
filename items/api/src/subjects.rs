@@ -27,6 +27,12 @@ pub struct Subject {
     pub id: SubjectId,
     pub kind: SubjectKind,
     pub state: SubjectState,
+    /// An object, opaque to Konklav.
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
+    /// Changes whenever `metadata` does; send it as `If-Match` to patch
+    /// the metadata only if no one else has since.
+    pub metadata_etag: String,
     pub created_at: DateTime<Utc>,
     /// When the subject was erased, if it was.
     #[schema(required)]
@@ -39,6 +45,9 @@ pub struct SubjectQuery {
     pub kind: Option<SubjectKind>,
     /// A login identifier (email address, phone number or key id).
     pub identifier: Option<String>,
+    /// A JSON object of strings, numbers and booleans: only objects whose
+    /// metadata has each of its keys at the top level with an equal value.
+    pub metadata: Option<String>,
     pub before: Option<SubjectId>,
     pub limit: Option<i64>,
 }
@@ -50,9 +59,13 @@ pub struct SubjectPage {
     pub next: Option<SubjectId>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateSubject {
     pub kind: SubjectKind,
+    /// An object, opaque to Konklav.
+    #[serde(default = "crate::metadata::empty_object")]
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
 }
 
 /// A subject with its credentials and MFA factors.
@@ -127,6 +140,10 @@ pub struct ReportedChallenge {
     /// The address it was sent to. Empty for a challenge that was not sent
     /// anywhere.
     pub recipient: String,
+    /// What a relying system stored on an invite; empty for other
+    /// challenges.
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
     #[schema(required)]

@@ -13,6 +13,7 @@ use axum::{Json, Router};
 use futures_util::Stream;
 use konklav_core::feed::{FeedEvent, POSITION, RESET, SessionChanged};
 use konklav_core::{Cursor, SessionId};
+use konklav_store::metadata::Object;
 use konklav_store::{Pool, events, sessions};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
@@ -139,17 +140,50 @@ async fn resume_point(
 }
 
 const DELIVERY: &str = "delivery.requested";
+const METADATA_CHANGED: &str = "metadata.changed";
+const INVITE_REDEEMED: &str = "invite.redeemed";
+
+/// What a consumer may see beyond the events themselves.
+#[derive(Clone, Debug, Default)]
+struct Access {
+    /// Holds the delivery capability.
+    delivery: bool,
+    /// The kinds of object whose metadata it could read on the control
+    /// plane.
+    metadata: std::collections::HashSet<Object>,
+}
+
+impl Access {
+    async fn of(
+        conn: &mut konklav_store::Connection,
+        caller: konklav_core::SubjectId,
+    ) -> Result<Self, ApiError> {
+        let held = capabilities::held(conn, caller).await?;
+        let all = held.contains(capabilities::CONTROL_ALL);
+        Ok(Self {
+            delivery: held.contains(capabilities::DELIVERY_READ),
+            metadata: Object::ALL
+                .into_iter()
+                .filter(|object| all || held.contains(crate::metadata::capability(*object)))
+                .collect(),
+        })
+    }
+}
 
 /// Whether a consumer sees `event`: it matches the kinds filter, and delivery
 /// requests only go to holders of the delivery capability.
-fn visible(event: &events::Event, kinds: Option<&BTreeSet<String>>, delivery: bool) -> bool {
-    kinds.is_none_or(|kinds| kinds.contains(&event.kind)) && (event.kind != DELIVERY || delivery)
+fn visible(event: &events::Event, kinds: Option<&BTreeSet<String>>, access: &Access) -> bool {
+    kinds.is_none_or(|kinds| kinds.contains(&event.kind))
+        && (event.kind != DELIVERY || access.delivery)
 }
 
-/// Converts an outbox row, removing challenge material from delivery
-/// requests whose challenge has expired, so replays reveal nothing usable.
+/// Converts an outbox row for a consumer: removes challenge material and
+/// the invite's metadata from delivery requests whose challenge has
+/// expired, so replays reveal nothing usable, and withholds metadata the
+/// consumer couldn't read on the control plane.
 // r[impl challenge.delivery.no-replay]
-fn to_feed_event(event: events::Event) -> FeedEvent {
+// r[impl metadata.feed]
+fn to_feed_event(event: events::Event, access: &Access) -> FeedEvent {
     let mut payload = event.payload;
     if event.kind == DELIVERY {
         let expired = payload["expires_at"]
@@ -157,7 +191,19 @@ fn to_feed_event(event: events::Event) -> FeedEvent {
             .is_none_or(|at| at <= chrono::Utc::now().timestamp());
         if expired && let Some(object) = payload.as_object_mut() {
             object.remove("material");
+            object.remove("metadata");
         }
+    }
+    let about = match event.kind.as_str() {
+        METADATA_CHANGED => payload["object"].as_str().and_then(Object::parse),
+        INVITE_REDEEMED => Some(Object::Invite),
+        _ => None,
+    };
+    if let Some(object) = about
+        && !access.metadata.contains(&object)
+        && let Some(fields) = payload.as_object_mut()
+    {
+        fields.remove("metadata");
     }
     FeedEvent {
         cursor: Cursor::new(event.cursor),
@@ -178,8 +224,8 @@ struct StreamState {
     hub: std::sync::Arc<FeedHub>,
     cursor: Cursor,
     kinds: Option<BTreeSet<String>>,
-    /// Whether the consumer may read delivery requests.
-    delivery: bool,
+    /// What the consumer may see.
+    access: Access,
     buffer: VecDeque<FeedEvent>,
     /// Held until the stream ends.
     _slot: StreamSlot,
@@ -222,7 +268,7 @@ async fn stream_events(
         .clone()
         .try_acquire_owned()
         .map_err(|_| ApiError::new(ErrorCode::Overloaded, "too many change-feed streams"))?;
-    let delivery = capabilities::holds(&mut conn, caller, capabilities::DELIVERY_READ).await?;
+    let access = Access::of(&mut conn, caller).await?;
     let requested = headers
         .get("last-event-id")
         .and_then(|v| v.to_str().ok())
@@ -245,7 +291,7 @@ async fn stream_events(
         hub: state.feed.clone(),
         cursor,
         kinds: kinds(&query),
-        delivery,
+        access,
         buffer,
         _slot: StreamSlot::new(slot),
     };
@@ -270,8 +316,8 @@ async fn stream_events(
             }
             for event in page {
                 state.cursor = Cursor::new(event.cursor);
-                if visible(&event, state.kinds.as_ref(), state.delivery) {
-                    state.buffer.push_back(to_feed_event(event));
+                if visible(&event, state.kinds.as_ref(), &state.access) {
+                    state.buffer.push_back(to_feed_event(event, &state.access));
                 }
             }
         }
@@ -297,7 +343,7 @@ async fn batch_events(
 ) -> Result<Json<Batch>, ApiError> {
     let mut conn = state.pool.get().await?;
     let caller = require_service(&state, &mut conn, &headers).await?;
-    let delivery = capabilities::holds(&mut conn, caller, capabilities::DELIVERY_READ).await?;
+    let access = Access::of(&mut conn, caller).await?;
     let requested = Cursor::new(query.after.unwrap_or(0));
     let (cursor, reset) = resume_point(&mut conn, Some(requested)).await?;
     let limit = query.limit.unwrap_or(PAGE).clamp(1, 1000);
@@ -307,8 +353,8 @@ async fn batch_events(
     Ok(Json(Batch {
         events: page
             .into_iter()
-            .filter(|e| visible(e, kinds.as_ref(), delivery))
-            .map(to_feed_event)
+            .filter(|e| visible(e, kinds.as_ref(), &access))
+            .map(|e| to_feed_event(e, &access))
             .collect(),
         next,
         reset,

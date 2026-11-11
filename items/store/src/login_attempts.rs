@@ -76,6 +76,30 @@ pub async fn address_failures_since(
         .await
 }
 
+/// The attempt kind recorded for invite-token checks, keyed by the
+/// invite id the token names.
+const INVITE_TOKEN: &str = "invite_token";
+
+/// Records a check of an invite token from `address` as failed before it
+/// is checked, as [`begin`] does for logins. Only the address's failures
+/// limit these checks, so the invite id is kept for audit, not counted.
+pub async fn begin_invite_token(
+    conn: &mut AsyncPgConnection,
+    invite: uuid::Uuid,
+    address: Option<&str>,
+) -> QueryResult<i64> {
+    diesel::insert_into(login_attempt::table)
+        .values((
+            login_attempt::kind.eq(INVITE_TOKEN),
+            login_attempt::identifier.eq(invite.to_string()),
+            login_attempt::succeeded.eq(false),
+            login_attempt::address.eq(address),
+        ))
+        .returning(login_attempt::id)
+        .get_result(conn)
+        .await
+}
+
 /// The attempt kind recorded for TOTP checks, keyed by factor id.
 const TOTP: &str = "mfa_totp";
 

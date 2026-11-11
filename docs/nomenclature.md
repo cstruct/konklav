@@ -154,6 +154,12 @@ Terms are introduced in dependency order: each definition only uses terms define
   - Example: a membership fact `member_type=professional`, or a tenant fact `tenant_type=personal`.
   - Facts describe a subject's situation. They are not permissions.
 
+- `metadata`
+  - A JSON object a relying system stores on a Konklav object (a subject, credential, invite, tenant, membership, share, OIDC client, template or role) through the control plane, such as a secret key's display name.
+  - Konklav never interprets it: it is undeclared, untyped, and never reaches tokens or policy. Facts are the counterpart that does.
+  - `metadata etag`: an entity tag of an object's metadata, which a merge patch of the metadata can be made conditional on.
+  - `public metadata`: a small JSON object on an invite, separate from its metadata, that the invite preview shows to whoever holds the token, such as the inviter's display name.
+
 - `portable fact`
   - A fact declared safe to copy into tokens, so that relying systems can read it without asking Konklav.
   - A `non-portable fact` stays inside Konklav, or inside the relying system that owns it.
@@ -220,6 +226,10 @@ Terms are introduced in dependency order: each definition only uses terms define
 
 - `invite`
   - A challenge that, when redeemed, links a credential to a new or existing subject, and may activate a membership.
+  - `emailed invite`: an invite to an email address, whose token Konklav asks to have delivered there and never returns.
+  - `link-only invite`: an invite without an address. Konklav delivers nothing and returns its token once, when it is created, for the relying system to share as a link.
+  - `bearer link`: a link-only invite's link, redeemable by whoever holds it, since there is no address to match.
+  - `invite preview`: what the subject-facing surface shows about an invite to whoever holds its token, before sign-in: its state, expiry, whether it is link-only and its public metadata.
 
 - `session`
   - Konklav's server-side record of one authentication, from login until sign-out, expiry, or revocation.
@@ -414,6 +424,8 @@ Terms are introduced in dependency order: each definition only uses terms define
     - `scope.changed`
     - `signing_keys.changed`
     - `delivery.requested`
+    - `metadata.changed`
+    - `invite.redeemed`
 
 - `outbox`
   - The database table where events are written and kept for a retention period.

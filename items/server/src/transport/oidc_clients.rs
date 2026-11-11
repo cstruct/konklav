@@ -5,6 +5,7 @@ use konklav_store::oidc_clients::{ClientDefinition, ClientKind, IdTokenAlgorithm
 
 pub(crate) fn oidc_client(client: OidcClient) -> api::OidcClient {
     let definition = client.definition;
+    let metadata_etag = crate::metadata::etag(&definition.metadata);
     api::OidcClient {
         id: client.id,
         definition: api::OidcClientDefinition {
@@ -29,8 +30,10 @@ pub(crate) fn oidc_client(client: OidcClient) -> api::OidcClient {
             backchannel_logout_uri: definition.backchannel_logout_uri,
             require_pkce: definition.require_pkce,
             require_dpop: definition.require_dpop,
+            metadata: definition.metadata,
         },
         has_secret: client.has_secret,
+        metadata_etag,
         disabled_at: client.disabled_at,
         created_at: client.created_at,
         updated_at: client.updated_at,
@@ -60,6 +63,7 @@ pub(crate) fn client_definition(definition: api::OidcClientDefinition) -> Client
         backchannel_logout_uri: definition.backchannel_logout_uri,
         require_pkce: definition.require_pkce,
         require_dpop: definition.require_dpop,
+        metadata: definition.metadata,
     }
 }
 
@@ -88,6 +92,7 @@ mod tests {
                 "refresh": false,
                 "jwks": {"keys": []},
                 "login_url": "https://spa.example.com/login",
+                "metadata": {"owner": "web team"},
             }),
         ] {
             let stored: ClientDefinition = serde_json::from_value(body.clone()).unwrap();
@@ -103,7 +108,9 @@ mod tests {
                 updated_at: chrono::Utc::now(),
             };
             assert_eq!(
-                serde_json::to_value(super::oidc_client(client.clone())).unwrap(),
+                crate::transport::authz::tests::without_etag(
+                    serde_json::to_value(super::oidc_client(client.clone())).unwrap()
+                ),
                 serde_json::to_value(&client).unwrap()
             );
         }

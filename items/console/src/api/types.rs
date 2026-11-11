@@ -412,6 +412,9 @@ pub struct NewClientSecret {
 pub struct CreatedInvite {
     pub invite_id: String,
     pub expires_at: String,
+    /// A link-only invite's token, shown only once.
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 #[cfg(test)]

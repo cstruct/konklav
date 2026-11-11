@@ -1,3 +1,4 @@
+drop index event_metadata_idx;
 drop index event_delivery_idx;
 drop index row_version_key_idx;
 drop trigger role_assignment_member_not_erased on role_assignment;

@@ -483,6 +483,10 @@ config_tree! {
             /// The longest a batch may ask for its key to be remembered.
             #[facet(default = 3600)]
             pub batch_key_max_seconds: u32,
+            /// The largest an object's metadata may be, in bytes of
+            /// compact JSON.
+            #[facet(default = 16384)]
+            pub metadata_max_bytes: u32,
         }>,
     }
 }
@@ -639,9 +643,9 @@ pub type ServeContexts = (
 /// The contexts `migrate` needs: no listeners.
 pub type MigrateContexts = (DatabaseConfig, TelemetryConfig);
 
-/// The contexts `bootstrap` needs: the database, and the MFA keys that
-/// imported TOTP seeds are encrypted with.
-pub type BootstrapContexts = (DatabaseConfig, TelemetryConfig, MfaConfig);
+/// The contexts `bootstrap` needs: the database, the MFA keys that
+/// imported TOTP seeds are encrypted with, and the control plane's limits.
+pub type BootstrapContexts = (DatabaseConfig, TelemetryConfig, MfaConfig, ControlConfig);
 
 impl Database {
     /// Builds the libpq connection URL, escaping user and password.
@@ -684,6 +688,17 @@ impl ControlConfig {
                         c.batch_key_max_seconds,
                     )),
                 }
+            })
+    }
+
+    /// The metadata size limit, the default when `[control]` is absent.
+    // r[impl metadata.limit]
+    #[must_use]
+    pub fn metadata_limit(&self) -> usize {
+        self.control
+            .as_ref()
+            .map_or(crate::metadata::DEFAULT_LIMIT, |c| {
+                usize::try_from(c.metadata_max_bytes).unwrap_or(usize::MAX)
             })
     }
 

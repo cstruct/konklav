@@ -24,6 +24,8 @@ The change feed MUST include at least these event kinds:
 - `signing_keys.changed`
 - `delivery.requested`
 - `subject.erased`
+- `metadata.changed`
+- `invite.redeemed`
 
 r[feed.self-contained-session]
 `session.changed` events MUST carry enough state (session id, version,

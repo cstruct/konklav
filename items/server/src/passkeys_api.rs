@@ -331,6 +331,7 @@ async fn register(
             data: CredentialData::PublicKey(registered.data),
             mfa_factors_required: 0,
             replaces: None,
+            metadata: konklav_store::metadata::empty(),
         },
     )
     .await?;

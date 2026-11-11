@@ -23,6 +23,8 @@ pub(crate) struct SubjectRecord {
     pub(crate) kind: SubjectKind,
     #[serde(default = "active")]
     pub(crate) state: SubjectState,
+    #[serde(default = "konklav_store::metadata::empty")]
+    pub(crate) metadata: serde_json::Value,
 }
 
 fn active() -> SubjectState {
@@ -30,12 +32,34 @@ fn active() -> SubjectState {
 }
 
 /// Creates a subject unless one with its id exists, then applies its state.
+/// An existing subject keeps its metadata.
 // r[impl import.idempotent]
+// r[impl import.metadata]
 pub(crate) async fn subject(
     conn: &mut Connection,
     record: &SubjectRecord,
 ) -> Result<Outcome, ApiError> {
-    let (_, created) = subjects::create(conn, record.id, record.kind).await?;
+    let created = match subjects::get(conn, record.id).await {
+        Ok(existing) if existing.kind != record.kind => {
+            return Err(konklav_store::StoreError::Conflict(format!(
+                "subject {} already exists as {}",
+                record.id,
+                existing.kind.as_str()
+            ))
+            .into());
+        }
+        // r[impl subject.erasure.blocks-writes]
+        Ok(existing) if existing.state == SubjectState::Erased => {
+            return Err(konklav_store::StoreError::SubjectErased.into());
+        }
+        Ok(_) => false,
+        Err(konklav_store::StoreError::NotFound) => {
+            subjects::create_with_metadata(conn, record.id, record.kind, &record.metadata)
+                .await?
+                .1
+        }
+        Err(error) => return Err(error.into()),
+    };
     if record.state != SubjectState::Active {
         subjects::set_state(conn, record.id, record.state).await?;
     }
@@ -75,6 +99,8 @@ pub(crate) struct CredentialRecord {
     /// Restrictive session flags every session started with it carries.
     #[serde(default)]
     pub(crate) session_flags: Vec<String>,
+    #[serde(default = "konklav_store::metadata::empty")]
+    pub(crate) metadata: serde_json::Value,
     #[serde(flatten)]
     pub(crate) material: CredentialMaterial,
 }
@@ -115,6 +141,8 @@ pub(crate) async fn credential(
             data: data.clone(),
             mfa_factors_required: record.mfa_factors_required,
             replaces: None,
+            // r[impl import.metadata]
+            metadata: record.metadata,
         },
     )
     .await?;
