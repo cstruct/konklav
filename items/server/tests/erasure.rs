@@ -628,3 +628,282 @@ async fn the_relying_surface_answers_for_an_erased_subject_as_for_one_holding_no
         assert_eq!(erased["tenant"], json!([]), "{erased:?}");
     }
 }
+
+async fn personal_data(app: &TestApp, subject: &str) -> Reply {
+    app.control(
+        Method::GET,
+        &format!("/v1/subjects/{subject}/personal-data"),
+        None,
+    )
+    .await
+}
+
+/// What [`held_by_ada`] seeded.
+struct Held {
+    ada: String,
+    grace: String,
+    membership: String,
+    refresh_token: String,
+}
+
+/// Seeds Ada with a password, two MFA factors, a membership with a role, a
+/// session, a pending challenge and a failed and a successful login, and
+/// Grace with a session of her own.
+async fn held_by_ada(app: &TestApp, tenant: &str) -> Held {
+    use konklav_store::challenges::{self, NewChallenge, Purpose};
+    use konklav_store::mfa::{self, EmailCodeData, FactorData, TotpData};
+
+    let ada = app.human("ada@example.com", PASSWORD).await;
+    let grace = app.human("grace@example.com", PASSWORD).await;
+    let membership = uuid::Uuid::now_v7().to_string();
+    let joined = app
+        .control(
+            Method::PUT,
+            &format!("/v1/memberships/{membership}"),
+            Some(json!({"subject": ada, "tenant": tenant})),
+        )
+        .await;
+    assert!(joined.status.is_success(), "{:?}", joined.body);
+    let assigned = app
+        .control(
+            Method::POST,
+            &format!("/v1/memberships/{membership}/assignments"),
+            Some(json!({"role": "reader"})),
+        )
+        .await;
+    assert!(assigned.status.is_success(), "{:?}", assigned.body);
+    let wrong = app.login("ada@example.com", "not the password").await;
+    assert!(!wrong.status.is_success());
+    let login = app.login("ada@example.com", PASSWORD).await;
+    assert_eq!(login.status, StatusCode::OK, "{:?}", login.body);
+    app.login("grace@example.com", PASSWORD).await;
+    {
+        let mut conn = app.db.pool().get().await.unwrap();
+        let subject: konklav_core::SubjectId = ada.parse().unwrap();
+        mfa::create(
+            &mut conn,
+            subject,
+            &FactorData::EmailCode(EmailCodeData {
+                email: "ada@codes.example".into(),
+            }),
+        )
+        .await
+        .unwrap();
+        mfa::create(
+            &mut conn,
+            subject,
+            &FactorData::Totp(TotpData {
+                key_id: "seed-key".into(),
+                nonce: "seed-nonce".into(),
+                ciphertext: "seed-ciphertext".into(),
+                last_step: None,
+            }),
+        )
+        .await
+        .unwrap();
+        challenges::create(
+            &mut conn,
+            NewChallenge {
+                id: uuid::Uuid::now_v7(),
+                purpose: Purpose::EmailLink,
+                subject_id: Some(subject),
+                credential_id: None,
+                mfa_factor_id: None,
+                session_id: None,
+                recipient: "ada@example.com".into(),
+                secret_hash: b"challenge-secret".to_vec(),
+                details: json!({"nonce": "challenge-material"}),
+                expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+            },
+        )
+        .await
+        .unwrap();
+    }
+    Held {
+        ada,
+        grace,
+        membership,
+        refresh_token: login.body["refresh_token"].as_str().unwrap().to_owned(),
+    }
+}
+
+// r[verify subject.report.contents]
+// r[verify subject.report.no-secrets]
+// r[verify subject.report.erased]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_personal_data_report_shows_what_is_held_without_secrets() {
+    let (app, tenant) = app_with_a_tenant().await;
+    let Held {
+        ada,
+        grace,
+        membership,
+        refresh_token,
+    } = held_by_ada(&app, &tenant).await;
+
+    let report = personal_data(&app, &ada).await;
+    assert_eq!(report.status, StatusCode::OK, "{:?}", report.body);
+    let body = &report.body;
+    assert_eq!(body["subject"]["id"], ada);
+    assert_eq!(body["subject"]["state"], "active");
+
+    let credentials = body["credentials"].as_array().unwrap();
+    assert_eq!(credentials.len(), 1, "{credentials:?}");
+    assert_eq!(credentials[0]["kind"], "password");
+    assert_eq!(credentials[0]["identifier"], "ada@example.com");
+
+    let factors = body["mfa_factors"].as_array().unwrap();
+    assert_eq!(factors.len(), 2, "{factors:?}");
+    assert_eq!(factors[0]["email"], "ada@codes.example");
+    assert_eq!(factors[1]["kind"], "totp");
+
+    assert_eq!(body["memberships"][0]["id"], membership);
+    assert_eq!(body["memberships"][0]["tenant_id"], tenant);
+    assert_eq!(body["role_assignments"][0]["target"]["id"], membership);
+
+    let sessions = body["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 1, "{sessions:?}");
+    assert_eq!(sessions[0]["subject_id"], ada);
+    assert_eq!(sessions[0]["amr"], json!(["pwd"]));
+
+    assert_eq!(body["challenges"][0]["purpose"], "email_link");
+    assert_eq!(body["challenges"][0]["recipient"], "ada@example.com");
+    assert!(body["challenges"][0]["created_at"].is_string());
+
+    let attempts = body["login_attempts"].as_array().unwrap();
+    let outcomes: Vec<bool> = attempts
+        .iter()
+        .map(|a| a["succeeded"].as_bool().unwrap())
+        .collect();
+    assert_eq!(outcomes, [false, true], "{attempts:?}");
+    assert_eq!(attempts[0]["identifier"], "ada@example.com");
+    assert_eq!(attempts[0]["kind"], "password");
+
+    // No secret, under any name, and nothing of anyone else's.
+    let text = body.to_string();
+    for secret in [
+        "$argon2",
+        "hash",
+        "seed-",
+        "ciphertext",
+        "challenge-secret",
+        "challenge-material",
+        "details",
+        "grace@example.com",
+        grace.as_str(),
+    ] {
+        assert!(!text.contains(secret), "{secret} in the report: {text}");
+    }
+    assert!(!text.contains(&refresh_token));
+
+    assert_eq!(erase(&app, &ada).await.status, StatusCode::OK);
+    let report = personal_data(&app, &ada).await;
+    assert_eq!(report.status, StatusCode::OK, "{:?}", report.body);
+    assert_eq!(report.body["subject"]["state"], "erased");
+    assert!(report.body["subject"]["erased_at"].is_string());
+    for list in [
+        "credentials",
+        "mfa_factors",
+        "memberships",
+        "role_assignments",
+        "sessions",
+        "challenges",
+        "login_attempts",
+    ] {
+        assert_eq!(report.body[list], json!([]), "{list}");
+    }
+
+    let unknown = personal_data(&app, &uuid::Uuid::now_v7().to_string()).await;
+    assert_eq!(unknown.code(), "NOT_FOUND");
+}
+
+// r[verify subject.report.contents]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_personal_data_report_needs_the_capability_to_manage_subjects() {
+    let app = TestApp::new().await;
+    let ada = app.human("ada@example.com", PASSWORD).await;
+    let (_, manager) = operator(&app, "manager@example.com", &["konklav:subjects:manage"]).await;
+    let (_, eraser) = operator(&app, "eraser@example.com", &["konklav:subjects:erase"]).await;
+    let path = format!("/v1/subjects/{ada}/personal-data");
+
+    let read = app.with_bearer(Method::GET, &path, &manager).await;
+    assert_eq!(read.status, StatusCode::OK, "{:?}", read.body);
+    assert_eq!(read.body["credentials"][0]["identifier"], "ada@example.com");
+
+    let refused = app.with_bearer(Method::GET, &path, &eraser).await;
+    assert_eq!(refused.code(), "FORBIDDEN");
+    let anonymous = app.send(Method::GET, &path, &[], None).await;
+    assert_eq!(anonymous.code(), "UNAUTHENTICATED");
+}
+
+// r[verify subject.report.contents]
+// r[verify subject.report.no-secrets]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_service_principals_report_shows_its_keys_and_workload_without_secrets() {
+    let app = TestApp::new().await;
+    let service = uuid::Uuid::now_v7().to_string();
+    let created = app
+        .control(
+            Method::PUT,
+            &format!("/v1/subjects/{service}"),
+            Some(json!({"kind": "service"})),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+    let credentials = format!("/v1/subjects/{service}/credentials");
+    let key = app
+        .control(
+            Method::POST,
+            &credentials,
+            Some(json!({"kind": "secret_key"})),
+        )
+        .await;
+    assert!(key.status.is_success(), "{:?}", key.body);
+    // Straight into the store: the control plane takes only providers that
+    // are configured.
+    {
+        use konklav_store::credentials::{self, CredentialData, FederatedData, NewCredential};
+        let mut conn = app.db.pool().get().await.unwrap();
+        credentials::insert(
+            &mut conn,
+            NewCredential {
+                id: konklav_core::CredentialId::new_v7(),
+                subject_id: service.parse().unwrap(),
+                identifier: credentials::federated_identifier("upstream", "Workload-7"),
+                data: CredentialData::Federated(FederatedData {
+                    provider: "upstream".into(),
+                    subject: "Workload-7".into(),
+                    email: Some("workload@upstream.example".into()),
+                    email_verified: Some(true),
+                }),
+                mfa_factors_required: 0,
+                replaces: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let report = personal_data(&app, &service).await;
+    assert_eq!(report.status, StatusCode::OK, "{:?}", report.body);
+    let listed = report.body["credentials"].as_array().unwrap();
+    assert_eq!(listed[0]["kind"], "secret_key");
+    assert!(listed[0]["slots"]["a"]["created_at"].is_string());
+    assert_eq!(listed[1]["kind"], "federated");
+    assert_eq!(
+        listed[1]["federated"],
+        json!({
+            "provider": "upstream",
+            "subject": "Workload-7",
+            "email": "workload@upstream.example",
+            "email_verified": true
+        })
+    );
+
+    let text = report.body.to_string();
+    for slot in ["a", "b"] {
+        let shown = key.body["secret_keys"][slot].as_str().unwrap();
+        let secret = shown.split_once('.').unwrap().1;
+        assert!(!text.contains(secret), "slot {slot}'s secret in the report");
+    }
+    assert!(!text.contains("hash"), "{text}");
+}

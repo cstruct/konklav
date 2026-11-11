@@ -21,6 +21,7 @@ pub mod mfa;
 mod migrate;
 pub mod oidc_clients;
 pub mod peer_cursors;
+pub mod personal_data;
 mod pool;
 pub mod registered_scopes;
 pub mod roles;

@@ -209,16 +209,44 @@ its own control plane.
 ## Personal data reports
 
 `GET /v1/subjects/{id}/personal-data` on the control-plane surface returns
-what Konklav holds about one subject: its credentials' kinds and login
-identifiers, federated identities, passkey labels, MFA factors, memberships
-with facts, role assignments, and the sessions and challenges not yet
-deleted by retention. It never shows hashes, seeds, key material or
-challenge material.
+what Konklav holds about one subject, as one answer read from one
+snapshot. It needs `konklav:subjects:manage`.
+
+| Part | What it shows |
+| --- | --- |
+| `subject` | Id, kind, state and times. |
+| `credentials` | Kind, login identifier and times, revoked ones included. A federated credential shows the provider, the provider's `sub` and the email address it reported. A passkey shows its label. |
+| `mfa_factors` | Kind and, for an email factor, the address. Removed factors are included, since their rows stay until erasure. |
+| `memberships` | Tenant, state and facts, ended ones included. |
+| `role_assignments` | Global ones and those of the subject's memberships. |
+| `sessions` | Every session retention hasn't deleted: times, authentication methods, client kind, OIDC client, the claims an identity provider passed and the DPoP key thumbprint. |
+| `challenges` | Purpose, recipient and times, for the challenges erasure would delete. |
+| `login_attempts` | Time, kind of credential, login identifier, outcome and client address, for the attempts erasure would delete. |
+
+It never shows hashes, seeds, key material or challenge material. For an
+erased subject every list is empty.
+
+Three things Konklav holds are left out on purpose:
+
+- **Facts a membership had earlier**, which history keeps as row versions.
+  The report shows the facts that hold now.
+- **Stored `delivery.requested` events.** Each repeats the recipient of a
+  challenge the report already shows, next to material that must not be
+  shown.
+- **Remembered batch answers**, which are short-lived copies of answers the
+  caller already received.
+
+Erasure removes all three.
 
 It covers Konklav only. A deployment's full answer to an access request
 adds what its relying systems hold.
 
-Erasure and the report must cover the same places. A test compares both
-against the database schema, so adding a column that can hold personal
-data fails until someone decides how erasure and the report treat it
-(`r[subject.report.complete]`).
+### Keeping erasure and the report complete
+
+Erasure and the report must cover the same places
+(`r[subject.report.complete]`). A test in `items/store/tests/erasure.rs`
+holds a decision for every column of the database: no personal data,
+personal data that erasure removes and the report shows, or data that
+erasure removes and the report leaves out, with the reason. It compares
+that list with the schema, so a migration that adds a column fails the
+test until someone has decided how erasure and the report treat it.

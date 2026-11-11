@@ -304,6 +304,9 @@ pub struct Erasure {
 /// authenticates as it.
 // r[impl subject.erasure.removes]
 // r[impl subject.erasure.atomic]
+// r[impl subject.erasure.identifier-released]
+// r[impl subject.erasure.entitlements]
+// r[impl subject.report.complete]
 pub async fn erase(conn: &mut AsyncPgConnection, id: SubjectId) -> StoreResult<Erasure> {
     conn.transaction::<_, StoreError, _>(async |conn| {
         // Writers that attach something to the subject lock its row too
@@ -424,7 +427,10 @@ pub async fn erase(conn: &mut AsyncPgConnection, id: SubjectId) -> StoreResult<E
 /// Everything Konklav knows the subject by or reaches it at: its login
 /// identifiers, the email addresses of its federated credentials and MFA
 /// factors, and where its challenges were sent.
-async fn recipients(conn: &mut AsyncPgConnection, subject: uuid::Uuid) -> StoreResult<Vec<String>> {
+pub(crate) async fn recipients(
+    conn: &mut AsyncPgConnection,
+    subject: uuid::Uuid,
+) -> StoreResult<Vec<String>> {
     #[derive(QueryableByName)]
     struct Known {
         #[diesel(sql_type = Text)]

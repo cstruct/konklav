@@ -14,10 +14,10 @@ use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use diesel_async::AsyncConnection;
 use konklav_api::{
-    self as api, BreakGlass, CreateCredential, CreateSubject, CreatedCredential, ReplacePassword,
-    RevokeCredential, RevokeSessions, RevokedKey, RevokedSessions, RotateSlot, RotatedSlot,
-    SecretKeys, SessionFlags, SessionPage, SessionQuery, SlotExpiry, SubjectDetail, SubjectPage,
-    SubjectQuery,
+    self as api, BreakGlass, CreateCredential, CreateSubject, CreatedCredential,
+    PersonalDataReport, ReplacePassword, RevokeCredential, RevokeSessions, RevokedKey,
+    RevokedSessions, RotateSlot, RotatedSlot, SecretKeys, SessionFlags, SessionPage, SessionQuery,
+    SlotExpiry, SubjectDetail, SubjectPage, SubjectQuery,
 };
 use konklav_authn::{PasswordCheck, PasswordHasher, generate_secret};
 use konklav_core::{CredentialId, Cursor, SessionId, SubjectId};
@@ -27,7 +27,7 @@ use konklav_store::credentials::{
 };
 use konklav_store::sessions::{self, Session, SessionFilter};
 use konklav_store::subjects::{self, Subject, SubjectKind, SubjectState};
-use konklav_store::{StoreError, mfa, signing_keys};
+use konklav_store::{StoreError, mfa, personal_data, signing_keys};
 use subtle::ConstantTimeEq;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -45,6 +45,7 @@ pub(crate) fn subjects() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_subjects))
         .routes(routes!(create_subject, get_subject))
+        .routes(routes!(personal_data))
         .routes(routes!(disable_subject))
         .routes(routes!(enable_subject))
         .routes(routes!(create_credential))
@@ -308,6 +309,39 @@ async fn get_subject(db: Db, Path(id): Path<String>) -> Result<Json<SubjectDetai
         credentials: credentials.into_iter().map(transport::credential).collect(),
         mfa_factors: factors.iter().map(transport::mfa_factor).collect(),
     }))
+}
+
+/// Gets the personal data report of a subject.
+///
+/// Everything Konklav holds about the subject: its credentials with their
+/// login identifiers, MFA factors, memberships with their facts, role
+/// assignments, and the sessions, challenges and login attempts not yet
+/// deleted by retention. It never holds a hash, a seed, key material or
+/// challenge material. For an erased subject every list is empty.
+///
+/// The report covers Konklav only, not what relying systems hold.
+// r[impl subject.report.contents]
+// r[impl subject.report.no-secrets]
+#[utoipa::path(get, path = "/subjects/{id}/personal-data", tag = "subjects", params(("id" = SubjectId, Path)),
+    responses((status = 200, body = PersonalDataReport)))]
+async fn personal_data(
+    db: Db,
+    Path(id): Path<String>,
+) -> Result<Json<PersonalDataReport>, ApiError> {
+    let id = parse_id(&id, "subject id")?;
+    let mut conn = db.get().await?;
+    // One snapshot, so the lists agree with each other.
+    let held = conn
+        .build_transaction()
+        .repeatable_read()
+        .read_only()
+        .run::<_, StoreError, _>(async |conn| personal_data::of(conn, id).await)
+        .await
+        .map_err(|error| match error {
+            StoreError::NotFound => ApiError::not_found("subject"),
+            other => other.into(),
+        })?;
+    Ok(Json(transport::personal_data_report(held)))
 }
 
 async fn set_subject_state(

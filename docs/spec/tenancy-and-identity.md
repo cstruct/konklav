@@ -221,11 +221,15 @@ holding:
 - the subject
 - its credentials: kind, login identifier, times, and for a federated
   credential the provider with what it reported, for a passkey its label
-- its MFA factors: kind and, for an email factor, the address
+- its MFA factors, removed ones included: kind and, for an email factor,
+  the address
 - its memberships with their facts, and its role assignments
 - its sessions that have not been deleted: times, authentication methods,
-  client kind, OIDC client and the claims an identity provider passed
-- its challenges that have not been deleted: purpose, recipient and times
+  client kind, OIDC client, the claims an identity provider passed and the
+  key thumbprint
+- the challenges that erasure would delete: purpose, recipient and times
+- the login attempts that erasure would delete: time, kind of credential,
+  login identifier, outcome and address
 
 r[subject.report.no-secrets]
 A personal data report MUST NOT hold password hashes, secret keys, MFA

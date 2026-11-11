@@ -309,6 +309,24 @@ The type of a fact's value.
 """
 
 
+class FederatedIdentity(TypedDict):
+    """
+    The account a federated credential stands for, as the identity provider
+    reported it.
+    """
+
+    email: str | None
+    email_verified: bool | None
+    provider: str
+    """
+    The configured provider id.
+    """
+    subject: str
+    """
+    The provider's `sub`.
+    """
+
+
 type FlagKind = Literal['restrictive', 'assertive']
 """
 A restrictive flag denies the session everywhere except operations that
@@ -600,6 +618,48 @@ class ReplacePassword(TypedDict):
     password: str
 
 
+class ReportedChallenge(TypedDict):
+    """
+    A challenge in a personal data report, without its material.
+    """
+
+    consumed_at: str | None
+    created_at: str
+    expires_at: str
+    id: str
+    purpose: str
+    """
+    What it was for, such as `email_link` or `invite`.
+    """
+    recipient: str
+    """
+    The address it was sent to. Empty for a challenge that was not sent
+    anywhere.
+    """
+    revoked_at: str | None
+
+
+class ReportedLoginAttempt(TypedDict):
+    """
+    A login attempt in a personal data report.
+    """
+
+    address: str | None
+    """
+    The client address it came from, when one was recorded.
+    """
+    attempted_at: str
+    identifier: str
+    """
+    The login identifier tried, or the id of an MFA factor.
+    """
+    kind: str
+    """
+    The kind of credential or MFA factor tried.
+    """
+    succeeded: bool
+
+
 class RequestedClaims(TypedDict):
     """
     Single claims an OIDC client asked for with the `claims` request
@@ -865,6 +925,7 @@ class WrittenCredential(TypedDict):
 
     break_glass: bool
     created_at: str
+    federated: NotRequired[FederatedIdentity | None]
     id: CredentialId
     identifier: str
     kind: CredentialKind
@@ -1211,6 +1272,7 @@ class Credential(TypedDict):
 
     break_glass: bool
     created_at: str
+    federated: NotRequired[FederatedIdentity | None]
     id: CredentialId
     identifier: str
     kind: CredentialKind
@@ -1441,6 +1503,11 @@ class MfaFactor(TypedDict):
     """
     id: str
     kind: MfaFactorKind
+    removed_at: NotRequired[str | None]
+    """
+    When it was removed. Only a personal data report shows removed
+    factors.
+    """
 
 
 class Obligation(TypedDict):
@@ -2003,6 +2070,48 @@ class OidcClient(OidcClientDefinition):
     """
     id: str
     updated_at: str
+
+
+class PersonalDataReport(TypedDict):
+    """
+    Everything Konklav holds about one subject, without secrets: no password
+    hashes, secret keys, MFA seeds, passkey key material, refresh-token
+    hashes or challenge material.
+
+    For an erased subject every list is empty.
+    """
+
+    challenges: list[ReportedChallenge]
+    """
+    Challenges not yet deleted by retention: those made for the subject,
+    and those sent to one of its addresses without naming a subject.
+    """
+    credentials: list[Credential]
+    """
+    Revoked ones included.
+    """
+    login_attempts: list[ReportedLoginAttempt]
+    """
+    Attempts to log in with one of the subject's login identifiers or
+    MFA factors, until the rate-limit window passes.
+    """
+    memberships: list[Membership]
+    """
+    Ended ones included.
+    """
+    mfa_factors: list[MfaFactor]
+    """
+    Removed ones included.
+    """
+    role_assignments: list[RoleAssignment]
+    """
+    Global assignments and those of the subject's memberships.
+    """
+    sessions: list[Session]
+    """
+    Every session not yet deleted by retention, newest first.
+    """
+    subject: Subject
 
 
 Requirements = TypedDict(

@@ -168,6 +168,11 @@ class Subjects(_Resource[M]):
     async def get(self: Subjects[Direct], id: str) -> types.SubjectDetail:
         return cast(types.SubjectDetail, await self._direct._get(path("subjects", id)))
 
+    @operation("personal_data")
+    async def personal_data(self: Subjects[Direct], id: str) -> types.PersonalDataReport:
+        """Everything Konklav holds about the subject, without secrets."""
+        return cast(types.PersonalDataReport, await self._direct._get(path("subjects", id, "personal-data")))
+
     @overload
     async def create(self: Subjects[Direct], id: str, body: types.CreateSubject) -> Written[types.Subject]: ...
 

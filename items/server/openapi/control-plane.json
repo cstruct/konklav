@@ -2514,6 +2514,48 @@
         "x-konklav-capability": "konklav:authz:manage"
       }
     },
+    "/v1/subjects/{id}/personal-data": {
+      "get": {
+        "tags": [
+          "subjects"
+        ],
+        "summary": "Gets the personal data report of a subject.",
+        "description": "Everything Konklav holds about the subject: its credentials with their\nlogin identifiers, MFA factors, memberships with their facts, role\nassignments, and the sessions, challenges and login attempts not yet\ndeleted by retention. It never holds a hash, a seed, key material or\nchallenge material. For an erased subject every list is empty.\n\nThe report covers Konklav only, not what relying systems hold.",
+        "operationId": "personal_data",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalDataReport"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:subjects:manage"
+      }
+    },
     "/v1/templates": {
       "get": {
         "tags": [
@@ -3930,6 +3972,17 @@
             "type": "string",
             "format": "date-time"
           },
+          "federated": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FederatedIdentity",
+                "description": "For federated credentials."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "$ref": "#/components/schemas/CredentialId"
           },
@@ -4522,6 +4575,38 @@
           "string_list",
           "date_range"
         ]
+      },
+      "FederatedIdentity": {
+        "type": "object",
+        "description": "The account a federated credential stands for, as the identity provider\nreported it.",
+        "required": [
+          "provider",
+          "subject",
+          "email",
+          "email_verified"
+        ],
+        "properties": {
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email_verified": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "provider": {
+            "type": "string",
+            "description": "The configured provider id."
+          },
+          "subject": {
+            "type": "string",
+            "description": "The provider's `sub`."
+          }
+        }
       },
       "FlagKind": {
         "type": "string",
@@ -5193,6 +5278,14 @@
           },
           "kind": {
             "$ref": "#/components/schemas/MfaFactorKind"
+          },
+          "removed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it was removed. Only a personal data report shows removed\nfactors."
           }
         }
       },
@@ -5401,6 +5494,74 @@
               "null"
             ],
             "format": "date-time"
+          }
+        }
+      },
+      "PersonalDataReport": {
+        "type": "object",
+        "description": "Everything Konklav holds about one subject, without secrets: no password\nhashes, secret keys, MFA seeds, passkey key material, refresh-token\nhashes or challenge material.\n\nFor an erased subject every list is empty.",
+        "required": [
+          "subject",
+          "credentials",
+          "mfa_factors",
+          "memberships",
+          "role_assignments",
+          "sessions",
+          "challenges",
+          "login_attempts"
+        ],
+        "properties": {
+          "challenges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportedChallenge"
+            },
+            "description": "Challenges not yet deleted by retention: those made for the subject,\nand those sent to one of its addresses without naming a subject."
+          },
+          "credentials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Credential"
+            },
+            "description": "Revoked ones included."
+          },
+          "login_attempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportedLoginAttempt"
+            },
+            "description": "Attempts to log in with one of the subject's login identifiers or\nMFA factors, until the rate-limit window passes."
+          },
+          "memberships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Membership"
+            },
+            "description": "Ended ones included."
+          },
+          "mfa_factors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MfaFactor"
+            },
+            "description": "Removed ones included."
+          },
+          "role_assignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoleAssignment"
+            },
+            "description": "Global assignments and those of the subject's memberships."
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Session"
+            },
+            "description": "Every session not yet deleted by retention, newest first."
+          },
+          "subject": {
+            "$ref": "#/components/schemas/Subject"
           }
         }
       },
@@ -5903,6 +6064,90 @@
           },
           "password": {
             "type": "string"
+          }
+        }
+      },
+      "ReportedChallenge": {
+        "type": "object",
+        "description": "A challenge in a personal data report, without its material.",
+        "required": [
+          "id",
+          "purpose",
+          "recipient",
+          "created_at",
+          "expires_at",
+          "consumed_at",
+          "revoked_at"
+        ],
+        "properties": {
+          "consumed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "purpose": {
+            "type": "string",
+            "description": "What it was for, such as `email_link` or `invite`."
+          },
+          "recipient": {
+            "type": "string",
+            "description": "The address it was sent to. Empty for a challenge that was not sent\nanywhere."
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "ReportedLoginAttempt": {
+        "type": "object",
+        "description": "A login attempt in a personal data report.",
+        "required": [
+          "kind",
+          "identifier",
+          "succeeded",
+          "attempted_at",
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The client address it came from, when one was recorded."
+          },
+          "attempted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "identifier": {
+            "type": "string",
+            "description": "The login identifier tried, or the id of an MFA factor."
+          },
+          "kind": {
+            "type": "string",
+            "description": "The kind of credential or MFA factor tried."
+          },
+          "succeeded": {
+            "type": "boolean"
           }
         }
       },
@@ -7403,6 +7648,17 @@
               "created_at": {
                 "type": "string",
                 "format": "date-time"
+              },
+              "federated": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/FederatedIdentity",
+                    "description": "For federated credentials."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "id": {
                 "$ref": "#/components/schemas/CredentialId"

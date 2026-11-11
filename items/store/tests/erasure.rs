@@ -9,13 +9,14 @@ use konklav_store::credentials::{
     self, CredentialData, CredentialKind, FederatedData, NewCredential, PasswordData,
 };
 use konklav_store::mfa::{self, EmailCodeData, FactorData};
+use konklav_store::personal_data::PersonalData;
 use konklav_store::roles::{self, AssignmentTarget, RoleDefinition};
 use konklav_store::sessions::{self, ClientKind, NewSession, SessionFilter, Stage};
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
 use konklav_store::tenants::{self, ROOT};
 use konklav_store::{
     Connection, StoreError, batch_results, events, history, login_attempts, memberships,
-    oidc_clients,
+    oidc_clients, personal_data,
 };
 use konklav_test_support::TestDatabase;
 use serde_json::json;
@@ -737,4 +738,555 @@ async fn a_service_principal_with_a_client_is_not_erased_until_the_client_is_dis
         oidc_clients::put(&mut conn, "reports", &definition).await,
         Err(StoreError::SubjectErased)
     ));
+}
+
+/// How many rows of each kind a personal data read holds.
+fn amounts(held: &PersonalData) -> [usize; 7] {
+    [
+        held.credentials.len(),
+        held.mfa_factors.len(),
+        held.memberships.len(),
+        held.role_assignments.len(),
+        held.sessions.len(),
+        held.challenges.len(),
+        held.login_attempts.len(),
+    ]
+}
+
+// r[verify subject.report.contents]
+// r[verify subject.report.erased]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_personal_data_read_finds_what_erasure_removes_and_no_one_elses() {
+    let db = TestDatabase::new().await;
+    let (ada, grace) = seeded(&db, true).await;
+    let mut conn = db.pool().get().await.unwrap();
+
+    let held = personal_data::of(&mut conn, ada.id).await.unwrap();
+    assert_eq!(held.subject.id, ada.id);
+    let text = format!("{held:?}");
+    // Facts a membership had earlier are in history only, which the read
+    // leaves out.
+    for needle in ada.needles() {
+        assert_eq!(
+            text.contains(needle),
+            needle != ada.earlier_fact,
+            "{needle} in the personal data"
+        );
+    }
+    for needle in grace.needles() {
+        assert!(!text.contains(needle), "{needle} is someone else's");
+    }
+    assert!(
+        amounts(&held).iter().all(|held| *held > 0),
+        "{:?}",
+        amounts(&held)
+    );
+
+    // A removed factor is still held, so it is still read.
+    let factor = held.mfa_factors[0].id;
+    assert!(mfa::remove(&mut conn, ada.id, factor).await.unwrap());
+    let held = personal_data::of(&mut conn, ada.id).await.unwrap();
+    assert!(held.mfa_factors[0].removed_at.is_some());
+
+    subjects::erase(&mut conn, ada.id).await.unwrap();
+    let held = personal_data::of(&mut conn, ada.id).await.unwrap();
+    assert_eq!(held.subject.state, SubjectState::Erased);
+    assert!(held.subject.erased_at.is_some());
+    assert_eq!(amounts(&held), [0; 7]);
+
+    let unknown = personal_data::of(&mut conn, SubjectId::new_v7()).await;
+    assert!(matches!(unknown, Err(StoreError::NotFound)));
+}
+
+/// What was decided for every column of one table, for erasure and for the
+/// personal data report together.
+struct Table {
+    name: &'static str,
+    /// No personal data: identifiers Konklav made, times, states, settings
+    /// and catalog data. Erasure may leave these, and the report may show
+    /// them.
+    plain: &'static [&'static str],
+    /// Personal data. Erasure removes it and the report shows it.
+    personal: &'static [&'static str],
+    /// Personal data or a secret that erasure removes and the report leaves
+    /// out, each with the reason.
+    unreported: &'static [(&'static str, &'static str)],
+}
+
+/// A decision for every column of the database. Adding a column fails
+/// [`every_column_has_a_decision_for_erasure_and_the_report`] until it is
+/// listed here, which is the moment to decide whether `subjects::erase`
+/// and `personal_data::of` must handle it.
+const DECISIONS: &[Table] = &[
+    Table {
+        name: "__diesel_schema_migrations",
+        plain: &["version", "run_on"],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "backchannel_logout",
+        plain: &[
+            "id",
+            "client_id",
+            "session_id",
+            "subject_id",
+            "attempts",
+            "next_attempt_at",
+            "last_error",
+            "created_at",
+        ],
+        personal: &[],
+        unreported: &[],
+    },
+    // `caller` is `subject:<id>`, an identifier.
+    Table {
+        name: "batch_result",
+        plain: &["caller", "key", "request_hash", "created_at", "expires_at"],
+        personal: &[],
+        unreported: &[(
+            "answer",
+            "a remembered copy of an answer the caller already got, kept for a short time",
+        )],
+    },
+    Table {
+        name: "bearer_assertion",
+        plain: &["issuer", "jti", "expires_at"],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "catalog_action",
+        plain: &["name", "description", "group_definition", "builtin"],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "catalog_fact",
+        plain: &["key", "target", "value_type", "portable", "description"],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "catalog_scope_kind",
+        plain: &["name", "description", "registered"],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "catalog_session_flag",
+        plain: &["name", "kind", "requestable", "description", "confine"],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "challenge",
+        plain: &[
+            "id",
+            "purpose",
+            "subject_id",
+            "credential_id",
+            "mfa_factor_id",
+            "session_id",
+            "attempts",
+            "max_attempts",
+            "created_at",
+            "expires_at",
+            "consumed_at",
+            "revoked_at",
+        ],
+        personal: &["recipient"],
+        unreported: &[
+            ("secret_hash", "a secret"),
+            (
+                "details",
+                "challenge material, such as a PKCE challenge or a nonce",
+            ),
+        ],
+    },
+    Table {
+        name: "client_assertion",
+        plain: &["client_id", "jti", "expires_at"],
+        personal: &[],
+        unreported: &[],
+    },
+    // `data` is reported in part: a federated identity and a passkey's label,
+    // never a hash or key material.
+    Table {
+        name: "credential",
+        plain: &[
+            "id",
+            "subject_id",
+            "kind",
+            "mfa_factors_required",
+            "replaces",
+            "created_at",
+            "updated_at",
+            "revoked_at",
+            "revoked_reason",
+            "break_glass",
+            "session_flags",
+        ],
+        personal: &["identifier", "data"],
+        unreported: &[],
+    },
+    Table {
+        name: "dpop_proof",
+        plain: &["jkt", "jti", "expires_at"],
+        personal: &[],
+        unreported: &[],
+    },
+    // Every other payload holds identifiers only.
+    Table {
+        name: "event",
+        plain: &["cursor", "kind", "created_at"],
+        personal: &[],
+        unreported: &[(
+            "payload",
+            "a `delivery.requested` payload repeats a challenge's recipient, which the report shows, with its material",
+        )],
+    },
+    Table {
+        name: "feed_watermark",
+        plain: &["singleton", "pruned_through"],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "history_setting",
+        plain: &["only_row", "enabled_at", "retention"],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "history_table",
+        plain: &["relation", "key_columns"],
+        personal: &[],
+        unreported: &[],
+    },
+    // Attempts by address alone can't be tied to a subject and stay until
+    // the rate-limit window passes.
+    Table {
+        name: "login_attempt",
+        plain: &["id", "kind", "succeeded", "attempted_at"],
+        personal: &["identifier", "address"],
+        unreported: &[],
+    },
+    Table {
+        name: "membership",
+        plain: &[
+            "id",
+            "subject_id",
+            "tenant_id",
+            "state",
+            "created_at",
+            "updated_at",
+            "managed_by",
+        ],
+        personal: &["facts"],
+        unreported: &[],
+    },
+    // `data` is reported in part: an email factor's address, never a seed.
+    Table {
+        name: "mfa_factor",
+        plain: &[
+            "id",
+            "subject_id",
+            "kind",
+            "active",
+            "created_at",
+            "updated_at",
+            "removed_at",
+        ],
+        personal: &["data"],
+        unreported: &[],
+    },
+    Table {
+        name: "oidc_client",
+        plain: &[
+            "id",
+            "kind",
+            "secret_hash",
+            "redirect_uris",
+            "scopes",
+            "audience",
+            "visible_groups",
+            "login_url",
+            "id_token_alg",
+            "refresh",
+            "disabled_at",
+            "created_at",
+            "updated_at",
+            "service_subject_id",
+            "jwks",
+            "post_logout_redirect_uris",
+            "backchannel_logout_uri",
+            "require_pkce",
+            "require_dpop",
+        ],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "peer_cursor",
+        plain: &["provider", "cursor", "updated_at"],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "registered_scope",
+        plain: &[
+            "kind",
+            "id",
+            "tenant_id",
+            "containers",
+            "state",
+            "created_at",
+            "updated_at",
+            "kind_registered",
+        ],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "role",
+        plain: &[
+            "id",
+            "tenant_id",
+            "key",
+            "template_id",
+            "priority",
+            "metadata",
+            "created_at",
+            "updated_at",
+            "builtin",
+        ],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "role_assignment",
+        plain: &[
+            "id",
+            "role_id",
+            "membership_id",
+            "subject_id",
+            "scope_kind",
+            "scope_id",
+            "created_at",
+            "managed_by",
+            "scope_kind_registered",
+        ],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "role_policy",
+        plain: &["role_id", "action", "effect", "scope_bound"],
+        personal: &[],
+        unreported: &[],
+    },
+    // Only memberships' versions hold personal data: their facts.
+    Table {
+        name: "row_version",
+        plain: &["id", "relation", "key", "valid_from", "valid_until"],
+        personal: &[],
+        unreported: &[(
+            "data",
+            "facts a membership had earlier; the report shows what holds now",
+        )],
+    },
+    // Erasure revokes the sessions and clears the two personal columns; the
+    // rows go when session retention allows.
+    Table {
+        name: "session",
+        plain: &[
+            "id",
+            "subject_id",
+            "credential_id",
+            "tenant_id",
+            "membership_id",
+            "stage",
+            "client_kind",
+            "amr",
+            "auth_time",
+            "flags",
+            "impersonator_subject_id",
+            "version",
+            "refresh_hash",
+            "created_at",
+            "updated_at",
+            "expires_at",
+            "revoked_at",
+            "revoked_reason",
+            "mfa_factors",
+            "parent_session_id",
+            "oidc_client_id",
+            "oidc_scopes",
+            "oidc_userinfo_claims",
+            "oidc_id_token_claims",
+        ],
+        personal: &["identity_claims", "dpop_jkt"],
+        unreported: &[],
+    },
+    Table {
+        name: "session_previous_refresh",
+        plain: &["session_id", "refresh_hash", "rotated_at"],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "share",
+        plain: &[
+            "id",
+            "owner_tenant_id",
+            "scope_kind",
+            "scope_id",
+            "recipient_tenant_id",
+            "recipient_scope_kind",
+            "recipient_scope_id",
+            "attributes",
+            "valid_from",
+            "valid_until",
+            "state",
+            "accepted_at",
+            "revoked_at",
+            "revoked_by",
+            "created_at",
+            "updated_at",
+        ],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "share_action",
+        plain: &["share_id", "action"],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "signing_key",
+        plain: &[
+            "kid",
+            "algorithm",
+            "public_key",
+            "published_at",
+            "activated_at",
+            "retired_at",
+            "revoked_at",
+        ],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "subject",
+        plain: &[
+            "id",
+            "kind",
+            "state",
+            "created_at",
+            "updated_at",
+            "erased_at",
+        ],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "template",
+        plain: &[
+            "id",
+            "key",
+            "description",
+            "metadata",
+            "created_at",
+            "updated_at",
+        ],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
+        name: "template_policy",
+        plain: &["template_id", "action", "effect", "scope_bound"],
+        personal: &[],
+        unreported: &[],
+    },
+    // Tenant facts describe a tenant, not a subject (`subject.erasure.removes`).
+    Table {
+        name: "tenant",
+        plain: &[
+            "id",
+            "parent_id",
+            "state",
+            "facts",
+            "created_at",
+            "updated_at",
+        ],
+        personal: &[],
+        unreported: &[],
+    },
+];
+
+// r[verify subject.report.complete]
+#[tokio::test(flavor = "multi_thread")]
+async fn every_column_has_a_decision_for_erasure_and_the_report() {
+    #[derive(diesel::QueryableByName)]
+    struct Found {
+        #[diesel(sql_type = Text)]
+        table_name: String,
+        #[diesel(sql_type = Text)]
+        column_name: String,
+    }
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let found: Vec<(String, String)> = diesel::sql_query(
+        "select c.table_name::text, c.column_name::text
+         from information_schema.columns c
+         join information_schema.tables t using (table_schema, table_name)
+         where c.table_schema = 'public' and t.table_type = 'BASE TABLE'
+         order by 1, c.ordinal_position",
+    )
+    .get_results::<Found>(&mut conn)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|found| (found.table_name, found.column_name))
+    .collect();
+    let decided: Vec<(String, String)> = DECISIONS
+        .iter()
+        .flat_map(|table| {
+            let unreported = table.unreported.iter().map(|(column, _)| column);
+            table
+                .plain
+                .iter()
+                .chain(table.personal)
+                .chain(unreported)
+                .map(|column| (table.name.to_owned(), (*column).to_owned()))
+        })
+        .collect();
+
+    let undecided: Vec<_> = found.iter().filter(|c| !decided.contains(c)).collect();
+    assert!(
+        undecided.is_empty(),
+        "columns without a decision in DECISIONS; decide whether erasure must remove \
+         them and whether the personal data report must show them: {undecided:?}"
+    );
+    let gone: Vec<_> = decided.iter().filter(|c| !found.contains(c)).collect();
+    assert!(
+        gone.is_empty(),
+        "DECISIONS lists columns that don't exist: {gone:?}"
+    );
+
+    let mut twice = decided.clone();
+    twice.sort();
+    twice.dedup();
+    assert_eq!(twice.len(), decided.len(), "a column is listed twice");
+    for table in DECISIONS {
+        for (column, reason) in table.unreported {
+            assert!(
+                !reason.is_empty(),
+                "{}.{column} needs its reason",
+                table.name
+            );
+        }
+    }
 }
