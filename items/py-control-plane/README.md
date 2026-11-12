@@ -127,6 +127,8 @@ await client.credentials.create(person, {"id": credential, "kind": "password", "
 key = await client.credentials.create(service, {"kind": "secret_key"})  # key.value["secret_keys"], shown once
 await client.credentials.rotate_slot(key.value["credential"]["id"], "b")
 await client.subjects.disable(person)  # ends the subject's sessions
+report = await client.subjects.personal_data(person)  # what Konklav holds about it, without secrets
+await client.subjects.erase(person)  # removes its personal data, for good
 
 # Catalog, templates, roles and assignments
 await client.catalog.put({"actions": [{"name": "document:read"}]})

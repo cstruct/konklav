@@ -2,11 +2,12 @@
 
 use chrono::{DateTime, Utc};
 use diesel::prelude::*;
-use diesel_async::{AsyncPgConnection, RunQueryDsl};
-use konklav_core::SubjectId;
+use diesel::sql_types::{Array, Text, Uuid};
+use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
+use konklav_core::{Cursor, SubjectId};
 
-use crate::schema::subject;
-use crate::{StoreError, StoreResult};
+use crate::schema::{oidc_client, subject};
+use crate::{StoreError, StoreResult, events, sessions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -38,6 +39,8 @@ impl SubjectKind {
 pub enum SubjectState {
     Active,
     Disabled,
+    /// Final: what erasure leaves.
+    Erased,
 }
 
 impl SubjectState {
@@ -46,14 +49,15 @@ impl SubjectState {
         match self {
             Self::Active => "active",
             Self::Disabled => "disabled",
+            Self::Erased => "erased",
         }
     }
 
     fn parse(value: &str) -> Self {
-        if value == "disabled" {
-            Self::Disabled
-        } else {
-            Self::Active
+        match value {
+            "disabled" => Self::Disabled,
+            "erased" => Self::Erased,
+            _ => Self::Active,
         }
     }
 }
@@ -66,6 +70,8 @@ pub struct Subject {
     pub metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// When the subject was erased, if it was.
+    pub erased_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Queryable, Selectable)]
@@ -77,6 +83,7 @@ struct Row {
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     metadata: serde_json::Value,
+    erased_at: Option<DateTime<Utc>>,
 }
 
 impl From<Row> for Subject {
@@ -88,6 +95,7 @@ impl From<Row> for Subject {
             metadata: row.metadata,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            erased_at: row.erased_at,
         }
     }
 }
@@ -105,6 +113,9 @@ pub async fn get(conn: &mut AsyncPgConnection, id: SubjectId) -> StoreResult<Sub
 
 /// Creates a subject with a caller-supplied id and empty metadata; see
 /// [`create_with_metadata`].
+///
+/// An erased subject's id is never given out again.
+// r[impl subject.erasure.tombstone]
 pub async fn create(
     conn: &mut AsyncPgConnection,
     id: SubjectId,
@@ -139,6 +150,9 @@ pub async fn create_with_metadata(
         return Ok((row.into(), true));
     }
     let existing = get(conn, id).await?;
+    if existing.state == SubjectState::Erased {
+        return Err(StoreError::SubjectErased);
+    }
     if existing.kind != kind {
         Err(StoreError::Conflict(format!(
             "subject {id} already exists as {}",
@@ -153,13 +167,23 @@ pub async fn create_with_metadata(
     }
 }
 
-/// Sets a subject's state and returns the previous one.
+/// Enables or disables a subject and returns the previous state. An erased
+/// subject stays erased, and only [`erase`] erases one.
+// r[impl subject.state]
 pub async fn set_state(
     conn: &mut AsyncPgConnection,
     id: SubjectId,
     state: SubjectState,
 ) -> StoreResult<SubjectState> {
     let previous = get(conn, id).await?.state;
+    if previous == SubjectState::Erased {
+        return Err(StoreError::SubjectErased);
+    }
+    if state == SubjectState::Erased {
+        return Err(StoreError::Conflict(
+            "a subject is erased by erasure, not by setting its state".into(),
+        ));
+    }
     diesel::update(subject::table.find(id.as_uuid()))
         .set((
             subject::state.eq(state.as_str()),
@@ -238,4 +262,316 @@ pub async fn list_by(
         .into_iter()
         .map(Subject::from)
         .collect())
+}
+
+/// An erased subject's id and when it was erased.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ErasedSubject {
+    pub id: SubjectId,
+    pub erased_at: DateTime<Utc>,
+}
+
+/// Erased subjects in the order they were erased, ties by id, optionally
+/// only those erased at or after `since`. Pass the last id of a page as
+/// `after` for the next: the page then starts behind that subject, however
+/// many were erased at the same instant.
+///
+/// [`StoreError::NotFound`] when `after` isn't an erased subject.
+// r[impl subject.erasure.list]
+pub async fn erased(
+    conn: &mut AsyncPgConnection,
+    since: Option<DateTime<Utc>>,
+    after: Option<SubjectId>,
+    limit: i64,
+) -> StoreResult<Vec<ErasedSubject>> {
+    let mut query = subject::table
+        .filter(subject::erased_at.is_not_null())
+        .into_boxed();
+    if let Some(since) = since {
+        query = query.filter(subject::erased_at.ge(since));
+    }
+    if let Some(after) = after {
+        let after = uuid::Uuid::from(after);
+        let at: Option<DateTime<Utc>> = subject::table
+            .find(after)
+            .select(subject::erased_at)
+            .first::<Option<DateTime<Utc>>>(conn)
+            .await
+            .optional()?
+            .flatten();
+        let at = at.ok_or(StoreError::NotFound)?;
+        query = query.filter(
+            subject::erased_at
+                .gt(at)
+                .or(subject::erased_at.eq(at).and(subject::id.gt(after))),
+        );
+    }
+    let rows: Vec<(uuid::Uuid, Option<DateTime<Utc>>)> = query
+        .order((subject::erased_at.asc(), subject::id.asc()))
+        .limit(limit)
+        .select((subject::id, subject::erased_at))
+        .load(conn)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id, erased_at)| {
+            Some(ErasedSubject {
+                id: id.into(),
+                erased_at: erased_at?,
+            })
+        })
+        .collect())
+}
+
+/// What [`erase`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Erasure {
+    /// The erased subject.
+    pub subject: Subject,
+    /// The cursor of the `subject.erased` event, or `None` when the subject
+    /// was erased before and nothing changed.
+    pub cursor: Option<Cursor>,
+}
+
+/// Erases a subject: removes all personal data Konklav holds about it and
+/// leaves the erased subject. Everything happens in one transaction, which
+/// nests in the caller's if there is one.
+///
+/// What goes, in this order:
+///
+/// 1. its sessions are revoked and lose identity-provider claims and DPoP
+///    key thumbprints
+/// 2. the challenges and stored delivery requests made for it, or sent to
+///    one of its recipients without naming a subject
+/// 3. the login attempts for its login identifiers and MFA factors
+/// 4. its MFA factors and credentials
+/// 5. its role assignments; its memberships end and lose their facts, in
+///    their row versions too
+/// 6. the remembered batch answers that name it or one of its recipients
+///
+/// Erasing an erased subject changes nothing.
+///
+/// # Errors
+///
+/// [`StoreError::NotFound`] for an unknown subject, and
+/// [`StoreError::Conflict`] while an OIDC client that isn't disabled
+/// authenticates as it.
+// r[impl subject.erasure.removes]
+// r[impl subject.erasure.atomic]
+// r[impl subject.erasure.identifier-released]
+// r[impl subject.erasure.entitlements]
+// r[impl subject.report.complete]
+pub async fn erase(conn: &mut AsyncPgConnection, id: SubjectId) -> StoreResult<Erasure> {
+    conn.transaction::<_, StoreError, _>(async |conn| {
+        // Writers that attach something to the subject lock its row too
+        // (the foreign-key check and `subject_not_erased`), so they either
+        // committed before this and are erased below, or wait and fail.
+        let found: Subject = subject::table
+            .find(id.as_uuid())
+            .for_update()
+            .select(Row::as_select())
+            .first(conn)
+            .await
+            .optional()?
+            .map(Subject::from)
+            .ok_or(StoreError::NotFound)?;
+        // r[impl subject.erasure.idempotent]
+        if found.state == SubjectState::Erased {
+            return Ok(Erasure {
+                subject: found,
+                cursor: None,
+            });
+        }
+        // r[impl subject.erasure.bound-client]
+        let bound = oidc_client::table
+            .filter(oidc_client::service_subject_id.eq(id.as_uuid()))
+            .filter(oidc_client::disabled_at.is_null())
+            .select(oidc_client::id)
+            .first::<String>(conn)
+            .await
+            .optional()?;
+        if let Some(client) = bound {
+            return Err(StoreError::Conflict(format!(
+                "OIDC client {client} authenticates as subject {id}; disable the client first"
+            )));
+        }
+
+        let subject = uuid::Uuid::from(id);
+        let recipients = recipients(conn, subject).await?;
+        sessions::end_for_erasure(conn, id).await?;
+        remove_held(conn, subject, &recipients).await?;
+
+        let erased: Subject = diesel::update(subject::table.find(subject))
+            .set((
+                subject::state.eq(SubjectState::Erased.as_str()),
+                subject::metadata.eq(crate::metadata::empty()),
+                subject::erased_at.eq(diesel::dsl::now),
+                subject::updated_at.eq(diesel::dsl::now),
+            ))
+            .returning(Row::as_returning())
+            .get_result::<Row>(conn)
+            .await?
+            .into();
+        // After the update, whose replaced version is among them.
+        // r[impl subject.erasure.history]
+        diesel::sql_query(
+            "update row_version set data = data || '{\"metadata\": {}}'
+             where relation = 'subject'::regclass
+               and key = jsonb_build_object('id', $1)
+               and data -> 'metadata' <> '{}'",
+        )
+        .bind::<Uuid, _>(subject)
+        .execute(conn)
+        .await?;
+        // Last, after the session and entitlement events from above and
+        // from the triggers on the rows just changed.
+        // r[impl subject.erasure.event]
+        // r[impl feed.subject-erased]
+        let cursor = events::append(
+            conn,
+            "subject.erased",
+            serde_json::json!({
+                "subject": id,
+                "erased_at": erased.erased_at.map(|at| at.timestamp()),
+            }),
+        )
+        .await?;
+        Ok(Erasure {
+            subject: erased,
+            cursor: Some(cursor),
+        })
+    })
+    .await
+}
+
+/// Removes what is held about `subject` in the tables that refer to it, and
+/// in stored events and history. The subject's own row, and its sessions,
+/// are [`erase`]'s to change.
+// r[impl subject.erasure.removes]
+async fn remove_held(
+    conn: &mut AsyncPgConnection,
+    subject: uuid::Uuid,
+    recipients: &[String],
+) -> StoreResult<()> {
+    let statements = [
+        // Earlier `metadata.changed` events hold metadata the subject's
+        // objects had. They go first: the statements below emit new
+        // ones, which carry empty metadata or none and stay.
+        // r[impl subject.erasure.metadata]
+        format!(
+            "delete from event
+             where kind = 'metadata.changed'
+               and case payload ->> 'object'
+                   when 'subject' then payload ->> 'id' = $1::text
+                   when 'credential' then payload ->> 'id' in
+                       (select id::text from credential where subject_id = $1)
+                   when 'membership' then payload ->> 'id' in
+                       (select id::text from membership where subject_id = $1)
+                   when 'invite' then payload ->> 'id' in
+                       (select id::text from challenge where {CHALLENGES})
+                   else false
+               end"
+        ),
+        // An invite's metadata may describe whoever it was for. The
+        // event keeps saying who redeemed which invite.
+        "update event set payload = jsonb_set(payload, '{metadata}', '{}')
+         where kind = 'invite.redeemed'
+           and payload ->> 'subject' = $1::text
+           and payload -> 'metadata' <> '{}'"
+            .to_owned(),
+        format!("delete from challenge where {CHALLENGES}"),
+        // Delivery requests that name no subject, such as an invite to
+        // someone new, are matched by recipient. Those naming another
+        // subject are that subject's.
+        "delete from event
+         where kind = 'delivery.requested'
+           and (payload ->> 'subject' = $1::text
+                or (payload ->> 'subject' is null and payload ->> 'recipient' = any($2)))"
+            .to_owned(),
+        // TOTP attempts are recorded under the factor's id.
+        "delete from login_attempt
+         where identifier = any($2)
+            or identifier in (select id::text from mfa_factor where subject_id = $1)"
+            .to_owned(),
+        "delete from mfa_factor where subject_id = $1".to_owned(),
+        // Ended sessions lose their reference (`on delete set null`).
+        "delete from credential where subject_id = $1".to_owned(),
+        "delete from role_assignment
+         where subject_id = $1
+            or membership_id in (select id from membership where subject_id = $1)"
+            .to_owned(),
+        "update membership
+         set state = 'ended', facts = '{}', metadata = '{}', updated_at = now()
+         where subject_id = $1
+           and (state = 'active' or facts <> '{}' or metadata <> '{}')"
+            .to_owned(),
+        // After the update above, whose replaced version is among them.
+        // r[impl subject.erasure.history]
+        "update row_version set data = data || '{\"facts\": {}, \"metadata\": {}}'
+         where relation = 'membership'::regclass
+           and key in (select jsonb_build_object('id', id) from membership where subject_id = $1)
+           and (data -> 'facts' <> '{}' or data -> 'metadata' <> '{}')"
+            .to_owned(),
+        // An answer holds text as JSON does, so compare it escaped.
+        "delete from batch_result
+         where caller = 'subject:' || $1::text
+            or strpos(answer::text, $1::text) > 0
+            or exists (
+                select 1 from unnest($2) recipient
+                where strpos(answer::text, to_jsonb(recipient)::text) > 0
+            )"
+        .to_owned(),
+    ];
+    for statement in statements {
+        diesel::sql_query(statement)
+            .bind::<Uuid, _>(subject)
+            .bind::<Array<Text>, _>(recipients)
+            .execute(conn)
+            .await?;
+    }
+    Ok(())
+}
+
+/// The challenges that are an erased subject's, with the subject as `$1` and
+/// its recipients as `$2`: those made for it, those sent to one of its
+/// recipients without naming a subject, such as an invite to someone new,
+/// and the invites it redeemed, which the feed remembers. Those naming
+/// another subject are that subject's.
+pub(crate) const CHALLENGES: &str = "(
+    subject_id = $1
+    or credential_id in (select id from credential where subject_id = $1)
+    or mfa_factor_id in (select id from mfa_factor where subject_id = $1)
+    or session_id in (select id from session where subject_id = $1)
+    or (subject_id is null and recipient <> '' and recipient = any($2))
+    or id in (select (payload ->> 'invite')::uuid from event
+              where kind = 'invite.redeemed' and payload ->> 'subject' = $1::text)
+)";
+
+/// Everything Konklav knows the subject by or reaches it at: its login
+/// identifiers, the email addresses of its federated credentials and MFA
+/// factors, and where its challenges were sent. Never an empty string, which
+/// is the recipient of every challenge that was sent nowhere.
+pub(crate) async fn recipients(
+    conn: &mut AsyncPgConnection,
+    subject: uuid::Uuid,
+) -> StoreResult<Vec<String>> {
+    #[derive(QueryableByName)]
+    struct Known {
+        #[diesel(sql_type = Text)]
+        value: String,
+    }
+    Ok(diesel::sql_query(
+        "select value from (
+             select identifier as value from credential where subject_id = $1
+             union select data ->> 'email' from credential where subject_id = $1
+             union select data ->> 'email' from mfa_factor where subject_id = $1
+             union select recipient from challenge where subject_id = $1
+         ) known where value is not null and value <> ''",
+    )
+    .bind::<Uuid, _>(subject)
+    .get_results::<Known>(conn)
+    .await?
+    .into_iter()
+    .map(|known| known.value)
+    .collect())
 }

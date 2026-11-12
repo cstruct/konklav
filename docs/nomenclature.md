@@ -84,6 +84,11 @@ Terms are introduced in dependency order: each definition only uses terms define
   - Either `human` or `service`.
   - Service subjects can only authenticate non-interactively.
 
+- `subject state`
+  - A subject's lifecycle state: `active`, `disabled`, or `erased`.
+  - A disabled subject has no sessions and can't start one, and can be enabled again.
+  - `erased` is final (see `erasure` under Operations).
+
 - `operator`
   - A human subject operating the Konklav control plane.
   - Examples: platform admin, support engineer, developer operating the system.
@@ -614,6 +619,26 @@ Terms are introduced in dependency order: each definition only uses terms define
 
 - `delivery material`
   - The secret part of a `delivery.requested` event: the one-time code or link token the relying system sends.
+
+- `personal data`
+  - What Konklav holds that identifies or describes the person behind a subject: login identifiers, credential and MFA factor contents, the recipients of challenges, claims passed from an identity provider, and membership facts.
+  - A subject's id, kind and state are not personal data once nothing else is attached to them.
+  - Konklav can't tell which facts describe a person, so it treats every fact on a subject's memberships as personal data.
+
+- `erasure`
+  - Removing all personal data Konklav holds about one subject, for good, in one control-plane operation. History and stored events are included.
+  - It is how a deployment answers a request to be forgotten for the part Konklav holds. Relying systems remove their own data when the change feed tells them.
+  - Not to be confused with disabling a subject, which removes nothing, or with `retention`, which deletes rows because of their age.
+
+- `erased subject`
+  - What erasure leaves: the subject's id, kind and state `erased`, with the time of erasure.
+  - It keeps identifiers in relying systems' projections and in Konklav's own records meaningful, and it can never authenticate, be granted access, or be restored.
+  - A person who comes back gets a new subject.
+
+- `personal data report`
+  - Everything Konklav holds about one subject, without secrets, as one control-plane answer.
+  - It is how a deployment answers a request for access to the part Konklav holds.
+  - Prefer this term over `export`, which means writing a bootstrap set.
 
 - `telemetry`
   - The traces, metrics and logs Konklav exports over OTLP for operators. It is separate from the change feed, which is for relying systems.

@@ -23,12 +23,18 @@ The change feed MUST include at least these event kinds:
 - `scope.changed`
 - `signing_keys.changed`
 - `delivery.requested`
+- `subject.erased`
 - `metadata.changed`
 - `invite.redeemed`
 
 r[feed.self-contained-session]
 `session.changed` events MUST carry enough state (session id, version,
 revoked flag) for consumers to apply them without calling back.
+
+r[feed.subject-erased]
+A `subject.erased` event MUST carry the subject's id and the time of
+erasure, and nothing that identifies the person. It MUST be readable by
+every consumer of the feed, like the other events that name subjects.
 
 r[feed.retention]
 Events MUST be retained for at least a configured period. A consumer whose

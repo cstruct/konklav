@@ -12,6 +12,8 @@
 //! - [`Relying::poll_work`] lists background fetches that are due, and when
 //!   to poll next, so busy entries are refreshed before they expire.
 //! - The `on_*` methods apply what the host fetched or received.
+//!   [`Relying::on_feed_event`] returns an [`ErasureNotice`] when the
+//!   relying system must hear of an erasure, or may have missed some.
 //!
 //! - [`policy::Policy`] merges route policies and builds their requirements.
 //! - [`rate_limit::RateLimiter`] enforces rate limits in memory and says
@@ -28,7 +30,8 @@ mod presented;
 pub mod rate_limit;
 
 pub use cache::{
-    Acceptance, Key, Need, Outcome, Relying, RequestDescriptor, ScopeRecord, Verification, Work,
+    Acceptance, ErasureNotice, Key, Need, Outcome, Relying, RequestDescriptor, ScopeRecord,
+    Verification, Work,
 };
 pub use config::Config;
 pub use presented::{PresentationId, Presented};

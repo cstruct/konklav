@@ -36,9 +36,21 @@ pub struct Subject {
     pub id: String,
     /// `human` or `service`.
     pub kind: String,
-    /// `active` or `disabled`.
+    /// `active`, `disabled` or `erased`.
     pub state: String,
     pub created_at: String,
+    /// When the subject was erased, if it was.
+    #[serde(default)]
+    pub erased_at: Option<String>,
+}
+
+impl Subject {
+    /// Whether the subject was erased: only its id, kind and state are
+    /// left, and nothing can be attached to it.
+    #[must_use]
+    pub fn is_erased(&self) -> bool {
+        self.state == "erased"
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -66,6 +78,14 @@ pub struct Slots {
     pub b: Slot,
 }
 
+/// The account a federated credential stands for at its identity provider.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Federated {
+    pub provider: String,
+    pub subject: String,
+    pub email: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct Credential {
     pub id: String,
@@ -75,6 +95,8 @@ pub struct Credential {
     pub mfa_factors_required: i16,
     #[serde(default)]
     pub slots: Option<Slots>,
+    #[serde(default)]
+    pub federated: Option<Federated>,
     pub replaces: Option<String>,
     pub created_at: String,
     pub revoked_at: Option<String>,
@@ -441,7 +463,20 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(detail.subject.kind, "human");
+        assert!(!detail.subject.is_erased());
         assert!(detail.credentials[0].can_be_break_glass());
+    }
+
+    #[test]
+    fn an_erased_subject_reads_as_erased() {
+        let erased: Subject = serde_json::from_value(json!({
+            "id": "s1", "kind": "human", "state": "erased",
+            "created_at": "2026-10-01T00:00:00Z",
+            "erased_at": "2026-11-11T16:03:26Z",
+        }))
+        .unwrap();
+        assert!(erased.is_erased());
+        assert_eq!(erased.erased_at.as_deref(), Some("2026-11-11T16:03:26Z"));
     }
 
     #[test]
@@ -453,6 +488,7 @@ mod tests {
             identifier: "ada@example.com".into(),
             mfa_factors_required: 0,
             slots: None,
+            federated: None,
             replaces: None,
             created_at: String::new(),
             revoked_at: None,

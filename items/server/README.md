@@ -66,8 +66,11 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - `/.well-known/jwks.json`
   - `/v1/entitlements/{subject}[/{tenant}]`
   - `/v1/check`, which decides from current state, session validity included
+  - `/v1/erased-subjects?since=&after=&limit=`, the erased subjects in the order they were erased, for catching up on `subject.erased` events the feed no longer holds
 - Control-plane surface (`/v1`):
   - subjects (idempotent `PUT`, disable and enable; a subject's read lists its credentials and MFA factors, never their secrets)
+  - erasure (`POST /v1/subjects/{id}/erase` removes all personal data Konklav holds about a subject and leaves the erased subject; it needs `konklav:subjects:erase`, and later writes to the subject answer `SUBJECT_ERASED`; see [erasure](../../docs/architecture/erasure.md))
+  - personal data reports (`GET /v1/subjects/{id}/personal-data` returns what Konklav holds about one subject, without secrets; it needs `konklav:subjects:manage`)
   - credentials (create, revoke, replace a password, rotate a secret-key slot or set when it expires, keeping its secret). A password credential can be created from an Argon2id `password_hash` made elsewhere instead of a `password`.
   - sessions (list, get, revoke by filter)
   - signing keys (list, break-glass revoke)

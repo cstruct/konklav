@@ -51,6 +51,20 @@ pub struct Passkey {
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
+/// The account a federated credential stands for, as the identity provider
+/// reported it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct FederatedIdentity {
+    /// The configured provider id.
+    pub provider: String,
+    /// The provider's `sub`.
+    pub subject: String,
+    #[schema(required)]
+    pub email: Option<String>,
+    #[schema(required)]
+    pub email_verified: Option<bool>,
+}
+
 /// A credential without any secret material.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Credential {
@@ -65,6 +79,9 @@ pub struct Credential {
     /// For passkeys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub passkey: Option<Passkey>,
+    /// For federated credentials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub federated: Option<FederatedIdentity>,
     #[schema(required)]
     pub replaces: Option<CredentialId>,
     pub created_at: DateTime<Utc>,

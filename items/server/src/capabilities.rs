@@ -19,6 +19,7 @@ use crate::subject_api::authenticate;
 pub const IMPERSONATE: &str = "konklav:subject:impersonate";
 pub const CONTROL_ALL: &str = "konklav:control:all";
 pub const SUBJECTS: &str = "konklav:subjects:manage";
+pub const SUBJECTS_ERASE: &str = "konklav:subjects:erase";
 pub const TENANTS: &str = "konklav:tenants:manage";
 pub const AUTHZ: &str = "konklav:authz:manage";
 pub const SESSIONS: &str = "konklav:sessions:manage";

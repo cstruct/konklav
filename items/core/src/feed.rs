@@ -69,6 +69,15 @@ pub struct ScopeChanged {
     pub scopes: Vec<ChangedScope>,
 }
 
+/// `subject.erased`: Konklav removed the personal data it held about the
+/// subject, and relying systems should remove theirs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubjectErased {
+    pub subject: SubjectId,
+    /// Unix seconds.
+    pub erased_at: i64,
+}
+
 /// A parsed feed event. Unknown kinds are kept as `Other`, so consumers
 /// tolerate kinds added later.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,6 +86,7 @@ pub enum FeedPayload {
     EntitlementsChanged(EntitlementsChanged),
     SigningKeysChanged(SigningKeysChanged),
     ScopeChanged(ScopeChanged),
+    SubjectErased(SubjectErased),
     Reset,
     Position,
     Other,
@@ -97,6 +107,7 @@ impl FeedEvent {
                 FeedPayload::SigningKeysChanged(serde_json::from_value(payload)?)
             }
             "scope.changed" => FeedPayload::ScopeChanged(serde_json::from_value(payload)?),
+            "subject.erased" => FeedPayload::SubjectErased(serde_json::from_value(payload)?),
             RESET => FeedPayload::Reset,
             POSITION => FeedPayload::Position,
             _ => FeedPayload::Other,

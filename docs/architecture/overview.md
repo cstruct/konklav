@@ -38,6 +38,7 @@ and spec-first development with Tracey.
 | Feed | Transactional outbox served over SSE, resumable by cursor | [change feed](change-feed.md) |
 | Relying SDK | Sans-I/O Rust core; pyo3 binding first, wasm later | [relying SDK](relying-sdk.md) |
 | Tenants | Konklav is authoritative; relying systems keep projections | [tenant projections](tenant-projections.md) |
+| Erasure | Konklav erases the personal data it holds and keeps the erased subject's id; relying systems hear it on the feed and erase theirs | [erasure](erasure.md) |
 | Messaging | Konklav emits delivery requests; relying systems send the messages | [change feed](change-feed.md) |
 | Federation | OIDC in both roles (identity providers and OpenID provider) with claim mapping; Konklav instances federate, optionally peering through the change feed | [OIDC and federation](oidc-and-federation.md), [proof of possession](proof-of-possession.md) |
 | Managed config | Deferred; catalog and templates go through the control-plane API first | |

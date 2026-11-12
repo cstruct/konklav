@@ -1,4 +1,6 @@
 /target/
+# Other sessions' worktrees, each with a build directory of its own.
+/.claude/
 /.git/
 /.github/
 /.agents/

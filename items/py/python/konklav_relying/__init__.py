@@ -62,6 +62,20 @@ and in memory always:
 login = RateLimit("login", [RateLimitWindow(size=5, period=timedelta(minutes=1))])
 await login.add(email)  # raises RateLimited
 ```
+
+A relying system that keeps data about subjects hears of erasures through
+`on_erasure`, and catches up with `erased_subjects`:
+
+```python
+async def on_erasure(notice: Erased | ErasuresMissed) -> None:
+    if isinstance(notice, Erased):
+        await delete_everything_about(notice.subject)
+    else:
+        for erased in await client.erased_subjects(since=my_stored_watermark()):
+            await delete_everything_about(erased.subject)
+
+client = RelyingClient(..., on_erasure=on_erasure)
+```
 """
 
 from __future__ import annotations
@@ -74,7 +88,7 @@ import logging
 import threading
 import time
 import urllib.parse
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from typing import Any
 
 import httpx
@@ -84,7 +98,19 @@ from konklav_relying.fake_ids import fake_uuid7
 from konklav_relying.pacing import Pacing, paced
 from konklav_relying.policy import MissingScopeId, Policy, PolicyError, Requirements, StepUp
 from konklav_relying.rate_limit import RateLimit, RateLimited, RateLimitWindow
-from konklav_relying.results import AcceptedRequest, AccessToken, Actor, Confirmation, Decision, DenyReason, Obligation
+from konklav_relying.results import (
+    AcceptedRequest,
+    AccessToken,
+    Actor,
+    Confirmation,
+    Decision,
+    DenyReason,
+    Erased,
+    ErasureNotice,
+    ErasuresMissed,
+    Obligation,
+    erasure_notice,
+)
 
 __all__ = [
     "AcceptedRequest",
@@ -94,6 +120,9 @@ __all__ = [
     "Core",
     "Decision",
     "DenyReason",
+    "Erased",
+    "ErasureNotice",
+    "ErasuresMissed",
     "InvalidDpopProof",
     "KonklavError",
     "MissingScopeId",
@@ -172,12 +201,24 @@ class RelyingClient:
         audience: str | None = None,
         audiences: Collection[str] | None = None,
         http: httpx.AsyncClient | None = None,
+        on_erasure: Callable[[ErasureNotice], Awaitable[None]] | None = None,
         **config: Any,
     ) -> None:
         """
         Pass the accepted audiences as `audiences`, or one as `audience`.
         `config` tunes the relying core (`Config` in the Rust crate), such
         as `entitlement_ttl_ms`.
+
+        `on_erasure` is awaited, one notice at a time, with each `Erased`
+        subject the change feed reports, so the relying system can remove
+        its own data about it, and with `ErasuresMissed` when some may have
+        been missed, which includes every start: the client can't know
+        what happened while it wasn't running. The same erasure may arrive
+        more than once. A notice whose handler raises is logged and not
+        repeated, and notices are lost with the process, so a relying
+        system that must not miss one keeps the time it has handled
+        erasures up to in its own storage and reads `erased_subjects` from
+        there on `ErasuresMissed`.
         """
         self._relying_url = relying_url.rstrip("/")
         self._subject_url = subject_url.rstrip("/")
@@ -193,6 +234,8 @@ class RelyingClient:
         self._token_lock = asyncio.Lock()
         self._wake = asyncio.Event()
         self._tasks: list[asyncio.Task[None]] = []
+        self._on_erasure = on_erasure
+        self._erasures: asyncio.Queue[ErasureNotice] = asyncio.Queue()
 
     # -- lifecycle --------------------------------------------------------
 
@@ -202,6 +245,8 @@ class RelyingClient:
             asyncio.create_task(self._run_feed(), name="konklav-feed"),
             asyncio.create_task(self._run_work(), name="konklav-work"),
         ]
+        if self._on_erasure is not None:
+            self._tasks.append(asyncio.create_task(self._run_erasures(self._on_erasure), name="konklav-erasures"))
 
     async def stop(self) -> None:
         for task in self._tasks:
@@ -436,6 +481,26 @@ class RelyingClient:
             query += "&kinds=" + ",".join(kinds)
         return _checked(await self._get(f"/v1/events/batch{query}")).json()
 
+    async def erased_subjects(self, since: int | None = None) -> list[Erased]:
+        """
+        Every subject Konklav erased at or after `since` (Unix seconds), or
+        ever when `None`, in the order they were erased. Unlike the feed,
+        this reaches back however long the relying system was away.
+        """
+        erased: list[Erased] = []
+        after: str | None = None
+        while True:
+            query = "?limit=1000"
+            if since is not None:
+                query += f"&since={since}"
+            if after is not None:
+                query += f"&after={after}"
+            page = _checked(await self._get(f"/v1/erased-subjects{query}")).json()
+            erased.extend(Erased.from_json(entry) for entry in page["subjects"])
+            after = page.get("next")
+            if after is None:
+                return erased
+
     async def await_cursor(self, cursor: int, timeout: float = 5.0) -> bool:
         """Wait until this client reflects every change up to `cursor`."""
         deadline = time.monotonic() + timeout
@@ -537,6 +602,18 @@ class RelyingClient:
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._wake.wait(), timeout=wait)
 
+    # r[impl relying.erasure.notify]
+    # r[impl relying.erasure.reset]
+    async def _run_erasures(self, handler: Callable[[ErasureNotice], Awaitable[None]]) -> None:
+        while True:
+            notice = await self._erasures.get()
+            try:
+                await handler(notice)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _log.exception("the erasure handler failed for %r", notice)
+
     async def _run_feed(self) -> None:
         backoff = 0.25
         while True:
@@ -569,12 +646,15 @@ class RelyingClient:
                 if line.startswith("data:"):
                     data.append(line[5:].strip())
                 elif line == "":
+                    notice = None
                     with self._lock:
                         if data:
-                            self._core.on_feed_event("".join(data), _now())
+                            notice = self._core.on_feed_event("".join(data), _now())
                         else:
                             # A heartbeat comment.
                             self._core.on_feed_activity(_now())
+                    if notice is not None and self._on_erasure is not None:
+                        self._erasures.put_nowait(erasure_notice(json.loads(notice)))
                     data = []
                     self._wake.set()
 

@@ -40,7 +40,7 @@ This is a library and can't run on its own.
 cargo test -p konklav-api
 ```
 
-- Direct coverage: round trips of the tenant, membership, subject, credential, session, signing-key, written and error types, the tagged `AssignmentTarget`, the catalog with its flattened groups, roles, templates, entitlements and explanations, shares with their flattened terms, registered-scope changes, invites, OIDC clients with their flattened definitions, imports with their tagged material, batches (which refuse `GET`s) and batch errors, and the mapping from error codes to HTTP statuses.
+- Direct coverage: round trips of the tenant, membership, subject, personal data report, credential, session, signing-key, written and error types, the tagged `AssignmentTarget`, the catalog with its flattened groups, roles, templates, entitlements and explanations, shares with their flattened terms, registered-scope changes, invites, OIDC clients with their flattened definitions, imports with their tagged material, batches (which refuse `GET`s) and batch errors, and the mapping from error codes to HTTP statuses.
 - Indirect coverage: the server's integration-test harness checks every control-plane response it receives against the committed document, so a type that drifts from what a handler returns fails those tests. The server's `openapi` test fails when `items/server/openapi/control-plane.json` no longer matches these types. To rewrite the document after a deliberate change, run:
 
   ```sh

@@ -49,6 +49,7 @@ Other relying endpoints:
 | `tenant.changed` | `{ tenant, parent, state, created }` |
 | `signing_keys.changed` | `{ kids: [..] }` |
 | `delivery.requested` | `{ channel, recipient, purpose, subject?, material, expires_at, locale_hint? }` |
+| `subject.erased` | `{ subject, erased_at }` (see [erasure](erasure.md)) |
 
 Every event also carries `cursor`, `kind` and `created_at`.
 

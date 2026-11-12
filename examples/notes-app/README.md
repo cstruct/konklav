@@ -85,7 +85,9 @@ A proof is accepted once, so each decision is its own request: the app asks `/ap
 **The admin page.** The admin backend runs the same code flow, but server side:
 - It authenticates with its client secret, binds the tokens to a key only it holds, and refreshes them with that key.
 - On every API request it asks its own relying client for `admin:access`, presenting the token with a proof it signs. The browser never sees either.
-- What admins change goes through the control plane as the `admin-api` service principal. That principal holds only `konklav:subjects:manage`, `konklav:authz:manage` and `konklav:sessions:manage`.
+- What admins change goes through the control plane as the `admin-api` service principal. That principal holds only `konklav:subjects:manage`, `konklav:subjects:erase`, `konklav:authz:manage` and `konklav:sessions:manage`.
+
+**Erasure.** The admin page's **Erase** asks Konklav to erase the subject. Konklav removes the sign-in, roles and sessions it holds, keeps only the erased subject's id, and reports `subject.erased` on the change feed. The app backend's relying client hands that to the backend, which deletes the person's notes: each note records its author's subject id for this. The Python backend also stores the time it has handled erasures up to and reads Konklav's list of erased subjects from there at every start, so an erasure made while it was down still removes the notes. The Rust backend keeps notes in memory, so it has nothing to catch up on.
 
 **Single logout.** Signing out of either app is RP-initiated logout (`/v1/oauth2/logout`). It ends the login page's session, and with it every client session started from it. The other app's next request is refused as `invalid_token`.
 
@@ -109,6 +111,7 @@ Both limits share state through Valkey, so the app backend's two replicas count 
 - **DPoP.** In the app, **What DPoP stops** sends the access token without a proof, then replays a captured request. Both get `401` with `WWW-Authenticate: DPoP error="invalid_dpop_proof"`.
 - **Live roles.** As Ada on the admin page, take away Ada's `editor` role. In the app, **Check again** shows `notes:write` gone, and adding a note is refused.
 - **Revocation.** Use **Sign out everywhere** for someone signed in to the app; their next API call is refused and the refresh fails.
+- **Erasure.** (Volumes from before this was added lack the capability the admin page needs: start over with `down -v`.) As Ada, give Bob the `editor` role, and as Bob add a note. Then, as Ada on the admin page, **Erase** Bob. Bob disappears from the list, his note is gone from the app, his next API call is refused, and signing in as him fails like an unknown address. Adding `bob@example.com` again makes a new person with no connection to the old one.
 - **Single sign-on.** Sign in to the app, then open the admin page: it signs you in without a prompt. As Bob it says the page is for admins only.
 - **Rate limits.** As Ada, add six notes quickly: the sixth is refused, and the page counts down to the next. In Python, the page names the backend replicas that answered it under the notes. Then, in Python, stop Valkey with `docker compose -f examples/notes-app/python/compose.yaml stop valkey` and add notes again: each replica now counts alone and allows two at once, then one every 30 seconds, so the limit still holds, and the backends log that they answer from memory. Start it again with `start valkey`; after the backoff, at most 30 seconds, the replicas count together through Valkey again, from a fresh count since Valkey kept nothing.
 - **Storage.** In either page's developer tools, `localStorage`, `sessionStorage` and `document.cookie` are empty. IndexedDB holds only the `CryptoKey`.

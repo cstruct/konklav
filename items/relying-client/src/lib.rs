@@ -14,6 +14,10 @@
 //!   claims before it can state the requirements, and decides for it later
 //!   ([`RelyingClient::decide_accepted`]) without checking its DPoP proof
 //!   again.
+//! - It hands erasures to the relying system: [`RelyingClient::erasures`]
+//!   yields each erased subject as the feed reports it, and says when some
+//!   may have been missed; [`RelyingClient::erased_subjects`] reads the
+//!   erased subjects from Konklav to catch up.
 //!
 //! [`rate_limit::RateLimit`] enforces rate limits, through Redis with the
 //! `redis` feature and in memory always. [`pacing`] and [`fake_ids`] keep a
@@ -32,14 +36,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use futures_util::StreamExt;
 use konklav_authz::{Decision, DenyReason, EntitlementSet, Requirements};
 use konklav_core::Cursor;
+pub use konklav_core::feed::SubjectErased;
 use konklav_core::feed::{FeedEvent, SessionChanged};
 use konklav_relying::{
     Acceptance, Config, Key, Need, Outcome, PresentationId, Relying, ScopeRecord, Verification,
 };
-pub use konklav_relying::{Presented, RequestDescriptor, policy};
+pub use konklav_relying::{ErasureNotice, Presented, RequestDescriptor, policy};
 use konklav_token::{AccessClaims, JwkSet, TokenKind};
 use serde::Deserialize;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, mpsc};
 
 /// Where Konklav is and how to authenticate to it.
 #[derive(Clone, Debug)]
@@ -127,12 +132,21 @@ struct Inner {
     http: reqwest::Client,
     token: tokio::sync::Mutex<Option<ServiceToken>>,
     wake: Notify,
+    /// Where erasure notices go, once the host has asked for them.
+    erasures: Mutex<Option<mpsc::UnboundedSender<ErasureNotice>>>,
 }
 
 /// A relying client. Cheap to clone; clones share caches.
 #[derive(Clone)]
 pub struct RelyingClient {
     inner: Arc<Inner>,
+}
+
+/// One page of `/v1/erased-subjects`.
+#[derive(Deserialize)]
+struct ErasedPage {
+    subjects: Vec<SubjectErased>,
+    next: Option<konklav_core::SubjectId>,
 }
 
 #[derive(Deserialize)]
@@ -152,6 +166,7 @@ impl RelyingClient {
                 http: reqwest::Client::new(),
                 token: tokio::sync::Mutex::new(None),
                 wake: Notify::new(),
+                erasures: Mutex::new(None),
             }),
         }
     }
@@ -166,6 +181,71 @@ impl RelyingClient {
             tokio::spawn(async move { feed.run_feed().await }),
             tokio::spawn(async move { work.run_work().await }),
         ]
+    }
+
+    /// The erasure notices from now on: each subject Konklav erases, so the
+    /// relying system can remove its own data about it, and
+    /// [`ErasureNotice::Missed`] when erasures may have been missed and
+    /// [`Self::erased_subjects`] should be read.
+    ///
+    /// Call this before [`Self::start`]: a client that starts following
+    /// the feed says at once that it may have missed erasures while it
+    /// wasn't running. The same erasure may arrive more than once. Notices
+    /// wait in the receiver without bound and are lost with it, so a
+    /// relying system that must not miss one keeps the time it has handled
+    /// erasures up to in its own storage, and reads
+    /// [`Self::erased_subjects`] from there when it starts and on
+    /// [`ErasureNotice::Missed`]. Only the latest receiver gets notices.
+    // r[impl relying.erasure.notify]
+    // r[impl relying.erasure.reset]
+    #[must_use]
+    pub fn erasures(&self) -> mpsc::UnboundedReceiver<ErasureNotice> {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        *self
+            .inner
+            .erasures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sender);
+        receiver
+    }
+
+    fn hand_over(&self, notice: ErasureNotice) {
+        let mut erasures = self
+            .inner
+            .erasures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(sender) = erasures.as_ref()
+            && sender.send(notice).is_err()
+        {
+            // The host dropped its receiver.
+            *erasures = None;
+        }
+    }
+
+    /// Every subject Konklav erased at or after `since` (Unix seconds), or
+    /// ever when `None`, in the order they were erased. Unlike the feed,
+    /// this reaches back however long the relying system was away.
+    pub async fn erased_subjects(&self, since: Option<i64>) -> Result<Vec<SubjectErased>, Error> {
+        let mut erased = Vec::new();
+        let mut after: Option<konklav_core::SubjectId> = None;
+        loop {
+            let path = format!(
+                "/v1/erased-subjects?limit=1000{}{}",
+                since
+                    .map(|since| format!("&since={since}"))
+                    .unwrap_or_default(),
+                after
+                    .map(|after| format!("&after={after}"))
+                    .unwrap_or_default()
+            );
+            let page: ErasedPage = checked(self.get(&path).await?).await?.json().await?;
+            erased.extend(page.subjects);
+            match page.next {
+                Some(next) => after = Some(next),
+                None => return Ok(erased),
+            }
+        }
     }
 
     fn core(&self) -> std::sync::MutexGuard<'_, Relying> {
@@ -539,12 +619,16 @@ impl RelyingClient {
                     status: 0,
                     body: format!("malformed feed event: {e}"),
                 })?;
-                self.core()
-                    .on_feed_event(&event, now())
-                    .map_err(|e| Error::Status {
-                        status: 0,
-                        body: format!("malformed feed event: {e}"),
-                    })?;
+                let notice =
+                    self.core()
+                        .on_feed_event(&event, now())
+                        .map_err(|e| Error::Status {
+                            status: 0,
+                            body: format!("malformed feed event: {e}"),
+                        })?;
+                if let Some(notice) = notice {
+                    self.hand_over(notice);
+                }
                 self.inner.wake.notify_waiters();
             }
         }

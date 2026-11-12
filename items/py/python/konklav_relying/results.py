@@ -28,6 +28,9 @@ __all__ = [
     "Decision",
     "DenyCode",
     "DenyReason",
+    "Erased",
+    "ErasureNotice",
+    "ErasuresMissed",
     "Obligation",
 ]
 
@@ -241,3 +244,50 @@ class AcceptedRequest:
     """The relying core's handle, opaque."""
     access_token: str = field(repr=False, compare=False)
     """The access token, for the check API."""
+
+
+@dataclass(frozen=True, slots=True)
+class Erased:
+    """
+    Konklav erased `subject`, and the relying system should remove its own
+    data about it. The same erasure may be handed over more than once.
+    """
+
+    subject: str
+    erased_at: int
+    """Unix seconds."""
+
+    @classmethod
+    def from_json(cls, value: Mapping[str, Any]) -> Erased:
+        return cls(subject=str(value["subject"]), erased_at=int(value["erased_at"]))
+
+
+@dataclass(frozen=True, slots=True)
+class ErasuresMissed:
+    """
+    Erasures may have been missed, so the relying system should read the
+    erased subjects from Konklav (`RelyingClient.erased_subjects`).
+    """
+
+    since: int | None
+    """
+    When the client applied its last feed event before the gap, in Unix
+    seconds by this machine's clock; `None` when it had applied none, as
+    when it has just started.
+    """
+
+
+type ErasureNotice = Erased | ErasuresMissed
+
+
+def erasure_notice(value: Mapping[str, Any]) -> ErasureNotice:
+    """
+    >>> erasure_notice({"notice": "erased", "subject": "s-1", "erased_at": 1800000000})
+    Erased(subject='s-1', erased_at=1800000000)
+    >>> erasure_notice({"notice": "missed", "since": None})
+    ErasuresMissed(since=None)
+    """
+    if value["notice"] == "erased":
+        return Erased.from_json(value)
+    since = value.get("since")
+    return ErasuresMissed(since=None if since is None else int(since))

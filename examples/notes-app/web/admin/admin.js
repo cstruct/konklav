@@ -79,6 +79,14 @@ async function renderUsers() {
         user.state === "active"
           ? button("Disable", "danger", () => call("POST", `/api/users/${user.id}/disable`))
           : button("Enable", "secondary", () => call("POST", `/api/users/${user.id}/enable`)),
+        " ",
+        // Erasure can't be undone: Konklav forgets the person, and the app
+        // backend deletes their notes when it hears of it.
+        button("Erase", "danger", async () => {
+          const who = user.emails[0] || user.id;
+          if (!confirm(`Erase ${who}? Their sign-in, roles and notes are removed for good.`)) return;
+          await call("POST", `/api/users/${user.id}/erase`);
+        }),
       );
       row.append(who, held, actions);
       return row;

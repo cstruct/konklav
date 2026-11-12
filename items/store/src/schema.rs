@@ -266,7 +266,7 @@ diesel::table! {
     session (id) {
         id -> Uuid,
         subject_id -> Uuid,
-        credential_id -> Uuid,
+        credential_id -> Nullable<Uuid>,
         tenant_id -> Nullable<Uuid>,
         membership_id -> Nullable<Uuid>,
         stage -> Text,
@@ -350,6 +350,7 @@ diesel::table! {
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
         metadata -> Jsonb,
+        erased_at -> Nullable<Timestamptz>,
     }
 }
 

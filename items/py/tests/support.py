@@ -117,6 +117,8 @@ class FakeKonklav:
         self.cursor = 0
         self.calls: list[str] = []
         self.checks: list[dict[str, Any]] = []
+        # What `/v1/erased-subjects` lists, served one per page.
+        self.erased: list[dict[str, Any]] = []
 
     def push(self, kind: str, payload: dict[str, Any]) -> int:
         self.cursor += 1
@@ -176,6 +178,15 @@ class FakeKonklav:
             if claims["aud"] not in body.get("audiences", [AUDIENCE]):
                 return httpx.Response(200, json={"decision": "deny", "reason": "invalid_token", "revision": None})
             return httpx.Response(200, json={"decision": "allow", "revision": self.revision})
+        if path == "/v1/erased-subjects":
+            query = request.url.params
+            listed = [e for e in self.erased if e["erased_at"] >= int(query.get("since", 0))]
+            if "after" in query:
+                position = [e["subject"] for e in listed].index(query["after"])
+                listed = listed[position + 1 :]
+            page = listed[:1]
+            more = len(listed) > 1
+            return httpx.Response(200, json={"subjects": page, "next": page[0]["subject"] if more else None})
         if path == "/v1/events":
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=self._feed())
         return httpx.Response(404)

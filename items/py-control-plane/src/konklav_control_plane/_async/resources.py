@@ -233,6 +233,11 @@ class Subjects(_Resource[M]):
     async def get(self: Subjects[Direct], id: str) -> types.SubjectDetail:
         return cast(types.SubjectDetail, await self._direct._get(path("subjects", id)))
 
+    @operation("personal_data")
+    async def personal_data(self: Subjects[Direct], id: str) -> types.PersonalDataReport:
+        """Everything Konklav holds about the subject, without secrets."""
+        return cast(types.PersonalDataReport, await self._direct._get(path("subjects", id, "personal-data")))
+
     @overload
     async def create(self: Subjects[Direct], id: str, body: types.CreateSubject) -> Written[types.Subject]: ...
 
@@ -262,6 +267,17 @@ class Subjects(_Resource[M]):
     @operation("enable_subject")
     def enable(self, id: str) -> Any:
         return self._do(Call("POST", path("subjects", id, "enable"), written=True))
+
+    @overload
+    async def erase(self: Subjects[Direct], id: str) -> Written[types.Subject]: ...
+
+    @overload
+    def erase(self: Subjects[Batched], id: str) -> Pending[Written[types.Subject]]: ...
+
+    @operation("erase_subject")
+    def erase(self, id: str) -> Any:
+        """Removes all personal data held about the subject. This can't be undone."""
+        return self._do(Call("POST", path("subjects", id, "erase"), written=True))
 
     @overload
     async def patch_metadata(

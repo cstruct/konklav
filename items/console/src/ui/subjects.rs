@@ -9,14 +9,16 @@ use leptos_router::hooks::{use_navigate, use_params_map};
 use serde_json::{Value, json};
 
 use super::authz::{Explain, GlobalAssignments};
-use super::common::{Field, Gated, Id, Problem, Secret, confirm, invalid_input, loaded, timestamp};
+use super::common::{
+    Field, Gated, Id, Problem, Secret, confirm, invalid_input, loaded, pretty, save_file, timestamp,
+};
 use super::console::use_console;
 use super::sessions::SessionList;
 use crate::api::endpoints::{self, SessionFilter};
 use crate::api::types::{
     CreatedCredential, Credential, RotatedSlot, Subject, SubjectDetail, SubjectPage,
 };
-use crate::grants::Capability;
+use crate::grants::{CONTROL_ALL, Capability};
 use crate::ids::new_id;
 
 #[component]
@@ -132,24 +134,32 @@ fn CreateSubject() -> impl IntoView {
 pub fn SubjectPage() -> impl IntoView {
     let params = use_params_map();
     let id = Signal::derive(move || params.read().get("id").unwrap_or_default());
+    // Set by the details once they know; an erased subject takes no roles.
+    let erased = RwSignal::new(false);
     view! {
         <p><A href="/subjects">"← Subjects"</A></p>
         <h1>"Subject " <code>{id}</code></h1>
         <Gated capability=Capability::Subjects>
-            <SubjectDetails id/>
+            <SubjectDetails id erased/>
         </Gated>
         <h2>"Sessions"</h2>
         <Gated capability=Capability::Sessions>
-            <SessionList filter=Signal::derive(move || SessionFilter::subject(&id.get()))/>
+            // Listed anew after an erasure, which ends them all.
+            {move || {
+                erased.track();
+                view! { <SessionList filter=Signal::derive(move || SessionFilter::subject(&id.get()))/> }
+            }}
         </Gated>
-        <h2>"Global roles"</h2>
-        <Gated capability=Capability::Authz>
-            <GlobalAssignments subject=id/>
-        </Gated>
-        <h2>"Entitlements"</h2>
-        <Gated capability=Capability::Authz>
-            <Explain subject=id/>
-        </Gated>
+        {move || (!erased.get()).then(|| view! {
+            <h2>"Global roles"</h2>
+            <Gated capability=Capability::Authz>
+                <GlobalAssignments subject=id/>
+            </Gated>
+            <h2>"Entitlements"</h2>
+            <Gated capability=Capability::Authz>
+                <Explain subject=id/>
+            </Gated>
+        })}
     }
 }
 
@@ -157,12 +167,17 @@ pub fn SubjectPage() -> impl IntoView {
 type Shown = Option<(String, String)>;
 
 #[component]
-fn SubjectDetails(id: Signal<String>) -> impl IntoView {
+fn SubjectDetails(id: Signal<String>, erased: RwSignal<bool>) -> impl IntoView {
     let console = use_console();
     let error = RwSignal::new(None);
     let secret = RwSignal::new(None::<Shown>);
     let resource =
         LocalResource::new(move || console.call::<SubjectDetail>(endpoints::subject(&id.get())));
+    Effect::new(move |_| {
+        if let Some(Ok(detail)) = resource.get() {
+            erased.set(detail.subject.is_erased());
+        }
+    });
     let set_enabled = move |enabled: bool| {
         if enabled || confirm("Disable this subject? Its sessions end and it can't sign in.") {
             console.act(
@@ -177,6 +192,9 @@ fn SubjectDetails(id: Signal<String>) -> impl IntoView {
         {move || secret.get().flatten().map(|(label, value)| view! { <Secret label value/> })}
         {loaded(resource, move |detail: SubjectDetail| {
             let subject = detail.subject.clone();
+            if subject.is_erased() {
+                return view! { <ErasedSubject subject/> }.into_any();
+            }
             let active = subject.state == "active";
             let kind = subject.kind.clone();
             view! {
@@ -193,8 +211,121 @@ fn SubjectDetails(id: Signal<String>) -> impl IntoView {
                 <h2>"Credentials"</h2>
                 <Credentials credentials=detail.credentials reload=move || resource.refetch() secret/>
                 <AddCredential subject=id kind reload=move || resource.refetch() secret/>
+                <h2>"Personal data"</h2>
+                <PersonalData subject=id reload=move || resource.refetch()/>
             }
+            .into_any()
         })}
+    }
+}
+
+/// What is left of an erased subject. It offers no actions, since Konklav
+/// refuses every change to it.
+#[component]
+fn ErasedSubject(subject: Subject) -> impl IntoView {
+    view! {
+        <dl class="facts">
+            <dt>"Kind"</dt><dd>{subject.kind}</dd>
+            <dt>"State"</dt><dd>{subject.state}</dd>
+            <dt>"Created"</dt><dd>{timestamp(&subject.created_at)}</dd>
+            <dt>"Erased"</dt><dd>{subject.erased_at.as_deref().map(timestamp)}</dd>
+        </dl>
+        <div class="notice warning" role="note">
+            <strong>"This subject was erased. "</strong>
+            "Konklav holds no personal data about it: no credentials, MFA factors, role \
+             assignments or membership facts. Only its id, kind and state are left. The id is \
+             never used again, and nothing can be added to it."
+        </div>
+    }
+}
+
+/// The file a subject's personal data report is saved as.
+fn report_file_name(subject: &str) -> String {
+    format!("konklav-personal-data-{subject}.json")
+}
+
+/// The personal data report as a download, and erasure behind a
+/// confirmation that says what it removes.
+#[component]
+fn PersonalData(
+    subject: Signal<String>,
+    reload: impl Fn() + Copy + Send + Sync + 'static,
+) -> impl IntoView {
+    let console = use_console();
+    let error = RwSignal::new(None);
+    let confirming = RwSignal::new(false);
+    let download = move |_| {
+        let id = subject.get_untracked();
+        console.act(
+            endpoints::personal_data(&id),
+            error,
+            move |report: Value| {
+                if !save_file(&report_file_name(&id), "application/json", &pretty(&report)) {
+                    error.set(Some(invalid_input("the browser didn't take the file")));
+                }
+            },
+        );
+    };
+    let erase = move |_| {
+        console.act(
+            endpoints::erase_subject(&subject.get_untracked()),
+            error,
+            move |_: Value| {
+                confirming.set(false);
+                reload();
+            },
+        );
+    };
+    let erasing = move || {
+        if console.subject().as_deref() == Some(subject.get().as_str()) {
+            return view! { <p class="muted">"You can't erase your own subject."</p> }.into_any();
+        }
+        if !console.allows(Capability::Erase) {
+            return view! {
+                <p class="muted">
+                    "Erasing this subject needs " <code>{Capability::Erase.action()}</code>
+                    " or " <code>{CONTROL_ALL}</code> "."
+                </p>
+            }
+            .into_any();
+        }
+        if !confirming.get() {
+            return view! {
+                <button class="danger" on:click=move |_| confirming.set(true)>"Erase…"</button>
+            }
+            .into_any();
+        }
+        view! {
+            <div class="card" role="alertdialog" aria-label="Erase this subject">
+                <p><strong>"Erase this subject? This can't be undone."</strong></p>
+                <p>"Konklav removes all personal data it holds about the subject:"</p>
+                <ul>
+                    <li>"its credentials and login identifiers, MFA factors and pending challenges"</li>
+                    <li>"its role assignments, and the facts on its memberships, in history too"</li>
+                    <li>"what identity providers reported about it, and its recorded login attempts"</li>
+                </ul>
+                <p>
+                    "Its sessions and memberships end. The subject stays as "<code>"erased"</code>
+                    ", its id is never used again, and relying systems are told so they can \
+                     remove what they hold. If the person comes back, they get a new subject."
+                </p>
+                <p class="muted">"Download the personal data report first if you need a record of what was held."</p>
+                <div class="row">
+                    <button class="danger" on:click=erase>"Erase for good"</button>
+                    <button type="button" class="link" on:click=move |_| confirming.set(false)>"Cancel"</button>
+                </div>
+            </div>
+        }
+        .into_any()
+    };
+    view! {
+        <p class="muted">
+            "The report holds everything Konklav has about this subject, without secrets. \
+             Relying systems answer for what they hold themselves."
+        </p>
+        <Problem error/>
+        <p><button class="secondary" on:click=download>"Download personal data report"</button></p>
+        {erasing}
     }
 }
 
@@ -283,6 +414,10 @@ fn Credentials(
                     slots.b.expires_at.map(|e| format!(" until {}", timestamp(&e))).unwrap_or_default(),
                 )
             });
+            let federated = credential.federated.clone().map(|account| {
+                let email = account.email.map(|email| format!(" ({email})")).unwrap_or_default();
+                format!("{} at {}{email}", account.subject, account.provider)
+            });
             let is_password = credential.kind == "password";
             let is_key = credential.kind == "secret_key";
             let can_break_glass = credential.can_be_break_glass();
@@ -291,7 +426,10 @@ fn Credentials(
                 <tr class:revoked=!active>
                     <td><Id id=credential.id.clone()/></td>
                     <td>{credential.kind.clone()}</td>
-                    <td><code>{credential.identifier.clone()}</code></td>
+                    <td>
+                        <code>{credential.identifier.clone()}</code>
+                        {federated.map(|account| view! { <div class="muted">{account}</div> })}
+                    </td>
                     <td>{(credential.mfa_factors_required > 0).then(|| format!("{} factor(s)", credential.mfa_factors_required))}</td>
                     <td>{slots}</td>
                     <td>{status}{marked.then(|| view! { <span class="chip warning">"break-glass"</span> })}</td>
@@ -457,6 +595,11 @@ fn AddCredential(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_report_is_saved_under_the_subjects_id() {
+        assert_eq!(report_file_name("s1"), "konklav-personal-data-s1.json");
+    }
 
     #[test]
     fn credential_bodies_follow_their_kind() {

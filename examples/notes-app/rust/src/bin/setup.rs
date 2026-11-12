@@ -42,11 +42,12 @@ const ROLES: [(&str, &[&str]); 4] = [
     ("editor", &["notes:read", "notes:write"]),
     ("admin", &["admin:access"]),
     // The admin page's service principal: managing people, their roles and
-    // their sessions, and nothing else of the control plane.
+    // their sessions, erasing people, and nothing else of the control plane.
     (
         "admin-api",
         &[
             "konklav:subjects:manage",
+            "konklav:subjects:erase",
             "konklav:authz:manage",
             "konklav:sessions:manage",
         ],

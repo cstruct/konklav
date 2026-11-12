@@ -16,6 +16,7 @@ The relying core: a sans-I/O library with everything a relying system needs to d
   - scopes Konklav doesn't know are remembered for 5 s, and forgotten as soon as `scope.changed` names them
   - `scope.changed` marks a record stale with the same debounce bound as entitlement sets
 - Following the change feed's state: cursor, heartbeats, `position`, `reset`. When it lags (three missed heartbeats), the core answers `Need::Check`, so hosts ask `/v1/check`.
+- Erasure: on `subject.erased` the core drops the subject's cached sessions and entitlement sets and returns `ErasureNotice::Erased` for the host to pass on. On a `reset`, and when a stream starts without a position of the core's own, it returns `ErasureNotice::Missed` with the time it applied its last event, if any, so the relying system reads the erased subjects from Konklav.
 - Rate limits (`rate_limit`): named limits of several windows per key, enforced with the generic cell rate algorithm (GCRA):
   - local state for a bounded number of keys (100 000 by default, least recently used first), dropped once drained, with an optional local divisor
   - for a rate-limit store (Valkey, or Redis 6.2 or later), the script to run with its keys and arguments, keys hashed under a configured secret (HMAC-SHA-256)
@@ -37,7 +38,7 @@ The core never makes network calls, reads clocks, spawns tasks or sleeps. Hosts 
 - `Relying::decide` returns `Outcome::Decided` or `Outcome::Need { needs }`. `decide_presented` and `verify_presented` take a `Presented` (raw headers and a `RequestDescriptor`) for DPoP; `decide` and `verify` take a bearer token. `accept_presented` verifies a `Presented` once and holds it under a `PresentationId` for one `decide_accepted`, which doesn't check the proof again.
 - `Verification::InvalidProof` and `DenyReason::InvalidDpopProof` mean the relying system should answer with a `WWW-Authenticate: DPoP` challenge.
 - `Relying::poll_work` returns the fetches due and when to poll next.
-- `on_jwks`, `on_session`, `on_session_unknown`, `on_entitlements`, `on_registered_scope`, `on_registered_scope_unknown`, `on_fetch_failed`, `on_feed_connected`, `on_feed_activity`, `on_feed_lost`, `on_feed_event`, `await_cursor`.
+- `on_jwks`, `on_session`, `on_session_unknown`, `on_entitlements`, `on_registered_scope`, `on_registered_scope_unknown`, `on_fetch_failed`, `on_feed_connected`, `on_feed_activity`, `on_feed_lost`, `on_feed_event` (which returns an `ErasureNotice` when the relying system must hear of an erasure), `await_cursor`.
 - `Config` holds the issuer, the audiences a token may carry (`audiences`, also read from `audience` as one or a list) and tuning. A verified token's `AccessClaims::aud` says which audience it carried.
 - `policy::Policy`: a builder (`tenant_actions`, `scope_actions`, `token_kinds`, `admit_flags`, `step_up`, `tenant_fact`, ...), `Policy::public`, `Policy::overriding`, `Policy::merge`, `check` and `requirements` with `ResolvedScope`s. It follows the Python binding's `konklav_relying.policy.Policy`.
 - `rate_limit::RateLimiter`: `begin` counts an event locally and returns `Attempt::Decided` or `Attempt::Store { call, local }`; `on_store_answer` and `on_store_failed` take the store's answer or failure. `STORE_SCRIPT` is the script both hosts run.
@@ -67,6 +68,7 @@ cargo build -p konklav-relying --target wasm32-unknown-unknown
 - Direct coverage: deterministic tests with injected time, covering:
   - warm and cold decisions, fallback when lagging
   - session revocation, the debounce bound, TTL, reset
+  - erasure: dropped caches, the notice, and the notices for a reset and a fresh start
   - JWKS refresh limits, await-cursor, sweeps, tenant-scoped invalidation
   - registered scopes: lazy fetches, unknown scopes, moves within the debounce window, the size bound
   - DPoP: schemes, proofs checked before the check API, replays, the bounded replay set

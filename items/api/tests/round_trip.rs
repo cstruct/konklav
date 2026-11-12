@@ -6,10 +6,10 @@ use konklav_api::{
     ErrorCode, ErrorResponse, ExplainDecision, Explanation, IdTokenAlgorithm, ImportCredentials,
     ImportFactors, ImportSessions, ImportSubjects, Imported, ImportedCredentialMaterial, Invite,
     InvitePage, InvitePreview, MembershipDetail, OfferShare, OidcClient, OidcClientDefinition,
-    OidcClientSecret, PutRole, PutTemplate, Reason, RecordRegisteredScope, RegisteredScope,
-    RegisteredScopeBatch, RegisteredScopeChanges, RevokeSessions, RevokeShare, RevokedKey,
-    RevokedSessions, Role, RotatedSlot, SessionPage, Share, ShareList, ShareTerms, SigningKey,
-    SlotExpiry, SubjectDetail, SubjectPage, Template, TenantPage, Written,
+    OidcClientSecret, PersonalDataReport, PutRole, PutTemplate, Reason, RecordRegisteredScope,
+    RegisteredScope, RegisteredScopeBatch, RegisteredScopeChanges, RevokeSessions, RevokeShare,
+    RevokedKey, RevokedSessions, Role, RotatedSlot, SessionPage, Share, ShareList, ShareTerms,
+    SigningKey, SlotExpiry, SubjectDetail, SubjectPage, Template, TenantPage, Written,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -114,6 +114,7 @@ fn subject() -> Value {
         "metadata": {"locale": "sv-SE", "tags": ["beta"]},
         "metadata_etag": "0123456789abcdef0123456789abcdef",
         "created_at": "2026-11-02T10:00:00Z",
+        "erased_at": null,
     })
 }
 
@@ -165,6 +166,49 @@ fn subject_details_round_trip_with_flattened_subjects_and_omitted_credential_par
     let mut written = subject();
     written["cursor"] = json!(7);
     round_trips::<Written<konklav_api::Subject>>(&written);
+}
+
+#[test]
+fn personal_data_reports_round_trip() {
+    let mut federated = credential("federated");
+    federated["federated"] = json!({
+        "provider": "upstream",
+        "subject": "Ada-At-Upstream",
+        "email": "ada@upstream.example",
+        "email_verified": null,
+    });
+    round_trips::<PersonalDataReport>(&json!({
+        "subject": subject(),
+        "credentials": [federated],
+        "mfa_factors": [{
+            "id": CREDENTIAL,
+            "kind": "email_code",
+            "active": true,
+            "email": "ada@example.com",
+            "created_at": "2026-11-02T10:00:00Z",
+            "removed_at": "2026-11-03T10:00:00Z",
+        }],
+        "memberships": [],
+        "role_assignments": [],
+        "sessions": [],
+        "challenges": [{
+            "id": CREDENTIAL,
+            "purpose": "email_link",
+            "recipient": "ada@example.com",
+            "metadata": {"campaign": "spring"},
+            "created_at": "2026-11-02T10:00:00Z",
+            "expires_at": "2026-11-02T10:10:00Z",
+            "consumed_at": null,
+            "revoked_at": null,
+        }],
+        "login_attempts": [{
+            "kind": "password",
+            "identifier": "ada@example.com",
+            "succeeded": false,
+            "attempted_at": "2026-11-02T10:00:00Z",
+            "address": null,
+        }],
+    }));
 }
 
 #[test]

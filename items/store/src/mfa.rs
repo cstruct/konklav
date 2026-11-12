@@ -73,6 +73,9 @@ pub struct Factor {
     pub data: FactorData,
     pub active: bool,
     pub created_at: DateTime<Utc>,
+    /// When the subject or an operator removed it. A removed factor proves
+    /// nothing, but its row stays until the subject is erased.
+    pub removed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Queryable, Selectable)]
@@ -84,6 +87,7 @@ struct Row {
     data: serde_json::Value,
     active: bool,
     created_at: DateTime<Utc>,
+    removed_at: Option<DateTime<Utc>>,
 }
 
 impl TryFrom<Row> for Factor {
@@ -102,6 +106,7 @@ impl TryFrom<Row> for Factor {
             data,
             active: row.active,
             created_at: row.created_at,
+            removed_at: row.removed_at,
         })
     }
 }
@@ -165,6 +170,22 @@ pub async fn list(conn: &mut AsyncPgConnection, subject: SubjectId) -> StoreResu
     mfa_factor::table
         .filter(mfa_factor::subject_id.eq(subject.as_uuid()))
         .filter(mfa_factor::removed_at.is_null())
+        .order(mfa_factor::created_at.asc())
+        .select(Row::as_select())
+        .load(conn)
+        .await?
+        .into_iter()
+        .map(|row| Factor::try_from(row).map_err(StoreError::from))
+        .collect()
+}
+
+/// Every factor the subject has had, removed ones included, oldest first.
+pub async fn list_with_removed(
+    conn: &mut AsyncPgConnection,
+    subject: SubjectId,
+) -> StoreResult<Vec<Factor>> {
+    mfa_factor::table
+        .filter(mfa_factor::subject_id.eq(subject.as_uuid()))
         .order(mfa_factor::created_at.asc())
         .select(Row::as_select())
         .load(conn)

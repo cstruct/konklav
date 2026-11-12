@@ -23,6 +23,10 @@ token.
     Argon2id hash, revoke, replace a password, rotate a secret-key slot,
     mark break-glass), sessions, global roles and
     entitlements
+  - a subject's personal data report, downloaded as JSON, and erasure,
+    behind a confirmation that says what is removed and that it can't be
+    undone. Erasing needs `konklav:subjects:erase`. An erased subject
+    shows only what is left of it, with no actions.
   - tenants (create, facts, state, children) and memberships (create,
     facts, end, role assignments)
   - roles per tenant (the root tenant's are global, and built-in

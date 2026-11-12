@@ -21,6 +21,10 @@ Its outputs are queries:
   `next_wakeup`
 - `await_cursor(c) -> Ready | Pending`
 
+Applying an event also returns an erasure notice when the relying system
+itself has something to do: a subject was erased, or erasures may have
+been missed ([erasure](erasure.md#through-the-relying-sdk)).
+
 Host bindings run a loop: they perform the work items, feed the results
 back, and sleep until `next_wakeup` or until a new event arrives.
 

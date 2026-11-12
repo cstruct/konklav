@@ -11,6 +11,9 @@ pub enum ErrorCode {
     MethodNotAllowed,
     InvalidRequest,
     Conflict,
+    /// The request would change an erased subject or attach something to
+    /// it. Erasure is final, so retrying can't succeed.
+    SubjectErased,
     /// An `If-Match` precondition didn't hold: the object changed since
     /// its entity tag was read.
     PreconditionFailed,
@@ -44,7 +47,7 @@ impl ErrorCode {
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::InvalidRequest | Self::MetadataTooLarge => StatusCode::BAD_REQUEST,
             Self::PreconditionFailed => StatusCode::PRECONDITION_FAILED,
-            Self::Conflict => StatusCode::CONFLICT,
+            Self::Conflict | Self::SubjectErased => StatusCode::CONFLICT,
             Self::Unauthenticated | Self::InvalidCredentials | Self::SessionEnded => {
                 StatusCode::UNAUTHORIZED
             }

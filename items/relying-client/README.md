@@ -15,6 +15,24 @@ Native Rust host binding for the relying core, on tokio and reqwest.
   Errors mean deny. `decide_request` takes a `Presented` (the request's raw `Authorization` and `DPoP` headers and the public URL it addressed) so sender-constrained tokens work too; `decide` takes a bearer token.
 - `accept_request`, `decide_accepted` and `verify_request`, for hosts that need a request's verified claims before they can state its requirements (`relying.verify.accepted-presentation`): `accept_request` verifies the token, its session and its DPoP proof once and returns the claims with a handle; `decide_accepted` decides once for the handle without checking the proof again; `verify_request` verifies without deciding. Each falls back to `/v1/check` like `decide`, and returns `Verified::{Valid, Invalid, InvalidProof}`.
 - `await_cursor` for read-your-writes after a Konklav write.
+- Erasure, for relying systems that keep data about subjects ([erasure](../../docs/architecture/erasure.md#through-the-relying-sdk)):
+  - `erasures()` returns a channel of `ErasureNotice`: `Erased` for each subject Konklav erases, and `Missed` when some may have been missed, which includes every start. Ask for it before `start()`.
+  - `erased_subjects(since)` reads every subject erased at or after a time from `/v1/erased-subjects`, for catching up.
+
+  ```rust
+  let mut erasures = client.erasures();
+  let _tasks = client.start();
+  while let Some(notice) = erasures.recv().await {
+      match notice {
+          ErasureNotice::Erased(erased) => delete_everything_about(erased.subject).await,
+          ErasureNotice::Missed { .. } => {
+              for erased in client.erased_subjects(stored_watermark().await).await? {
+                  delete_everything_about(erased.subject).await;
+              }
+          }
+      }
+  }
+  ```
 - `pacing` and `fake_ids`, so a relying system's own endpoints don't show, through their timing or their ids, whether a record exists:
   - `paced(Pacing::new(floor, jitter), work)` runs the work and a wait drawn from `floor ± jitter` together, and returns once both are done, an `Err` included. Dropping it drops the wait; a panic isn't paced. Tests use `Pacing::NONE`.
   - `fake_uuid7()` makes a UUIDv7 claiming now, for something the request would have just created; `fake_uuid7_within(window)` claims a millisecond from a past window, for something that would already exist. `claimed_ms` reads back the time a UUIDv7 claims.
@@ -43,6 +61,7 @@ cargo test -p konklav-relying-client --features redis
 - Direct coverage: end to end against a real server on ephemeral ports:
   - check-API fallback before the feed connects, then local decisions
   - revocation through the feed
+  - erasure: the notice at start, the live notice, and reading the list
   - read-your-writes after removing an assignment
   - accepting a request once and deciding for it once
 - Rate limits against the development Valkey (`REDIS_URL`): one limit shared by two clients, refusals that don't count, hashed and expiring keys, and falling back to memory and recovering when a proxy cuts the connection.

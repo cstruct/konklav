@@ -119,7 +119,7 @@ pub async fn access_token(
         exp: expires_at.timestamp(),
         knd: token_kind,
         sid: session.id,
-        cid: Some(session.credential_id),
+        cid: session.credential_id,
         sv: session.version,
         amr: session.amr.clone(),
         auth_time: session.auth_time.timestamp(),

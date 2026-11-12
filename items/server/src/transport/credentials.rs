@@ -6,27 +6,33 @@ use konklav_store::credentials::{
 };
 
 pub(crate) fn credential(credential: Credential) -> api::Credential {
-    let (slots, passkey) = match &credential.data {
-        CredentialData::SecretKey(data) => (
-            Some(api::SecretKeySlots {
+    let (mut slots, mut passkey, mut federated) = (None, None, None);
+    match &credential.data {
+        CredentialData::SecretKey(data) => {
+            slots = Some(api::SecretKeySlots {
                 a: secret_key_slot(&data.a),
                 b: secret_key_slot(&data.b),
-            }),
-            None,
-        ),
-        CredentialData::PublicKey(data) => (
-            None,
-            Some(api::Passkey {
+            });
+        }
+        CredentialData::PublicKey(data) => {
+            passkey = Some(api::Passkey {
                 label: data.label.clone(),
                 last_used_at: data.last_used_at,
-            }),
-        ),
+            });
+        }
+        CredentialData::Federated(data) => {
+            federated = Some(api::FederatedIdentity {
+                provider: data.provider.clone(),
+                subject: data.subject.clone(),
+                email: data.email.clone(),
+                email_verified: data.email_verified,
+            });
+        }
         CredentialData::Password(_)
         | CredentialData::EmailLink
         | CredentialData::PhoneOtp
-        | CredentialData::Federated(_)
-        | CredentialData::Client => (None, None),
-    };
+        | CredentialData::Client => {}
+    }
     api::Credential {
         id: credential.id,
         subject_id: credential.subject_id,
@@ -35,6 +41,7 @@ pub(crate) fn credential(credential: Credential) -> api::Credential {
         mfa_factors_required: credential.mfa_factors_required,
         slots,
         passkey,
+        federated,
         replaces: credential.replaces,
         created_at: credential.created_at,
         revoked_at: credential.revoked_at,

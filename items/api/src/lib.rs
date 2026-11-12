@@ -36,9 +36,9 @@ pub use catalog::{
     ScopeKindEntry, SessionFlagEntry,
 };
 pub use credentials::{
-    BreakGlass, CreateCredential, CreatedCredential, Credential, CredentialKind, Passkey,
-    ReplacePassword, RevokeCredential, RotateSlot, RotatedSlot, SecretKeySlot, SecretKeySlots,
-    SecretKeys, SecretSlot, SessionFlags, SlotExpiry,
+    BreakGlass, CreateCredential, CreatedCredential, Credential, CredentialKind, FederatedIdentity,
+    Passkey, ReplacePassword, RevokeCredential, RotateSlot, RotatedSlot, SecretKeySlot,
+    SecretKeySlots, SecretKeys, SecretSlot, SessionFlags, SlotExpiry,
 };
 pub use error::{ErrorBody, ErrorCode, ErrorResponse};
 pub use explain::{ExplainDecision, ExplainQuery};
@@ -74,8 +74,9 @@ pub use shares::{
     OfferShare, RevokeShare, Share, ShareList, ShareQuery, ShareSide, ShareState, ShareTerms,
 };
 pub use subjects::{
-    CreateSubject, MfaFactor, MfaFactorKind, Subject, SubjectDetail, SubjectKind, SubjectPage,
-    SubjectQuery, SubjectState,
+    CreateSubject, MfaFactor, MfaFactorKind, PersonalDataReport, ReportedChallenge,
+    ReportedLoginAttempt, Subject, SubjectDetail, SubjectKind, SubjectPage, SubjectQuery,
+    SubjectState,
 };
 pub use templates::{PutTemplate, Template};
 pub use tenancy::{

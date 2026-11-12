@@ -48,6 +48,10 @@ pub(crate) async fn subject(
             ))
             .into());
         }
+        // r[impl subject.erasure.blocks-writes]
+        Ok(existing) if existing.state == SubjectState::Erased => {
+            return Err(konklav_store::StoreError::SubjectErased.into());
+        }
         Ok(_) => false,
         Err(konklav_store::StoreError::NotFound) => {
             subjects::create_with_metadata(conn, record.id, record.kind, &record.metadata)

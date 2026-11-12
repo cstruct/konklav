@@ -68,7 +68,9 @@ impl ClientKind {
 pub struct Session {
     pub id: SessionId,
     pub subject_id: SubjectId,
-    pub credential_id: CredentialId,
+    /// The credential the session was established with. Only an ended
+    /// session can lack one, when erasure deleted the credential.
+    pub credential_id: Option<CredentialId>,
     pub tenant_id: Option<TenantId>,
     pub membership_id: Option<MembershipId>,
     pub stage: Stage,
@@ -117,6 +119,16 @@ impl Session {
     pub fn is_active_at(&self, now: DateTime<Utc>) -> bool {
         self.revoked_at.is_none() && self.expires_at > now
     }
+
+    /// The session's credential, which every session that hasn't ended has.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::NotFound`] for an ended session whose credential
+    /// erasure deleted.
+    pub fn credential(&self) -> StoreResult<CredentialId> {
+        self.credential_id.ok_or(StoreError::NotFound)
+    }
 }
 
 #[derive(Queryable, Selectable)]
@@ -124,7 +136,7 @@ impl Session {
 struct Row {
     id: uuid::Uuid,
     subject_id: uuid::Uuid,
-    credential_id: uuid::Uuid,
+    credential_id: Option<uuid::Uuid>,
     tenant_id: Option<uuid::Uuid>,
     membership_id: Option<uuid::Uuid>,
     stage: String,
@@ -155,7 +167,7 @@ impl From<Row> for Session {
         Self {
             id: row.id.into(),
             subject_id: row.subject_id.into(),
-            credential_id: row.credential_id.into(),
+            credential_id: row.credential_id.map(Into::into),
             tenant_id: row.tenant_id.map(Into::into),
             membership_id: row.membership_id.map(Into::into),
             stage: Stage::parse(&row.stage),
@@ -441,6 +453,43 @@ async fn revoke_ids(
             revoked.extend(cascaded);
         }
     }
+    Ok(revoked)
+}
+
+/// Ends everything an erased subject was signed in to: revokes its sessions
+/// and those it started as an impersonator, with the sessions started from
+/// them, then erases what its own sessions hold about it.
+pub(crate) async fn end_for_erasure(
+    conn: &mut AsyncPgConnection,
+    subject: SubjectId,
+) -> StoreResult<Vec<(Session, Cursor)>> {
+    let subject = uuid::Uuid::from(subject);
+    let ids = session::table
+        .filter(
+            session::subject_id
+                .eq(subject)
+                .or(session::impersonator_subject_id.eq(subject)),
+        )
+        .filter(session::revoked_at.is_null())
+        .select(session::id)
+        .load::<uuid::Uuid>(conn)
+        .await?
+        .into_iter()
+        .map(SessionId::from)
+        .collect::<Vec<_>>();
+    let revoked = revoke_ids(conn, &ids, "subject_erased").await?;
+    diesel::update(session::table.filter(session::subject_id.eq(subject)))
+        .filter(
+            session::identity_claims
+                .is_not_null()
+                .or(session::dpop_jkt.is_not_null()),
+        )
+        .set((
+            session::identity_claims.eq(None::<serde_json::Value>),
+            session::dpop_jkt.eq(None::<String>),
+        ))
+        .execute(conn)
+        .await?;
     Ok(revoked)
 }
 

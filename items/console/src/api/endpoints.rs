@@ -127,6 +127,22 @@ pub fn set_subject_enabled(id: &str, enabled: bool) -> Request {
     Request::control(Method::Post, format!("/subjects/{}/{action}", encode(id)))
 }
 
+/// Erases the subject: everything personal Konklav holds about it goes, for
+/// good.
+#[must_use]
+pub fn erase_subject(id: &str) -> Request {
+    Request::control(Method::Post, format!("/subjects/{}/erase", encode(id)))
+}
+
+/// The subject's personal data report.
+#[must_use]
+pub fn personal_data(id: &str) -> Request {
+    Request::control(
+        Method::Get,
+        format!("/subjects/{}/personal-data", encode(id)),
+    )
+}
+
 /// `body` is a credential definition tagged by `kind`, as the control plane
 /// takes it.
 #[must_use]
@@ -526,6 +542,18 @@ mod tests {
         assert!(!request.authenticated);
         assert_eq!(request.body.unwrap()["client"], "browser");
         assert!(!refresh().authenticated, "the cookie authenticates refresh");
+    }
+
+    #[test]
+    fn erasure_and_the_report_are_control_plane_calls_for_one_subject() {
+        let erase = erase_subject("s 1");
+        assert_eq!(erase.url(), "/control/v1/subjects/s%201/erase");
+        assert!(erase.authenticated);
+        assert!(erase.body.is_none());
+        assert_eq!(
+            personal_data("s1").url(),
+            "/control/v1/subjects/s1/personal-data"
+        );
     }
 
     #[test]
