@@ -115,7 +115,8 @@ r[item.py.accepted-request]
 for a token that isn't valid, or an `AcceptedRequest` with the verified
 `AccessToken`. `decide_accepted` and `decide_accepted_typed` MUST decide
 requirements for it as `decide_request` and `decide_request_typed` decide
-them, including through the check API when the caches can't be trusted.
+them, including through the check API when the caches can't be trusted, as
+often as the request needs, and `release_accepted` MUST release it.
 
 ## Pacing and fake ids
 

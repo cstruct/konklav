@@ -170,8 +170,8 @@ impl Replays {
     }
 }
 
-/// Identifies a presentation the core accepted, for one decision with
-/// [`crate::Relying::decide_accepted`]. It names the core that issued it, so
+/// Identifies a presentation the core accepted, for the decisions of its
+/// request with [`crate::Relying::decide_accepted`]. It names the core that issued it, so
 /// no other core in the process takes it for one of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct PresentationId {
@@ -182,8 +182,8 @@ pub struct PresentationId {
 /// Numbers each core's held presentations apart from every other core's.
 static CORES: AtomicU64 = AtomicU64::new(1);
 
-/// Presentations accepted for a decision, until they are answered or
-/// their proof could no longer pass the freshness check. Bounded like
+/// Presentations accepted for decisions, until they are released or their
+/// proof could no longer pass the freshness check. Bounded like
 /// [`Replays`]: when full of live entries it holds no more.
 // r[impl relying.verify.accepted-presentation]
 #[derive(Clone, Debug)]

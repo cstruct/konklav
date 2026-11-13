@@ -54,23 +54,27 @@ it MUST report that reason, so the relying system can answer with a
 
 r[relying.verify.accepted-presentation]
 A relying system that needs a request's verified claims before it can state
-the requirements, such as to find a scope from the token's tenant, gets
-them without spending the request's one DPoP proof twice. The relying SDK
-MUST be able to accept a request's presentation: verify the token, its
-session and any DPoP proof, remember the proof as `relying.verify.dpop-replay`
-requires, and return the claims with a handle for the accepted
-presentation. Deciding with that handle MUST NOT check the proof again. It
-MUST check the token and its session as any decision does, so a session
-that ended in between is denied. A handle:
+the requirements, such as to find a scope from the token's tenant, or that
+decides more than once per request, such as a GraphQL server deciding per
+field, gets them without spending the request's one DPoP proof twice. The
+relying SDK MUST be able to accept a request's presentation: verify the
+token, its session and any DPoP proof, remember the proof as
+`relying.verify.dpop-replay` requires, and return the claims with a handle
+for the accepted presentation. Deciding with that handle MUST NOT check the
+proof again. Each decision MUST check the token and its session as any
+decision does, so a session that ended in between is denied. A handle:
 
 - is kept only in the memory of the relying core that issued it, and no
   other relying core knows it;
-- answers at most one decision, as a proof does;
+- answers every decision asked for it, until it expires or the relying
+  system releases it;
 - expires once its proof could no longer pass the freshness check, or for
   a bearer token, after the same time.
 
-A decision with a handle that is unknown, already answered or expired MUST
-deny with `invalid_token`.
+The relying SDK MUST let the relying system release a handle, and the
+relying system SHOULD release it once its request is answered. A decision
+with a handle that is unknown, released or expired MUST deny with
+`invalid_token`.
 
 ## Decisions
 

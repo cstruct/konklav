@@ -11,6 +11,7 @@ use konklav_relying::policy::{Policy, ResolvedScope};
 use konklav_relying_client::{Presented, RequestDescriptor, Verified};
 use konklav_token::{AccessClaims, TokenKind};
 
+use crate::decider::RequestDecider;
 use crate::outcome::{Forbidden, Scheme, Unauthenticated};
 use crate::{Denied, Konklav, RoutePolicyError};
 
@@ -24,10 +25,12 @@ pub(crate) enum Evaluation {
         verified: bool,
         token: Option<AccessClaims>,
     },
-    /// Allowed, for `token`, by a policy admitting `admitted`.
+    /// Allowed, for `token`, by a policy admitting `admitted`, with what
+    /// decides the request's further requirements.
     Allowed {
         token: AccessClaims,
         admitted: BTreeSet<TokenKind>,
+        decider: RequestDecider,
     },
 }
 
@@ -285,14 +288,22 @@ impl Konklav {
             .map_err(|error| RoutePolicyError::Policy(error).into_response())?;
 
         // r[impl item.axum.single-decision]
-        let Ok(decision) = self.host().decide_accepted(&accepted, &requirements).await else {
+        let token = token.clone();
+        let decider = RequestDecider::new(self.inner.host.clone(), accepted);
+        let Ok(decision) = self
+            .host()
+            .decide_accepted(decider.accepted(), &requirements)
+            .await
+        else {
+            decider.release();
             return Err(self.respond(Denied::Unavailable));
         };
         let denied = match decision {
             Decision::Allow { .. } => {
                 return Ok(Evaluation::Allowed {
-                    token: token.clone(),
+                    token,
                     admitted,
+                    decider,
                 });
             }
             Decision::StepUp { requirement } => Denied::StepUpRequired {
@@ -313,6 +324,7 @@ impl Konklav {
             },
             Decision::Deny { reason } => Denied::Forbidden(Forbidden::Decision(reason)),
         };
+        decider.release();
         Err(self.respond(denied))
     }
 }

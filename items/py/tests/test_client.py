@@ -238,7 +238,10 @@ def test_accepted_requests_are_decided_once_with_their_one_proof() -> None:
             assert accepted is not None and accepted.token.cnf is not None
             decision = await client.decide_accepted_typed(accepted, reading)
             assert decision.allowed and "/v1/check" not in fake.calls
-            # Once decided, neither the presentation nor its proof works again.
+            # It decides as often as the request needs, until released; its
+            # proof never works again.
+            assert await client.decide_accepted(accepted, reading) == {"decision": "allow"}
+            client.release_accepted(accepted)
             assert await client.decide_accepted(accepted, reading) == {"decision": "deny", "reason": "invalid_token"}
             with pytest.raises(InvalidDpopProof):
                 await client.accept_request(**once)

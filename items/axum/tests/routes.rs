@@ -13,7 +13,8 @@ use axum::routing::get;
 use konklav_authz::{Decision, DenyReason, StepUp};
 use konklav_axum::{
     CurrentToken, Denied, IdentityToken, Konklav, OptionalToken, Policy, PolicyError,
-    ResolvedScope, RoutePolicy, RoutePolicyError, RouterPolicy, TenantToken, path_param,
+    RequestDecider, ResolvedScope, RoutePolicy, RoutePolicyError, RouterPolicy, TenantToken,
+    path_param,
 };
 use konklav_core::TenantId;
 use konklav_relying_client::Error;
@@ -778,4 +779,95 @@ fn route_policies_describe_themselves_as_konklav_fastapi_publishes_them() {
             "admit_flags": ["personal_only"],
         })
     );
+}
+
+// r[verify item.axum.request-decider]
+#[tokio::test]
+async fn a_handler_decides_further_requirements_until_its_request_is_answered() {
+    use konklav_authz::Requirements;
+
+    let host = FakeHost::deciding(|requirements| {
+        Ok(if requirements.tenant.contains("secret:read") {
+            Decision::Deny {
+                reason: DenyReason::MissingActions {
+                    actions: strings(&["secret:read"]),
+                },
+            }
+        } else {
+            Decision::allow()
+        })
+    });
+    let kept = Arc::new(Mutex::new(None::<RequestDecider>));
+    let handler = {
+        let kept = kept.clone();
+        move |decider: RequestDecider| async move {
+            let mut answers = Vec::new();
+            for action in ["project:read", "secret:read"] {
+                let requirements = Requirements {
+                    tenant: strings(&[action]),
+                    ..Requirements::default()
+                };
+                let decision = decider.decide(&requirements).await.unwrap();
+                answers.push(format!(
+                    "{action}: {}",
+                    matches!(decision, Decision::Allow { .. })
+                ));
+            }
+            assert_eq!(decider.claims().sub.to_string(), SUBJECT);
+            *kept.lock().unwrap() = Some(decider);
+            answers.join(", ")
+        }
+    };
+    let allowed = app(
+        &konklav(&host),
+        Router::new().route(
+            "/",
+            get(handler).route_layer(RoutePolicy::new(&Policy::new()).unwrap()),
+        ),
+    );
+    let answer = send(
+        &allowed,
+        request("/", &[("authorization", &bearer("tenant"))]),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK);
+    assert_eq!(answer.body, json!("project:read: true, secret:read: false"));
+    // One acceptance; the route's decision and the handler's two.
+    assert_eq!(host.accepted().len(), 1);
+    assert_eq!(host.decided().len(), 3);
+    // Released once the handler answered.
+    assert_eq!(host.released(), 1);
+    assert!(kept.lock().unwrap().is_some());
+
+    // A refused request's presentation is released too.
+    let refusing = FakeHost::deciding(|_| {
+        Ok(Decision::Deny {
+            reason: DenyReason::NoTenant,
+        })
+    });
+    let refused = app(
+        &konklav(&refusing),
+        Router::new().route(
+            "/",
+            get(ok).route_layer(RoutePolicy::new(&Policy::new()).unwrap()),
+        ),
+    );
+    let answer = send(
+        &refused,
+        request("/", &[("authorization", &bearer("tenant"))]),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::FORBIDDEN);
+    assert_eq!(refusing.released(), 1);
+
+    // On a public route there is nothing to decide with.
+    let public = app(
+        &konklav(&host),
+        Router::new().route(
+            "/public",
+            get(|_: RequestDecider| async { "never" }).route_layer(RoutePolicy::public()),
+        ),
+    );
+    let answer = send(&public, request("/public", &[])).await;
+    assert_eq!(answer.status, StatusCode::INTERNAL_SERVER_ERROR);
 }

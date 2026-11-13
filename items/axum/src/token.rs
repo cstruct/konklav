@@ -42,7 +42,9 @@ fn allowed(
             problem: "on a route whose policy is public; use OptionalToken".to_owned(),
         }
         .into_response()),
-        Evaluation::Allowed { token, admitted } => match accepted {
+        Evaluation::Allowed {
+            token, admitted, ..
+        } => match accepted {
             Some(kind) if admitted.iter().any(|admitted| *admitted != kind) => {
                 Err(RoutePolicyError::Extractor {
                     extractor,

@@ -50,6 +50,7 @@
 
 mod client_address;
 mod config;
+mod decider;
 mod evaluate;
 mod host;
 mod outcome;
@@ -60,6 +61,7 @@ mod token;
 
 pub use client_address::{ClientAddress, InvalidProxy};
 pub use config::{Konklav, KonklavBuilder};
+pub use decider::RequestDecider;
 pub use evaluate::{PathParams, path_param};
 pub use host::{Accepted, BoxFuture, RelyingHost};
 pub use outcome::{

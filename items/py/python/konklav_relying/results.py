@@ -234,9 +234,10 @@ class AccessToken:
 class AcceptedRequest:
     """
     A request whose token, session and DPoP proof `RelyingClient.accept_request`
-    verified: its `token`, and the presentation to decide once with
-    `RelyingClient.decide_accepted`. It is valid only in the client that
-    accepted it, and only while the proof is fresh.
+    verified: its `token`, and the presentation to decide with
+    `RelyingClient.decide_accepted`, as often as the request needs, until
+    `RelyingClient.release_accepted` releases it. It is valid only in the
+    client that accepted it, and only while the proof is fresh.
     """
 
     token: AccessToken
