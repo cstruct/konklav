@@ -13,6 +13,7 @@ use konklav_token::TokenKind;
 use serde_json::{Value, json};
 use tower::{Layer, Service};
 
+use crate::decider::RequestDecider;
 use crate::evaluate::{Evaluation, read_path_params};
 use crate::host::BoxFuture;
 use crate::{Konklav, RoutePolicyError, RouteRateLimit};
@@ -189,6 +190,9 @@ impl RoutePolicy {
         read_path_params(parts).await;
         let evaluation = konklav.evaluate(&self.inner.policy, parts).await?;
         let token = evaluation.token().cloned();
+        if let Evaluation::Allowed { decider, .. } = &evaluation {
+            parts.extensions.insert(decider.clone());
+        }
         parts.extensions.insert(evaluation);
         for limit in &self.inner.rate_limits {
             limit.add(&konklav, parts, token.as_ref()).await?;
@@ -246,10 +250,25 @@ where
         Box::pin(async move {
             let (mut parts, body) = request.into_parts();
             if let Err(response) = policy.evaluate(&mut parts).await {
+                release(&parts);
                 return Ok(response);
             }
+            let decider = parts.extensions.get::<RequestDecider>().cloned();
             let response = inner.call(Request::from_parts(parts, body)).await?;
+            // r[impl item.axum.request-decider]: decides nothing after its
+            // request.
+            if let Some(decider) = decider {
+                decider.release();
+            }
             Ok(response.into_response())
         })
+    }
+}
+
+/// Releases a presentation a refused request's evaluation still holds, such
+/// as when a rate limit refused it after it was allowed.
+fn release(parts: &axum::http::request::Parts) {
+    if let Some(decider) = parts.extensions.get::<RequestDecider>() {
+        decider.release();
     }
 }

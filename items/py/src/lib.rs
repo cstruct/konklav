@@ -73,8 +73,8 @@ impl Core {
         dump(&self.inner.verify_presented(&presented, now))
     }
 
-    /// Accepts a request's presentation once, for one decision with
-    /// [`Core::decide_accepted`]: `{"outcome": "accepted", "claims": ...,
+    /// Accepts a request's presentation once, for the decisions of its
+    /// request with [`Core::decide_accepted`]: `{"outcome": "accepted", "claims": ...,
     /// "presentation": ...}`, `{"outcome": "check", "presentation": ...}`, `{"outcome": "invalid"}`, `{"outcome": "invalid_proof"}` or
     /// `{"outcome": "need", "needs": [...]}`.
     fn accept_presented(&mut self, presented: &str, now: u64) -> PyResult<String> {
@@ -94,6 +94,14 @@ impl Core {
         let presentation: PresentationId = parse(presentation, "presentation")?;
         let requirements: Requirements = parse(requirements, "requirements")?;
         dump(&self.inner.decide_accepted(presentation, &requirements, now))
+    }
+
+    /// Releases an accepted presentation (its `presentation` JSON) once its
+    /// request is answered: it decides nothing more.
+    fn release_accepted(&mut self, presentation: &str) -> PyResult<()> {
+        let presentation: PresentationId = parse(presentation, "presentation")?;
+        self.inner.release_accepted(presentation);
+        Ok(())
     }
 
     /// Returns `{"outcome": "ready", "set": ...}` or `{"outcome": "need",

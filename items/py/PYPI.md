@@ -67,8 +67,10 @@ await client.stop()
   `WWW-Authenticate: DPoP error="invalid_dpop_proof"`.
 - `accept_request` verifies a request's token, session and DPoP proof
   once and returns the verified token, and `decide_accepted` then decides
-  for it without spending the proof again, for hosts that need the token
-  before they know the requirements.
+  for it without spending the proof again, as often as the request needs,
+  for hosts that need the token before they know the requirements or that
+  decide more than once; `release_accepted` ends it once the request is
+  answered.
 
 - `Policy` declares an operation's requirements once per route or router,
   merges the policies of nested layers and resolves them per request with

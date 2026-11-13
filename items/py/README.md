@@ -52,7 +52,7 @@ decision = await client.decide(token, {"scopes": [{"kind": "project", "id": proj
 
 For sender-constrained (DPoP) tokens, `decide_request` and `verify_request` take the request's raw `Authorization` and `DPoP` headers, its method, and the public URL the client addressed (behind a proxy, not the upstream one). A deny with reason `invalid_dpop_proof`, or `InvalidDpopProof` from `verify_request`, should be answered with 401 and `WWW-Authenticate: DPoP error="invalid_dpop_proof"`.
 
-A request's DPoP proof is answered once, so a host that needs the verified token before it can state the requirements doesn't call `verify_request` and then `decide_request`. Instead it calls `accept_request`, which verifies the token, its session and its proof and returns an `AcceptedRequest` with the `AccessToken`, then decides once with `decide_accepted` (or `decide_accepted_typed`). That decision rechecks the session but not the proof.
+A request's DPoP proof is answered once, so a host that needs the verified token before it can state the requirements doesn't call `verify_request` and then `decide_request`. Instead it calls `accept_request`, which verifies the token, its session and its proof and returns an `AcceptedRequest` with the `AccessToken`, then decides with `decide_accepted` (or `decide_accepted_typed`), as often as the request needs. Each decision rechecks the session but not the proof. Once the request is answered, `release_accepted` ends the presentation, which otherwise lasts as long as its proof is fresh.
 
 ### Erasure
 

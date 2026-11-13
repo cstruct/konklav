@@ -15,7 +15,7 @@ use konklav_token::AccessClaims;
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// A presentation the relying host accepted: the verified claims, and the
-/// host's own handle for deciding once.
+/// host's own handle for deciding the request's requirements.
 pub struct Accepted {
     claims: AccessClaims,
     handle: Box<dyn Any + Send + Sync>,
@@ -77,6 +77,13 @@ pub trait RelyingHost: Send + Sync + 'static {
         &'a self,
         presented: &'a Presented,
     ) -> BoxFuture<'a, Result<Verified<AccessClaims>, Error>>;
+
+    /// Releases an accepted presentation once its request is answered, so
+    /// it decides nothing more. A host that holds nothing per presentation
+    /// needn't.
+    fn release_accepted(&self, accepted: &Accepted) {
+        let _ = accepted;
+    }
 }
 
 impl RelyingHost for RelyingClient {
@@ -117,6 +124,12 @@ impl RelyingHost for RelyingClient {
     ) -> BoxFuture<'a, Result<Verified<AccessClaims>, Error>> {
         Box::pin(RelyingClient::verify_request(self, presented))
     }
+
+    fn release_accepted(&self, accepted: &Accepted) {
+        if let Some(accepted) = accepted.handle::<AcceptedRequest>() {
+            RelyingClient::release_accepted(self, accepted);
+        }
+    }
 }
 
 impl<T: RelyingHost + ?Sized> RelyingHost for Arc<T> {
@@ -140,5 +153,9 @@ impl<T: RelyingHost + ?Sized> RelyingHost for Arc<T> {
         presented: &'a Presented,
     ) -> BoxFuture<'a, Result<Verified<AccessClaims>, Error>> {
         (**self).verify_request(presented)
+    }
+
+    fn release_accepted(&self, accepted: &Accepted) {
+        (**self).release_accepted(accepted);
     }
 }

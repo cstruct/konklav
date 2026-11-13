@@ -658,6 +658,16 @@ async fn accepted_requests_are_decided_once() {
                 .unwrap(),
             Decision::allow()
         );
+        // As often as the request needs, until it is released.
+        assert_eq!(
+            world
+                .client
+                .decide_accepted(&accepted, &reading())
+                .await
+                .unwrap(),
+            Decision::allow()
+        );
+        world.client.release_accepted(&accepted);
         if trusted {
             assert_eq!(
                 world
@@ -668,7 +678,7 @@ async fn accepted_requests_are_decided_once() {
                 Decision::Deny {
                     reason: DenyReason::InvalidToken
                 },
-                "decided once"
+                "released"
             );
         }
     }

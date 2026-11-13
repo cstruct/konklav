@@ -11,9 +11,10 @@
 //!   caches can't be trusted.
 //! - It accepts a request's presentation once
 //!   ([`RelyingClient::accept_request`]), for a host that needs the verified
-//!   claims before it can state the requirements, and decides for it later
-//!   ([`RelyingClient::decide_accepted`]) without checking its DPoP proof
-//!   again.
+//!   claims before it can state the requirements, or decides more than once
+//!   per request, and decides for it later, as often as the request needs
+//!   ([`RelyingClient::decide_accepted`]), without checking its DPoP proof
+//!   again, until it releases it ([`RelyingClient::release_accepted`]).
 //! - It hands erasures to the relying system: [`RelyingClient::erasures`]
 //!   yields each erased subject as the feed reports it, and says when some
 //!   may have been missed; [`RelyingClient::erased_subjects`] reads the
@@ -83,7 +84,9 @@ pub enum Verified<T> {
 }
 
 /// A request's presentation that [`RelyingClient::accept_request`]
-/// accepted, for one [`RelyingClient::decide_accepted`].
+/// accepted, for the decisions of its request with
+/// [`RelyingClient::decide_accepted`], until it expires or
+/// [`RelyingClient::release_accepted`] releases it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AcceptedRequest {
     claims: AccessClaims,
@@ -369,9 +372,10 @@ impl RelyingClient {
     }
 
     /// Decides `requirements` for a request [`RelyingClient::accept_request`]
-    /// accepted, once. Its token and session are checked again; its proof
-    /// isn't. A request decided before, or accepted too long ago, is denied
-    /// as `invalid_token`. Fails closed: an error means deny.
+    /// accepted, as often as the request needs. Its token and session are
+    /// checked each time; its proof isn't. A request released, or accepted
+    /// too long ago, is denied as `invalid_token`. Fails closed: an error
+    /// means deny.
     pub async fn decide_accepted(
         &self,
         accepted: &AcceptedRequest,
@@ -381,6 +385,14 @@ impl RelyingClient {
             core.decide_accepted(accepted.presentation, requirements, now())
         })
         .await
+    }
+
+    /// Releases a request [`RelyingClient::accept_request`] accepted, once
+    /// it is answered: it decides nothing more, and its room in the core is
+    /// free for another.
+    // r[impl relying.verify.accepted-presentation]
+    pub fn release_accepted(&self, accepted: &AcceptedRequest) {
+        self.core().release_accepted(accepted.presentation);
     }
 
     /// Verifies a request's token, its session and any DPoP proof, without

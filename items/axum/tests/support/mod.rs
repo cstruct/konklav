@@ -56,6 +56,8 @@ pub struct FakeHost {
     pub accepted: Mutex<Vec<Presented>>,
     pub decided: Mutex<Vec<Requirements>>,
     pub verified: Mutex<Vec<Presented>>,
+    /// How many presentations were released.
+    pub released: Mutex<usize>,
 }
 
 impl FakeHost {
@@ -71,6 +73,7 @@ impl FakeHost {
             accepted: Mutex::default(),
             decided: Mutex::default(),
             verified: Mutex::default(),
+            released: Mutex::default(),
         })
     }
 
@@ -94,6 +97,10 @@ impl FakeHost {
 
     pub fn verified(&self) -> Vec<Presented> {
         self.verified.lock().unwrap().clone()
+    }
+
+    pub fn released(&self) -> usize {
+        *self.released.lock().unwrap()
     }
 }
 
@@ -131,6 +138,10 @@ impl RelyingHost for FakeHost {
             self.verified.lock().unwrap().push(presented.clone());
             Self::token(presented)
         })
+    }
+
+    fn release_accepted(&self, _: &Accepted) {
+        *self.released.lock().unwrap() += 1;
     }
 }
 

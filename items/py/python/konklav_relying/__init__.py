@@ -395,9 +395,10 @@ class RelyingClient:
 
     async def decide_accepted(self, accepted: AcceptedRequest, requirements: Mapping[str, Any]) -> _DecisionJson:
         """
-        Decide `requirements` for a request `accept_request` accepted, once.
-        Its session is checked again; its proof isn't. A request decided
-        before, or accepted too long ago, is denied with `invalid_token`.
+        Decide `requirements` for a request `accept_request` accepted, as
+        often as the request needs. Its session is checked each time; its
+        proof isn't. A request released, or accepted too long ago, is denied
+        with `invalid_token`.
         """
         encoded = json.dumps(requirements)
         return await self._decide(
@@ -409,6 +410,15 @@ class RelyingClient:
     async def decide_accepted_typed(self, accepted: AcceptedRequest, requirements: Mapping[str, Any]) -> Decision:
         """`decide_accepted`, returning a `Decision`."""
         return Decision.from_json(await self.decide_accepted(accepted, requirements))
+
+    # r[impl item.py.accepted-request]
+    def release_accepted(self, accepted: AcceptedRequest) -> None:
+        """
+        Release a request `accept_request` accepted, once it is answered: it
+        decides nothing more, and its room is free for another.
+        """
+        with self._lock:
+            self._core.release_accepted(accepted.presentation)
 
     async def verify(self, token: str) -> dict[str, Any] | None:
         """

@@ -81,6 +81,14 @@ the accepted presentation and the requirements its merged route policy
 A request that meets a second `RoutePolicy` after one has evaluated it MUST
 fail closed (`item.axum.misconfiguration`) instead of deciding again.
 
+r[item.axum.request-decider]
+An allowed request MUST carry, for its handler, a request decider that
+decides further requirements for the accepted presentation
+(`relying.verify.accepted-presentation`), as the route's own decision is
+made but without checking the proof again, and that fails closed. Once the
+handler has answered, the layer MUST release the presentation, so the
+request decider decides nothing after its request.
+
 r[item.axum.scope-resolvers]
 The relying system MUST be able to configure one scope resolver per scope
 kind, an async function of the request's parts and the verified token,

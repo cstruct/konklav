@@ -32,12 +32,16 @@ rate-limit key templates, in axum's terms (layers, extractors,
      URL, then run the hooks.
   3. Deny a route tenant that isn't the token's, and resolve the scopes from
      resolvers or path parameters.
-  4. Make one `decide_accepted` call.
+  4. Make one `decide_accepted` call for the route's requirements.
+  5. Hand the handler a `RequestDecider` for further decisions with the
+     same presentation, and release the presentation once the handler has
+     answered.
 - Outcomes as `Denied`, an `IntoResponse` error: `Unauthenticated` (401),
   `Forbidden` (403), `StepUpRequired` (401, RFC 9470), `Unavailable` (503)
   and `RateLimited` (429).
 - Extractors: `CurrentToken`, `OptionalToken`, `IdentityToken`,
-  `TenantToken`, and `ClientAddress`.
+  `TenantToken`, `RequestDecider` (`item.axum.request-decider`), and
+  `ClientAddress`.
 - `RoutePacing`: a layer pacing the answers it wraps
   (`konklav_relying_client::pacing`, re-exported as `Pacing` and `paced`).
 - Rate limits: `RouteRateLimit(limit, key)` over
@@ -169,7 +173,10 @@ afterwards. So evaluation accepts the request once
 (`RelyingClient::accept_request`), which returns the verified claims with a
 handle; hooks, the route tenant and the scope resolvers only ever see those
 claims, and one `decide_accepted` call decides for the handle
-(`relying.verify.accepted-presentation`). The URL proofs are checked against
+(`relying.verify.accepted-presentation`). A handler that decides more, such
+as a GraphQL server per field, extracts `RequestDecider` and decides with
+the same handle, without the proof again; the layer releases the handle
+once the handler has answered, after which it decides nothing. The URL proofs are checked against
 is the `public_url` hook's, else the request's own scheme and authority,
 else `http://` and its `Host` header: set `public_url` behind TLS or a proxy.
 

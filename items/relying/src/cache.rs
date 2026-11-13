@@ -306,8 +306,8 @@ impl Relying {
 
     /// [`Relying::verify_presented`] for a host that decides afterwards:
     /// accepts the presentation once, remembering its proof, and holds it
-    /// for one [`Relying::decide_accepted`], which doesn't check the proof
-    /// again.
+    /// for [`Relying::decide_accepted`], which doesn't check the proof again,
+    /// until it expires or is released.
     // r[impl relying.verify.accepted-presentation]
     pub fn accept_presented(&mut self, presented: &Presented, now: u64) -> Acceptance {
         let (token, accepted) =
@@ -361,9 +361,10 @@ impl Relying {
 
     /// Decides `requirements` for a presentation [`Relying::accept_presented`]
     /// accepted, without checking its proof again; the token and its session
-    /// are checked as [`Relying::decide`] checks them. Once answered (a
-    /// decision, or a hand-off to the check API), the presentation is gone.
-    /// An unknown, answered or expired one is denied as `invalid_token`.
+    /// are checked as [`Relying::decide`] checks them. The presentation
+    /// answers every decision until it expires or
+    /// [`Relying::release_accepted`] releases it. An unknown, released or
+    /// expired one is denied as `invalid_token`.
     // r[impl relying.verify.accepted-presentation]
     pub fn decide_accepted(
         &mut self,
@@ -379,15 +380,15 @@ impl Relying {
                 },
             };
         };
-        let outcome = self.decide_token(&token, requirements, now);
-        let answered = match &outcome {
-            Outcome::Need { needs } => needs.contains(&Need::Check),
-            Outcome::Decided { .. } => true,
-        };
-        if answered {
-            self.held.release(presentation);
-        }
-        outcome
+        self.decide_token(&token, requirements, now)
+    }
+
+    /// Releases a presentation [`Relying::accept_presented`] accepted, once
+    /// its request is answered: it decides nothing more, and its room is
+    /// free for another.
+    // r[impl relying.verify.accepted-presentation]
+    pub fn release_accepted(&mut self, presentation: PresentationId) {
+        self.held.release(presentation);
     }
 
     fn proof_settings(&self) -> ProofSettings {

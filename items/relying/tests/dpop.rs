@@ -292,7 +292,7 @@ fn accepted(acceptance: Acceptance) -> PresentationId {
 
 // r[verify relying.verify.accepted-presentation]
 #[test]
-fn an_accepted_presentation_is_decided_once_without_its_proof_again() {
+fn an_accepted_presentation_answers_its_requests_decisions_without_its_proof_again() {
     let mut f = Fixture::new(config());
     f.warm();
     let token = f.bound();
@@ -311,11 +311,14 @@ fn an_accepted_presentation_is_decided_once_without_its_proof_again() {
         f.decide(&presented, T0),
         denied(DenyReason::InvalidDpopProof)
     );
-    assert_eq!(
-        f.core.decide_accepted(presentation, &reading(), T0),
-        allowed()
-    );
-    // Answered once.
+    // Every decision of the request, until it is released.
+    for _ in 0..3 {
+        assert_eq!(
+            f.core.decide_accepted(presentation, &reading(), T0),
+            allowed()
+        );
+    }
+    f.core.release_accepted(presentation);
     assert_eq!(
         f.core.decide_accepted(presentation, &reading(), T0),
         denied(DenyReason::InvalidToken)
@@ -387,8 +390,8 @@ fn accepting_waits_for_fetches_and_hands_bearer_tokens_and_the_check_api_a_prese
         allowed()
     );
 
-    // Without a trusted cache the check API decides, and the presentation
-    // is answered by the hand-off.
+    // Without a trusted cache the check API decides, each time it is asked,
+    // until the presentation is released.
     f.core.on_feed_lost();
     let Acceptance::Check { presentation } = f
         .core
@@ -396,12 +399,15 @@ fn accepting_waits_for_fetches_and_hands_bearer_tokens_and_the_check_api_a_prese
     else {
         panic!("not handed to the check API");
     };
-    assert_eq!(
-        f.core.decide_accepted(presentation, &reading(), T0),
-        Outcome::Need {
-            needs: vec![Need::Check]
-        }
-    );
+    for _ in 0..2 {
+        assert_eq!(
+            f.core.decide_accepted(presentation, &reading(), T0),
+            Outcome::Need {
+                needs: vec![Need::Check]
+            }
+        );
+    }
+    f.core.release_accepted(presentation);
     assert_eq!(
         f.core.decide_accepted(presentation, &reading(), T0),
         denied(DenyReason::InvalidToken)
