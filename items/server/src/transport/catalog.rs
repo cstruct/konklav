@@ -14,6 +14,7 @@ pub(crate) fn catalog(document: CatalogDocument) -> api::CatalogDocument {
             .map(|action| api::ActionEntry {
                 name: action.name,
                 description: action.description,
+                vouches: action.vouches,
             })
             .collect(),
         groups: document
@@ -23,6 +24,7 @@ pub(crate) fn catalog(document: CatalogDocument) -> api::CatalogDocument {
                 name: group.name,
                 description: group.description,
                 definition: group.definition,
+                vouches: group.vouches,
             })
             .collect(),
         scope_kinds: document
@@ -70,6 +72,7 @@ pub(crate) fn store_catalog(document: api::CatalogDocument) -> CatalogDocument {
             .map(|action| ActionEntry {
                 name: action.name,
                 description: action.description,
+                vouches: action.vouches,
             })
             .collect(),
         groups: document
@@ -79,6 +82,7 @@ pub(crate) fn store_catalog(document: api::CatalogDocument) -> CatalogDocument {
                 name: group.name,
                 description: group.description,
                 definition: group.definition,
+                vouches: group.vouches,
             })
             .collect(),
         scope_kinds: document

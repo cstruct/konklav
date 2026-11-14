@@ -782,6 +782,7 @@ fn route_policies_describe_themselves_as_konklav_fastapi_publishes_them() {
 }
 
 // r[verify item.axum.request-decider]
+// r[verify item.axum.single-decision]
 #[tokio::test]
 async fn a_handler_decides_further_requirements_until_its_request_is_answered() {
     use konklav_authz::Requirements;
@@ -832,9 +833,11 @@ async fn a_handler_decides_further_requirements_until_its_request_is_answered() 
     .await;
     assert_eq!(answer.status, StatusCode::OK);
     assert_eq!(answer.body, json!("project:read: true, secret:read: false"));
-    // One acceptance; the route's decision and the handler's two.
+    // One acceptance; the route's decision and the handler's two, of
+    // which only the route's is the route decision.
     assert_eq!(host.accepted().len(), 1);
     assert_eq!(host.decided().len(), 3);
+    assert_eq!(host.routes(), [true, false, false]);
     // Released once the handler answered.
     assert_eq!(host.released(), 1);
     assert!(kept.lock().unwrap().is_some());

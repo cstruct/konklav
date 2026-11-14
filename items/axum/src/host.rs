@@ -64,11 +64,14 @@ pub trait RelyingHost: Send + Sync + 'static {
     ) -> BoxFuture<'a, Result<Verified<Accepted>, Error>>;
 
     /// Decides `requirements` for an accepted presentation, without checking
-    /// its proof again.
+    /// its proof again. `route` marks the route decision, whose allow's
+    /// vouches the request's later decisions are made with
+    /// (`relying.verify.route-authority`).
     fn decide_accepted<'a>(
         &'a self,
         accepted: &'a Accepted,
         requirements: &'a Requirements,
+        route: bool,
     ) -> BoxFuture<'a, Result<Decision, Error>>;
 
     /// Verifies a request's token, its session and any DPoP proof, without
@@ -108,13 +111,14 @@ impl RelyingHost for RelyingClient {
         &'a self,
         accepted: &'a Accepted,
         requirements: &'a Requirements,
+        route: bool,
     ) -> BoxFuture<'a, Result<Decision, Error>> {
         Box::pin(async move {
             let Some(accepted) = accepted.handle::<AcceptedRequest>() else {
                 // Not accepted by this client: never decide for it.
                 return Err(Error::Exhausted);
             };
-            RelyingClient::decide_accepted(self, accepted, requirements).await
+            RelyingClient::decide_accepted(self, accepted, requirements, route).await
         })
     }
 
@@ -144,8 +148,9 @@ impl<T: RelyingHost + ?Sized> RelyingHost for Arc<T> {
         &'a self,
         accepted: &'a Accepted,
         requirements: &'a Requirements,
+        route: bool,
     ) -> BoxFuture<'a, Result<Decision, Error>> {
-        (**self).decide_accepted(accepted, requirements)
+        (**self).decide_accepted(accepted, requirements, route)
     }
 
     fn verify_request<'a>(

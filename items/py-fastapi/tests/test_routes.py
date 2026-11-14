@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import Any
 
 import pytest
 from fastapi import APIRouter, FastAPI, HTTPException, WebSocket
 from fastapi.requests import HTTPConnection
+from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 from konklav_relying import AccessToken, KonklavError, StepUp
 from starlette.websockets import WebSocketDisconnect
@@ -17,6 +19,7 @@ from konklav_fastapi import (
     IdentityToken,
     KonklavRoutes,
     OptionalToken,
+    RequestDecider,
     ResolvedScope,
     RoutePolicy,
     RoutePolicyError,
@@ -523,6 +526,10 @@ def test_startup_validation_lists_every_bad_route() -> None:
     async def socket(websocket: WebSocket) -> None:
         return None
 
+    @app.get("/public-decider", dependencies=[RoutePolicy.public()])
+    async def public_decider(decider: RequestDecider) -> None:
+        return None
+
     @app.get("/fine", dependencies=[RoutePolicy(token_kinds={"identity", "tenant"})])
     async def fine(token: CurrentToken, project: str) -> None:
         return None
@@ -542,6 +549,7 @@ def test_startup_validation_lists_every_bad_route() -> None:
         "GET /identity: injects IdentityToken, which takes identity tokens, but its policy admits tenant",
         "GET /anyone: injects CurrentToken, but its policy is public; use OptionalToken",
         "WEBSOCKET /socket: declares no RoutePolicy; declare one, or RoutePolicy.public()",
+        "GET /public-decider: injects RequestDecider, but its policy is public, so there is nothing to decide with",
     ]
 
     async def resolver(connection: HTTPConnection, claims: AccessToken) -> str:
@@ -584,3 +592,117 @@ def test_openapi_publishes_each_operations_policy() -> None:
         "audiences": ["app"],
     }
     assert paths["/health"]["get"]["x-konklav-policy"] == {"public": True}
+
+
+def _denying(action: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    """Allows everything but `action` tenant-wide."""
+
+    def decide(request: dict[str, Any]) -> dict[str, Any]:
+        if action in request["requirements"].get("tenant", []):
+            return {"decision": "deny", "reason": {"missing_actions": {"actions": [action]}}}
+        return {"decision": "allow"}
+
+    return decide
+
+
+# r[verify item.py-fastapi.request-decider]
+# r[verify item.py-fastapi.single-decision]
+def test_a_handler_decides_further_requirements_until_its_request_is_answered() -> None:
+    app = FastAPI(dependencies=[RoutePolicy(tenant_actions={"project:read"})])
+    kept: list[Any] = []
+
+    @app.get("/")
+    async def decide(decider: RequestDecider) -> dict[str, Any]:
+        answers = {}
+        for action in ("project:write", "secret:read"):
+            answers[action] = (await decider.decide_typed({"tenant": [action]})).allowed
+        assert decider.token.sub == "s-1"
+        kept.append(decider)
+        return answers
+
+    @app.get("/stream")
+    async def stream(decider: RequestDecider) -> StreamingResponse:
+        async def body() -> Any:
+            # Still deciding while the response streams.
+            yield str((await decider.decide({"tenant": ["project:write"]}))["decision"])
+
+        return StreamingResponse(body())
+
+    @app.get("/fails")
+    async def fails(decider: RequestDecider) -> None:
+        raise HTTPException(status_code=409)
+
+    @app.websocket("/live")
+    async def live(socket: WebSocket, decider: RequestDecider) -> None:
+        await socket.accept()
+        await socket.send_json(await decider.decide({"tenant": ["project:write"]}))
+        await socket.close()
+
+    fake = FakeClient(decide=_denying("secret:read"))
+    with serve(app, client=fake) as http:
+        response = http.get("/", headers=bearer())
+        assert response.status_code == 200, response.text
+        assert response.json() == {"project:write": True, "secret:read": False}
+        # The route's decision and the handler's two; only the route's is
+        # the route decision.
+        assert [decided["route"] for decided in fake.decided] == [True, False, False]
+        # Released once the handler answered: the kept decider decides
+        # nothing more.
+        assert fake.released == [0]
+        after = asyncio.run(kept[0].decide({"tenant": ["project:write"]}))
+        assert after == {"decision": "deny", "reason": "invalid_token"}
+
+        streamed = http.get("/stream", headers=bearer())
+        assert streamed.text == "allow"
+        assert fake.released == [0, 1]
+
+        assert http.get("/fails", headers=bearer()).status_code == 409
+        assert fake.released == [0, 1, 2]
+
+        with http.websocket_connect(f"/live?token={token()}") as socket:
+            assert socket.receive_json() == {"decision": "allow"}
+        assert fake.released == [0, 1, 2, 3]
+
+    # A refused request's presentation is released too, and its handler
+    # never gets a decider.
+    refusing = FakeClient(decide=_denying("project:read"))
+    with serve(app, client=refusing) as http:
+        assert http.get("/", headers=bearer()).status_code == 403
+    assert refusing.released == [0]
+    assert len(kept) == 1
+
+
+# r[verify item.py-fastapi.request-decider]
+def test_presentations_are_released_on_every_route_that_decides() -> None:
+    app = FastAPI(dependencies=[RoutePolicy(tenant_actions={"project:read"})])
+
+    @app.get("/plain")
+    async def plain(token: TenantToken) -> str:
+        return token.sub
+
+    @app.get("/open", dependencies=[RoutePolicy.override(public=True)])
+    async def open_route(token: OptionalToken) -> str | None:
+        return None if token is None else token.sub
+
+    fake = FakeClient()
+    with serve(app, client=fake) as http:
+        assert http.get("/plain", headers=bearer()).status_code == 200
+        assert http.get("/plain", headers=bearer("invalid")).status_code == 401
+        assert http.get("/open", headers=bearer()).status_code == 200
+    # Only the accepted presentation of `/plain` was held: an invalid
+    # token is never accepted, and a public route accepts none.
+    assert fake.released == [0]
+
+
+# r[verify item.py-fastapi.request-decider]
+def test_a_failed_route_decision_releases_its_presentation() -> None:
+    app = FastAPI(dependencies=[RoutePolicy(tenant_actions={"project:read"})])
+
+    @app.get("/")
+    async def route(decider: RequestDecider) -> None:
+        return None
+
+    fake = FakeClient(decide=lambda _: KonklavError("down"))
+    with serve(app, client=fake) as http:
+        assert http.get("/", headers=bearer()).status_code == 503
+    assert fake.released == [0]

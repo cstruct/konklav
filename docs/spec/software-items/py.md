@@ -116,7 +116,9 @@ for a token that isn't valid, or an `AcceptedRequest` with the verified
 `AccessToken`. `decide_accepted` and `decide_accepted_typed` MUST decide
 requirements for it as `decide_request` and `decide_request_typed` decide
 them, including through the check API when the caches can't be trusted, as
-often as the request needs, and `release_accepted` MUST release it.
+often as the request needs, and `release_accepted` MUST release it. Both
+MUST take a keyword-only `route` flag, false by default, that marks the
+decision as the request's route decision (`relying.verify.route-authority`).
 
 ## Pacing and fake ids
 

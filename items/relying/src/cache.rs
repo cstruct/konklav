@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use konklav_authz::{
-    Decision, DenyReason, EntitlementSet, RegisteredScopes, Registration, Requirements, Scope,
-    evaluate,
+    Decision, DenyReason, EntitlementSet, RegisteredScopes, Registration, Requirements,
+    RouteAuthority, Scope, evaluate_with_route_authority,
 };
 use konklav_core::feed::{
     EntitlementsChanged, FeedEvent, FeedPayload, ScopeChanged, SessionChanged, SubjectErased,
@@ -365,14 +365,25 @@ impl Relying {
     /// answers every decision until it expires or
     /// [`Relying::release_accepted`] releases it. An unknown, released or
     /// expired one is denied as `invalid_token`.
+    ///
+    /// `route` marks the route decision: it is decided without route
+    /// authority, and what an allow vouches for is kept with the
+    /// presentation, replacing what an earlier one kept; a deny keeps
+    /// nothing. Every other decision is decided with the kept route
+    /// authority, and its allow vouches for nothing.
     // r[impl relying.verify.accepted-presentation]
+    // r[impl relying.verify.route-authority]
     pub fn decide_accepted(
         &mut self,
         presentation: PresentationId,
         requirements: &Requirements,
+        route: bool,
         now: u64,
     ) -> Outcome {
-        let Some(token) = self.held.token(presentation, now) else {
+        let (Some(token), Some(authority)) = (
+            self.held.token(presentation, now),
+            self.held.route_authority(presentation, now),
+        ) else {
             self.held.release(presentation);
             return Outcome::Decided {
                 decision: Decision::Deny {
@@ -380,7 +391,59 @@ impl Relying {
                 },
             };
         };
-        self.decide_token(&token, requirements, now)
+        let authority = (!route).then_some(authority);
+        let outcome = self.decide_token(&token, requirements, authority.as_ref(), now);
+        if route && let Outcome::Decided { decision } = &outcome {
+            self.held.record_route_decision(presentation, decision, now);
+        }
+        outcome
+    }
+
+    /// The route authority to send with a check-API request for a decision
+    /// [`Relying::decide_accepted`] handed off with [`Need::Check`]: none
+    /// for the route decision, the kept route authority for any other. A
+    /// presentation no longer held has none, and its decision is denied as
+    /// `invalid_token` by [`Relying::on_check_accepted`].
+    // r[impl relying.verify.route-authority]
+    #[must_use]
+    pub fn route_authority(
+        &self,
+        presentation: PresentationId,
+        route: bool,
+        now: u64,
+    ) -> Option<RouteAuthority> {
+        if route {
+            return None;
+        }
+        self.held.route_authority(presentation, now)
+    }
+
+    /// [`Relying::from_check`] for a decision [`Relying::decide_accepted`]
+    /// handed off: a route decision's allow is kept with the presentation as
+    /// a local one is, and a presentation released or expired meanwhile is
+    /// denied as `invalid_token`.
+    // r[impl relying.fallback.equivalence]
+    // r[impl relying.verify.route-authority]
+    pub fn on_check_accepted(
+        &mut self,
+        presentation: PresentationId,
+        route: bool,
+        decision: Decision,
+        now: u64,
+    ) -> Outcome {
+        if self.held.token(presentation, now).is_none() {
+            self.held.release(presentation);
+            return Outcome::Decided {
+                decision: Decision::Deny {
+                    reason: DenyReason::InvalidToken,
+                },
+            };
+        }
+        if route {
+            self.held
+                .record_route_decision(presentation, &decision, now);
+        }
+        Outcome::Decided { decision }
     }
 
     /// Releases a presentation [`Relying::accept_presented`] accepted, once
@@ -528,7 +591,7 @@ impl Relying {
                 Err(Refused::Token) => return deny(DenyReason::InvalidToken),
                 Err(Refused::Proof) => return deny(DenyReason::InvalidDpopProof),
             };
-        let outcome = self.decide_token(token, requirements, now);
+        let outcome = self.decide_token(token, requirements, None, now);
         let answered = match &outcome {
             Outcome::Need { needs } => needs.contains(&Need::Check),
             Outcome::Decided { .. } => true,
@@ -539,7 +602,15 @@ impl Relying {
         outcome
     }
 
-    fn decide_token(&mut self, token: &str, requirements: &Requirements, now: u64) -> Outcome {
+    /// Decides `requirements` for `token`, with `route_authority` when it
+    /// is a later decision of an accepted presentation's request.
+    fn decide_token(
+        &mut self,
+        token: &str,
+        requirements: &Requirements,
+        route_authority: Option<&RouteAuthority>,
+        now: u64,
+    ) -> Outcome {
         let (claims, mut needs) = match self.check_token(token, now) {
             Ok(checked) => checked,
             Err(outcome) => return outcome,
@@ -563,8 +634,9 @@ impl Relying {
             return Outcome::Need { needs };
         }
         Outcome::Decided {
-            decision: evaluate(
+            decision: evaluate_with_route_authority(
                 requirements,
+                route_authority,
                 &claims,
                 &set.restrictive_flags,
                 &set.confinements,

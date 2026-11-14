@@ -21,13 +21,22 @@ by listing actions or by a prefix selector (for example "every name not in
 operations can require the group itself. Expansion MUST happen during
 compilation.
 
+r[authz.catalog.vouches]
+An action or action group MAY declare `vouches`, a list of the actions and
+action groups it vouches for (see Route authority). Each name MUST be a
+declared action or action group, other than the entry itself. A vouch MUST
+NOT name a control-plane capability, and a catalog that declares one that
+does MUST be rejected. A vouch grants nothing by itself: holding a vouching
+action MUST NOT satisfy a requirement for an action it vouches for, except
+through route authority.
+
 r[authz.catalog.revision]
 Every catalog change MUST produce a new revision and an
 `entitlements.changed` event for all subjects.
 
 r[authz.catalog.removal]
 An action MUST NOT be removed from the catalog while any policy references
-it.
+it, or while another catalog entry's `vouches` names it.
 
 r[authz.catalog.flag-confinement]
 A session flag entry MAY carry a confinement as `confine`, an object whose
@@ -184,6 +193,13 @@ The portable facts are bounded (`fact.bounded`), so carrying all of them
 keeps the set small, and the set doesn't depend on which requirements it
 will be used for.
 
+r[authz.compile.vouches]
+Every entitlement set MUST carry the catalog's vouches for each vouching
+action the set grants at any level, with vouched action groups expanded to
+their members and their own name (`authz.catalog.groups`), so a relying
+core can decide route authority without the catalog. A set that grants no
+vouching action MUST carry no vouches, and serializes as one without them.
+
 ## Sharing
 
 r[authz.share.shape]
@@ -303,6 +319,56 @@ A change to a role, template, policy or the catalog MUST emit an
 `entitlements.changed` event naming either the affected subjects or all
 subjects.
 
+## Route authority
+
+Route authority lets the check that admits a request, such as a route
+requiring `user:manage_data`, answer for narrower checks made while the
+same request is handled, such as one for `user:write`, without the subject
+holding the narrower action anywhere else.
+
+r[authz.decision.vouches]
+An allow MUST name what it vouches for: for each required action that the
+entitlement set's vouches name as a vouching action, its vouched actions at
+the placement where it was required (global, tenant-wide, or the scope of
+the requirement). An allow MUST NOT vouch at a scope owned by another
+tenant than the token's, and a decision that isn't an allow vouches for
+nothing.
+
+r[authz.decision.route-authority]
+A decision MAY be made with route authority: the vouches of an allowed
+route decision for the same request (`relying.verify.route-authority`). A
+required action that the route authority covers MUST count as granted,
+whatever the entitlement set holds, so a vouch overrides an explicit deny
+of the vouched action. Every other check MUST be made as without route
+authority: the token, its session, token kinds, session flags and their
+confinements, step-up, tenant facts, and the actions the route authority
+doesn't cover. An allow made with route authority MUST NOT vouch for
+anything, so route authority isn't transitive.
+
+r[authz.decision.route-authority.coverage]
+Route authority at a placement MUST cover a required action exactly when
+the action is among the vouched actions at that placement and the
+requirement is:
+
+- anywhere, for route authority at the global placement;
+- tenant-wide, or at a scope of the token's tenant, for route authority
+  tenant-wide;
+- at the same scope, or at an active registered scope recorded in the
+  token's tenant that lists that scope among its containing scopes
+  (`authz.registered.shape`), for route authority at a scope.
+
+It MUST NOT cover a requirement at a scope owned by another tenant than the
+token's, which only shares can satisfy (`authz.share.requirements`), nor at
+a registered scope that was never recorded or has been removed, which still
+denies (`authz.registered.unknown-denies`).
+
+r[authz.api.check-route-authority]
+The check API MUST accept route authority with the requirements, as the
+vouches an allow named (`authz.decision.vouches`), and decide with it as
+`authz.decision.route-authority` requires, so that a relying core deciding
+through the check API reaches the decision it would reach locally
+(`authz.api.check-equivalence`).
+
 ## Relying surface
 
 r[authz.api.entitlements]
@@ -387,6 +453,14 @@ With tenant fact requirements, a decision explanation MUST report a
 `tenant_facts` check that names each predicate and the tenant's values of
 the facts they name, and says which predicate fails when one does, or that
 the decision is for no tenant.
+
+r[authz.explain.route-authority]
+The control plane MUST be able to explain a decision made with route
+authority, given as the route's requirements. It MUST compute the route
+authority those requirements vouch for, report each required action the
+route authority covers as granted through the vouch, naming the vouching
+action and the placement it was required at, and report a route decision
+that isn't an allow, and so vouches for nothing.
 
 r[authz.explain.at]
 With history enabled, the control plane MUST be able to explain a decision

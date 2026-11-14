@@ -35,7 +35,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
-use konklav_authz::{Decision, DenyReason, EntitlementSet, Requirements};
+use konklav_authz::{Decision, DenyReason, EntitlementSet, Requirements, RouteAuthority};
 use konklav_core::Cursor;
 pub use konklav_core::feed::SubjectErased;
 use konklav_core::feed::{FeedEvent, SessionChanged};
@@ -376,15 +376,42 @@ impl RelyingClient {
     /// checked each time; its proof isn't. A request released, or accepted
     /// too long ago, is denied as `invalid_token`. Fails closed: an error
     /// means deny.
+    ///
+    /// `route` marks the route decision: an allow's vouches are kept as the
+    /// request's route authority, and every other decision is made with
+    /// them, locally or through the check API alike.
+    // r[impl relying.verify.route-authority]
     pub async fn decide_accepted(
         &self,
         accepted: &AcceptedRequest,
         requirements: &Requirements,
+        route: bool,
     ) -> Result<Decision, Error> {
-        self.decide_with(&accepted.access_token, requirements, |core| {
-            core.decide_accepted(accepted.presentation, requirements, now())
-        })
-        .await
+        let presentation = accepted.presentation;
+        for _ in 0..4 {
+            let outcome = self
+                .core()
+                .decide_accepted(presentation, requirements, route, now());
+            let needs = match outcome {
+                Outcome::Decided { decision } => return Ok(decision),
+                Outcome::Need { needs } => needs,
+            };
+            if needs.contains(&Need::Check) {
+                let authority = self.core().route_authority(presentation, route, now());
+                let decision = self
+                    .check(&accepted.access_token, requirements, authority.as_ref())
+                    .await?;
+                return match self
+                    .core()
+                    .on_check_accepted(presentation, route, decision, now())
+                {
+                    Outcome::Decided { decision } => Ok(decision),
+                    Outcome::Need { .. } => Err(Error::Exhausted),
+                };
+            }
+            self.fetch_all(&needs).await?;
+        }
+        Err(Error::Exhausted)
     }
 
     /// Releases a request [`RelyingClient::accept_request`] accepted, once
@@ -436,7 +463,7 @@ impl RelyingClient {
                 Outcome::Need { needs } => needs,
             };
             if needs.contains(&Need::Check) {
-                return self.check(token, requirements).await;
+                return self.check(token, requirements, None).await;
             }
             self.fetch_all(&needs).await?;
         }
@@ -459,7 +486,7 @@ impl RelyingClient {
             token_kinds: Some(EVERY_TOKEN_KIND.into_iter().collect()),
             ..Requirements::default()
         };
-        let decision = self.check(token, &any).await?;
+        let decision = self.check(token, &any, None).await?;
         if matches!(
             decision,
             Decision::Deny {
@@ -474,14 +501,24 @@ impl RelyingClient {
 
     /// Asks Konklav's check API, for when local caches can't be trusted,
     /// for a token with one of the audiences this relying system accepts.
+    /// `route_authority` goes with a later decision of an accepted request
+    /// (`authz.api.check-route-authority`).
     // r[impl relying.verify.audiences]
-    async fn check(&self, token: &str, requirements: &Requirements) -> Result<Decision, Error> {
+    async fn check(
+        &self,
+        token: &str,
+        requirements: &Requirements,
+        route_authority: Option<&RouteAuthority>,
+    ) -> Result<Decision, Error> {
         let url = format!("{}/v1/check", self.inner.config.relying_url);
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "token": token,
             "requirements": requirements,
             "audiences": self.inner.config.core.audiences,
         });
+        if let Some(authority) = route_authority {
+            body["route_authority"] = serde_json::to_value(authority).unwrap_or_default();
+        }
         let response = self
             .inner
             .http

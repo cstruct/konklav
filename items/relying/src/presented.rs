@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use konklav_authz::{Decision, RouteAuthority};
 use konklav_token::{Proof, ProofRequest};
 use serde::{Deserialize, Serialize};
 
@@ -190,7 +191,17 @@ static CORES: AtomicU64 = AtomicU64::new(1);
 pub(crate) struct Held {
     core: u64,
     next: u64,
-    tokens: BTreeMap<u64, (String, u64)>,
+    presentations: BTreeMap<u64, HeldPresentation>,
+}
+
+/// One held presentation: its token, until when it is held, and the route
+/// authority its route decision recorded.
+#[derive(Clone, Debug)]
+struct HeldPresentation {
+    token: String,
+    until: u64,
+    // r[impl relying.verify.route-authority]
+    route_authority: RouteAuthority,
 }
 
 impl Default for Held {
@@ -198,7 +209,7 @@ impl Default for Held {
         Self {
             core: CORES.fetch_add(1, Ordering::Relaxed),
             next: 0,
-            tokens: BTreeMap::new(),
+            presentations: BTreeMap::new(),
         }
     }
 }
@@ -212,14 +223,21 @@ impl Held {
         capacity: usize,
         now: u64,
     ) -> Option<PresentationId> {
-        if self.tokens.len() >= capacity {
-            self.tokens.retain(|_, (_, held_until)| *held_until > now);
+        if self.presentations.len() >= capacity {
+            self.presentations.retain(|_, held| held.until > now);
         }
-        if self.tokens.len() >= capacity {
+        if self.presentations.len() >= capacity {
             return None;
         }
         self.next += 1;
-        self.tokens.insert(self.next, (token.to_owned(), until));
+        self.presentations.insert(
+            self.next,
+            HeldPresentation {
+                token: token.to_owned(),
+                until,
+                route_authority: RouteAuthority::default(),
+            },
+        );
         Some(PresentationId {
             core: self.core,
             seq: self.next,
@@ -228,18 +246,51 @@ impl Held {
 
     /// The token of a live presentation this core holds.
     pub(crate) fn token(&self, id: PresentationId, now: u64) -> Option<String> {
+        self.live(id, now).map(|held| held.token.clone())
+    }
+
+    /// The route authority a live presentation's route decision recorded:
+    /// empty before one allowed.
+    pub(crate) fn route_authority(&self, id: PresentationId, now: u64) -> Option<RouteAuthority> {
+        self.live(id, now).map(|held| held.route_authority.clone())
+    }
+
+    /// Records what a route decision for a live presentation vouches for,
+    /// replacing what an earlier one recorded: nothing unless it allowed.
+    // r[impl relying.verify.route-authority]
+    pub(crate) fn record_route_decision(
+        &mut self,
+        id: PresentationId,
+        decision: &Decision,
+        now: u64,
+    ) {
+        if id.core != self.core {
+            return;
+        }
+        if let Some(held) = self
+            .presentations
+            .get_mut(&id.seq)
+            .filter(|held| held.until > now)
+        {
+            held.route_authority = match decision {
+                Decision::Allow { vouches, .. } => vouches.clone(),
+                Decision::Deny { .. } | Decision::StepUp { .. } => RouteAuthority::default(),
+            };
+        }
+    }
+
+    fn live(&self, id: PresentationId, now: u64) -> Option<&HeldPresentation> {
         if id.core != self.core {
             return None;
         }
-        self.tokens
+        self.presentations
             .get(&id.seq)
-            .filter(|(_, until)| *until > now)
-            .map(|(token, _)| token.clone())
+            .filter(|held| held.until > now)
     }
 
     pub(crate) fn release(&mut self, id: PresentationId) {
         if id.core == self.core {
-            self.tokens.remove(&id.seq);
+            self.presentations.remove(&id.seq);
         }
     }
 }

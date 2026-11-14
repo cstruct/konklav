@@ -76,6 +76,18 @@ relying system SHOULD release it once its request is answered. A decision
 with a handle that is unknown, released or expired MUST deny with
 `invalid_token`.
 
+r[relying.verify.route-authority]
+When the relying system decides with a handle, it MUST be able to mark the
+decision as the request's route decision. A route decision MUST be decided
+without route authority. When it allows, the relying core MUST keep the
+vouches the allow names (`authz.decision.vouches`) with the handle as its
+route authority, replacing any it kept before, and when it doesn't allow,
+the handle MUST keep none. Every decision with the handle that isn't
+marked as the route decision MUST be decided with the route authority the
+handle keeps (`authz.decision.route-authority`), locally or through the
+check API alike. Route authority MUST go with the handle when it is
+released or expires, and MUST NOT be kept anywhere else.
+
 ## Decisions
 
 r[relying.decision.local]

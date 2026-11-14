@@ -109,6 +109,8 @@ class FakeKonklav:
         self.tenant = tenant
         self.session = session
         self.actions = ["project:read"]
+        # Vouching action -> vouched actions, in the entitlement set.
+        self.vouches: dict[str, list[str]] = {}
         self.tenant_facts: dict[str, Any] = {"tenant_type": "client"}
         self.revision = 1
         self.session_version = 1
@@ -167,6 +169,7 @@ class FakeKonklav:
                     "scoped": [],
                     "restrictive_flags": ["personal_only"],
                     "confinements": {"tenant_facts": self.tenant_facts},
+                    **({"vouches": self.vouches} if self.vouches else {}),
                 },
             )
         if path == "/v1/check":
@@ -177,7 +180,23 @@ class FakeKonklav:
             claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
             if claims["aud"] not in body.get("audiences", [AUDIENCE]):
                 return httpx.Response(200, json={"decision": "deny", "reason": "invalid_token", "revision": None})
-            return httpx.Response(200, json={"decision": "allow", "revision": self.revision})
+            # As Konklav, for tenant-wide requirements: granted or covered by
+            # route authority; without route authority, an allow names
+            # what it vouches for.
+            required = set(body["requirements"].get("tenant", []))
+            authority = body.get("route_authority")
+            covered = set(authority.get("tenant", [])) | set(authority.get("global", [])) if authority else set()
+            missing = sorted(required - set(self.actions) - covered)
+            if missing:
+                return httpx.Response(
+                    200,
+                    json={"decision": "deny", "reason": {"missing_actions": {"actions": missing}}, "revision": self.revision},
+                )
+            decision: dict[str, Any] = {"decision": "allow", "revision": self.revision}
+            vouched = sorted({v for action in required for v in self.vouches.get(action, [])})
+            if authority is None and vouched:
+                decision["vouches"] = {"tenant": vouched}
+            return httpx.Response(200, json=decision)
         if path == "/v1/erased-subjects":
             query = request.url.params
             listed = [e for e in self.erased if e["erased_at"] >= int(query.get("since", 0))]

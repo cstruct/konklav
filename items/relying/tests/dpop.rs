@@ -314,13 +314,13 @@ fn an_accepted_presentation_answers_its_requests_decisions_without_its_proof_aga
     // Every decision of the request, until it is released.
     for _ in 0..3 {
         assert_eq!(
-            f.core.decide_accepted(presentation, &reading(), T0),
+            f.core.decide_accepted(presentation, &reading(), false, T0),
             allowed()
         );
     }
     f.core.release_accepted(presentation);
     assert_eq!(
-        f.core.decide_accepted(presentation, &reading(), T0),
+        f.core.decide_accepted(presentation, &reading(), false, T0),
         denied(DenyReason::InvalidToken)
     );
     // Another core doesn't take it for its own, even while holding one.
@@ -329,10 +329,15 @@ fn an_accepted_presentation_answers_its_requests_decisions_without_its_proof_aga
     let own = other.token(None);
     let held = accepted(other.core.accept_presented(&Presented::bearer(&own), T0));
     assert_eq!(
-        other.core.decide_accepted(presentation, &reading(), T0),
+        other
+            .core
+            .decide_accepted(presentation, &reading(), false, T0),
         denied(DenyReason::InvalidToken)
     );
-    assert_eq!(other.core.decide_accepted(held, &reading(), T0), allowed());
+    assert_eq!(
+        other.core.decide_accepted(held, &reading(), false, T0),
+        allowed()
+    );
 }
 
 // r[verify relying.verify.accepted-presentation]
@@ -353,7 +358,7 @@ fn an_accepted_presentation_still_checks_the_session_and_expires_with_its_proof(
     let later = T0 + 91_000;
     f.core.on_feed_activity(later);
     assert_eq!(
-        f.core.decide_accepted(stale, &reading(), later),
+        f.core.decide_accepted(stale, &reading(), false, later),
         denied(DenyReason::InvalidToken)
     );
     f.core.on_session(SessionChanged {
@@ -364,7 +369,7 @@ fn an_accepted_presentation_still_checks_the_session_and_expires_with_its_proof(
         expires_at: seconds(T0) + 86_400,
     });
     assert_eq!(
-        f.core.decide_accepted(revoked, &reading(), T0),
+        f.core.decide_accepted(revoked, &reading(), false, T0),
         denied(DenyReason::InvalidToken)
     );
 }
@@ -386,7 +391,7 @@ fn accepting_waits_for_fetches_and_hands_bearer_tokens_and_the_check_api_a_prese
     let bearer = f.token(None);
     let presentation = accepted(f.core.accept_presented(&Presented::bearer(&bearer), T0));
     assert_eq!(
-        f.core.decide_accepted(presentation, &reading(), T0),
+        f.core.decide_accepted(presentation, &reading(), false, T0),
         allowed()
     );
 
@@ -401,7 +406,7 @@ fn accepting_waits_for_fetches_and_hands_bearer_tokens_and_the_check_api_a_prese
     };
     for _ in 0..2 {
         assert_eq!(
-            f.core.decide_accepted(presentation, &reading(), T0),
+            f.core.decide_accepted(presentation, &reading(), false, T0),
             Outcome::Need {
                 needs: vec![Need::Check]
             }
@@ -409,7 +414,7 @@ fn accepting_waits_for_fetches_and_hands_bearer_tokens_and_the_check_api_a_prese
     }
     f.core.release_accepted(presentation);
     assert_eq!(
-        f.core.decide_accepted(presentation, &reading(), T0),
+        f.core.decide_accepted(presentation, &reading(), false, T0),
         denied(DenyReason::InvalidToken)
     );
 }

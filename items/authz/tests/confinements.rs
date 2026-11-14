@@ -246,6 +246,7 @@ fn explanations_name_the_confinement_that_denies() {
     let catalog = Catalog {
         actions: set(&["patient:read"]),
         groups: BTreeMap::new(),
+        vouches: BTreeMap::new(),
     };
     let assignments = [Assignment {
         label: "carer".into(),
@@ -277,6 +278,7 @@ fn explanations_name_the_confinement_that_denies() {
                     confinements,
                     current: true,
                 }),
+                route: None,
                 now: NOW,
             },
             vec![],

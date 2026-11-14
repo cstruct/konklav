@@ -32,10 +32,11 @@ rate-limit key templates, in axum's terms (layers, extractors,
      URL, then run the hooks.
   3. Deny a route tenant that isn't the token's, and resolve the scopes from
      resolvers or path parameters.
-  4. Make one `decide_accepted` call for the route's requirements.
+  4. Make one `decide_accepted` call for the route's requirements, marked
+     as the request's route decision (`route: true`).
   5. Hand the handler a `RequestDecider` for further decisions with the
-     same presentation, and release the presentation once the handler has
-     answered.
+     same presentation, made with the route decision's route authority,
+     and release the presentation once the handler has answered.
 - Outcomes as `Denied`, an `IntoResponse` error: `Unauthenticated` (401),
   `Forbidden` (403), `StepUpRequired` (401, RFC 9470), `Unavailable` (503)
   and `RateLimited` (429).
@@ -176,7 +177,18 @@ claims, and one `decide_accepted` call decides for the handle
 (`relying.verify.accepted-presentation`). A handler that decides more, such
 as a GraphQL server per field, extracts `RequestDecider` and decides with
 the same handle, without the proof again; the layer releases the handle
-once the handler has answered, after which it decides nothing. The URL proofs are checked against
+once the handler has answered, after which it decides nothing.
+
+The layer's decision is the request's route decision, and the
+`RequestDecider`'s are made with its route authority
+(`relying.verify.route-authority`): when the catalog says
+`user:manage_data` vouches for `user:write`, a route requiring
+`user:manage_data` lets the handler's `user:write` decision allow, while a
+route requiring `user:write` still forbids a subject who doesn't hold it.
+The handler's decisions vouch for nothing further. `RelyingHost`
+implementations take the flag as `decide_accepted`'s `route` argument.
+
+The URL proofs are checked against
 is the `public_url` hook's, else the request's own scheme and authority,
 else `http://` and its `Host` header: set `public_url` behind TLS or a proxy.
 

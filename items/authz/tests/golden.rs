@@ -27,6 +27,7 @@ fn catalog() -> Catalog {
             ),
             ("sys:all".to_owned(), Group::AllExceptPrefixes(vec![])),
         ]),
+        vouches: BTreeMap::new(),
     }
 }
 

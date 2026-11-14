@@ -4091,6 +4091,14 @@
           },
           "name": {
             "type": "string"
+          },
+          "vouches": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Actions and action groups that an allowed route decision requiring\nthis action vouches for: the request's later decisions treat them as\ngranted where this action was required, without the subject holding\nthem. Each must be another declared action or group.",
+            "uniqueItems": true
           }
         }
       },
@@ -4978,6 +4986,10 @@
                   "$ref": "#/components/schemas/Obligation"
                 },
                 "description": "One per share the decision relied on."
+              },
+              "vouches": {
+                "$ref": "#/components/schemas/RouteAuthority",
+                "description": "What the allow vouches for, as route authority for the\nrequest's later decisions when it is a route decision. Empty\nfor an allow made with route authority."
               }
             }
           },
@@ -5052,6 +5064,17 @@
               {
                 "$ref": "#/components/schemas/Decision",
                 "description": "The decision the check API would reach, when explaining for a\nsession."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "route": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RouteExplanation",
+                "description": "The route decision, when explaining a later decision of a request\nwith the route's requirements."
               },
               {
                 "type": "null"
@@ -5289,6 +5312,20 @@
               "type": "string"
             },
             "uniqueItems": true
+          },
+          "vouches": {
+            "type": "object",
+            "description": "For each vouching action the set grants at any level, the actions\nit vouches for, with groups expanded.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           }
         }
       },
@@ -5366,6 +5403,17 @@
           },
           "requirements": {
             "$ref": "#/components/schemas/Requirements"
+          },
+          "route": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Requirements",
+                "description": "The route's requirements, to explain a later decision of a request\nwith the route authority they vouch for; a route decision when\nabsent."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "session": {
             "oneOf": [
@@ -5557,6 +5605,14 @@
               },
               "name": {
                 "type": "string"
+              },
+              "vouches": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "As an action's `vouches`, for a route decision requiring this\ngroup.",
+                "uniqueItems": true
               }
             }
           }
@@ -6841,6 +6897,37 @@
                 "$ref": "#/components/schemas/ShareId"
               }
             }
+          },
+          {
+            "type": "object",
+            "title": "ReasonVouched",
+            "description": "The route decision's route authority covers it, whatever the\nsubject holds.",
+            "required": [
+              "vouching",
+              "at",
+              "held",
+              "kind"
+            ],
+            "properties": {
+              "at": {
+                "type": "string",
+                "description": "Where the route required it: `global`, `tenant`, or\n`<scope kind>/<scope id>`."
+              },
+              "held": {
+                "$ref": "#/components/schemas/Reason",
+                "description": "Why it would be granted or not without the route authority."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "vouched"
+                ]
+              },
+              "vouching": {
+                "type": "string",
+                "description": "The vouching action the route required."
+              }
+            }
           }
         ],
         "description": "Why a required action is granted or not."
@@ -7440,6 +7527,62 @@
           },
           "slot": {
             "$ref": "#/components/schemas/SecretSlot"
+          }
+        }
+      },
+      "RouteAuthority": {
+        "type": "object",
+        "description": "What an allowed route decision vouches for: vouched actions per\nplacement, where the vouching actions were required. Later decisions of\nthe same request are made with it\n(`authz.decision.route-authority`).",
+        "properties": {
+          "global": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Vouched for everywhere.",
+            "uniqueItems": true
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VouchedScope"
+            },
+            "description": "Vouched for at one scope each, and at the registered scopes it\ncontains."
+          },
+          "tenant": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Vouched for tenant-wide in the token's tenant and at its scopes.",
+            "uniqueItems": true
+          }
+        }
+      },
+      "RouteExplanation": {
+        "type": "object",
+        "description": "The route decision a later decision is explained with, and the route\nauthority it gives.",
+        "required": [
+          "allowed",
+          "message",
+          "vouches",
+          "explanation"
+        ],
+        "properties": {
+          "allowed": {
+            "type": "boolean",
+            "description": "Whether the route decision allows; one that doesn't vouches for\nnothing."
+          },
+          "explanation": {
+            "$ref": "#/components/schemas/DecisionExplanation",
+            "description": "Why the route decision allows or denies."
+          },
+          "message": {
+            "type": "string"
+          },
+          "vouches": {
+            "$ref": "#/components/schemas/RouteAuthority",
+            "description": "What the route decision vouches for."
           }
         }
       },
@@ -8507,6 +8650,30 @@
           "reset_password",
           "invite"
         ]
+      },
+      "VouchedScope": {
+        "type": "object",
+        "description": "Vouched actions at one scope of the token's tenant.",
+        "required": [
+          "kind",
+          "id",
+          "actions"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        }
       },
       "Written_BatchResults": {
         "allOf": [

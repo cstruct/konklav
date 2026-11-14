@@ -44,12 +44,12 @@ impl RequestDecider {
         self.inner.accepted.claims()
     }
 
-    /// Decides `requirements` for the request. Fails closed: an error means
-    /// deny.
+    /// Decides `requirements` for the request, with the route authority of
+    /// the route decision. Fails closed: an error means deny.
     pub async fn decide(&self, requirements: &Requirements) -> Result<Decision, Error> {
         self.inner
             .host
-            .decide_accepted(&self.inner.accepted, requirements)
+            .decide_accepted(&self.inner.accepted, requirements, false)
             .await
     }
 

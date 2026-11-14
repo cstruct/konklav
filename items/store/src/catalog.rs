@@ -8,7 +8,9 @@ use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 use konklav_authz::{Confinement, Confinements, Group};
 use serde::{Deserialize, Serialize};
 
-use crate::schema::{catalog_action, catalog_fact, catalog_scope_kind, catalog_session_flag};
+use crate::schema::{
+    catalog_action, catalog_fact, catalog_scope_kind, catalog_session_flag, catalog_vouch,
+};
 use crate::{StoreError, StoreResult};
 
 /// Built-in control-plane capabilities share this prefix.
@@ -23,6 +25,11 @@ pub struct ActionEntry {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// The actions and groups a route decision requiring this one vouches
+    /// for.
+    // r[impl authz.catalog.vouches]
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub vouches: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +39,10 @@ pub struct GroupEntry {
     pub description: String,
     #[serde(flatten)]
     pub definition: Group,
+    /// As [`ActionEntry::vouches`].
+    // r[impl authz.catalog.vouches]
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub vouches: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,6 +201,14 @@ impl CatalogDocument {
                 .iter()
                 .map(|g| (g.name.clone(), g.definition.clone()))
                 .collect(),
+            vouches: self
+                .actions
+                .iter()
+                .map(|a| (&a.name, &a.vouches))
+                .chain(self.groups.iter().map(|g| (&g.name, &g.vouches)))
+                .filter(|(_, vouches)| !vouches.is_empty())
+                .map(|(name, vouches)| (name.clone(), vouches.clone()))
+                .collect(),
         }
     }
 
@@ -325,6 +344,46 @@ impl CatalogDocument {
         Ok(())
     }
 
+    /// Every declared vouch, as (vouching action, vouched action) pairs.
+    pub fn vouch_pairs(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.actions
+            .iter()
+            .map(|a| (&a.name, &a.vouches))
+            .chain(self.groups.iter().map(|g| (&g.name, &g.vouches)))
+            .flat_map(|(name, vouches)| {
+                vouches
+                    .iter()
+                    .map(move |vouched| (name.as_str(), vouched.as_str()))
+            })
+    }
+
+    /// Checks that every vouch names another declared action or group,
+    /// and never a control-plane capability.
+    // r[impl authz.catalog.vouches]
+    // r[impl authz.catalog.removal]
+    fn validate_vouches(&self) -> Result<(), String> {
+        let declared = |name: &str| {
+            self.actions.iter().any(|a| a.name == name)
+                || self.groups.iter().any(|g| g.name == name)
+        };
+        for (name, vouched) in self.vouch_pairs() {
+            if vouched.starts_with(CAPABILITY_PREFIX) {
+                return Err(format!(
+                    "`{name}` vouches for `{vouched}`, a control-plane capability"
+                ));
+            }
+            if vouched == name {
+                return Err(format!("`{name}` vouches for itself"));
+            }
+            if !declared(vouched) {
+                return Err(format!(
+                    "`{name}` vouches for `{vouched}`, which is not declared"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Checks the document for problems the database can't express.
     pub fn validate(&self) -> Result<(), String> {
         let mut names = BTreeSet::new();
@@ -368,6 +427,7 @@ impl CatalogDocument {
                 self.validate_confinement(flag, confinement)?;
             }
         }
+        self.validate_vouches()?;
         for group in &self.groups {
             if let Group::Actions(members) = &group.definition
                 && let Some(unknown) = members
@@ -391,8 +451,19 @@ struct ActionRow {
     group_definition: Option<serde_json::Value>,
 }
 
-pub async fn load(conn: &mut AsyncPgConnection) -> StoreResult<CatalogDocument> {
-    let mut document = CatalogDocument::default();
+/// The declared actions and groups, with their vouches.
+async fn load_actions(
+    conn: &mut AsyncPgConnection,
+    document: &mut CatalogDocument,
+) -> StoreResult<()> {
+    let mut vouches: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (action, vouched) in catalog_vouch::table
+        .select((catalog_vouch::action, catalog_vouch::vouched))
+        .load::<(String, String)>(conn)
+        .await?
+    {
+        vouches.entry(action).or_default().insert(vouched);
+    }
     let rows = catalog_action::table
         .filter(catalog_action::builtin.eq(false))
         .order(catalog_action::name.asc())
@@ -404,19 +475,28 @@ pub async fn load(conn: &mut AsyncPgConnection) -> StoreResult<CatalogDocument> 
         .load::<ActionRow>(conn)
         .await?;
     for row in rows {
+        let entry_vouches = vouches.remove(&row.name).unwrap_or_default();
         match row.group_definition {
             None => document.actions.push(ActionEntry {
                 name: row.name,
                 description: row.description,
+                vouches: entry_vouches,
             }),
             Some(definition) => document.groups.push(GroupEntry {
                 name: row.name,
                 description: row.description,
                 definition: serde_json::from_value(definition)
                     .map_err(|e| diesel::result::Error::DeserializationError(Box::new(e)))?,
+                vouches: entry_vouches,
             }),
         }
     }
+    Ok(())
+}
+
+pub async fn load(conn: &mut AsyncPgConnection) -> StoreResult<CatalogDocument> {
+    let mut document = CatalogDocument::default();
+    load_actions(conn, &mut document).await?;
     document.scope_kinds = catalog_scope_kind::table
         .order(catalog_scope_kind::name.asc())
         .select((
@@ -499,7 +579,9 @@ pub async fn load(conn: &mut AsyncPgConnection) -> StoreResult<CatalogDocument> 
 pub async fn replace(conn: &mut AsyncPgConnection, document: &CatalogDocument) -> StoreResult<()> {
     document.validate().map_err(StoreError::Conflict)?;
     conn.transaction::<_, StoreError, _>(async |conn| {
+        let vouches = remove_stale_vouches(conn, document).await?;
         replace_actions(conn, document).await?;
+        add_vouches(conn, document, &vouches).await?;
         replace_scope_kinds(conn, document).await?;
         replace_facts(conn, document).await?;
         replace_session_flags(conn, document).await?;
@@ -557,6 +639,58 @@ async fn replace_actions(
             .set((
                 catalog_action::description.eq(&group.description),
                 catalog_action::group_definition.eq(&definition),
+            ))
+            .execute(conn)
+            .await
+            .map_err(StoreError::from_constraint)?;
+    }
+    Ok(())
+}
+
+/// Removes the vouches `document` no longer declares, before its actions
+/// are replaced, so that removing an action they name isn't refused for
+/// them. Returns the vouches kept.
+async fn remove_stale_vouches(
+    conn: &mut AsyncPgConnection,
+    document: &CatalogDocument,
+) -> StoreResult<BTreeSet<(String, String)>> {
+    let wanted: BTreeSet<(&str, &str)> = document.vouch_pairs().collect();
+    let mut kept = BTreeSet::new();
+    for (action, vouched) in catalog_vouch::table
+        .select((catalog_vouch::action, catalog_vouch::vouched))
+        .load::<(String, String)>(conn)
+        .await?
+    {
+        if wanted.contains(&(action.as_str(), vouched.as_str())) {
+            kept.insert((action, vouched));
+            continue;
+        }
+        diesel::delete(
+            catalog_vouch::table
+                .filter(catalog_vouch::action.eq(&action))
+                .filter(catalog_vouch::vouched.eq(&vouched)),
+        )
+        .execute(conn)
+        .await?;
+    }
+    Ok(kept)
+}
+
+/// Adds the vouches `document` declares that aren't stored yet.
+// r[impl authz.catalog.vouches]
+async fn add_vouches(
+    conn: &mut AsyncPgConnection,
+    document: &CatalogDocument,
+    kept: &BTreeSet<(String, String)>,
+) -> StoreResult<()> {
+    for (action, vouched) in document.vouch_pairs() {
+        if kept.contains(&(action.to_owned(), vouched.to_owned())) {
+            continue;
+        }
+        diesel::insert_into(catalog_vouch::table)
+            .values((
+                catalog_vouch::action.eq(action),
+                catalog_vouch::vouched.eq(vouched),
             ))
             .execute(conn)
             .await

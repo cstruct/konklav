@@ -70,7 +70,10 @@ await client.stop()
   for it without spending the proof again, as often as the request needs,
   for hosts that need the token before they know the requirements or that
   decide more than once; `release_accepted` ends it once the request is
-  answered.
+  answered. Pass `route=True` for the decision of the request's route:
+  its allow vouches, through the catalog's vouches, for actions the
+  request's later decisions then pass, such as a handler's `user:write`
+  check on a route requiring `user:manage_data`.
 
 - `Policy` declares an operation's requirements once per route or router,
   merges the policies of nested layers and resolves them per request with

@@ -60,6 +60,13 @@ diesel::table! {
 }
 
 diesel::table! {
+    catalog_vouch (action, vouched) {
+        action -> Text,
+        vouched -> Text,
+    }
+}
+
+diesel::table! {
     catalog_session_flag (name) {
         name -> Text,
         kind -> Text,
@@ -425,6 +432,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     catalog_fact,
     catalog_scope_kind,
     catalog_session_flag,
+    catalog_vouch,
     challenge,
     client_assertion,
     credential,

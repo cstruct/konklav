@@ -27,7 +27,7 @@ from konklav_control_plane import BearerToken, ControlPlaneClient
 from konklav_relying import AccessToken, RelyingClient, StepUp
 from starlette.websockets import WebSocketDisconnect
 
-from konklav_fastapi import KonklavRoutes, RoutePolicy, TenantToken
+from konklav_fastapi import KonklavRoutes, RequestDecider, RoutePolicy, TenantToken
 from support import DpopKey
 
 PASSWORD = "correct horse battery"
@@ -66,17 +66,40 @@ def server() -> Iterator[dict[str, Any]]:
 
 @pytest.fixture(scope="module")
 def world(server: dict[str, Any]) -> World:
-    """A person who reads documents in one tenant and is only a member of another."""
+    """
+    A person who reads documents and manages user data in one tenant, where
+    `user:write` is denied them, and is only a member of another.
+    """
 
     async def setup() -> World:
         async with ControlPlaneClient(server["control"], auth=BearerToken(server["bootstrap_token"])) as control:
             reader, other, person, service = (str(uuid.uuid4()) for _ in range(4))
             email = f"{uuid.uuid4().hex}@example.com"
             async with control.batch() as batch:
-                batch.catalog.put({"actions": [{"name": "document:read"}]})
+                batch.catalog.put(
+                    {
+                        "actions": [
+                            {"name": "document:read"},
+                            {"name": "user:manage_data", "vouches": ["user:write"]},
+                            {"name": "user:write"},
+                        ]
+                    }
+                )
                 batch.tenants.create(reader, {})
                 batch.tenants.create(other, {})
-                batch.roles.put(reader, "reader", {"policies": [{"action": "document:read", "effect": "allow"}]})
+                # Manages user data, which vouches for `user:write`, while
+                # `user:write` itself is denied.
+                batch.roles.put(
+                    reader,
+                    "reader",
+                    {
+                        "policies": [
+                            {"action": "document:read", "effect": "allow"},
+                            {"action": "user:manage_data", "effect": "allow"},
+                            {"action": "user:write", "effect": "deny"},
+                        ]
+                    },
+                )
                 batch.subjects.create(person, {"kind": "human"})
                 batch.credentials.create(person, {"kind": "password", "identifier": email, "password": PASSWORD})
                 membership = str(uuid.uuid4())
@@ -145,6 +168,18 @@ def app_for(world: World, verified: list[AccessToken]) -> FastAPI:
     @app.get("/sensitive", dependencies=[RoutePolicy(step_up=StepUp(min_methods=2))])
     async def sensitive() -> str:
         return "sensitive"
+
+    @app.get("/users/data", dependencies=[RoutePolicy(tenant_actions={"user:manage_data"})])
+    async def manage(decider: RequestDecider) -> bool:
+        return (await decider.decide_typed({"tenant": ["user:write"]})).allowed
+
+    @app.get("/users/plain")
+    async def plain(decider: RequestDecider) -> bool:
+        return (await decider.decide_typed({"tenant": ["user:write"]})).allowed
+
+    @app.get("/users", dependencies=[RoutePolicy(tenant_actions={"user:write"})])
+    async def write() -> str:
+        return "written"
 
     @app.websocket("/live")
     async def live(socket: WebSocket, token: TenantToken) -> None:
@@ -233,3 +268,22 @@ def test_websockets_take_the_token_from_the_query(world: World) -> None:
         with pytest.raises(WebSocketDisconnect) as closed, http.websocket_connect(f"/live?token={member}") as socket:
             socket.receive_json()
         assert closed.value.code == 1008
+
+
+# r[verify item.py-fastapi.request-decider]
+# r[verify relying.verify.route-authority]
+def test_a_route_decision_vouches_for_its_handlers_decisions(world: World) -> None:
+    reader = tenant_token(world, world.reader_tenant)
+    bearer = {"authorization": f"Bearer {reader}"}
+    with TestClient(app_for(world, []), base_url=URL) as http:
+        # The route requires `user:manage_data`, which vouches for the
+        # handler's `user:write` check, despite the deny.
+        response = http.get("/users/data", headers=bearer)
+        assert response.status_code == 200, response.text
+        assert response.json() is True
+        # A route that doesn't require it vouches for nothing.
+        assert http.get("/users/plain", headers=bearer).json() is False
+        # And a route requiring `user:write` itself is still forbidden.
+        response = http.get("/users", headers=bearer)
+        assert response.status_code == 403
+        assert response.json()["error"]["reason"] == {"missing_actions": {"actions": ["user:write"]}}

@@ -4,7 +4,7 @@
 //! every rule stays in `konklav-relying`. The Python package
 //! `konklav_relying` adds the I/O (httpx, asyncio) around it.
 
-use konklav_authz::{EntitlementSet, Requirements};
+use konklav_authz::{Decision, EntitlementSet, Requirements};
 use konklav_core::Cursor;
 use konklav_core::feed::{FeedEvent, SessionChanged};
 use konklav_relying::rate_limit::{
@@ -84,16 +84,52 @@ impl Core {
 
     /// Decides `requirements` for an accepted presentation (its
     /// `presentation` JSON, as accepting returned it), without checking its
-    /// proof again; an outcome as [`Core::decide`] returns.
+    /// proof again; an outcome as [`Core::decide`] returns. `route` marks
+    /// the route decision.
+    #[pyo3(signature = (presentation, requirements, now, *, route = false))]
     fn decide_accepted(
         &mut self,
         presentation: &str,
         requirements: &str,
         now: u64,
+        route: bool,
     ) -> PyResult<String> {
         let presentation: PresentationId = parse(presentation, "presentation")?;
         let requirements: Requirements = parse(requirements, "requirements")?;
-        dump(&self.inner.decide_accepted(presentation, &requirements, now))
+        dump(
+            &self
+                .inner
+                .decide_accepted(presentation, &requirements, route, now),
+        )
+    }
+
+    /// The route authority JSON to send to the check API for a decision
+    /// [`Core::decide_accepted`] handed off, or `null` for the route
+    /// decision.
+    #[pyo3(signature = (presentation, now, *, route = false))]
+    fn route_authority(&self, presentation: &str, now: u64, route: bool) -> PyResult<String> {
+        let presentation: PresentationId = parse(presentation, "presentation")?;
+        dump(&self.inner.route_authority(presentation, route, now))
+    }
+
+    /// Records a check-API decision (its JSON) made for a decision
+    /// [`Core::decide_accepted`] handed off: an outcome as [`Core::decide`]
+    /// returns.
+    #[pyo3(signature = (presentation, decision, now, *, route = false))]
+    fn on_check_accepted(
+        &mut self,
+        presentation: &str,
+        decision: &str,
+        now: u64,
+        route: bool,
+    ) -> PyResult<String> {
+        let presentation: PresentationId = parse(presentation, "presentation")?;
+        let decision: Decision = parse(decision, "decision")?;
+        dump(
+            &self
+                .inner
+                .on_check_accepted(presentation, route, decision, now),
+        )
     }
 
     /// Releases an accepted presentation (its `presentation` JSON) once its

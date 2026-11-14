@@ -200,6 +200,7 @@ async fn session_for(
 /// explains the outcome.
 // r[impl authz.explain.decision]
 // r[impl authz.explain.checks]
+// r[impl authz.explain.route-authority]
 #[utoipa::path(post, path = "/subjects/{id}/explain-decision", tag = "explain",
     params(("id" = SubjectId, Path)),
     request_body = ExplainDecision,
@@ -231,6 +232,15 @@ async fn explain_decision(
         None => None,
     };
 
+    // The registered scopes the route's requirements name too.
+    let named = match &body.route {
+        Some(route) => {
+            let mut named = body.requirements.clone();
+            named.scopes.extend(route.scopes.iter().cloned());
+            named
+        }
+        None => body.requirements.clone(),
+    };
     let Gathered {
         checks,
         input,
@@ -239,15 +249,13 @@ async fn explain_decision(
     } = match body.at {
         // In a batch, in the batch's transaction.
         None if konklav_store::in_transaction(&mut conn) => {
-            gather(&mut conn, subject, tenant, &body.requirements).await?
+            gather(&mut conn, subject, tenant, &named).await?
         }
         None => {
             conn.build_transaction()
                 .read_only()
                 .repeatable_read()
-                .run::<_, ApiError, _>(async |conn| {
-                    gather(conn, subject, tenant, &body.requirements).await
-                })
+                .run::<_, ApiError, _>(async |conn| gather(conn, subject, tenant, &named).await)
                 .await?
         }
         Some(_) if konklav_store::in_transaction(&mut conn) => {
@@ -262,7 +270,7 @@ async fn explain_decision(
                 .repeatable_read()
                 .run::<_, ApiError, _>(async |conn| {
                     history::shadow(conn, at).await?;
-                    gather(conn, subject, tenant, &body.requirements).await
+                    gather(conn, subject, tenant, &named).await
                 })
                 .await?
         }
@@ -290,6 +298,7 @@ async fn explain_decision(
             tenant,
             tenant_facts: &confinements.tenant_facts,
             session: context,
+            route: body.route.as_ref(),
             now: body.at.unwrap_or(now).timestamp(),
         },
         checks,

@@ -3,6 +3,7 @@
 //! `RelyingClient`.
 #![allow(clippy::too_many_lines)]
 
+use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,8 +12,10 @@ use axum::Router;
 use axum::routing::get;
 use chrono::Duration as ChronoDuration;
 use ed25519_dalek::SigningKey;
+use konklav_authz::{Decision, Requirements};
 use konklav_axum::{
-    ClientAddress, Konklav, Policy, RoutePolicy, RouteRateLimit, RouterPolicy, TenantToken,
+    ClientAddress, Konklav, Policy, RequestDecider, RoutePolicy, RouteRateLimit, RouterPolicy,
+    TenantToken,
 };
 use konklav_relying::Config;
 use konklav_relying_client::rate_limit::{RateLimit, RateLimitConfig, RateLimitWindow};
@@ -154,7 +157,14 @@ async fn world() -> World {
         .control(
             Method::PUT,
             "/v1/catalog",
-            json!({"actions": [{"name": "project:read"}], "scope_kinds": [{"name": "project"}]}),
+            json!({
+                "actions": [
+                    {"name": "project:read"},
+                    {"name": "user:manage_data", "vouches": ["user:write"]},
+                    {"name": "user:write"},
+                ],
+                "scope_kinds": [{"name": "project"}],
+            }),
         )
         .await;
     let tenant = uuid::Uuid::now_v7();
@@ -166,6 +176,18 @@ async fn world() -> World {
             Method::PUT,
             &format!("/v1/tenants/{tenant}/roles/reader"),
             json!({"policies": [{"action": "project:read", "effect": "allow"}]}),
+        )
+        .await;
+    // Manages user data, which vouches for `user:write`, while
+    // `user:write` itself is denied.
+    server
+        .control(
+            Method::PUT,
+            &format!("/v1/tenants/{tenant}/roles/steward"),
+            json!({"policies": [
+                {"action": "user:manage_data", "effect": "allow"},
+                {"action": "user:write", "effect": "deny"},
+            ]}),
         )
         .await;
 
@@ -197,6 +219,13 @@ async fn world() -> World {
             Method::POST,
             &format!("/v1/memberships/{membership}/assignments"),
             json!({"role": "reader"}),
+        )
+        .await;
+    server
+        .control(
+            Method::POST,
+            &format!("/v1/memberships/{membership}/assignments"),
+            json!({"role": "steward"}),
         )
         .await;
 
@@ -269,9 +298,21 @@ async fn address(ClientAddress(address): ClientAddress) -> String {
     address.to_string()
 }
 
+/// Whether the handler's own check for `user:write` passes.
+async fn writes(decider: RequestDecider) -> String {
+    let write = Requirements {
+        tenant: BTreeSet::from(["user:write".to_owned()]),
+        ..Requirements::default()
+    };
+    let decision = decider.decide(&write).await.unwrap();
+    format!("user:write: {}", matches!(decision, Decision::Allow { .. }))
+}
+
 /// The relying system: projects need `project:read`, documents also need
 /// `document:write`, which nobody has, and the address route is public and
-/// rate limited per client.
+/// rate limited per client. `/users/data` needs `user:manage_data`, and
+/// `/users` and `/projects/{project}/users` check `user:write` in their
+/// handler; `/users` also needs it itself.
 fn relying_system(client: RelyingClient) -> Router {
     let konklav = Konklav::builder(client).build().unwrap();
     let projects = RouterPolicy::new(Policy::new().tenant_actions(["project:read"]));
@@ -305,6 +346,26 @@ fn relying_system(client: RelyingClient) -> Router {
             ),
         )
         .route(
+            "/users/data",
+            get(writes).route_layer(
+                RoutePolicy::new(&Policy::new().tenant_actions(["user:manage_data"])).unwrap(),
+            ),
+        )
+        .route(
+            "/users",
+            get(writes).route_layer(
+                RoutePolicy::new(&Policy::new().tenant_actions(["user:write"])).unwrap(),
+            ),
+        )
+        .route(
+            "/projects/{project}/users",
+            get(writes).route_layer(
+                projects
+                    .route(&Policy::new().scope_actions("project", ["project:read"]))
+                    .unwrap(),
+            ),
+        )
+        .route(
             "/address",
             get(address).route_layer(RoutePolicy::public().rate_limit(per_client).unwrap()),
         )
@@ -315,6 +376,7 @@ fn relying_system(client: RelyingClient) -> Router {
 // r[verify item.axum.single-decision]
 // r[verify item.axum.outcomes]
 // r[verify item.axum.rate-limited]
+// r[verify item.axum.request-decider]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_relying_system_on_axum_decides_through_konklav() {
     let world = world().await;
@@ -362,6 +424,26 @@ async fn a_relying_system_on_axum_decides_through_konklav() {
     assert_eq!(
         invalid.headers()["www-authenticate"],
         r#"Bearer error="invalid_token""#
+    );
+
+    // A route requiring `user:manage_data` vouches for its handler's
+    // `user:write` check, despite the deny; a route requiring only
+    // `project:read` doesn't, and a route requiring `user:write` itself is
+    // still forbidden.
+    // r[verify relying.verify.route-authority]
+    let vouched = get("/users/data", Some(&world.token)).await.unwrap();
+    assert_eq!(vouched.status(), 200);
+    assert_eq!(vouched.text().await.unwrap(), "user:write: true");
+    let unvouched = get("/projects/p-1/users", Some(&world.token))
+        .await
+        .unwrap();
+    assert_eq!(unvouched.status(), 200);
+    assert_eq!(unvouched.text().await.unwrap(), "user:write: false");
+    let direct = get("/users", Some(&world.token)).await.unwrap();
+    assert_eq!(direct.status(), 403);
+    assert_eq!(
+        direct.json::<Value>().await.unwrap(),
+        json!({"error": {"code": "forbidden", "reason": {"missing_actions": {"actions": ["user:write"]}}}})
     );
 
     let first = get("/address", None).await.unwrap();

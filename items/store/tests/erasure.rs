@@ -932,6 +932,12 @@ const DECISIONS: &[Table] = &[
         unreported: &[],
     },
     Table {
+        name: "catalog_vouch",
+        plain: &["action", "vouched"],
+        personal: &[],
+        unreported: &[],
+    },
+    Table {
         name: "challenge",
         plain: &[
             "id",

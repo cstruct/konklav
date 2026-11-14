@@ -19,6 +19,23 @@ async def read_project(project: str, token: TenantToken) -> dict[str, str]:
     return {"project": project, "subject": token.sub}
 ```
 
+A handler that decides more than its route policy states injects
+`RequestDecider`. Its decisions reuse the route's verified presentation and
+are made with the route decision's route authority, so a route requiring
+`user:manage_data`, which the catalog says vouches for `user:write`, lets
+the handler's `user:write` decision allow, while a route requiring
+`user:write` still forbids a subject who doesn't hold it:
+
+```python
+from konklav_fastapi import RequestDecider
+
+
+@router.post("/users/{user}/data", dependencies=[RoutePolicy(tenant_actions={"user:manage_data"})])
+async def manage_data(user: str, decider: RequestDecider) -> dict[str, bool]:
+    decision = await decider.decide_typed({"tenant": ["user:write"]})
+    return {"write": decision.allowed}
+```
+
 Startup validation refuses routes without a policy, policies that can't be
 decided, and token dependencies the policy doesn't match. Each operation's
 merged policy is published in OpenAPI as `x-konklav-policy`.

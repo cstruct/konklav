@@ -51,7 +51,7 @@ fn entitlements() -> Entitlements {
             },
             set(&["document:read"]),
         )]),
-        shared: Vec::new(),
+        ..Entitlements::default()
     }
 }
 

@@ -215,6 +215,8 @@ pub enum Group {
 pub struct Catalog {
     pub actions: BTreeSet<String>,
     pub groups: BTreeMap<String, Group>,
+    /// What each vouching action or group vouches for, as declared.
+    pub vouches: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Catalog {
@@ -334,9 +336,23 @@ pub struct Entitlements {
     /// Other tenants' scopes shared with this tenant.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shared: Vec<Shared>,
+    /// For each vouching action the set grants at any level, the actions
+    /// it vouches for, with groups expanded.
+    // r[impl authz.compile.vouches]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub vouches: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Entitlements {
+    /// Whether `action` is granted at any level of this set: globally,
+    /// tenant-wide or at some scope.
+    #[must_use]
+    pub fn grants_anywhere(&self, action: &str) -> bool {
+        self.global.contains(action)
+            || self.tenant.contains(action)
+            || self.scoped.values().any(|actions| actions.contains(action))
+    }
+
     /// Everything granted at `scope` (or tenant-wide when `None`): global,
     /// tenant-wide and the scope's own actions.
     #[must_use]
