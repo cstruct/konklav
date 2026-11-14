@@ -9,6 +9,7 @@ EntitlementSet {
   tenant:  Set<Action>,                  // tenant-wide in `tenant`
   scoped:  Map<(ScopeKind, ScopeId), Set<Action>>,
   shared:  List<Shared>,                 // other tenants' scopes, see Shares
+  vouches: Map<Action, Set<Action>>,     // see Route authority
 }
 ```
 
@@ -158,6 +159,56 @@ idempotent `PUT`) before using it, and reconcile pending ones.
 
 Containment is one level deep. Nested containers, such as folders inside
 projects, are left until a deployment needs them.
+
+## Route authority
+
+An action group grants its members wherever the group is granted. Some
+relying systems need something narrower: a route that requires
+`user:manage_data` calls code that checks `user:write`, and that check
+should pass inside the request, while a route requiring `user:write`
+directly still forbids a subject who doesn't hold it. The catalog says so
+with a vouch on the vouching action (`r[authz.catalog.vouches]`):
+
+```json
+{
+  "actions": [
+    {"name": "user:manage_data", "vouches": ["user:write", "user:data"]},
+    {"name": "user:write"},
+    {"name": "user:read"},
+    {"name": "user:export"}
+  ],
+  "groups": [{"name": "user:data", "actions": ["user:read", "user:export"]}]
+}
+```
+
+A vouch grants nothing. Compilation keeps the vouches of the vouching
+actions the set grants, with groups expanded (`r[authz.compile.vouches]`).
+When a request's route decision allows, the allow names what it vouches
+for, per placement where a vouching action was required: globally,
+tenant-wide, or at a scope of the token's tenant
+(`r[authz.decision.vouches]`). That is the request's route authority.
+
+The relying core keeps it with the accepted presentation and decides
+every later decision of the request with it
+(`r[relying.verify.route-authority]`). A covered action counts as
+granted, even where a role explicitly denies it, because the route's
+check is the authority for the inner one; every other check (token kind,
+session flags, step-up, tenant facts, unknown registered scopes) is made
+as usual (`r[authz.decision.route-authority]`). Coverage
+(`r[authz.decision.route-authority.coverage]`):
+
+- global route authority covers every placement;
+- tenant-wide covers the tenant and its scopes;
+- a scope covers itself and the registered scopes recorded in the token's
+  tenant inside it;
+- another tenant's scope is never covered.
+
+Later decisions vouch for nothing, so authority isn't transitive, and a
+route decision that doesn't allow leaves an empty one. The check API takes
+the route authority as `route_authority`, so a decision there agrees with
+a local one (`r[authz.api.check-route-authority]`), and explaining a
+decision with `route` set to the route's requirements names the vouch that
+grants each covered action (`r[authz.explain.route-authority]`).
 
 ## Decision path in the relying SDK
 

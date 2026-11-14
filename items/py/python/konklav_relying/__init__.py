@@ -393,23 +393,45 @@ class RelyingClient:
             )
         raise KonklavError("could not verify the token")
 
-    async def decide_accepted(self, accepted: AcceptedRequest, requirements: Mapping[str, Any]) -> _DecisionJson:
+    # r[impl relying.verify.route-authority]
+    async def decide_accepted(
+        self, accepted: AcceptedRequest, requirements: Mapping[str, Any], *, route: bool = False
+    ) -> _DecisionJson:
         """
         Decide `requirements` for a request `accept_request` accepted, as
         often as the request needs. Its session is checked each time; its
         proof isn't. A request released, or accepted too long ago, is denied
         with `invalid_token`.
+
+        `route=True` marks the route decision: what its allow vouches for is
+        kept as the request's route authority, and every other decision is
+        made with it, locally or through the check API alike.
         """
         encoded = json.dumps(requirements)
-        return await self._decide(
-            accepted.access_token,
-            requirements,
-            lambda: self._core.decide_accepted(accepted.presentation, encoded, _now()),
-        )
+        presentation = accepted.presentation
+        for _ in range(4):
+            with self._lock:
+                outcome = json.loads(self._core.decide_accepted(presentation, encoded, _now(), route=route))
+            if outcome["outcome"] == "decided":
+                return outcome["decision"]
+            needs = outcome["needs"]
+            if any(need["need"] == "check" for need in needs):
+                with self._lock:
+                    authority = json.loads(self._core.route_authority(presentation, _now(), route=route))
+                decision = await self._check(accepted.access_token, requirements, route_authority=authority)
+                with self._lock:
+                    checked = json.loads(
+                        self._core.on_check_accepted(presentation, json.dumps(decision), _now(), route=route)
+                    )
+                return checked["decision"]
+            await asyncio.gather(*(self._fetch(need) for need in needs))
+        raise KonklavError("could not reach a decision")
 
-    async def decide_accepted_typed(self, accepted: AcceptedRequest, requirements: Mapping[str, Any]) -> Decision:
+    async def decide_accepted_typed(
+        self, accepted: AcceptedRequest, requirements: Mapping[str, Any], *, route: bool = False
+    ) -> Decision:
         """`decide_accepted`, returning a `Decision`."""
-        return Decision.from_json(await self.decide_accepted(accepted, requirements))
+        return Decision.from_json(await self.decide_accepted(accepted, requirements, route=route))
 
     # r[impl item.py.accepted-request]
     def release_accepted(self, accepted: AcceptedRequest) -> None:
@@ -542,13 +564,15 @@ class RelyingClient:
         headers = {"authorization": f"Bearer {await self._bearer()}"}
         return await self._http.get(f"{self._relying_url}{path}", headers=headers)
 
-    async def _check(self, token: str, requirements: Mapping[str, Any]) -> _DecisionJson:
+    async def _check(
+        self, token: str, requirements: Mapping[str, Any], *, route_authority: Mapping[str, Any] | None = None
+    ) -> _DecisionJson:
         headers = {"authorization": f"Bearer {await self._bearer()}"}
-        response = await self._http.post(
-            f"{self._relying_url}/v1/check",
-            json={"token": token, "requirements": requirements, "audiences": self._audiences},
-            headers=headers,
-        )
+        body: dict[str, Any] = {"token": token, "requirements": requirements, "audiences": self._audiences}
+        if route_authority is not None:
+            # A later decision of an accepted request (`authz.api.check-route-authority`).
+            body["route_authority"] = route_authority
+        response = await self._http.post(f"{self._relying_url}/v1/check", json=body, headers=headers)
         body = _checked(response).json()
         body.pop("revision", None)
         return body

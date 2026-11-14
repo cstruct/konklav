@@ -24,6 +24,11 @@ pub struct ExplainDecision {
     pub session: Option<SessionId>,
     #[serde(default)]
     pub requirements: Requirements,
+    /// The route's requirements, to explain a later decision of a request
+    /// with the route authority they vouch for; a route decision when
+    /// absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<Requirements>,
     /// The time to explain the decision as of, as RFC 3339; now when
     /// absent. Needs history, and can't be combined with a session.
     #[serde(default)]

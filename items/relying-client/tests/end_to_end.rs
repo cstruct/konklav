@@ -653,7 +653,7 @@ async fn accepted_requests_are_decided_once() {
         assert_eq!(
             world
                 .client
-                .decide_accepted(&accepted, &reading())
+                .decide_accepted(&accepted, &reading(), true)
                 .await
                 .unwrap(),
             Decision::allow()
@@ -662,7 +662,7 @@ async fn accepted_requests_are_decided_once() {
         assert_eq!(
             world
                 .client
-                .decide_accepted(&accepted, &reading())
+                .decide_accepted(&accepted, &reading(), true)
                 .await
                 .unwrap(),
             Decision::allow()
@@ -672,7 +672,7 @@ async fn accepted_requests_are_decided_once() {
             assert_eq!(
                 world
                     .client
-                    .decide_accepted(&accepted, &reading())
+                    .decide_accepted(&accepted, &reading(), true)
                     .await
                     .unwrap(),
                 Decision::Deny {
@@ -768,4 +768,117 @@ async fn erasures_reach_the_host_live_and_through_the_list() {
             .unwrap(),
         vec![]
     );
+}
+
+/// The Goal's example through the client: a route requiring
+/// `user:manage_data` lets a later check for `user:write` pass despite an
+/// explicit deny, while a route requiring `user:write` is still denied;
+/// locally and through the check API alike.
+// r[verify relying.verify.route-authority]
+// r[verify authz.api.check-route-authority]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_route_decision_vouches_locally_and_through_the_check_api() {
+    use konklav_relying_client::{Presented, Verified};
+
+    let world = world().await;
+    world
+        .server
+        .control(
+            Method::PUT,
+            "/v1/catalog",
+            json!({
+                "actions": [
+                    {"name": "project:read"},
+                    {"name": "user:manage_data", "vouches": ["user:write"]},
+                    {"name": "user:write"},
+                ],
+                "scope_kinds": [{"name": "project"}],
+            }),
+        )
+        .await;
+    world
+        .server
+        .control(
+            Method::PUT,
+            &format!("/v1/tenants/{}/roles/steward", world.tenant),
+            json!({"policies": [
+                {"action": "user:manage_data", "effect": "allow"},
+                {"action": "user:write", "effect": "deny"},
+            ]}),
+        )
+        .await;
+    world
+        .server
+        .control(
+            Method::POST,
+            &format!("/v1/memberships/{}/assignments", world.membership),
+            json!({"role": "steward"}),
+        )
+        .await;
+
+    // Started after the writes, so its caches hold them; the other is
+    // never started, so the feed never connects and every decision goes
+    // through the check API.
+    let local = RelyingClient::new(world.config.clone());
+    let _tasks = local.start();
+    until_trusted(&local).await;
+    let central = RelyingClient::new(world.config.clone());
+
+    let tenant = |action: &str| Requirements {
+        tenant: BTreeSet::from([action.to_owned()]),
+        ..Requirements::default()
+    };
+    let write = tenant("user:write");
+    let denied = Decision::Deny {
+        reason: DenyReason::MissingActions {
+            actions: BTreeSet::from(["user:write".to_owned()]),
+        },
+    };
+    for (path, client) in [("local", &local), ("check API", &central)] {
+        let accept = || async {
+            let Verified::Valid(accepted) = client
+                .accept_request(&Presented::bearer(&world.token))
+                .await
+                .unwrap()
+            else {
+                panic!("{path}: the token verifies");
+            };
+            accepted
+        };
+        let direct = accept().await;
+        assert_eq!(
+            client.decide_accepted(&direct, &write, true).await.unwrap(),
+            denied,
+            "{path}: a user:write route is denied"
+        );
+        client.release_accepted(&direct);
+
+        let request = accept().await;
+        let route = client
+            .decide_accepted(&request, &tenant("user:manage_data"), true)
+            .await
+            .unwrap();
+        assert!(matches!(route, Decision::Allow { .. }), "{path}: {route:?}");
+        assert_eq!(
+            client
+                .decide_accepted(&request, &write, false)
+                .await
+                .unwrap(),
+            Decision::allow(),
+            "{path}: the handler's user:write check passes"
+        );
+        client.release_accepted(&request);
+        if path == "local" {
+            assert_eq!(
+                client
+                    .decide_accepted(&request, &write, false)
+                    .await
+                    .unwrap(),
+                Decision::Deny {
+                    reason: DenyReason::InvalidToken
+                },
+                "{path}: released"
+            );
+        }
+    }
 }

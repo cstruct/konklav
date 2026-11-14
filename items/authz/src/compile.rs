@@ -68,6 +68,8 @@ pub(crate) fn effective_policies(
 ///    a tenant-wide deny does not remove an allow at a scope.
 /// 6. Actions granted globally are dropped from the tenant level, and
 ///    actions granted globally or tenant-wide are dropped from scopes.
+/// 7. The catalog's vouches are kept for the vouching actions granted at
+///    any level, with vouched groups expanded.
 // r[impl authz.compile.entitlements]
 // r[impl authz.compile.reference-semantics]
 // r[impl authz.compile.precedence]
@@ -124,7 +126,26 @@ pub fn compile(catalog: &Catalog, assignments: &[Assignment]) -> Entitlements {
         actions.retain(|action| !above.contains(action));
     }
     entitlements.scoped.retain(|_, actions| !actions.is_empty());
+    entitlements.vouches = vouches(catalog, &entitlements);
     entitlements
+}
+
+/// The catalog's vouches for the vouching actions `entitlements` grants
+/// at any level, with vouched groups expanded.
+// r[impl authz.compile.vouches]
+fn vouches(catalog: &Catalog, entitlements: &Entitlements) -> BTreeMap<String, BTreeSet<String>> {
+    catalog
+        .vouches
+        .iter()
+        .filter(|(vouching, _)| entitlements.grants_anywhere(vouching))
+        .map(|(vouching, vouched)| {
+            let expanded = vouched
+                .iter()
+                .flat_map(|name| catalog.expand(name))
+                .collect();
+            (vouching.clone(), expanded)
+        })
+        .collect()
 }
 
 /// What `shares` grant on top of compiled `entitlements`: for each share,

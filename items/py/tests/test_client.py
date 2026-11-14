@@ -253,6 +253,55 @@ def test_accepted_requests_are_decided_once_with_their_one_proof() -> None:
     asyncio.run(scenario())
 
 
+# r[verify item.py.accepted-request]
+# r[verify relying.verify.route-authority]
+def test_a_route_decision_vouches_for_its_requests_later_decisions() -> None:
+    async def scenario() -> None:
+        keys = Keys()
+        subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
+        fake = FakeKonklav(keys, subject, tenant, session)
+        fake.actions = ["user:manage_data"]
+        fake.vouches = {"user:manage_data": ["user:write"]}
+        client = client_for(fake)
+        token = keys.token(subject=subject, session=session, tenant=tenant)
+        url = "https://api.example/users/data"
+        request = {"authorization": f"Bearer {token}", "dpop": None, "method": "GET", "url": url}
+        manage = {"tenant": ["user:manage_data"]}
+        write = {"tenant": ["user:write"]}
+        denied = {"decision": "deny", "reason": {"missing_actions": {"actions": ["user:write"]}}}
+
+        async def goal() -> None:
+            direct = await client.accept_request(**request)
+            assert direct is not None
+            assert await client.decide_accepted(direct, write, route=True) == denied
+            client.release_accepted(direct)
+
+            accepted = await client.accept_request(**request)
+            assert accepted is not None
+            assert await client.decide_accepted(accepted, write) == denied, "no route decision yet"
+            route = await client.decide_accepted_typed(accepted, manage, route=True)
+            assert route.allowed
+            assert await client.decide_accepted(accepted, write) == {"decision": "allow"}
+            client.release_accepted(accepted)
+
+        # Before the feed is up, through the check API: the route decision
+        # is sent without route authority, later ones with what it vouched.
+        await goal()
+        sent = [check.get("route_authority") for check in fake.checks if check["requirements"] != {"token_kinds": ["partial", "identity", "tenant", "reset_password", "invite"]}]
+        assert sent == [None, {}, None, {"tenant": ["user:write"]}]
+
+        await client.start()
+        try:
+            await until_trusted(client)
+            fake.checks.clear()
+            await goal()
+            assert fake.checks == [], "decided locally"
+        finally:
+            await client.stop()
+
+    asyncio.run(scenario())
+
+
 # r[verify item.py.typed.compatible]
 # r[verify authz.decision.tenant-facts]
 # r[verify relying.fallback.equivalence]

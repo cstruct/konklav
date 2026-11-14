@@ -26,12 +26,14 @@ fn document() -> CatalogDocument {
         .map(|name| ActionEntry {
             name: (*name).into(),
             description: String::new(),
+            vouches: BTreeSet::new(),
         })
         .collect(),
         groups: vec![GroupEntry {
             name: "tenant:all".into(),
             description: String::new(),
             definition: Group::AllExceptPrefixes(vec!["sys:".into()]),
+            vouches: BTreeSet::new(),
         }],
         scope_kinds: vec![ScopeKindEntry {
             name: "project".into(),
@@ -234,11 +236,96 @@ async fn catalog_entries_in_use_cannot_be_removed() {
     reserved.actions.push(ActionEntry {
         name: "konklav:tenant:create".into(),
         description: String::new(),
+        vouches: BTreeSet::new(),
     });
     assert!(matches!(
         catalog::replace(&mut conn, &reserved).await,
         Err(StoreError::Conflict(_))
     ));
+}
+
+/// `document()` with `action` vouching for `vouched`.
+fn vouching(mut document: CatalogDocument, action: &str, vouched: &[&str]) -> CatalogDocument {
+    let vouches: BTreeSet<String> = vouched.iter().map(|name| (*name).to_owned()).collect();
+    if let Some(entry) = document.actions.iter_mut().find(|a| a.name == action) {
+        entry.vouches = vouches;
+    } else if let Some(entry) = document.groups.iter_mut().find(|g| g.name == action) {
+        entry.vouches = vouches;
+    } else {
+        panic!("`{action}` isn't declared");
+    }
+    document
+}
+
+fn sorted(mut document: CatalogDocument) -> CatalogDocument {
+    document.actions.sort_by(|a, b| a.name.cmp(&b.name));
+    document
+}
+
+// r[verify authz.catalog.vouches]
+// r[verify authz.catalog.removal]
+#[tokio::test(flavor = "multi_thread")]
+async fn catalog_vouches_are_stored_and_checked() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let declared = vouching(
+        vouching(document(), "project:read", &["document:read", "tenant:all"]),
+        "tenant:all",
+        &["me"],
+    );
+    catalog::replace(&mut conn, &declared).await.unwrap();
+    assert_eq!(catalog::load(&mut conn).await.unwrap(), sorted(declared));
+
+    // Changing a vouch replaces it, and one declared again is kept.
+    let changed = vouching(
+        document(),
+        "project:read",
+        &["document:read", "document:write"],
+    );
+    catalog::replace(&mut conn, &changed).await.unwrap();
+    assert_eq!(
+        catalog::load(&mut conn).await.unwrap(),
+        sorted(changed.clone())
+    );
+
+    // A vouched action can't be removed while a vouch names it.
+    let mut without_write = changed.clone();
+    without_write.actions.retain(|a| a.name != "document:write");
+    assert!(matches!(
+        catalog::replace(&mut conn, &without_write).await,
+        Err(StoreError::Conflict(_))
+    ));
+    assert_eq!(
+        catalog::load(&mut conn).await.unwrap(),
+        sorted(changed.clone()),
+        "nothing changed"
+    );
+
+    // Removing the vouch with it is fine, as is removing a vouching action.
+    let without_write = vouching(without_write, "project:read", &["document:read"]);
+    catalog::replace(&mut conn, &without_write).await.unwrap();
+    let mut without_read = without_write.clone();
+    without_read.actions.retain(|a| a.name != "project:read");
+    catalog::replace(&mut conn, &without_read).await.unwrap();
+    assert_eq!(
+        catalog::load(&mut conn).await.unwrap(),
+        sorted(without_read)
+    );
+
+    for (vouched, problem) in [
+        ("project:read", "itself"),
+        ("project:delete", "not declared"),
+        ("konklav:tenant:create", "control-plane capability"),
+    ] {
+        let refused = vouching(document(), "project:read", &[vouched]);
+        assert!(
+            matches!(
+                catalog::replace(&mut conn, &refused).await,
+                Err(StoreError::Conflict(message)) if message.contains(problem)
+            ),
+            "a vouch for `{vouched}` is refused as {problem}"
+        );
+    }
 }
 
 // r[verify authz.compile.inactive]

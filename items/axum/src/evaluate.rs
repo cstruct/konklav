@@ -292,7 +292,7 @@ impl Konklav {
         let decider = RequestDecider::new(self.inner.host.clone(), accepted);
         let Ok(decision) = self
             .host()
-            .decide_accepted(decider.accepted(), &requirements)
+            .decide_accepted(decider.accepted(), &requirements, true)
             .await
         else {
             decider.release();

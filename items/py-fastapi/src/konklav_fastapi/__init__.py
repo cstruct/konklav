@@ -65,9 +65,11 @@ from konklav_fastapi.pacing import PacingMiddleware, RoutePacing
 from konklav_fastapi.rate_limits import RouteRateLimit, handle_rate_limited
 from konklav_fastapi.routes import (
     CurrentToken,
+    Decider,
     IdentityToken,
     KonklavRoutes,
     OptionalToken,
+    RequestDecider,
     ResolvedScope,
     RoutePolicy,
     RoutePolicyFields,
@@ -85,6 +87,7 @@ __version__ = importlib.metadata.version("konklav-fastapi")
 
 __all__ = [
     "CurrentToken",
+    "Decider",
     "Forbidden",
     "IdentityToken",
     "KonklavDenied",
@@ -92,6 +95,7 @@ __all__ = [
     "KonklavUnavailable",
     "OptionalToken",
     "PacingMiddleware",
+    "RequestDecider",
     "ResolvedScope",
     "RoutePacing",
     "RoutePolicy",

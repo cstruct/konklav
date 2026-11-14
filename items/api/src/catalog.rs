@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use konklav_authz::{Confinement, Group};
 use serde::{Deserialize, Serialize};
 
@@ -7,6 +9,12 @@ pub struct ActionEntry {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// Actions and action groups that an allowed route decision requiring
+    /// this action vouches for: the request's later decisions treat them as
+    /// granted where this action was required, without the subject holding
+    /// them. Each must be another declared action or group.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub vouches: BTreeSet<String>,
 }
 
 /// A declared action group and how it expands.
@@ -17,6 +25,10 @@ pub struct GroupEntry {
     pub description: String,
     #[serde(flatten)]
     pub definition: Group,
+    /// As an action's `vouches`, for a route decision requiring this
+    /// group.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub vouches: BTreeSet<String>,
 }
 
 /// A declared scope kind.

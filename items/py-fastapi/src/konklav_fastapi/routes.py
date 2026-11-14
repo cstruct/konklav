@@ -17,13 +17,16 @@ routes.install(app)
 Per request, the route's policies merge, outermost first; scope ids come
 from the scope resolvers (or the path parameter of each kind's name); and
 the token is verified once (`accept_request`) and one `decide_accepted_typed`
-call decides.
+call decides, as the route decision. A handler that decides further
+requirements injects a `RequestDecider`, which decides them with the route
+decision's route authority; the request's presentation is released once
+the handler has answered.
 """
 
 from __future__ import annotations
 
 import ipaddress
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -37,6 +40,7 @@ from fastapi.websockets import WebSocket
 from konklav_relying import (
     AcceptedRequest,
     AccessToken,
+    Decision,
     DenyReason,
     InvalidDpopProof,
     KonklavError,
@@ -62,9 +66,11 @@ from konklav_fastapi.pacing import RoutePacing
 
 __all__ = [
     "CurrentToken",
+    "Decider",
     "IdentityToken",
     "KonklavRoutes",
     "OptionalToken",
+    "RequestDecider",
     "ResolvedScope",
     "RouteTenantResolver",
     "RoutePolicy",
@@ -122,15 +128,29 @@ class _Presented:
 class _Outcome:
     public: bool
     token: AccessToken | None = None
+    accepted: AcceptedRequest | None = None
+    """The allowed request's presentation, until it is released."""
 
 
 # r[impl item.py-fastapi.shared-dependency]
-async def _evaluate(connection: HTTPConnection) -> None:
-    """The one dependency every `RoutePolicy` declares."""
+# r[impl item.py-fastapi.request-decider]
+async def _evaluate(connection: HTTPConnection) -> AsyncIterator[None]:
+    """
+    The one dependency every `RoutePolicy` declares. Once the handler has
+    answered (FastAPI runs a `yield` dependency's exit code after the
+    response), it releases the request's presentation.
+    """
     if _SCOPE_KEY in connection.scope:
+        yield
         return
     routes = KonklavRoutes.of(connection)
-    connection.scope[_SCOPE_KEY] = await routes._evaluate(connection)
+    outcome = await routes._evaluate(connection)
+    connection.scope[_SCOPE_KEY] = outcome
+    try:
+        yield
+    finally:
+        if outcome.accepted is not None:
+            routes._release(outcome.accepted)
 
 
 class RoutePolicyFields(PolicyFields, total=False):
@@ -430,6 +450,8 @@ class KonklavRoutes:
                 return cast(str, problem)
         if policy.is_public:
             for name, _ in injected:
+                if name == "RequestDecider":
+                    return "injects RequestDecider, but its policy is public, so there is nothing to decide with"
                 if name != "OptionalToken":
                     return f"injects {name}, but its policy is public; use OptionalToken"
             return None
@@ -515,6 +537,17 @@ class KonklavRoutes:
             raise Unauthenticated("missing_token")
         # r[impl item.py-fastapi.verify-then-decide]
         accepted = await self._accept(connection, presented)
+        try:
+            return await self._decide(connection, policy, presented, accepted)
+        except BaseException:
+            # Refused, or failed: the request decides nothing more.
+            # r[impl item.py-fastapi.request-decider]
+            self._release(accepted)
+            raise
+
+    async def _decide(
+        self, connection: HTTPConnection, policy: RoutePolicy, presented: _Presented, accepted: AcceptedRequest
+    ) -> _Outcome:
         token = accepted.token
         # r[impl item.py-fastapi.audiences]
         if policy.audiences is not None and token.aud not in policy.audiences:
@@ -551,12 +584,12 @@ class KonklavRoutes:
 
         # r[impl item.py-fastapi.single-decision]
         try:
-            decision = await self._client().decide_accepted_typed(accepted, requirements)
+            decision = await self._client().decide_accepted_typed(accepted, requirements, route=True)
         except KonklavError:
             raise KonklavUnavailable() from None
         match decision.decision:
             case "allow":
-                return _Outcome(public=False, token=token)
+                return _Outcome(public=False, token=token, accepted=accepted)
             case "step_up":
                 assert decision.step_up is not None
                 raise StepUpRequired(decision.step_up, presented.scheme)
@@ -565,6 +598,10 @@ class KonklavRoutes:
                 if decision.reason.code in ("invalid_token", "invalid_dpop_proof"):
                     raise Unauthenticated(decision.reason.code, presented.scheme)
                 raise Forbidden(decision.reason)
+
+    def _release(self, accepted: AcceptedRequest) -> None:
+        if self.client is not None:
+            self.client.release_accepted(accepted)
 
     async def _accept(self, connection: HTTPConnection, presented: _Presented) -> AcceptedRequest:
         """The presented token, its session and its DPoP proof, verified once."""
@@ -652,10 +689,61 @@ IdentityToken = Annotated[AccessToken, Depends(_identity_token)]
 TenantToken = Annotated[AccessToken, Depends(_tenant_token)]
 """The request's verified `tenant` token."""
 
+
+
+# -- request deciders ---------------------------------------------------------
+
+
+# r[impl item.py-fastapi.request-decider]
+@dataclass(frozen=True)
+class Decider:
+    """
+    Decides further requirements for an allowed request, as its handler
+    needs, with the route decision's route authority: what the route's own
+    requirements vouch for counts as granted. Inject it as `RequestDecider`.
+    It decides nothing once its request is answered.
+    """
+
+    _routes: KonklavRoutes
+    _accepted: AcceptedRequest
+
+    @property
+    def token(self) -> AccessToken:
+        """The request's verified token."""
+        return self._accepted.token
+
+    async def decide(self, requirements: Mapping[str, Any]) -> dict[str, Any]:
+        """
+        Decide `requirements` for the request, as `RelyingClient.decide_accepted`
+        does. Raises `KonklavUnavailable` when no decision can be reached:
+        fail closed.
+        """
+        try:
+            return await self._routes._client().decide_accepted(self._accepted, requirements)
+        except KonklavError:
+            raise KonklavUnavailable() from None
+
+    async def decide_typed(self, requirements: Mapping[str, Any]) -> Decision:
+        """`decide`, returning a `Decision`."""
+        return Decision.from_json(await self.decide(requirements))
+
+
+async def _request_decider(connection: HTTPConnection, _: _Evaluated) -> Decider:
+    outcome: _Outcome = connection.scope[_SCOPE_KEY]
+    if outcome.accepted is None:
+        # A public route: startup validation refuses it.
+        raise RoutePolicyError(f"{connection.url.path} injects RequestDecider, but its policy is public")
+    return Decider(KonklavRoutes.of(connection), outcome.accepted)
+
+
+RequestDecider = Annotated[Decider, Depends(_request_decider)]
+"""Decides further requirements for the allowed request, with its route authority."""
+
 # r[impl item.py-fastapi.injected-kinds]
 _INJECTED: dict[Callable[..., Any], tuple[str, frozenset[str]]] = {
     _optional_token: ("OptionalToken", TOKEN_KINDS),
     _current_token: ("CurrentToken", TOKEN_KINDS),
     _identity_token: ("IdentityToken", frozenset({"identity"})),
     _tenant_token: ("TenantToken", frozenset({"tenant"})),
+    _request_decider: ("RequestDecider", TOKEN_KINDS),
 }

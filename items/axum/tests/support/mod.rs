@@ -55,6 +55,8 @@ pub struct FakeHost {
     decide: Box<Decide>,
     pub accepted: Mutex<Vec<Presented>>,
     pub decided: Mutex<Vec<Requirements>>,
+    /// Whether each decision was marked as the route decision.
+    pub routes: Mutex<Vec<bool>>,
     pub verified: Mutex<Vec<Presented>>,
     /// How many presentations were released.
     pub released: Mutex<usize>,
@@ -72,6 +74,7 @@ impl FakeHost {
             decide: Box::new(decide),
             accepted: Mutex::default(),
             decided: Mutex::default(),
+            routes: Mutex::default(),
             verified: Mutex::default(),
             released: Mutex::default(),
         })
@@ -93,6 +96,10 @@ impl FakeHost {
 
     pub fn decided(&self) -> Vec<Requirements> {
         self.decided.lock().unwrap().clone()
+    }
+
+    pub fn routes(&self) -> Vec<bool> {
+        self.routes.lock().unwrap().clone()
     }
 
     pub fn verified(&self) -> Vec<Presented> {
@@ -123,9 +130,11 @@ impl RelyingHost for FakeHost {
         &'a self,
         _: &'a Accepted,
         requirements: &'a Requirements,
+        route: bool,
     ) -> BoxFuture<'a, Result<Decision, Error>> {
         Box::pin(async move {
             self.decided.lock().unwrap().push(requirements.clone());
+            self.routes.lock().unwrap().push(route);
             (self.decide)(requirements)
         })
     }

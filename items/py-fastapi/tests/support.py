@@ -63,6 +63,8 @@ class FakeClient:
     accepted: list[dict[str, Any]] = field(default_factory=list)
     decided: list[dict[str, Any]] = field(default_factory=list)
     verified: list[dict[str, Any]] = field(default_factory=list)
+    released: list[int] = field(default_factory=list)
+    """The presentations released, in order."""
 
     def _token(self, request: dict[str, Any]) -> AccessToken | None:
         raw = request["authorization"].partition(" ")[2]
@@ -80,13 +82,26 @@ class FakeClient:
             return None
         return AcceptedRequest(token=token, presentation=str(len(self.accepted) - 1), access_token="")
 
-    async def decide_accepted_typed(self, accepted: AcceptedRequest, requirements: dict[str, Any]) -> Decision:
-        request = {**self.accepted[int(accepted.presentation)], "requirements": requirements}
+    async def decide_accepted(
+        self, accepted: AcceptedRequest, requirements: dict[str, Any], *, route: bool = False
+    ) -> dict[str, Any]:
+        presentation = int(accepted.presentation)
+        if presentation in self.released:
+            return {"decision": "deny", "reason": "invalid_token"}
+        request = {**self.accepted[presentation], "requirements": requirements, "route": route}
         self.decided.append(request)
         outcome = self.decide(request)
         if isinstance(outcome, Exception):
             raise outcome
-        return Decision.from_json(outcome)
+        return outcome
+
+    async def decide_accepted_typed(
+        self, accepted: AcceptedRequest, requirements: dict[str, Any], *, route: bool = False
+    ) -> Decision:
+        return Decision.from_json(await self.decide_accepted(accepted, requirements, route=route))
+
+    def release_accepted(self, accepted: AcceptedRequest) -> None:
+        self.released.append(int(accepted.presentation))
 
     async def verify_request_typed(self, **request: Any) -> AccessToken | None:
         self.verified.append(request)

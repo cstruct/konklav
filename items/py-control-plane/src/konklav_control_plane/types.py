@@ -13,6 +13,13 @@ class ActionEntry(TypedDict):
 
     description: NotRequired[str]
     name: str
+    vouches: NotRequired[list[str]]
+    """
+    Actions and action groups that an allowed route decision requiring
+    this action vouches for: the request's later decisions treat them as
+    granted where this action was required, without the subject holding
+    them. Each must be another declared action or group.
+    """
 
 
 type BatchMethod = Literal['PUT', 'POST', 'PATCH', 'DELETE']
@@ -387,6 +394,11 @@ class GroupEntry1(TypedDict):
 
     description: NotRequired[str]
     name: str
+    vouches: NotRequired[list[str]]
+    """
+    As an action's `vouches`, for a route decision requiring this
+    group.
+    """
 
 
 class GroupEntry2(GroupActions, GroupEntry1):
@@ -923,6 +935,16 @@ type TokenKind = Literal['partial', 'identity', 'tenant', 'reset_password', 'inv
 """
 What an access token may be used for.
 """
+
+
+class VouchedScope(TypedDict):
+    """
+    Vouched actions at one scope of the token's tenant.
+    """
+
+    actions: list[str]
+    id: str
+    kind: str
 
 
 class WrittenBatchResults(TypedDict):
@@ -1962,6 +1984,16 @@ class RotatedSlot(TypedDict):
     slot: SecretSlot
 
 
+RouteAuthority = TypedDict(
+    'RouteAuthority',
+    {
+        'global': NotRequired[list[str]],
+        'scopes': NotRequired[list[VouchedScope]],
+        'tenant': NotRequired[list[str]],
+    },
+)
+
+
 class ScopeRequirement(TypedDict):
     """
     Actions required at one scope. The relying system resolves its own
@@ -2264,6 +2296,12 @@ class DecisionAllow(TypedDict):
     """
     One per share the decision relied on.
     """
+    vouches: NotRequired[RouteAuthority]
+    """
+    What the allow vouches for, as route authority for the
+    request's later decisions when it is a route decision. Empty
+    for an allow made with route authority.
+    """
 
 
 type Decision = DecisionAllow | DecisionDeny | DecisionStepUp
@@ -2276,6 +2314,7 @@ Entitlements = TypedDict(
         'scoped': list[ScopedActions],
         'shared': NotRequired[list[Shared]],
         'tenant': list[str],
+        'vouches': NotRequired[dict[str, list[str]]],
     },
 )
 
@@ -2443,6 +2482,7 @@ class ExplainDecision(TypedDict):
     absent. Needs history, and can't be combined with a session.
     """
     requirements: NotRequired[Requirements]
+    route: NotRequired[Requirements | None]
     session: NotRequired[SessionId | None]
     tenant: NotRequired[str | None]
     """
@@ -2482,6 +2522,7 @@ class DecisionExplanation(TypedDict):
     """
     checks: list[Check]
     decision: NotRequired[Decision | None]
+    route: NotRequired[RouteExplanation | None]
 
 
 class ReasonNotHeldAtRecipient(TypedDict):
@@ -2507,7 +2548,51 @@ class ReasonAllowedByShare(TypedDict):
     share: ShareId
 
 
-type Reason = ReasonAllowed | ReasonDenied | ReasonNotHere | ReasonNoRule | ReasonNoShare | ReasonShareNotAccepted | ReasonShareNotValid | ReasonNotShared | ReasonNotHeldAtRecipient | ReasonAllowedByShare
+class ReasonVouched(TypedDict):
+    """
+    The route decision's route authority covers it, whatever the
+    subject holds.
+    """
+
+    at: str
+    """
+    Where the route required it: `global`, `tenant`, or
+    `<scope kind>/<scope id>`.
+    """
+    held: Reason
+    """
+    Why it would be granted or not without the route authority.
+    """
+    kind: Literal['vouched']
+    vouching: str
+    """
+    The vouching action the route required.
+    """
+
+
+type Reason = ReasonAllowed | ReasonDenied | ReasonNotHere | ReasonNoRule | ReasonNoShare | ReasonShareNotAccepted | ReasonShareNotValid | ReasonNotShared | ReasonNotHeldAtRecipient | ReasonAllowedByShare | ReasonVouched
 """
 Why a required action is granted or not.
 """
+
+
+class RouteExplanation(TypedDict):
+    """
+    The route decision a later decision is explained with, and the route
+    authority it gives.
+    """
+
+    allowed: bool
+    """
+    Whether the route decision allows; one that doesn't vouches for
+    nothing.
+    """
+    explanation: DecisionExplanation
+    """
+    Why the route decision allows or denies.
+    """
+    message: str
+    vouches: RouteAuthority
+    """
+    What the route decision vouches for.
+    """

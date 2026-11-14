@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use konklav_authz::{
     Assignment, Catalog, Confinements, Decision, DenyReason, Effect, Entitlements, ExplainInput,
-    Level, Obligation, Policy, RegisteredScopes, Registration, Requirements, Scope,
+    Level, Obligation, Policy, RegisteredScopes, Registration, Requirements, RouteAuthority, Scope,
     ScopeRequirement, SessionContext, Share, compile, evaluate, explain_decision, shared,
 };
 use konklav_core::{SessionId, ShareId, SubjectId, TenantId};
@@ -21,6 +21,7 @@ fn catalog() -> Catalog {
     Catalog {
         actions: set(&["document:read", "document:write"]),
         groups: BTreeMap::new(),
+        vouches: BTreeMap::new(),
     }
 }
 
@@ -313,6 +314,7 @@ fn another_tenant_gets_shares_of_the_scope_or_a_container_with_obligations() {
                 id: "p-2".into(),
                 attributes: serde_json::Map::new(),
             }],
+            vouches: RouteAuthority::default(),
         }
     );
     assert_eq!(
@@ -449,6 +451,7 @@ fn explanations_agree_with_decisions_at_registered_scopes() {
                             confinements: &Confinements::default(),
                             current: true,
                         }),
+                        route: None,
                         now: NOW,
                     },
                     vec![],

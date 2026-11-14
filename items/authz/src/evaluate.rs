@@ -3,7 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use konklav_token::{AccessClaims, TokenKind};
 use serde::{Deserialize, Serialize};
 
-use crate::{Confinements, Entitlements, RegisteredScopes, Registration, Scope, failing_predicate};
+use crate::route_authority::vouched_by;
+use crate::{
+    Confinements, Entitlements, RegisteredScopes, Registration, RouteAuthority, Scope,
+    failing_predicate,
+};
 
 /// Actions required at one scope. The relying system resolves its own
 /// resources into scopes before asking, except registered scopes, which
@@ -177,6 +181,12 @@ pub enum Decision {
         /// One per share the decision relied on.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         obligations: Vec<Obligation>,
+        /// What the allow vouches for, as route authority for the
+        /// request's later decisions when it is a route decision. Empty
+        /// for an allow made with route authority.
+        // r[impl authz.decision.vouches]
+        #[serde(default, skip_serializing_if = "RouteAuthority::is_empty")]
+        vouches: RouteAuthority,
     },
     #[cfg_attr(feature = "openapi", schema(title = "DecisionDeny"))]
     Deny { reason: DenyReason },
@@ -191,6 +201,7 @@ impl Decision {
     pub fn allow() -> Self {
         Self::Allow {
             obligations: Vec::new(),
+            vouches: RouteAuthority::default(),
         }
     }
 }
@@ -218,6 +229,38 @@ pub fn evaluate(
     registered: &RegisteredScopes,
     now: i64,
 ) -> Decision {
+    evaluate_with_route_authority(
+        requirements,
+        None,
+        claims,
+        restrictive_flags,
+        confinements,
+        entitlements,
+        registered,
+        now,
+    )
+}
+
+/// As [`evaluate`], made with `route_authority` when it is given: the
+/// vouches of the request's allowed route decision. A required action it
+/// covers counts as granted, whatever the entitlement set holds, and every
+/// other check is made as without it. An allow made with route authority
+/// vouches for nothing.
+// r[impl authz.decision.route-authority]
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_with_route_authority(
+    requirements: &Requirements,
+    route_authority: Option<&RouteAuthority>,
+    claims: &AccessClaims,
+    restrictive_flags: &BTreeSet<String>,
+    confinements: &Confinements,
+    entitlements: &Entitlements,
+    registered: &RegisteredScopes,
+    now: i64,
+) -> Decision {
+    let none = RouteAuthority::default();
+    let authority = route_authority.unwrap_or(&none);
     let accepted = requirements
         .token_kinds
         .clone()
@@ -283,7 +326,7 @@ pub fn evaluate(
         requirements
             .global
             .iter()
-            .filter(|a| !global.contains(a.as_str()))
+            .filter(|a| !global.contains(a.as_str()) && !authority.covers_global(a))
             .cloned(),
     );
     let tenant = entitlements.actions_at(None);
@@ -291,10 +334,17 @@ pub fn evaluate(
         requirements
             .tenant
             .iter()
-            .filter(|a| !tenant.contains(a.as_str()))
+            .filter(|a| !tenant.contains(a.as_str()) && !authority.covers_tenant(a))
             .cloned(),
     );
-    let obligations = match scope_actions(requirements, claims, entitlements, registered, now) {
+    let obligations = match scope_actions(
+        requirements,
+        authority,
+        claims,
+        entitlements,
+        registered,
+        now,
+    ) {
         Ok((absent, obligations)) => {
             missing.extend(absent);
             obligations
@@ -302,7 +352,15 @@ pub fn evaluate(
         Err(reason) => return Decision::Deny { reason },
     };
     if missing.is_empty() {
-        Decision::Allow { obligations }
+        let vouches = if route_authority.is_some() {
+            RouteAuthority::default()
+        } else {
+            vouched_by(requirements, claims.tid, entitlements, registered)
+        };
+        Decision::Allow {
+            obligations,
+            vouches,
+        }
     } else {
         Decision::Deny {
             reason: DenyReason::MissingActions { actions: missing },
@@ -310,11 +368,12 @@ pub fn evaluate(
     }
 }
 
-/// The actions required at scopes that aren't granted, and the obligations
-/// of the shares that grant the others; a deny reason for an unknown
-/// registered scope.
+/// The actions required at scopes that aren't granted or covered by
+/// `authority`, and the obligations of the shares that grant the others; a
+/// deny reason for an unknown registered scope.
 fn scope_actions(
     requirements: &Requirements,
+    authority: &RouteAuthority,
     claims: &AccessClaims,
     entitlements: &Entitlements,
     registered: &RegisteredScopes,
@@ -327,7 +386,7 @@ fn scope_actions(
             kind: required.kind.clone(),
             id: required.id.clone(),
         };
-        let (granted, relied) = if let Some(record) = registered.lookup(&scope) {
+        let (granted, relied, record, owned) = if let Some(record) = registered.lookup(&scope) {
             let Some(record) = record
                 .filter(|record| required.tenant.is_none_or(|tenant| tenant == record.tenant))
             else {
@@ -336,17 +395,31 @@ fn scope_actions(
                     id: scope.id,
                 });
             };
-            registered_actions(entitlements, claims, record, &required.actions, now)
+            let (granted, relied) =
+                registered_actions(entitlements, claims, record, &required.actions, now);
+            let owned = claims.tid == Some(record.tenant);
+            (granted, relied, Some(record), owned)
         } else if let Some(owner) = required.tenant.filter(|owner| Some(*owner) != claims.tid) {
-            shared_actions(entitlements, owner, &scope, &required.actions, now)
+            let (granted, relied) =
+                shared_actions(entitlements, owner, &scope, &required.actions, now);
+            (granted, relied, None, false)
         } else {
-            (entitlements.actions_at(Some(&scope)), Vec::new())
+            let owned = claims.tid.is_some();
+            (
+                entitlements.actions_at(Some(&scope)),
+                Vec::new(),
+                None,
+                owned,
+            )
         };
         missing.extend(
             required
                 .actions
                 .iter()
-                .filter(|a| !granted.contains(a.as_str()))
+                .filter(|a| {
+                    !granted.contains(a.as_str())
+                        && !authority.covers_scope(a, &scope, record, owned)
+                })
                 .cloned(),
         );
         obligations.extend(relied);

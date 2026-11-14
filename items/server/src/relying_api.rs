@@ -8,7 +8,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use konklav_authz::Scope;
-use konklav_authz::{Decision, EntitlementSet, Requirements, evaluate};
+use konklav_authz::{
+    Decision, EntitlementSet, Requirements, RouteAuthority, evaluate_with_route_authority,
+};
 use konklav_core::{Cursor, SubjectId, TenantId};
 use konklav_store::registered_scopes::{self, RegisteredScope};
 use konklav_store::subjects::{self, SubjectKind};
@@ -104,6 +106,10 @@ struct CheckRequest {
     requirements: Requirements,
     /// The audiences the relying system accepts; Konklav's own when absent.
     audiences: Option<Vec<String>>,
+    /// The route authority of the request's allowed route decision, for a
+    /// later decision of the same request; absent for a route decision.
+    // r[impl authz.api.check-route-authority]
+    route_authority: Option<RouteAuthority>,
 }
 
 #[derive(Serialize)]
@@ -117,6 +123,7 @@ struct CheckResponse {
 /// token's session is still valid.
 // r[impl authz.api.check]
 // r[impl authz.api.check-equivalence]
+// r[impl authz.api.check-route-authority]
 // r[depends item.authz.single-evaluator]
 async fn check(
     State(state): State<AppState>,
@@ -157,8 +164,9 @@ async fn check(
         &body.requirements,
     )
     .await?;
-    let decision = evaluate(
+    let decision = evaluate_with_route_authority(
         &body.requirements,
+        body.route_authority.as_ref(),
         &claims,
         &set.restrictive_flags,
         &set.confinements,

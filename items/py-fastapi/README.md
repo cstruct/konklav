@@ -26,7 +26,15 @@ publishes it to PyPI with the other Python packages.
   3. Verify the token, its session and its DPoP proof once
      (`accept_request`), then run the hooks.
   4. Deny a route tenant that isn't the token's, and resolve the scope ids.
-  5. Make one `decide_accepted_typed` call for the accepted request.
+  5. Make the route decision: one `decide_accepted_typed` call for the
+     accepted request, with `route=True`.
+  6. Release the accepted presentation once the request is answered,
+     after the response is sent (streaming included), or right away when
+     the route refuses the request or its decision fails.
+- `RequestDecider`: an injected `Decider` with which a handler decides
+  further requirements of its request (`decide`, `decide_typed`), made
+  with the route decision's route authority, until the request is
+  answered.
 - Outcomes as exceptions (`konklav_fastapi.errors`): `Unauthenticated`
   (401), `Forbidden` (403), `StepUpRequired` (401) and
   `KonklavUnavailable` (503), with a default handler that the application
@@ -41,7 +49,7 @@ publishes it to PyPI with the other Python packages.
 - Client addresses: `KonklavRoutes.client_address`, which reads
   `X-Forwarded-For` only from `trusted_proxies`.
 - Injected tokens: `CurrentToken`, `OptionalToken`, `IdentityToken`,
-  `TenantToken`.
+  `TenantToken`, and `RequestDecider`, refused on public routes.
 - Startup validation over every HTTP and websocket route, and
   `x-konklav-policy` in OpenAPI.
 - Pacing: `RoutePacing`, a dependency that paces the routes it is
@@ -58,7 +66,7 @@ Out of scope:
 
 | Software item | Relationship |
 |---|---|
-| `konklav-py` (`konklav-relying`) | Required at exactly this package's version; provides `Policy`, `RelyingClient` (`accept_request`, `decide_accepted_typed`), the typed results and `Pacing` |
+| `konklav-py` (`konklav-relying`) | Required at exactly this package's version; provides `Policy`, `RelyingClient` (`accept_request`, `decide_accepted`, `decide_accepted_typed`, `release_accepted`), the typed results and `Pacing` |
 | `konklav-py-control-plane` | Used by the integration tests only, to set up a server |
 | `konklav-server` | Decides through the relying client; only the same version is supported |
 
@@ -157,7 +165,32 @@ which verifies the token, its session and its proof, and returns the
 verified token with a handle. Hooks, the route tenant and the scope
 resolvers only ever see that verified token. One `decide_accepted_typed`
 call then decides for the handle, rechecking the session but not the proof
-(`relying.verify.accepted-presentation`).
+(`relying.verify.accepted-presentation`). It is the request's route
+decision.
+
+### Deciding inside a handler
+
+A handler that needs to decide more than its route policy states injects
+`RequestDecider`. Its decisions are for the same accepted presentation,
+so they need no second proof, and are made with the route decision's
+route authority (`relying.verify.route-authority`): a route requiring
+`user:manage_data`, whose catalog entry vouches for `user:write`, lets the
+handler's `user:write` decision allow, while a route requiring
+`user:write` itself still forbids a subject who doesn't hold it.
+
+```python
+from konklav_fastapi import RequestDecider, RoutePolicy
+
+
+@router.post("/users/{user}/data", dependencies=[RoutePolicy(tenant_actions={"user:manage_data"})])
+async def manage_data(user: str, decider: RequestDecider) -> dict[str, bool]:
+    decision = await decider.decide_typed({"tenant": ["user:write"]})
+    return {"write": decision.allowed}
+```
+
+A handler's decisions vouch for nothing further. The presentation is
+released once the request is answered, after which the decider denies
+with `invalid_token`.
 
 ### Pacing
 

@@ -127,6 +127,12 @@ Terms are introduced in dependency order: each definition only uses terms define
   - Granting a group also grants the group's own name, so an operation can require the group itself.
   - Example: `tenant:all` expanding to every tenant-level action.
 
+- `vouch`
+  - A catalog relation from one action or action group, the `vouching action`, to other actions or action groups, the `vouched actions`.
+  - When a route decision allows a vouching action, the request's later decisions treat the vouched actions as satisfied where the vouching action was required (see `route authority`).
+  - Unlike an action group, a vouch grants nothing. A subject who holds `user:manage_data`, which vouches for `user:write`, still can't use a route that requires `user:write` itself.
+  - A vouch can't name a control-plane capability, and it isn't transitive: an action allowed through a vouch vouches for nothing further.
+
 - `scope kind`
   - A catalog-declared type of resource inside a tenant, such as `project`, `folder`, or `site`.
 
@@ -395,6 +401,15 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `decision`
   - The outcome of evaluating requirements against an access token, its session, and an entitlement set: `allow`, `deny`, or a step-up demand.
 
+- `route decision`
+  - The decision a relying system makes for an operation's own requirements, which it marks as such when it decides an accepted presentation, such as the one decision of a route policy (`item.axum.single-decision`). Decisions made afterwards for the same request, such as per GraphQL field, are not route decisions.
+
+- `route authority`
+  - What an allowed route decision vouches for: the vouched actions of the vouching actions it required, each at the placement where it was required.
+  - It lasts only as long as the request's accepted presentation, and later decisions of that presentation are made with it.
+  - It covers a required action at its own placement and at every placement inside it: global covers everything, tenant-wide covers the tenant and its scopes, and a scope covers itself and the registered scopes it contains. It never covers another tenant's scope.
+  - It overrides an explicit deny of a vouched action, since the route's check is the authority for the narrower one.
+
 - `decision explanation`
   - A control-plane account of why a decision allows or denies: every check it makes, and for each required action, the policy that allows or denies it, or why nothing does.
 
@@ -475,6 +490,11 @@ Terms are introduced in dependency order: each definition only uses terms define
   - Konklav's central decision endpoint on the relying surface.
   - The relying SDK uses it when its entitlement cache cannot be trusted, for example because the change feed has lost its connection.
   - If neither the cache nor the check API is available, the relying SDK denies (`fails closed`).
+
+- `accepted presentation`
+  - A request's token, session and any DPoP proof, verified once by a relying core and held in its memory, so the request can be decided as often as it needs without checking the proof again (`relying.verify.accepted-presentation`).
+  - It is held until its proof could no longer be fresh, or until the relying system releases it once the request is answered.
+  - In Rust and Python it is `AcceptedRequest`. In axum and FastAPI, a handler decides with it through a `RequestDecider`.
 
 - `read-your-writes`
   - The guarantee that a relying system, after changing something in Konklav, sees that change in its next decision.

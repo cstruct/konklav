@@ -38,6 +38,21 @@ back, and sleep until `next_wakeup` or until a new event arrives.
   staleness and reset logic can be property-tested without sleeping.
 - Portability: no tokio or reqwest in the core, so it compiles to `wasm32`.
 
+## Accepted presentations and route authority
+
+A host that needs the verified token before it can state requirements, or
+that decides more than once for one request, accepts the request once
+(`accept_request`) and decides for the accepted presentation as often as
+it needs, without spending the DPoP proof again
+(`r[relying.verify.accepted-presentation]`). Exactly one of those decisions
+is the request's route decision, marked by the host with a `route` flag.
+Its allow's vouches become the presentation's route authority, and every
+later decision is made with it (`r[relying.verify.route-authority]`), both
+locally and through the check API, which the host sends it to as
+`route_authority`. The framework adapters make the route policy's decision
+the route decision, hand handlers a `RequestDecider` for the rest, and
+release the presentation once the request is answered.
+
 ## Audiences
 
 A relying system may accept tokens for more than one audience: Konklav's

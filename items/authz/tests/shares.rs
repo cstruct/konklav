@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use konklav_authz::{
     Assignment, Catalog, Confinements, Decision, DenyReason, Effect, Entitlements, Group, Level,
-    Obligation, Policy, RegisteredScopes, Requirements, Scope, ScopeRequirement, Share, compile,
-    evaluate, shared,
+    Obligation, Policy, RegisteredScopes, Requirements, RouteAuthority, Scope, ScopeRequirement,
+    Share, compile, evaluate, shared,
 };
 use konklav_core::{SessionId, ShareId, SubjectId, TenantId};
 use konklav_token::{AccessClaims, TokenKind};
@@ -24,6 +24,7 @@ fn catalog() -> Catalog {
             "document:all".to_owned(),
             Group::Actions(set(&["document:read", "document:write", "document:delete"])),
         )]),
+        vouches: BTreeMap::new(),
     }
 }
 
@@ -180,6 +181,7 @@ fn shared_scopes_are_decided_through_shares_with_obligations() {
                 id: "p-17".into(),
                 attributes: the_share.attributes.clone(),
             }],
+            vouches: RouteAuthority::default(),
         }
     );
     assert_eq!(

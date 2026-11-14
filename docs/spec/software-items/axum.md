@@ -77,7 +77,8 @@ weren't verified.
 r[item.axum.single-decision]
 A route that isn't public MUST make exactly one decision per request, for
 the accepted presentation and the requirements its merged route policy
-(`item.relying.policy.requirements`) resolves to with the request's scopes.
+(`item.relying.policy.requirements`) resolves to with the request's scopes,
+marked as the request's route decision (`relying.verify.route-authority`).
 A request that meets a second `RoutePolicy` after one has evaluated it MUST
 fail closed (`item.axum.misconfiguration`) instead of deciding again.
 
@@ -85,7 +86,9 @@ r[item.axum.request-decider]
 An allowed request MUST carry, for its handler, a request decider that
 decides further requirements for the accepted presentation
 (`relying.verify.accepted-presentation`), as the route's own decision is
-made but without checking the proof again, and that fails closed. Once the
+made but without checking the proof again and never as the route decision,
+so with the route's route authority (`relying.verify.route-authority`),
+and that fails closed. Once the
 handler has answered, the layer MUST release the presentation, so the
 request decider decides nothing after its request.
 

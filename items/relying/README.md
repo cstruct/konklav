@@ -35,7 +35,8 @@ The core never makes network calls, reads clocks, spawns tasks or sleeps. Hosts 
 
 ## Public interface
 
-- `Relying::decide` returns `Outcome::Decided` or `Outcome::Need { needs }`. `decide_presented` and `verify_presented` take a `Presented` (raw headers and a `RequestDescriptor`) for DPoP; `decide` and `verify` take a bearer token. `accept_presented` verifies a `Presented` once and holds it under a `PresentationId` for one `decide_accepted`, which doesn't check the proof again.
+- `Relying::decide` returns `Outcome::Decided` or `Outcome::Need { needs }`. `decide_presented` and `verify_presented` take a `Presented` (raw headers and a `RequestDescriptor`) for DPoP; `decide` and `verify` take a bearer token. `accept_presented` verifies a `Presented` once and holds it under a `PresentationId` for `decide_accepted`, which doesn't check the proof again, until `release_accepted`.
+- `decide_accepted`'s `route` flag marks the route decision (`relying.verify.route-authority`): what its allow vouches for is kept with the presentation, and every other decision of the request is decided with it. When a decision is handed to the check API, `route_authority` gives the `route_authority` to send with it, and `on_check_accepted` records the answer, keeping a route decision's vouches as a local one's are.
 - `Verification::InvalidProof` and `DenyReason::InvalidDpopProof` mean the relying system should answer with a `WWW-Authenticate: DPoP` challenge.
 - `Relying::poll_work` returns the fetches due and when to poll next.
 - `on_jwks`, `on_session`, `on_session_unknown`, `on_entitlements`, `on_registered_scope`, `on_registered_scope_unknown`, `on_fetch_failed`, `on_feed_connected`, `on_feed_activity`, `on_feed_lost`, `on_feed_event` (which returns an `ErasureNotice` when the relying system must hear of an erasure), `await_cursor`.

@@ -98,7 +98,8 @@ r[item.py-fastapi.single-decision]
 A route that isn't public MUST then make exactly one decision per request,
 with `decide_accepted_typed` for the accepted presentation and the
 requirements of the route's merged policy (`item.py.policy.requirements`)
-with the request's scope ids. The request's one DPoP proof is checked when
+with the request's scope ids, marked as the request's route decision
+(`route=True`, `relying.verify.route-authority`). The request's one DPoP proof is checked when
 it is accepted, and not again (`relying.verify.accepted-presentation`).
 
 r[item.py-fastapi.scope-resolvers]
@@ -203,12 +204,24 @@ evaluation, so no handler receives a token its route's policy hasn't
 allowed. On a public route, `OptionalToken` MUST verify a presented token
 with `verify_request_typed` and run the hooks, and refuse an invalid one.
 
+r[item.py-fastapi.request-decider]
+The package MUST offer a `RequestDecider` dependency, which depends on the
+route's evaluation as the injected tokens do, so only an allowed request
+gets one. It MUST decide further requirements for the request's accepted
+presentation with `decide_accepted` and `decide_accepted_typed`, never as
+the route decision, so with the route's route authority
+(`relying.verify.route-authority`), and like them fail closed. Once the
+handler has answered, and when the route's evaluation refuses the request,
+the package MUST release the presentation (`release_accepted`), so a
+request decider decides nothing after its request, whether or not the
+route injects one.
+
 r[item.py-fastapi.injected-kinds]
 Startup validation MUST refuse a route that injects a token dependency
 whose accepted token kinds don't include every kind the route's policy
 admits (its `token_kinds`, or only `tenant` when unset, Konklav's default),
 and a route with a public policy that injects any token dependency other
-than `OptionalToken`.
+than `OptionalToken`, or a `RequestDecider`.
 
 ## Pacing
 

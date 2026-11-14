@@ -10,17 +10,20 @@ mod compile;
 mod evaluate;
 mod explain;
 mod model;
+mod route_authority;
 
 pub use compile::{compile, shared};
 pub use evaluate::{
     Decision, DenyReason, Obligation, Requirements, ScopeRequirement, StepUp, evaluate,
+    evaluate_with_route_authority,
 };
 pub use explain::{
     ActionExplanation, Check, Contribution, DecisionExplanation, ExplainInput, Explanation, Reason,
-    SessionContext, explain, explain_decision,
+    RouteExplanation, SessionContext, explain, explain_decision,
 };
 pub use model::{
     Assignment, Catalog, Confinement, Confinements, Effect, EntitlementSet, Entitlements, Group,
     Level, Policy, RegisteredScopes, Registration, Scope, Share, Shared, describe_predicates,
     failing_predicate,
 };
+pub use route_authority::{RouteAuthority, VouchedScope};

@@ -23,6 +23,7 @@ fn catalog() -> Catalog {
     Catalog {
         actions: set(&["document:read", "document:write"]),
         groups: BTreeMap::new(),
+        vouches: BTreeMap::new(),
     }
 }
 
@@ -74,6 +75,7 @@ fn explain(assignments: &[Assignment], requirements: &Requirements) -> DecisionE
             tenant: Some(TenantId::new_v7()),
             tenant_facts: &std::collections::BTreeMap::new(),
             session: None,
+            route: None,
             now: NOW,
         },
         vec![],
@@ -243,6 +245,7 @@ fn session_checks_explain_authentication() {
                 confinements: &Confinements::default(),
                 current: true,
             }),
+            route: None,
             now: NOW,
         },
         vec![Check::new("subject_active", true, "The subject is active.")],
@@ -302,6 +305,7 @@ fn shares_explain_what_they_do_and_dont_grant() {
                 tenant: Some(tenant),
                 tenant_facts: &std::collections::BTreeMap::new(),
                 session: None,
+                route: None,
                 now: NOW,
             },
             vec![],
@@ -445,6 +449,7 @@ fn explanations_agree_with_decisions() {
                         confinements: &Confinements::default(),
                         current: true,
                     }),
+                    route: None,
                     now: NOW,
                 },
                 vec![],

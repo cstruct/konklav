@@ -13,10 +13,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::compile::{Placement, beats, effective_policies};
 use crate::evaluate::step_up_satisfied;
+use crate::route_authority::vouched_by;
 use crate::{
     Assignment, Catalog, Confinements, Decision, DenyReason, Effect, Entitlements,
-    RegisteredScopes, Registration, Requirements, Scope, Share, compile, describe_predicates,
-    evaluate, failing_predicate, shared,
+    RegisteredScopes, Registration, Requirements, RouteAuthority, Scope, Share, compile,
+    describe_predicates, evaluate_with_route_authority, failing_predicate, shared,
 };
 
 /// One policy that bears on an action, and where it lands.
@@ -200,11 +201,27 @@ pub enum Reason {
         #[cfg_attr(feature = "openapi", schema(no_recursion))]
         held: Box<Reason>,
     },
+    /// The route decision's route authority covers it, whatever the
+    /// subject holds.
+    #[cfg_attr(feature = "openapi", schema(title = "ReasonVouched"))]
+    Vouched {
+        /// The vouching action the route required.
+        vouching: String,
+        /// Where the route required it: `global`, `tenant`, or
+        /// `<scope kind>/<scope id>`.
+        at: String,
+        /// Why it would be granted or not without the route authority.
+        #[cfg_attr(feature = "openapi", schema(no_recursion))]
+        held: Box<Reason>,
+    },
 }
 
 impl Reason {
     fn granted(&self) -> bool {
-        matches!(self, Self::Allowed { .. } | Self::AllowedByShare { .. })
+        matches!(
+            self,
+            Self::Allowed { .. } | Self::AllowedByShare { .. } | Self::Vouched { .. }
+        )
     }
 
     fn message(&self, action: &str, level: &str) -> String {
@@ -274,6 +291,10 @@ impl Reason {
                 "Allowed through share {share} of {level}, since the subject holds `{action}` at {recipient}: {}",
                 held.message(action, recipient)
             ),
+            Self::Vouched { vouching, at, held } => format!(
+                "Allowed through route authority: the route required `{vouching}` at {at}, which vouches for `{action}`. Without it: {}",
+                held.message(action, level)
+            ),
         }
     }
 }
@@ -314,6 +335,26 @@ pub struct DecisionExplanation {
     pub allowed: bool,
     pub checks: Vec<Check>,
     pub actions: Vec<ActionExplanation>,
+    /// The route decision, when explaining a later decision of a request
+    /// with the route's requirements.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<RouteExplanation>,
+}
+
+/// The route decision a later decision is explained with, and the route
+/// authority it gives.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct RouteExplanation {
+    /// Whether the route decision allows; one that doesn't vouches for
+    /// nothing.
+    pub allowed: bool,
+    pub message: String,
+    /// What the route decision vouches for.
+    pub vouches: RouteAuthority,
+    /// Why the route decision allows or denies.
+    #[cfg_attr(feature = "openapi", schema(no_recursion))]
+    pub explanation: Box<DecisionExplanation>,
 }
 
 /// The session a decision is explained for.
@@ -349,6 +390,10 @@ pub struct ExplainInput<'a> {
     /// decided from; empty without a tenant.
     pub tenant_facts: &'a BTreeMap<String, serde_json::Value>,
     pub session: Option<SessionContext<'a>>,
+    /// The route's requirements, when explaining a later decision of a
+    /// request, made with the route authority they vouch for; `None` for a
+    /// route decision. The registered scopes they name are in `registered`.
+    pub route: Option<&'a Requirements>,
     /// Unix seconds.
     pub now: i64,
 }
@@ -813,6 +858,7 @@ fn action_explanations(
     input: &ExplainInput<'_>,
     compiled: &Entitlements,
     tenant: Option<TenantId>,
+    authority: &RouteAuthority,
 ) -> Vec<ActionExplanation> {
     let requirements = input.requirements;
     let mut actions = Vec::new();
@@ -830,6 +876,17 @@ fn action_explanations(
             (false, None) => "tenant".to_owned(),
             (false, Some(scope)) => format!("{}/{}", scope.kind, scope.id),
         };
+        let covered = match (global_only, scope) {
+            (true, _) => authority.covers_global(action),
+            (false, None) => authority.covers_tenant(action),
+            (false, Some(scope)) => authority.covers_scope(action, scope, None, tenant.is_some()),
+        };
+        let target = Target {
+            global_only,
+            scope,
+            record: None,
+        };
+        let reason = vouched(input, compiled, action, covered, &target, reason);
         ActionExplanation {
             action: action.to_owned(),
             message: reason.message(action, &level),
@@ -857,7 +914,7 @@ fn action_explanations(
             if let Some(record) = record {
                 for action in &required.actions {
                     actions.push(registered_explanation(
-                        input, compiled, tenant, record, action,
+                        input, compiled, tenant, authority, record, action,
                     ));
                 }
             }
@@ -894,6 +951,7 @@ fn registered_explanation(
     input: &ExplainInput<'_>,
     compiled: &Entitlements,
     tenant: Option<TenantId>,
+    authority: &RouteAuthority,
     record: &Registration,
     action: &str,
 ) -> ActionExplanation {
@@ -939,6 +997,13 @@ fn registered_explanation(
     // Without a grant, the most specific candidate explains best.
     let chosen = first_granted.unwrap_or(candidates.len().min(2) - 1);
     let (name, (reason, contributions)) = candidates.swap_remove(chosen);
+    let covered = authority.covers_scope(action, &scope, Some(record), own_tenant);
+    let target = Target {
+        global_only: false,
+        scope: Some(&scope),
+        record: Some(record),
+    };
+    let reason = vouched(input, compiled, action, covered, &target, reason);
     ActionExplanation {
         action: action.to_owned(),
         message: reason.message(action, &name),
@@ -947,6 +1012,123 @@ fn registered_explanation(
         owner_tenant: (!own_tenant).then_some(record.tenant),
         reason,
         contributions,
+    }
+}
+
+/// Where a required action is required: globally only, tenant-wide, or at
+/// a scope with its registered record.
+struct Target<'a> {
+    global_only: bool,
+    scope: Option<&'a Scope>,
+    record: Option<&'a Registration>,
+}
+
+/// `reason`, or when the route authority covers the action and `reason`
+/// doesn't grant it, the vouch that does, naming the vouching action the
+/// route required and where.
+// r[impl authz.explain.route-authority]
+fn vouched(
+    input: &ExplainInput<'_>,
+    compiled: &Entitlements,
+    action: &str,
+    covered: bool,
+    target: &Target<'_>,
+    reason: Reason,
+) -> Reason {
+    if !covered || reason.granted() {
+        return reason;
+    }
+    let Some(route) = input.route else {
+        return reason;
+    };
+    let vouches = |vouching: &String| {
+        compiled
+            .vouches
+            .get(vouching)
+            .is_some_and(|vouched| vouched.contains(action))
+    };
+    let mut found = route
+        .global
+        .iter()
+        .find(|a| vouches(a))
+        .map(|a| (a.clone(), "global".to_owned()));
+    if found.is_none() && !target.global_only {
+        found = route
+            .tenant
+            .iter()
+            .find(|a| vouches(a))
+            .map(|a| (a.clone(), "tenant".to_owned()));
+    }
+    if found.is_none()
+        && let Some(scope) = target.scope
+    {
+        let covers = |at: &Scope| {
+            at == scope
+                || target
+                    .record
+                    .is_some_and(|record| record.containers.contains(at))
+        };
+        found = route.scopes.iter().find_map(|required| {
+            let at = Scope {
+                kind: required.kind.clone(),
+                id: required.id.clone(),
+            };
+            let vouching = required.actions.iter().find(|a| vouches(a))?;
+            covers(&at).then(|| (vouching.clone(), format!("{}/{}", at.kind, at.id)))
+        });
+    }
+    let Some((vouching, at)) = found else {
+        return reason;
+    };
+    Reason::Vouched {
+        vouching,
+        at,
+        held: Box::new(reason),
+    }
+}
+
+/// The route decision `route` is explained with, and the route authority
+/// it gives.
+// r[impl authz.explain.route-authority]
+fn route_explanation(
+    input: &ExplainInput<'_>,
+    route: &Requirements,
+    compiled: &Entitlements,
+    tenant: Option<TenantId>,
+    checks: Vec<Check>,
+) -> RouteExplanation {
+    let explanation = explain_decision(
+        &ExplainInput {
+            requirements: route,
+            route: None,
+            session: input.session.as_ref().map(|session| SessionContext {
+                claims: session.claims,
+                restrictive_flags: session.restrictive_flags,
+                confinements: session.confinements,
+                current: session.current,
+            }),
+            ..*input
+        },
+        checks,
+    );
+    let vouches = if explanation.allowed {
+        vouched_by(route, tenant, compiled, input.registered)
+    } else {
+        RouteAuthority::default()
+    };
+    let message = if !explanation.allowed {
+        "The route decision doesn't allow, so it vouches for nothing.".to_owned()
+    } else if vouches.is_empty() {
+        "The route decision allows, but vouches for nothing.".to_owned()
+    } else {
+        "The route decision allows, and vouches for actions later decisions of its request require."
+            .to_owned()
+    };
+    RouteExplanation {
+        allowed: explanation.allowed,
+        message,
+        vouches,
+        explanation: Box::new(explanation),
     }
 }
 
@@ -964,13 +1146,20 @@ pub fn explain_decision(input: &ExplainInput<'_>, checks: Vec<Check>) -> Decisio
         .session
         .as_ref()
         .map_or(input.tenant, |session| session.claims.tid);
+    let route = input
+        .route
+        .map(|route| route_explanation(input, route, &compiled, tenant, checks.clone()));
+    let authority = route
+        .as_ref()
+        .map_or_else(RouteAuthority::default, |route| route.vouches.clone());
     let checks = decision_checks(input, tenant, checks);
-    let actions = action_explanations(input, &compiled, tenant);
+    let actions = action_explanations(input, &compiled, tenant, &authority);
 
     let decision = input.session.as_ref().map(|session| {
         if session.current {
-            evaluate(
+            evaluate_with_route_authority(
                 requirements,
+                route.as_ref().map(|_| &authority),
                 session.claims,
                 session.restrictive_flags,
                 session.confinements,
@@ -991,5 +1180,6 @@ pub fn explain_decision(input: &ExplainInput<'_>, checks: Vec<Check>) -> Decisio
         allowed,
         checks,
         actions,
+        route,
     }
 }
