@@ -1224,7 +1224,7 @@ dependencies = [
  "downcast-rs",
  "itoa",
  "serde_json",
- "uuid",
+ "uuid 0.8.2",
 ]
 
 [[package]]
@@ -2672,7 +2672,7 @@ dependencies = [
  "serde",
  "serde_json",
  "utoipa",
- "uuid",
+ "uuid 1.29.3",
 ]
 
 [[package]]
@@ -2725,7 +2725,7 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
- "uuid",
+ "uuid 1.29.3",
 ]
 
 [[package]]
@@ -2738,7 +2738,7 @@ dependencies = [
  "facet-styx",
  "facet-value",
  "serde_json",
- "uuid",
+ "uuid 1.29.3",
 ]
 
 [[package]]
@@ -2766,7 +2766,7 @@ dependencies = [
  "serde",
  "serde_json",
  "utoipa",
- "uuid",
+ "uuid 1.29.3",
 ]
 
 [[package]]
@@ -2790,7 +2790,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "uuid",
+ "uuid 1.29.3",
 ]
 
 [[package]]
@@ -2832,7 +2832,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
- "uuid",
+ "uuid 1.29.3",
 ]
 
 [[package]]
@@ -2890,7 +2890,7 @@ dependencies = [
  "tracing-subscriber",
  "utoipa",
  "utoipa-axum",
- "uuid",
+ "uuid 1.29.3",
  "webauthn-authenticator-rs",
  "webauthn-rs",
  "webauthn-rs-proto",
@@ -2917,7 +2917,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "tokio",
- "uuid",
+ "uuid 1.29.3",
 ]
 
 [[package]]
@@ -2936,7 +2936,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
- "uuid",
+ "uuid 1.29.3",
 ]
 
 [[package]]
@@ -2951,7 +2951,7 @@ dependencies = [
  "p256",
  "serde_json",
  "tokio",
- "uuid",
+ "uuid 1.29.3",
 ]
 
 [[package]]
@@ -3099,7 +3099,7 @@ dependencies = [
  "rustc_version",
  "server_fn_macro",
  "syn 3.0.9",
- "uuid",
+ "uuid 1.29.3",
 ]
 
 [[package]]
@@ -6204,14 +6204,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
- "uuid",
+ "uuid 1.29.3",
 ]
 
 [[package]]
 name = "uuid"
-version = "1.29.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a0e2d11620c50695fe12bbbfde96b3477fe606e7284c22d505c12ce51214514"
+checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
+
+[[package]]
+name = "uuid"
+version = "1.29.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c14b15dffa2f4bd712103e857140aa04a4f2ff6e955c77d7eb8e53ee02a3b64"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
@@ -6428,7 +6434,7 @@ dependencies = [
  "openssl-sys",
  "serde",
  "tracing",
- "uuid",
+ "uuid 1.29.3",
 ]
 
 [[package]]
@@ -6459,7 +6465,7 @@ dependencies = [
  "tracing",
  "unicode-normalization",
  "url",
- "uuid",
+ "uuid 1.29.3",
  "webauthn-rs-core",
  "webauthn-rs-proto",
 ]
@@ -6474,7 +6480,7 @@ dependencies = [
  "serde",
  "tracing",
  "url",
- "uuid",
+ "uuid 1.29.3",
  "webauthn-rs-core",
 ]
 
@@ -6499,7 +6505,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "url",
- "uuid",
+ "uuid 1.29.3",
  "webauthn-attestation-ca",
  "webauthn-rs-proto",
  "x509-parser",
