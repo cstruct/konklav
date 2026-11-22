@@ -333,7 +333,9 @@ struct TotpEnrollment {
     uri: String,
 }
 
-/// `POST /v1/mfa/totp`: registers an inactive TOTP factor.
+/// `POST /v1/mfa/totp`: registers an inactive TOTP factor, its seed bound
+/// to it.
+// r[impl credential.mfa-seed.bound]
 async fn enroll_totp(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -341,13 +343,15 @@ async fn enroll_totp(
     let mut conn = state.pool.get().await?;
     let session = recent_own_session(&state, &mut conn, &headers).await?;
     let seed = TotpSecret::generate();
+    let id = uuid::Uuid::now_v7();
     let sealed = state
         .auth
         .secrets
-        .encrypt(seed.as_bytes())
+        .encrypt_bound(&mfa::totp_binding(id, session.subject_id), seed.as_bytes())
         .map_err(ApiError::internal)?;
-    let factor = mfa::create(
+    let factor = mfa::create_with_id(
         &mut conn,
+        id,
         session.subject_id,
         &FactorData::Totp(TotpData {
             key_id: sealed.key_id,
@@ -479,14 +483,15 @@ async fn verify_totp_locked(
             )));
         }
     }
+    let sealed = konklav_authn::EncryptedSecret {
+        key_id: data.key_id.clone(),
+        nonce: data.nonce.clone(),
+        ciphertext: data.ciphertext.clone(),
+    };
     let seed = state
         .auth
         .secrets
-        .decrypt(&konklav_authn::EncryptedSecret {
-            key_id: data.key_id.clone(),
-            nonce: data.nonce.clone(),
-            ciphertext: data.ciphertext.clone(),
-        })
+        .decrypt_bound(&factor.totp_binding(), &sealed)
         .map_err(ApiError::internal)?;
     let step = verify_totp(
         &TotpSecret::from_bytes(seed),

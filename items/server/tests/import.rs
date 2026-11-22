@@ -500,6 +500,61 @@ async fn importing_a_subject_as_disabled_ends_its_sessions() {
 
 // r[verify credential.mfa-seed.bound]
 #[tokio::test(flavor = "multi_thread")]
+async fn a_totp_seed_copied_to_another_subjects_factor_proves_nothing() {
+    use konklav_store::mfa::{self, FactorData};
+
+    let app = TestApp::new().await;
+    let ada = app.human("ada@example.com", "correct horse battery").await;
+    let eve = app.human("eve@example.com", "correct horse battery").await;
+    let (ada_factor, eve_factor) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+    let eve_seed = TotpSecret::generate();
+    let reply = app
+        .control(
+            Method::POST,
+            "/v1/import/mfa-factors",
+            Some(json!({"factors": [
+                {"id": ada_factor, "subject": ada, "kind": "totp",
+                 "seed_base32": TotpSecret::generate().to_base32()},
+                {"id": eve_factor, "subject": eve, "kind": "totp",
+                 "seed_base32": eve_seed.to_base32()},
+            ]})),
+        )
+        .await;
+    assert_eq!(reply.body["imported"], 2, "{:?}", reply.body);
+
+    // Eve, writing to the database, puts her seed on Ada's factor.
+    let mut conn = app.db.pool().get().await.unwrap();
+    let hers = mfa::get(&mut conn, eve.parse().unwrap(), eve_factor)
+        .await
+        .unwrap();
+    let FactorData::Totp(data) = &hers.data else {
+        panic!("a TOTP factor");
+    };
+    assert!(data.ciphertext.starts_with("b1:"), "the seed is bound");
+    mfa::set_data(&mut conn, ada_factor, &hers.data)
+        .await
+        .unwrap();
+
+    let step_up = async |email: &str, factor: uuid::Uuid| {
+        let login = app.login(email, "correct horse battery").await;
+        let auth = format!("Bearer {}", login.body["access_token"].as_str().unwrap());
+        let code = eve_seed.code_at_step(chrono::Utc::now().timestamp() / 30);
+        app.send(
+            Method::POST,
+            "/v1/step-up",
+            &[("authorization", &auth)],
+            Some(json!({"factor_id": factor, "code": code})),
+        )
+        .await
+    };
+    let as_ada = step_up("ada@example.com", ada_factor).await;
+    assert_ne!(as_ada.status, StatusCode::OK, "{:?}", as_ada.body);
+    let as_eve = step_up("eve@example.com", eve_factor).await;
+    assert_eq!(as_eve.status, StatusCode::OK, "{:?}", as_eve.body);
+}
+
+// r[verify credential.mfa-seed.bound]
+#[tokio::test(flavor = "multi_thread")]
 async fn a_bound_totp_seed_moved_to_another_factor_does_not_decrypt() {
     use konklav_authn::{EncryptedSecret, EncryptionError};
     use konklav_store::mfa::{self, FactorData, TotpData};

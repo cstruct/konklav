@@ -155,7 +155,12 @@ async fn import_factors(
 ) -> Result<Json<Imported>, ApiError> {
     let mut prepared = Vec::with_capacity(body.factors.len());
     for record in body.factors.into_iter().map(transport::factor_record) {
-        let data = import::seal_factor(&state.auth.secrets, record.id, record.material)?;
+        let data = import::seal_factor(
+            &state.auth.secrets,
+            record.id,
+            record.subject,
+            record.material,
+        )?;
         prepared.push((record.id, record.subject, data, record.active));
     }
     let mut conn = db.get().await?;

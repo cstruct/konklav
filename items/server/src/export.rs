@@ -324,12 +324,13 @@ async fn people(
 fn factor_row(factor: &Factor, secrets: &SecretBox) -> Result<Vec<String>, ExportError> {
     let (kind, seed, email) = match &factor.data {
         FactorData::Totp(data) => {
+            let sealed = EncryptedSecret {
+                key_id: data.key_id.clone(),
+                nonce: data.nonce.clone(),
+                ciphertext: data.ciphertext.clone(),
+            };
             let seed = secrets
-                .decrypt(&EncryptedSecret {
-                    key_id: data.key_id.clone(),
-                    nonce: data.nonce.clone(),
-                    ciphertext: data.ciphertext.clone(),
-                })
+                .decrypt_bound(&factor.totp_binding(), &sealed)
                 .map_err(|error| ExportError::Seed {
                     factor: factor.id,
                     message: error.to_string(),

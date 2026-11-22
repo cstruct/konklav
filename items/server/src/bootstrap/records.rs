@@ -541,7 +541,7 @@ pub(super) async fn factor(
                 }
             }
             Err(StoreError::NotFound) => {
-                let data = import::seal_factor(context.secrets, id, material)?;
+                let data = import::seal_factor(context.secrets, id, subject, material)?;
                 match import::factor(conn, id, subject, &data, wanted.active).await? {
                     Outcome::Created => Ok(Outcome::Created),
                     _ => Err(conflict(format!(

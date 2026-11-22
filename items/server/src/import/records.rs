@@ -235,12 +235,14 @@ pub(crate) fn decode_base32(input: &str) -> Option<Vec<u8>> {
 }
 
 /// A factor ready to store: TOTP seeds are encrypted with Konklav's current
-/// key. Separate from [`factor`] so encryption happens before a transaction
-/// opens.
+/// key, bound to the factor and its subject. Separate from [`factor`] so
+/// encryption happens before a transaction opens.
 // r[impl import.mfa]
+// r[impl credential.mfa-seed.bound]
 pub(crate) fn seal_factor(
     secrets: &SecretBox,
     id: uuid::Uuid,
+    subject: SubjectId,
     material: FactorMaterial,
 ) -> Result<FactorData, ApiError> {
     Ok(match material {
@@ -251,7 +253,7 @@ pub(crate) fn seal_factor(
                     ApiError::invalid_request(format!("factor {id}: invalid base32 seed"))
                 })?;
             let sealed = secrets
-                .encrypt(&seed)
+                .encrypt_bound(&mfa::totp_binding(id, subject), &seed)
                 .map_err(|e| ApiError::invalid_request(e.to_string()))?;
             FactorData::Totp(TotpData {
                 key_id: sealed.key_id,

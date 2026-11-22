@@ -36,6 +36,24 @@ a migration that extends `kind` and `credential_data_schema`, with no new
 table, view or join. The schemas mirror the serde types in
 `konklav-store`'s `credentials` module, and the two must change together.
 
+## TOTP seeds bound to their factor
+
+A TOTP factor's `data` holds the seed's `key_id`, `nonce` and `ciphertext`
+(AES-256-GCM). The seed is encrypted with the factor's id and its subject's
+id as associated data (`mfa::totp_binding`), so a ciphertext copied to
+another factor's row, or a row given to another subject, fails to decrypt
+(`r[credential.mfa-seed.bound]`). A bound ciphertext is stored as `b1:`
+followed by its base64, and is only ever opened with its binding. A
+ciphertext without the prefix is from before seeds were bound and opens as
+it always did; there is no re-encryption job, so it stays that way until
+the factor is enrolled or imported again.
+
+The mark is a prefix rather than a field because the factor data's JSON
+Schema allows no further properties, so a field would need a migration, and
+it adds nothing a field would: whoever can write the row can change either,
+and neither a bound ciphertext without its mark nor an unbound one with it
+decrypts.
+
 ## Shape
 
 - Ordinary mutable tables with `created_at` and `updated_at`. Bitemporal
