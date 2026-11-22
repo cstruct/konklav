@@ -26,6 +26,7 @@ the handler has answered.
 from __future__ import annotations
 
 import ipaddress
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from contextlib import asynccontextmanager
@@ -34,6 +35,7 @@ from functools import cache
 from typing import Annotated, Any, ClassVar, Literal, Self, Unpack, cast
 
 from fastapi import FastAPI
+from fastapi.datastructures import URL
 from fastapi.params import Depends
 from fastapi.requests import HTTPConnection
 from fastapi.websockets import WebSocket
@@ -79,6 +81,8 @@ __all__ = [
     "TenantToken",
     "TokenHook",
 ]
+
+_log = logging.getLogger(__name__)
 
 TOKEN_KINDS = frozenset({"partial", "identity", "tenant", "reset_password", "invite"})
 """Every token kind Konklav issues."""
@@ -296,11 +300,12 @@ def _canonical(address: str) -> str:
         return address
 
 
-def _url(connection: HTTPConnection) -> str:
+def _own_url(connection: HTTPConnection) -> URL:
+    """The URL the connection names for itself: its `Host` header is the client's choice."""
     url = connection.url
     if url.scheme in ("ws", "wss"):
         url = url.replace(scheme="https" if url.scheme == "wss" else "http")
-    return str(url)
+    return url
 
 
 @dataclass(kw_only=True)
@@ -320,8 +325,27 @@ class KonklavRoutes:
     """Run in order on every verified token."""
     cookie: Callable[[HTTPConnection], str | None] | None = None
     """Reads the token from a cookie, for requests without an `Authorization` header."""
+    public_origin: str | Sequence[str] | None = None
+    """
+    The origin clients address this application at, such as
+    `https://api.example`: DPoP proofs are checked against it and the
+    request's path. Of several, the request's `Host` chooses, the first when
+    it names none. Without it or `public_url`, every DPoP proof is refused.
+    """
     public_url: Callable[[HTTPConnection], str] | None = None
-    """The URL the client addressed, behind a proxy; DPoP proofs are checked against it."""
+    """
+    The URL the client addressed, when `public_origin` can't say it, such as
+    behind a proxy that rewrites paths. It must not build the URL's origin
+    from the request's `Host` or forwarded headers, which the client chooses.
+    """
+    trust_host_header: bool = False
+    """
+    Checks DPoP proofs against the request's own URL, so its `Host` header,
+    when neither `public_origin` nor `public_url` is set. The client chooses
+    it, so a proof made for another server that takes the same tokens passes
+    here when the client can address this one by that server's name: only
+    for tests, or behind a proxy that refuses every other `Host`.
+    """
     trusted_proxies: Sequence[str] = ()
     """
     Proxies' addresses or networks, such as `10.0.0.0/8`: behind one, the
@@ -330,8 +354,11 @@ class KonklavRoutes:
 
     _owners: dict[int, tuple[Any, Any]] = field(default_factory=dict, init=False, repr=False)
     _trusted: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = field(default=(), init=False, repr=False)
+    _origins: tuple[URL, ...] = field(default=(), init=False, repr=False)
 
     def __post_init__(self) -> None:
+        origins = [self.public_origin] if isinstance(self.public_origin, str) else list(self.public_origin or ())
+        self._origins = tuple(URL(origin.rstrip("/")) for origin in origins)
         self._trusted = tuple(ipaddress.ip_network(proxy, strict=False) for proxy in self.trusted_proxies)
 
     STATE_ATTRIBUTE: ClassVar[str] = "konklav_routes"
@@ -538,8 +565,30 @@ class KonklavRoutes:
             return None
         return _Presented(f"{'DPoP' if dpop else 'Bearer'} {token}", dpop, token)
 
+    # r[impl item.py-fastapi.proof-url]
     def _url(self, connection: HTTPConnection) -> str:
-        return self.public_url(connection) if self.public_url is not None else _url(connection)
+        """
+        The URL a DPoP proof must name, from configuration: the public-URL
+        hook's, else a public origin with the request's path. Empty when
+        neither is configured, unless `trust_host_header`: the relying core
+        then refuses any proof.
+        """
+        if self.public_url is not None:
+            return self.public_url(connection)
+        own = _own_url(connection)
+        if self._origins:
+            # The request only chooses among the configured origins.
+            named = own.netloc.lower()
+            origin = next((origin for origin in self._origins if origin.netloc.lower() == named), self._origins[0])
+            return str(own.replace(scheme=origin.scheme, netloc=origin.netloc))
+        if self.trust_host_header:
+            return str(own)
+        if "dpop" in connection.headers:
+            _log.error(
+                "a DPoP proof was presented but no public origin is configured "
+                "(KonklavRoutes(public_origin=...)); refusing it"
+            )
+        return ""
 
     def _client(self) -> RelyingClient:
         if self.client is None:

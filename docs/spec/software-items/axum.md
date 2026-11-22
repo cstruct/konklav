@@ -28,7 +28,8 @@ r[item.axum.configuration]
 `Konklav` MUST hold what evaluating route policies needs from the
 application: the relying host, a scope resolver per scope kind, an optional
 route-tenant resolver, hooks run on every verified token, an optional cookie
-hook, the public URL behind a proxy, trusted proxies and an optional answer
+hook, the public origins or the public-URL hook DPoP proofs are checked
+against (`item.axum.proof-url`), trusted proxies and an optional answer
 for outcomes (`item.axum.respond-with`). The application MUST install it
 once on its router, as a request extension. A route policy evaluated
 without it MUST fail closed (`item.axum.misconfiguration`).
@@ -76,11 +77,23 @@ r[item.axum.verify-then-decide]
 A route that isn't public MUST accept the request's presentation once
 (`relying.verify.accepted-presentation`) with the presented `Authorization`
 and `DPoP` values, the request's method (`GET` for a websocket upgrade) and
-its URL as the client addressed it: the public-URL hook's, else the
-request's own scheme and authority, else `http://` and its `Host` header.
+its URL as the client addressed it (`item.axum.proof-url`).
 Only then, in this order, MUST it run the hooks, check the route tenant,
 resolve the scopes and decide, so no application code sees claims that
 weren't verified.
+
+r[item.axum.proof-url]
+The URL a DPoP proof is checked against MUST come from the application's
+configuration, never from what the request says of its own origin, as for
+Konklav's own endpoints (`oidc.provider.dpop.htu`): the public-URL hook's
+answer, else a configured public origin followed by the path the client
+addressed. With several public origins configured, the request's authority
+or `Host` header MUST only choose among them, the first when it names none
+of them. With neither a hook nor an origin, the presentation MUST be
+accepted without a URL, so that the relying core refuses any DPoP proof
+(`relying.verify.dpop`), and an error MUST be logged. Only an application
+that asks for it (`trust_host_header`) MUST get the request's own scheme
+and authority, else `http://` and its `Host` header.
 
 r[item.axum.single-decision]
 A route that isn't public MUST make exactly one decision per request, for

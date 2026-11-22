@@ -137,6 +137,7 @@ def tenant_token(world: World, tenant: str, key: DpopKey | None = None) -> str:
 
 def app_for(world: World, verified: list[AccessToken]) -> FastAPI:
     routes = KonklavRoutes(
+        public_origin=URL,
         route_tenant=route_tenant,
         on_verified=[lambda _, token: remember(verified, token)],
     )

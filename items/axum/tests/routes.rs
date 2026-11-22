@@ -12,9 +12,9 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use konklav_authz::{Decision, DenyReason, StepUp};
 use konklav_axum::{
-    CurrentToken, Denied, IdentityToken, Konklav, OptionalToken, Policy, PolicyError,
-    RequestDecider, ResolvedScope, RoutePolicy, RoutePolicyError, RouterPolicy, TenantToken,
-    path_param,
+    CurrentToken, Denied, IdentityToken, Konklav, KonklavBuilder, OptionalToken, Policy,
+    PolicyError, RequestDecider, ResolvedScope, RoutePolicy, RoutePolicyError, RouterPolicy,
+    TenantToken, path_param,
 };
 use konklav_core::TenantId;
 use konklav_relying_client::Error;
@@ -27,7 +27,10 @@ fn app(konklav: &Konklav, routes: Router) -> Router {
 }
 
 fn konklav(host: &Arc<FakeHost>) -> Konklav {
-    Konklav::builder(host.clone()).build().unwrap()
+    Konklav::builder(host.clone())
+        .public_origin("http://api.example")
+        .build()
+        .unwrap()
 }
 
 fn strings(values: &[&str]) -> BTreeSet<String> {
@@ -162,6 +165,7 @@ async fn public_routes_read_no_token() {
 async fn tokens_come_from_the_header_the_cookie_hook_or_a_websockets_query() {
     let host = FakeHost::allowing();
     let konklav = Konklav::builder(host.clone())
+        .public_origin("http://api.example")
         .cookie(|parts| {
             parts
                 .headers
@@ -385,26 +389,69 @@ async fn a_presentation_is_released_when_its_handler_panics_or_is_dropped() {
     assert_eq!(host.accepted().len(), 2);
 }
 
-#[tokio::test]
-async fn proofs_are_checked_against_the_public_url() {
+/// The URL a DPoP request for `/things`, sent with `host_header`, is
+/// presented with under the configuration `configure` makes.
+async fn proof_url(
+    configure: impl FnOnce(KonklavBuilder) -> KonklavBuilder,
+    host_header: &str,
+) -> Option<String> {
     let host = FakeHost::allowing();
-    let konklav = Konklav::builder(host.clone())
-        .public_url(|parts| format!("https://public.example{}", parts.uri.path()))
-        .build()
-        .unwrap();
+    let konklav = configure(Konklav::builder(host.clone())).build().unwrap();
+    let policy = RoutePolicy::new(&Policy::new()).unwrap();
     let app = app(
         &konklav,
-        Router::new().route(
-            "/things",
-            axum::routing::post(ok).route_layer(RoutePolicy::new(&Policy::new()).unwrap()),
-        ),
+        Router::new().route("/things", axum::routing::post(ok).route_layer(policy)),
     );
-    let mut post = request("/things", &[("authorization", &bearer("tenant"))]);
+    let headers = [("authorization", "DPoP tenant"), ("dpop", "proof")];
+    let mut post = request("/things?x=1", &headers);
     *post.method_mut() = axum::http::Method::POST;
+    post.headers_mut()
+        .insert("host", host_header.parse().unwrap());
     send(&app, post).await;
-    let descriptor = host.accepted().pop().unwrap().request.unwrap();
+    let descriptor = host.accepted().pop().unwrap().request?;
     assert_eq!(descriptor.method, "POST");
-    assert_eq!(descriptor.url, "https://public.example/things");
+    Some(descriptor.url)
+}
+
+// A proof made for another server that takes the same tokens must not pass
+// here because the client named that server in `Host`.
+// r[verify item.axum.proof-url]
+#[tokio::test]
+async fn proofs_are_checked_against_the_configured_origin_not_the_host_header() {
+    assert_eq!(
+        proof_url(|builder| builder, "other.example").await,
+        None,
+        "nothing configured: no URL, so the core refuses the proof"
+    );
+
+    let origin = |builder: KonklavBuilder| builder.public_origin("https://api.example/");
+    assert_eq!(
+        proof_url(origin, "other.example").await.as_deref(),
+        Some("https://api.example/things?x=1")
+    );
+    // The request chooses only among the configured origins.
+    for (named, url) in [
+        ("APP.example:8443", "https://app.example:8443/things?x=1"),
+        ("api.example", "https://api.example/things?x=1"),
+        ("other.example", "https://api.example/things?x=1"),
+    ] {
+        let origins = |builder| origin(builder).public_origin("https://app.example:8443");
+        assert_eq!(proof_url(origins, named).await.as_deref(), Some(url));
+    }
+
+    let hook = |builder| {
+        origin(builder).public_url(|parts| format!("https://hook.example{}", parts.uri.path()))
+    };
+    assert_eq!(
+        proof_url(hook, "other.example").await.as_deref(),
+        Some("https://hook.example/things")
+    );
+    let trusting = |builder: KonklavBuilder| builder.trust_host_header();
+    assert_eq!(
+        proof_url(trusting, "other.example").await.as_deref(),
+        Some("http://other.example/things?x=1"),
+        "only when asked for"
+    );
 }
 
 fn deciding(decision: Result<Decision, Error>) -> Arc<FakeHost> {

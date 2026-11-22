@@ -22,7 +22,8 @@ rate-limit key templates, in axum's terms (layers, extractors,
   (`.layer(konklav.layer())`). It holds the relying host (a started
   `RelyingClient`), a scope resolver per scope kind, an optional
   route-tenant resolver, hooks run on every verified token, an optional
-  cookie hook, the public URL behind a proxy, trusted proxies and an
+  cookie hook, the public origin DPoP proofs are checked against, trusted
+  proxies and an
   optional answer for every `Denied`.
 - Evaluation, once per request, before the handler:
   1. Take the token from the `Authorization` header, the cookie hook or, for
@@ -188,9 +189,22 @@ route requiring `user:write` still forbids a subject who doesn't hold it.
 The handler's decisions vouch for nothing further. `RelyingHost`
 implementations take the flag as `decide_accepted`'s `route` argument.
 
-The URL proofs are checked against
-is the `public_url` hook's, else the request's own scheme and authority,
-else `http://` and its `Host` header: set `public_url` behind TLS or a proxy.
+A DPoP proof names the URL it was made for, and is checked against the URL
+this application is configured with, never against the request's `Host`
+header, which the client chooses: a proof made for another server that
+takes the same tokens would pass here whenever the client could reach this
+one under that server's name. So set `public_origin` to the origin clients
+address, such as `https://api.example` (call it again for each further
+origin; the request's `Host` then only chooses among them). The proof is
+checked against that origin and the request's path. `public_url` is a hook
+for what an origin can't say, such as a proxy that rewrites paths; it must
+not read the origin from the request either.
+
+Without `public_origin` or `public_url`, every DPoP proof is refused
+(`invalid_dpop_proof`) and an error is logged; bearer tokens are unaffected.
+`trust_host_header` brings back the request's own scheme and authority, or
+`http://` and its `Host` header: use it only in tests, or behind a proxy
+that refuses every `Host` but the application's own.
 
 ### Answers
 

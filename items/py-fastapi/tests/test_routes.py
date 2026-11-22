@@ -29,7 +29,7 @@ from support import FakeClient, token
 
 
 def serve(app: FastAPI, routes: KonklavRoutes | None = None, client: FakeClient | None = None) -> TestClient:
-    routes = routes or KonklavRoutes()
+    routes = routes or KonklavRoutes(public_origin="http://testserver")
     routes.client = client or FakeClient()
     routes.install(app)
     return TestClient(app)
@@ -110,6 +110,46 @@ def test_included_websocket_routes_merge_their_layers_and_take_the_token_from_th
     assert requirements(fake) == [{"tenant": ["include", "route", "router"]}]
     assert fake.decided[0]["method"] == "GET"
     assert fake.decided[0]["url"].startswith("http://testserver/ws/live")
+
+
+# A proof made for another server that takes the same tokens must not pass
+# here because the client named that server in `Host`.
+# r[verify item.py-fastapi.proof-url]
+def test_proofs_are_checked_against_the_configured_origin_not_the_host_header() -> None:
+    def url(routes: KonklavRoutes, host: str) -> str:
+        mounted = FastAPI(dependencies=[RoutePolicy(tenant_actions={"a"})])
+
+        @mounted.post("/things")
+        async def things() -> None:
+            return None
+
+        # The proof names the whole path the client addressed.
+        app = FastAPI()
+        app.mount("/admin", mounted)
+        routes.client = FakeClient()
+        routes.install(mounted)
+        headers = {"authorization": f"DPoP {token()}", "dpop": "proof", "host": host}
+        with TestClient(app) as http:
+            assert http.post("/admin/things?x=1", headers=headers).status_code == 200
+        return str(routes.client.accepted[-1]["url"])
+
+    # Nothing configured: no URL, so the core refuses the proof.
+    assert url(KonklavRoutes(), "other.example") == ""
+    assert url(KonklavRoutes(public_origin="https://api.example/"), "other.example") == (
+        "https://api.example/admin/things?x=1"
+    )
+    # The request chooses only among the configured origins.
+    origins = ["https://api.example", "https://app.example:8443"]
+    for host, expected in [
+        ("APP.example:8443", "https://app.example:8443/admin/things?x=1"),
+        ("api.example", "https://api.example/admin/things?x=1"),
+        ("other.example", "https://api.example/admin/things?x=1"),
+    ]:
+        assert url(KonklavRoutes(public_origin=origins), host) == expected
+    hook = KonklavRoutes(public_origin=origins, public_url=lambda connection: "https://hook.example/things")
+    assert url(hook, "other.example") == "https://hook.example/things"
+    # Only when asked for.
+    assert url(KonklavRoutes(trust_host_header=True), "other.example") == "http://other.example/admin/things?x=1"
 
 
 # r[verify item.py-fastapi.token-extraction]

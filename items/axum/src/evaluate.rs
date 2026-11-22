@@ -111,23 +111,35 @@ pub(crate) fn is_websocket(parts: &Parts) -> bool {
         && lists(parts, header::UPGRADE, "websocket")
 }
 
-/// The URL the client addressed, without the public-URL hook.
+/// The path and query the client addressed.
+fn addressed_path(parts: &Parts) -> &str {
+    parts.uri.path_and_query().map_or("/", |path| path.as_str())
+}
+
+/// The authority the request names for itself: its target's, else its
+/// `Host` header. The client chooses it.
+fn named_authority(parts: &Parts) -> Option<&str> {
+    parts
+        .uri
+        .authority()
+        .map(axum::http::uri::Authority::as_str)
+        .or_else(|| {
+            parts
+                .headers
+                .get(header::HOST)
+                .and_then(|value| value.to_str().ok())
+        })
+}
+
+/// The URL the request names for itself, for `trust_host_header`.
 fn own_url(parts: &Parts) -> String {
-    let path = parts.uri.path_and_query().map_or("/", |path| path.as_str());
-    if let (Some(scheme), Some(authority)) = (parts.uri.scheme_str(), parts.uri.authority()) {
-        let scheme = match scheme {
-            "ws" => "http",
-            "wss" => "https",
-            scheme => scheme,
-        };
-        return format!("{scheme}://{authority}{path}");
-    }
-    let host = parts
-        .headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    format!("http://{host}{path}")
+    let path = addressed_path(parts);
+    let scheme = match parts.uri.scheme_str() {
+        Some("https" | "wss") if parts.uri.authority().is_some() => "https",
+        _ => "http",
+    };
+    let authority = named_authority(parts).unwrap_or_default();
+    format!("{scheme}://{authority}{path}")
 }
 
 /// An evaluation, with what holds its accepted presentation, if any, until
@@ -135,6 +147,33 @@ fn own_url(parts: &Parts) -> String {
 pub(crate) type Evaluated = (Evaluation, Option<HeldPresentation>);
 
 impl Konklav {
+    /// The URL a DPoP proof must name, from configuration: the public-URL
+    /// hook's, else a public origin with the request's path. `None` when
+    /// neither is configured, unless the application trusts the `Host`
+    /// header.
+    // r[impl item.axum.proof-url]
+    fn proof_url(&self, parts: &Parts) -> Option<String> {
+        if let Some(url) = &self.inner.public_url {
+            return Some(url(parts));
+        }
+        let origins = &self.inner.public_origins;
+        let Some(first) = origins.first() else {
+            return self.inner.trust_host_header.then(|| own_url(parts));
+        };
+        // The request only chooses among the configured origins.
+        let named = named_authority(parts);
+        let origin = origins
+            .iter()
+            .find(|origin| {
+                let authority = origin
+                    .split_once("://")
+                    .map_or("", |(_, authority)| authority);
+                named.is_some_and(|named| named.eq_ignore_ascii_case(authority))
+            })
+            .unwrap_or(first);
+        Some(format!("{origin}{}", addressed_path(parts)))
+    }
+
     /// The request's token: from `Authorization`, the cookie hook or, for
     /// websockets, the `token` query parameter.
     // r[impl item.axum.token-extraction]
@@ -148,17 +187,22 @@ impl Konklav {
         };
         let dpop = header(header::HeaderName::from_static("dpop"));
         let websocket = is_websocket(parts);
-        let request = Some(RequestDescriptor {
+        let url = self.proof_url(parts);
+        if url.is_none() && dpop.is_some() {
+            tracing::error!(
+                "a DPoP proof was presented but no public origin is configured \
+                 (KonklavBuilder::public_origin); refusing it"
+            );
+        }
+        // Without a URL the core refuses any proof.
+        let request = url.map(|url| RequestDescriptor {
             // A websocket opens with a GET.
             method: if websocket {
                 "GET".to_owned()
             } else {
                 parts.method.as_str().to_owned()
             },
-            url: match &self.inner.public_url {
-                Some(url) => url(parts),
-                None => own_url(parts),
-            },
+            url,
         });
         if let Some(authorization) = header(header::AUTHORIZATION).filter(|value| !value.is_empty())
         {

@@ -17,7 +17,7 @@ publishes it to PyPI with the other Python packages.
 - `KonklavRoutes`: the application's configuration, installed once. It holds
   the started `RelyingClient`, a scope resolver per scope kind, an optional
   route-tenant resolver, hooks run on every verified token, an optional
-  cookie hook and the public URL behind a proxy.
+  cookie hook and the public origin DPoP proofs are checked against.
 - Evaluation, per request:
   1. Merge the route's policies, outermost first, admitting flags only from
      the route's own.
@@ -167,6 +167,24 @@ resolvers only ever see that verified token. One `decide_accepted_typed`
 call then decides for the handle, rechecking the session but not the proof
 (`relying.verify.accepted-presentation`). It is the request's route
 decision.
+
+A DPoP proof names the URL it was made for, and is checked against the URL
+this application is configured with, never against the request's `Host`
+header, which the client chooses: a proof made for another server that
+takes the same tokens would pass here whenever the client could reach this
+one under that server's name. So set `public_origin` on `KonklavRoutes` to
+the origin clients address, such as `https://api.example` (or a list of
+them; the request's `Host` then only chooses among them). The proof is
+checked against that origin and the request's whole path, including a
+mount's or the server's root path. `public_url` is a hook for what an
+origin can't say, such as a proxy that rewrites paths; it must not read the
+origin from the request either.
+
+Without `public_origin` or `public_url`, every DPoP proof is refused
+(`invalid_dpop_proof`) and an error is logged; bearer tokens are unaffected.
+`trust_host_header=True` brings back the request's own URL, so its `Host`
+header: use it only in tests, or behind a proxy that refuses every `Host`
+but the application's own.
 
 ### Deciding inside a handler
 

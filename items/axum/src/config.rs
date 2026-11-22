@@ -38,6 +38,9 @@ pub(crate) struct Inner {
     pub(crate) hooks: Vec<TokenHook>,
     pub(crate) cookie: Option<Cookie>,
     pub(crate) public_url: Option<PublicUrl>,
+    /// Without a trailing slash; the first is the default.
+    pub(crate) public_origins: Vec<String>,
+    pub(crate) trust_host_header: bool,
     pub(crate) trusted_proxies: Vec<Network>,
     respond: Option<Respond>,
 }
@@ -73,6 +76,8 @@ impl Konklav {
                 hooks: Vec::new(),
                 cookie: None,
                 public_url: None,
+                public_origins: Vec::new(),
+                trust_host_header: false,
                 trusted_proxies: Vec::new(),
                 respond: None,
             },
@@ -174,12 +179,45 @@ impl KonklavBuilder {
         self
     }
 
-    /// The URL the client addressed, behind a proxy: DPoP proofs are checked
-    /// against it. Without it, the request's own scheme and authority, or
-    /// `http://` and its `Host` header.
+    /// The origin clients address this application at, such as
+    /// `https://api.example`: DPoP proofs are checked against it and the
+    /// request's path. Call it again for each further origin the
+    /// application is served at; the request's `Host` then chooses among
+    /// them, the first when it names none.
+    ///
+    /// Without an origin or [`public_url`](Self::public_url), every DPoP
+    /// proof is refused. An origin that isn't an `http(s)` one matches no
+    /// proof.
+    #[must_use]
+    pub fn public_origin(mut self, origin: impl Into<String>) -> Self {
+        let origin = origin.into();
+        self.inner
+            .public_origins
+            .push(origin.trim_end_matches('/').to_owned());
+        self
+    }
+
+    /// The URL the client addressed, when [`public_origin`](Self::public_origin)
+    /// can't say it, such as behind a proxy that rewrites paths: DPoP
+    /// proofs are checked against it. It must not build the URL's origin
+    /// from the request's `Host` or forwarded headers, which the client
+    /// chooses.
     #[must_use]
     pub fn public_url(mut self, url: impl Fn(&Parts) -> String + Send + Sync + 'static) -> Self {
         self.inner.public_url = Some(Arc::new(url));
+        self
+    }
+
+    /// Checks DPoP proofs against the request's own scheme and authority,
+    /// or `http://` and its `Host` header, when neither
+    /// [`public_origin`](Self::public_origin) nor
+    /// [`public_url`](Self::public_url) is set. The client chooses both, so
+    /// a proof made for another server that takes the same tokens passes
+    /// here when the client can address this one by that server's name:
+    /// only for tests, or behind a proxy that refuses every other `Host`.
+    #[must_use]
+    pub fn trust_host_header(mut self) -> Self {
+        self.inner.trust_host_header = true;
         self
     }
 

@@ -86,13 +86,27 @@ A route that isn't public MUST verify the request's token, its session and
 any DPoP proof before anything else reads it, by accepting the presentation
 with `accept_request` (`item.py.accepted-request`), with the presented
 `Authorization` and `DPoP` values, the request's method (`GET` for a
-websocket) and its URL as the client addressed it. Only then, in this order,
+websocket) and its URL as the client addressed it
+(`item.py-fastapi.proof-url`). Only then, in this order,
 MUST it check the token's audience (`item.py-fastapi.audiences`), run the
 hooks (`item.py-fastapi.hooks`), check the route tenant
 (`item.py-fastapi.token-tenant`), resolve the scope ids
 (`item.py-fastapi.scope-resolvers`) and decide. So no application code sees
 claims that weren't verified, and resolvers look nothing up in a tenant the
 token doesn't belong to.
+
+r[item.py-fastapi.proof-url]
+The URL a DPoP proof is checked against MUST come from the application's
+configuration, never from what the request says of its own origin, as for
+`item.axum.proof-url`: the public-URL hook's answer, else a configured
+public origin followed by the whole path the client addressed, including a
+mount's and the server's root path. With several public origins configured,
+the request's `Host` header MUST only choose among them, the first when it
+names none of them. With neither a hook nor an origin, the presentation
+MUST be accepted with an empty URL, so that the relying core refuses any
+DPoP proof (`relying.verify.dpop`), and an error MUST be logged. Only an
+application that asks for it (`trust_host_header`) MUST get the request's
+own URL, which takes its authority from the `Host` header.
 
 r[item.py-fastapi.single-decision]
 A route that isn't public MUST then make exactly one decision per request,
