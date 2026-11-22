@@ -1224,7 +1224,7 @@ dependencies = [
  "downcast-rs",
  "itoa",
  "serde_json",
- "uuid 0.8.2",
+ "uuid",
 ]
 
 [[package]]
@@ -2672,7 +2672,7 @@ dependencies = [
  "serde",
  "serde_json",
  "utoipa",
- "uuid 1.29.3",
+ "uuid",
 ]
 
 [[package]]
@@ -2726,7 +2726,7 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
- "uuid 1.29.3",
+ "uuid",
 ]
 
 [[package]]
@@ -2739,7 +2739,7 @@ dependencies = [
  "facet-styx",
  "facet-value",
  "serde_json",
- "uuid 1.29.3",
+ "uuid",
 ]
 
 [[package]]
@@ -2767,7 +2767,7 @@ dependencies = [
  "serde",
  "serde_json",
  "utoipa",
- "uuid 1.29.3",
+ "uuid",
 ]
 
 [[package]]
@@ -2791,7 +2791,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "uuid 1.29.3",
+ "uuid",
 ]
 
 [[package]]
@@ -2833,7 +2833,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
- "uuid 1.29.3",
+ "uuid",
 ]
 
 [[package]]
@@ -2891,7 +2891,7 @@ dependencies = [
  "tracing-subscriber",
  "utoipa",
  "utoipa-axum",
- "uuid 1.29.3",
+ "uuid",
  "webauthn-authenticator-rs",
  "webauthn-rs",
  "webauthn-rs-proto",
@@ -2918,7 +2918,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "tokio",
- "uuid 1.29.3",
+ "uuid",
 ]
 
 [[package]]
@@ -2937,7 +2937,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
- "uuid 1.29.3",
+ "uuid",
 ]
 
 [[package]]
@@ -2952,7 +2952,7 @@ dependencies = [
  "p256",
  "serde_json",
  "tokio",
- "uuid 1.29.3",
+ "uuid",
 ]
 
 [[package]]
@@ -3100,7 +3100,7 @@ dependencies = [
  "rustc_version",
  "server_fn_macro",
  "syn 3.0.9",
- "uuid 1.29.3",
+ "uuid",
 ]
 
 [[package]]
@@ -6205,14 +6205,8 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
- "uuid 1.29.3",
+ "uuid",
 ]
-
-[[package]]
-name = "uuid"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
 
 [[package]]
 name = "uuid"
@@ -6435,7 +6429,7 @@ dependencies = [
  "openssl-sys",
  "serde",
  "tracing",
- "uuid 1.29.3",
+ "uuid",
 ]
 
 [[package]]
@@ -6466,7 +6460,7 @@ dependencies = [
  "tracing",
  "unicode-normalization",
  "url",
- "uuid 1.29.3",
+ "uuid",
  "webauthn-rs-core",
  "webauthn-rs-proto",
 ]
@@ -6481,7 +6475,7 @@ dependencies = [
  "serde",
  "tracing",
  "url",
- "uuid 1.29.3",
+ "uuid",
  "webauthn-rs-core",
 ]
 
@@ -6506,7 +6500,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "url",
- "uuid 1.29.3",
+ "uuid",
  "webauthn-attestation-ca",
  "webauthn-rs-proto",
  "x509-parser",
