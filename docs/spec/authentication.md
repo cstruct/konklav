@@ -363,6 +363,12 @@ r[authn.invite.redeem]
 Redeeming an invite MUST link a credential to a new or existing subject and
 MUST activate any membership the invite targets.
 
+r[authn.invite.active-subject]
+Redeeming an invite for an existing subject MUST fail, as a login by that
+subject would, unless the subject is active. A refused redemption MUST
+leave the invite pending and MUST NOT activate its membership or assign
+its roles.
+
 r[authn.invite.membership-id]
 An invite to a tenant MAY name the id of the membership its redemption
 creates. Redemption by a subject that already has a different active

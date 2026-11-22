@@ -28,7 +28,7 @@ use konklav_store::credentials::{
     self, CredentialData, CredentialKind, NewCredential, PasswordData,
 };
 use konklav_store::roles::{self, AssignmentTarget};
-use konklav_store::subjects::{self, SubjectKind};
+use konklav_store::subjects::{self, SubjectKind, SubjectState};
 use konklav_store::{events, memberships, tenants};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -38,7 +38,7 @@ use utoipa_axum::routes;
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::subject_api::{
     Client, SessionRequest, begin_attempt, begin_token_attempt, check_password,
-    start_passwordless_session, start_session,
+    invalid_credentials, start_passwordless_session, start_session,
 };
 use crate::{AppState, metadata, pacing};
 
@@ -658,6 +658,15 @@ async fn redeem_emailed(
     let new_hash = state.auth.hashing(move |hasher| hasher.hash(&new)).await?;
     let existing = existing_account(state, &challenge.recipient, password, address).await?;
     let mut conn = state.pool.get().await?;
+    // An account that can't log in redeems nothing: checked before the
+    // invite is consumed or its membership activated.
+    // r[impl authn.invite.active-subject]
+    if let Some(credential) = &existing {
+        let subject = subjects::get(&mut conn, credential.subject_id).await?;
+        if subject.state != SubjectState::Active || subject.kind != SubjectKind::Human {
+            return Err(invalid_credentials());
+        }
+    }
     conn.transaction::<_, ApiError, _>(async |conn| {
         let credential = match existing {
             Some(credential) => credential,
@@ -718,9 +727,7 @@ async fn redeem_signed_in(
         ));
     }
     let subject = subjects::get(&mut conn, session.subject_id).await?;
-    if subject.state != konklav_store::subjects::SubjectState::Active
-        || subject.kind != SubjectKind::Human
-    {
+    if subject.state != SubjectState::Active || subject.kind != SubjectKind::Human {
         return Err(ApiError::new(
             ErrorCode::Forbidden,
             "only people can redeem invites",

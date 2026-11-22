@@ -454,6 +454,48 @@ async fn password_guesses_through_an_invite_count_toward_the_login_limit() {
     assert_eq!(login.code(), "RATE_LIMITED", "{:?}", login.body);
 }
 
+/// How many rows `table` has.
+async fn rows(app: &TestApp, table: &str) -> i64 {
+    let mut conn = app.db.pool().get().await.unwrap();
+    let counted: Count = diesel::sql_query(format!("select count(*) as count from {table}"))
+        .get_result(&mut conn)
+        .await
+        .unwrap();
+    counted.count
+}
+
+// r[verify authn.invite.active-subject]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_disabled_subject_redeems_nothing() {
+    let app = TestApp::new().await;
+    let worker = worker(&app).await;
+    let tenant = tenant_with_reader(&app).await;
+    let subject = app.human("ada@example.com", PASSWORD).await;
+    let invited = json!({"email": "ada@example.com", "tenant": tenant, "roles": ["viewer"]});
+    invite(&app, invited).await;
+    let link = emailed_token(&app, &worker).await;
+    let state = async |state: &str| {
+        let path = format!("/v1/subjects/{subject}/{state}");
+        let changed = app.control(Method::POST, &path, None).await;
+        assert_eq!(changed.status, StatusCode::OK, "{:?}", changed.body);
+    };
+    state("disable").await;
+
+    let redeem = json!({"token": link, "password": PASSWORD});
+    let refused = app.post("/v1/invites/redeem", redeem.clone()).await;
+    assert_eq!(refused.code(), "INVALID_CREDENTIALS", "{:?}", refused.body);
+    assert_eq!(rows(&app, "membership").await, 0, "no membership");
+    assert!(events(&app, &worker, "invite.redeemed").await.is_empty());
+    let pending = preview(&app, link.as_str().unwrap()).await;
+    assert_eq!(pending.body["state"], "pending", "{:?}", pending.body);
+
+    // The invite is still there once the subject is active again.
+    state("enable").await;
+    let redeemed = app.post("/v1/invites/redeem", redeem).await;
+    assert_eq!(redeemed.status, StatusCode::OK, "{:?}", redeemed.body);
+    assert_eq!(rows(&app, "membership").await, 1);
+}
+
 // r[verify authn.invite.preview]
 // r[verify authn.invite.revoke]
 // r[verify metadata.public]
