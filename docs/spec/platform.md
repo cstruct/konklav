@@ -539,6 +539,14 @@ Imported sessions MUST keep their identifiers, versions and expiry, with a
 refresh-token hash supplied by the importer, so that people stay signed in
 across a migration.
 
+r[import.sessions.consistent]
+An imported session MUST be refused as invalid, naming the session, unless
+its credential belongs to its subject (or to the impersonator, for an
+impersonation session), its membership belongs to its subject and is in its
+tenant, it has a tenant and a membership exactly when its login stage is
+`tenant`, and its session flags are declared in the action catalog. A
+session whose identifier already exists is skipped without these checks.
+
 ## Bootstrap
 
 r[bootstrap.command]

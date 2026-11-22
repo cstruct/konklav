@@ -11,6 +11,7 @@ use konklav_store::credentials::{
 use konklav_store::mfa::{self, EmailCodeData, FactorData, TotpData};
 use konklav_store::sessions::{self, ClientKind, ImportedSession, NewSession, Stage};
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
+use konklav_store::{StoreError, catalog, memberships};
 use serde::Deserialize;
 
 use super::Outcome;
@@ -41,7 +42,7 @@ pub(crate) async fn subject(
 ) -> Result<Outcome, ApiError> {
     let created = match subjects::get(conn, record.id).await {
         Ok(existing) if existing.kind != record.kind => {
-            return Err(konklav_store::StoreError::Conflict(format!(
+            return Err(StoreError::Conflict(format!(
                 "subject {} already exists as {}",
                 record.id,
                 existing.kind.as_str()
@@ -50,10 +51,10 @@ pub(crate) async fn subject(
         }
         // r[impl subject.erasure.blocks-writes]
         Ok(existing) if existing.state == SubjectState::Erased => {
-            return Err(konklav_store::StoreError::SubjectErased.into());
+            return Err(StoreError::SubjectErased.into());
         }
         Ok(_) => false,
-        Err(konklav_store::StoreError::NotFound) => {
+        Err(StoreError::NotFound) => {
             subjects::create_with_metadata(conn, record.id, record.kind, &record.metadata)
                 .await?
                 .1
@@ -305,6 +306,51 @@ fn decode_hex(input: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+/// Refuses a session whose credential, membership, tenant or flags aren't
+/// ones a session of its subject could have got by signing in.
+// r[impl import.sessions.consistent]
+async fn check_session(conn: &mut Connection, record: &SessionRecord) -> Result<(), ApiError> {
+    let invalid = |problem: &str| {
+        Err(ApiError::invalid_request(format!(
+            "session {}: {problem}",
+            record.id
+        )))
+    };
+    // An impersonation session keeps the impersonator's credential.
+    let owners = [Some(record.subject), record.impersonator];
+    match credentials::get(conn, record.credential).await {
+        Ok(credential) if owners.contains(&Some(credential.subject_id)) => {}
+        Ok(_) => return invalid("its credential belongs to another subject"),
+        Err(StoreError::NotFound) => return invalid("its credential does not exist"),
+        Err(error) => return Err(error.into()),
+    }
+    match (record.tenant, record.membership) {
+        (None, None) if record.stage != Stage::Tenant => {}
+        (Some(tenant), Some(membership)) if record.stage == Stage::Tenant => {
+            let membership = match memberships::get(conn, membership).await {
+                Ok(membership) => membership,
+                Err(StoreError::NotFound) => return invalid("its membership does not exist"),
+                Err(error) => return Err(error.into()),
+            };
+            if membership.subject_id != record.subject {
+                return invalid("its membership belongs to another subject");
+            }
+            if membership.tenant_id != tenant {
+                return invalid("its membership is in another tenant");
+            }
+        }
+        _ => return invalid("a `tenant` session, and no other, needs a tenant and a membership"),
+    }
+    if !record.flags.is_empty() {
+        let catalog = catalog::load(conn).await?;
+        let declared = |flag: &String| catalog.session_flags.iter().any(|f| f.name == *flag);
+        if let Some(flag) = record.flags.iter().find(|flag| !declared(flag)) {
+            return invalid(&format!("session flag `{flag}` is not in the catalog"));
+        }
+    }
+    Ok(())
+}
+
 /// Carries a live session over unless one with its id exists, so people
 /// stay signed in, provided their clients can present `<session id>.<secret>`
 /// refresh tokens matching the given hash.
@@ -321,6 +367,14 @@ pub(crate) async fn session(
                 record.id
             ))
         })?;
+    // A session that exists is skipped unchecked: what it named may have
+    // changed since it was imported.
+    match sessions::get(conn, record.id).await {
+        Ok(_) => return Ok(Outcome::Skipped),
+        Err(StoreError::NotFound) => {}
+        Err(error) => return Err(error.into()),
+    }
+    check_session(conn, &record).await?;
     let inserted = sessions::import(
         conn,
         ImportedSession {

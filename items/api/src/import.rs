@@ -135,8 +135,13 @@ pub struct ImportFactors {
 pub struct ImportedSession {
     pub id: SessionId,
     pub subject: SubjectId,
+    /// One of the subject's credentials or, for an impersonation session,
+    /// of the impersonator's.
     pub credential: CredentialId,
+    /// The membership's tenant. Set exactly when `stage` is `tenant`.
     pub tenant: Option<TenantId>,
+    /// One of the subject's memberships. Set exactly when `stage` is
+    /// `tenant`.
     pub membership: Option<MembershipId>,
     pub stage: SessionStage,
     #[serde(default = "native")]

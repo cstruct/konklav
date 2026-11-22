@@ -5953,7 +5953,8 @@
             "$ref": "#/components/schemas/ClientKind"
           },
           "credential": {
-            "$ref": "#/components/schemas/CredentialId"
+            "$ref": "#/components/schemas/CredentialId",
+            "description": "One of the subject's credentials or, for an impersonation session,\nof the impersonator's."
           },
           "expires_at": {
             "type": "string",
@@ -5983,7 +5984,8 @@
           "membership": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/MembershipId"
+                "$ref": "#/components/schemas/MembershipId",
+                "description": "One of the subject's memberships. Set exactly when `stage` is\n`tenant`."
               },
               {
                 "type": "null"
@@ -6010,7 +6012,8 @@
           "tenant": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/TenantId"
+                "$ref": "#/components/schemas/TenantId",
+                "description": "The membership's tenant. Set exactly when `stage` is `tenant`."
               },
               {
                 "type": "null"

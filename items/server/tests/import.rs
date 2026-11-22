@@ -311,6 +311,140 @@ async fn imported_sessions_refresh_with_the_carried_over_secret() {
     assert_eq!(claims.sv, 8, "the imported version carries on");
 }
 
+/// A human with a password credential, as `(subject, credential)`.
+async fn person(app: &TestApp, email: &str) -> (String, String) {
+    let subject = app.human(email, "correct horse battery").await;
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    let credential = detail.body["credentials"][0]["id"].as_str().unwrap();
+    (subject, credential.to_owned())
+}
+
+/// A new tenant with `subject` as a member, as `(tenant, membership)`.
+async fn member(app: &TestApp, subject: &str) -> (String, String) {
+    let (tenant, membership) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+    let reply = app
+        .control(
+            Method::PUT,
+            &format!("/v1/tenants/{tenant}"),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{:?}", reply.body);
+    let reply = app
+        .control(
+            Method::PUT,
+            &format!("/v1/memberships/{membership}"),
+            Some(json!({"subject": subject, "tenant": tenant})),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{:?}", reply.body);
+    (tenant.to_string(), membership.to_string())
+}
+
+// r[verify import.sessions.consistent]
+#[tokio::test(flavor = "multi_thread")]
+async fn imported_sessions_must_fit_their_subject() {
+    let app = TestApp::new().await;
+    let reply = app
+        .control(
+            Method::PUT,
+            "/v1/catalog",
+            Some(json!({"session_flags": [{"name": "device_bound", "kind": "assertive"}]})),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+    let (ada, ada_credential) = person(&app, "ada@example.com").await;
+    let (eve, eve_credential) = person(&app, "eve@example.com").await;
+    let (_, bob_credential) = person(&app, "bob@example.com").await;
+    let (ada_tenant, ada_membership) = member(&app, &ada).await;
+    let (eve_tenant, eve_membership) = member(&app, &eve).await;
+
+    let import = async |fields: serde_json::Value| {
+        let id = uuid::Uuid::now_v7();
+        let mut session = json!({
+            "id": id, "subject": eve, "credential": eve_credential, "stage": "identity",
+            "amr": ["pwd"], "auth_time": "2026-10-01T00:00:00Z", "version": 1,
+            "refresh_hash": hex(&Sha256::digest(b"refresh")),
+            "expires_at": (chrono::Utc::now() + chrono::Duration::days(5)).to_rfc3339(),
+        });
+        for (key, value) in fields.as_object().unwrap() {
+            session[key] = value.clone();
+        }
+        let reply = app
+            .control(
+                Method::POST,
+                "/v1/import/sessions",
+                Some(json!({"sessions": [session]})),
+            )
+            .await;
+        (id.to_string(), reply)
+    };
+    let in_tenant = |tenant: &str, membership: &str| json!({"stage": "tenant", "tenant": tenant, "membership": membership});
+    for (fields, problem) in [
+        (
+            json!({"subject": ada}),
+            "credential belongs to another subject",
+        ),
+        (
+            json!({"credential": uuid::Uuid::now_v7()}),
+            "credential does not exist",
+        ),
+        (
+            json!({"impersonator": ada, "credential": bob_credential}),
+            "credential belongs to another subject",
+        ),
+        (
+            in_tenant(&ada_tenant, &ada_membership),
+            "membership belongs to another subject",
+        ),
+        (
+            in_tenant(&ada_tenant, &eve_membership),
+            "membership is in another tenant",
+        ),
+        (
+            in_tenant(&eve_tenant, &uuid::Uuid::now_v7().to_string()),
+            "membership does not exist",
+        ),
+        (
+            json!({"tenant": ada_tenant}),
+            "needs a tenant and a membership",
+        ),
+        (
+            json!({"stage": "tenant"}),
+            "needs a tenant and a membership",
+        ),
+        (
+            json!({"flags": ["device_bound", "undeclared"]}),
+            "`undeclared` is not in the catalog",
+        ),
+    ] {
+        let (id, reply) = import(fields.clone()).await;
+        assert_eq!(
+            reply.code(),
+            "INVALID_REQUEST",
+            "{fields}: {:?}",
+            reply.body
+        );
+        let message = reply.body["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains(&id) && message.contains(problem),
+            "{fields}: {message}"
+        );
+    }
+
+    for fields in [
+        json!({"flags": ["device_bound"]}),
+        in_tenant(&eve_tenant, &eve_membership),
+        // Ada impersonating Eve, with Ada's credential.
+        json!({"impersonator": ada, "credential": ada_credential}),
+    ] {
+        let (_, reply) = import(fields.clone()).await;
+        assert_eq!(reply.body["imported"], 1, "{fields}: {:?}", reply.body);
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn importing_needs_the_capability() {
     let app = TestApp::new().await;
