@@ -184,8 +184,9 @@ fn parse_link(token: &str) -> Option<(uuid::Uuid, &str)> {
     Some((id.parse().ok()?, secret))
 }
 
-/// Verifies a link token for `purpose` and consumes it.
-async fn redeem_link(
+/// Verifies a link token for `purpose` without consuming it: the token
+/// names a usable challenge and carries its secret.
+async fn check_link(
     conn: &mut Connection,
     purpose: Purpose,
     token: &str,
@@ -194,14 +195,23 @@ async fn redeem_link(
     let challenge = challenges::get(conn, id)
         .await
         .map_err(|_| invalid_code())?;
-    let now = Utc::now();
     let matches: bool = hash_challenge_secret(&id.to_string(), secret)
         .ct_eq(&challenge.secret_hash)
         .into();
-    if challenge.purpose != purpose.as_str() || !challenge.is_usable(now) || !matches {
+    if challenge.purpose != purpose.as_str() || !challenge.is_usable(Utc::now()) || !matches {
         return Err(invalid_code());
     }
-    if !challenges::consume(conn, id, now).await? {
+    Ok(challenge)
+}
+
+/// Verifies a link token for `purpose` and consumes it.
+async fn redeem_link(
+    conn: &mut Connection,
+    purpose: Purpose,
+    token: &str,
+) -> Result<challenges::Challenge, ApiError> {
+    let challenge = check_link(conn, purpose, token).await?;
+    if !challenges::consume(conn, challenge.id, Utc::now()).await? {
         return Err(invalid_code());
     }
     Ok(challenge)
@@ -955,19 +965,23 @@ struct CompleteReset {
 }
 
 /// `POST /v1/password-reset/complete`: sets a new password and ends every
-/// session of the subject.
+/// session of the subject. The token is checked before the password is
+/// hashed, so only someone holding a usable token can take a hashing slot,
+/// and again when it is consumed with the change.
 // r[impl authn.reset-password]
+// r[impl authn.reset-password.token-first]
 async fn complete_reset(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<CompleteReset>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_password(&body.password)?;
+    let mut conn = state.pool.get().await?;
+    check_link(&mut conn, Purpose::ResetPassword, &body.token).await?;
     let password = body.password.clone();
     let hash = state
         .auth
         .hashing(move |hasher| hasher.hash(&password))
         .await?;
-    let mut conn = state.pool.get().await?;
     let cursor = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let challenge = redeem_link(conn, Purpose::ResetPassword, &body.token).await?;

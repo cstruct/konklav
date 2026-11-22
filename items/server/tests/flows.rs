@@ -1564,6 +1564,27 @@ async fn one_ipv6_network_cannot_spread_its_attempts_over_its_addresses() {
     assert_eq!(login(other, 100).await.code(), "INVALID_CREDENTIALS");
 }
 
+// r[verify authn.reset-password.token-first]
+#[tokio::test(flavor = "multi_thread")]
+async fn resets_without_a_usable_token_hash_nothing() {
+    // No hashing slots: a request that reaches hashing never answers.
+    let app = TestApp::with_auth(|auth| {
+        auth.hashing_slots = tokio::sync::Semaphore::new(0);
+    })
+    .await;
+    let unknown = format!("{}.secret", uuid::Uuid::now_v7());
+    for junk in ["junk", unknown.as_str()] {
+        let reset = app.post(
+            "/v1/password-reset/complete",
+            json!({"token": junk, "password": "a fresh password"}),
+        );
+        let reset = tokio::time::timeout(std::time::Duration::from_secs(10), reset)
+            .await
+            .expect("the token is refused before the password is hashed");
+        assert_eq!(reset.code(), "INVALID_CREDENTIALS", "{junk}");
+    }
+}
+
 // r[verify authn.login.staged]
 #[tokio::test(flavor = "multi_thread")]
 async fn partial_sessions_cannot_use_the_relying_surface() {

@@ -428,6 +428,12 @@ r[authn.reset-password]
 Password reset MUST go through a challenge, and completing it MUST revoke
 the subject's other sessions.
 
+r[authn.reset-password.token-first]
+Completing a password reset MUST check that its token names a usable
+challenge before hashing the new password, so requests without one can't
+occupy password hashing (`authn.login.hashing-bound`). The token MUST
+still be consumed together with the password change.
+
 r[authn.password.restrictions-kept]
 A password that replaces another, set by its subject through password reset
 or password change or by an operator through the control plane, MUST keep
