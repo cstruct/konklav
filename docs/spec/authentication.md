@@ -32,7 +32,8 @@ address across identifiers, more loosely, so one source can't try many
 identifiers. An attempt MUST
 count toward the limit while it is being checked, so concurrent attempts
 can't exceed it, and every check of a credential's secret MUST count,
-including those made for step-up and password change, and every check of
+including those made for step-up and password change and to redeem an
+invite to an existing account (`authn.invite.emailed`), and every check of
 a code sent for a phone-code login. An IPv6 client address MUST be counted
 by its /64 prefix, and an IPv4-mapped IPv6 address as the IPv4 address it
 maps, so one source can't spread its attempts over the addresses it holds.

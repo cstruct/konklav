@@ -423,6 +423,37 @@ async fn link_only_invites_redeem_with_an_existing_accounts_password_only() {
     assert_eq!(refused.code(), "INVALID_REQUEST");
 }
 
+/// The token delivered for the newest emailed invite.
+async fn emailed_token(app: &TestApp, worker: &str) -> Value {
+    let deliveries = events(app, worker, "delivery.requested").await;
+    deliveries.last().unwrap()["payload"]["material"]["token"].clone()
+}
+
+// r[verify authn.login.rate-limit]
+#[tokio::test(flavor = "multi_thread")]
+async fn password_guesses_through_an_invite_count_toward_the_login_limit() {
+    let app = TestApp::new().await;
+    let worker = worker(&app).await;
+    app.human("ada@example.com", PASSWORD).await;
+    invite(&app, json!({"email": "ada@example.com"})).await;
+    let link = emailed_token(&app, &worker).await;
+    let guess = async |password: &str| {
+        app.post(
+            "/v1/invites/redeem",
+            json!({"token": link, "password": password}),
+        )
+        .await
+    };
+    // As many failures as a login identifier is allowed in ten minutes.
+    for n in 0..30 {
+        let wrong = guess(&format!("wrong password {n}")).await;
+        assert_eq!(wrong.code(), "INVALID_CREDENTIALS", "{:?}", wrong.body);
+    }
+    assert_eq!(guess(PASSWORD).await.code(), "RATE_LIMITED");
+    let login = app.login("ada@example.com", PASSWORD).await;
+    assert_eq!(login.code(), "RATE_LIMITED", "{:?}", login.body);
+}
+
 // r[verify authn.invite.preview]
 // r[verify authn.invite.revoke]
 // r[verify metadata.public]

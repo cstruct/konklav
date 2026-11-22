@@ -37,8 +37,8 @@ use utoipa_axum::routes;
 
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::subject_api::{
-    Client, SessionRequest, begin_token_attempt, check_password, start_passwordless_session,
-    start_session,
+    Client, SessionRequest, begin_attempt, begin_token_attempt, check_password,
+    start_passwordless_session, start_session,
 };
 use crate::{AppState, metadata, pacing};
 
@@ -446,32 +446,42 @@ struct PreviewRequest {
 
 /// The password credential already registered for `email`, if any, after
 /// checking `password` against it: redeeming an invite to an existing
-/// account proves ownership with that account's password.
+/// account proves ownership with that account's password. The check counts
+/// toward the login limits, like any check of a password.
 ///
-/// It checks out its own database connection and holds none while it
+/// It checks out its own database connections and holds none while it
 /// hashes; callers must hold none either.
 // r[impl authn.login.hashing-bound]
+// r[impl authn.login.rate-limit]
 async fn existing_account(
     state: &AppState,
     email: &str,
     password: &str,
+    address: ClientAddress,
 ) -> Result<Option<konklav_store::credentials::Credential>, ApiError> {
-    let found = {
+    // Taken first, so a check the queue has no place for counts nothing.
+    let place = state.auth.hashing_place()?;
+    let (existing, attempt) = {
         let mut conn = state.pool.get().await?;
-        credentials::find_active(&mut conn, CredentialKind::Password, email).await?
-    };
-    let Some(existing) = found else {
-        return Ok(None);
+        let kind = CredentialKind::Password;
+        let Some(existing) = credentials::find_active(&mut conn, kind, email).await? else {
+            return Ok(None);
+        };
+        let attempt = begin_attempt(&mut conn, kind, &existing.identifier, address).await?;
+        (existing, attempt)
     };
     let CredentialData::Password(data) = &existing.data else {
         return Err(invalid_invite());
     };
     let (password, hash) = (password.to_owned(), data.hash.clone());
-    let check = state
-        .auth
-        .hashing(move |hasher| hasher.verify(&password, &hash))
+    let check = place
+        .run(move |hasher| hasher.verify(&password, &hash))
         .await?;
-    if matches!(check, PasswordCheck::Match { .. }) {
+    let matched = matches!(check, PasswordCheck::Match { .. });
+    attempt
+        .finish(&mut *state.pool.get().await?, matched)
+        .await?;
+    if matched {
         Ok(Some(existing))
     } else {
         Err(ApiError::new(
@@ -611,7 +621,7 @@ async fn redeem_invite(
         .await;
     }
     drop(conn);
-    let credential = redeem_emailed(&state, &challenge, &password).await?;
+    let credential = redeem_emailed(&state, &challenge, &password, address).await?;
     let mut conn = state.pool.get().await?;
     start_passwordless_session(
         &state,
@@ -642,10 +652,11 @@ async fn redeem_emailed(
     state: &AppState,
     challenge: &challenges::Challenge,
     password: &str,
+    address: ClientAddress,
 ) -> Result<konklav_store::credentials::Credential, ApiError> {
     let new = password.to_owned();
     let new_hash = state.auth.hashing(move |hasher| hasher.hash(&new)).await?;
-    let existing = existing_account(state, &challenge.recipient, password).await?;
+    let existing = existing_account(state, &challenge.recipient, password, address).await?;
     let mut conn = state.pool.get().await?;
     conn.transaction::<_, ApiError, _>(async |conn| {
         let credential = match existing {
