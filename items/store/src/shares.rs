@@ -188,6 +188,23 @@ pub async fn get(conn: &mut AsyncPgConnection, id: ShareId) -> StoreResult<Share
         .ok_or(StoreError::NotFound)
 }
 
+/// The share, with its row locked for the rest of the transaction, so the
+/// state a change is decided from is the state it changes.
+async fn get_for_update(conn: &mut AsyncPgConnection, id: ShareId) -> StoreResult<Share> {
+    let row = share::table
+        .find(id.as_uuid())
+        .select(Row::as_select())
+        .for_update()
+        .first(conn)
+        .await
+        .optional()?
+        .ok_or(StoreError::NotFound)?;
+    with_actions(conn, vec![row])
+        .await?
+        .pop()
+        .ok_or(StoreError::NotFound)
+}
+
 /// Shares `tenant` owns or receives, newest first; only one side when
 /// `side` is given, and only those whose metadata contains `metadata`.
 // r[impl metadata.filter]
@@ -220,7 +237,9 @@ pub async fn list(
 /// changes nothing but the metadata, which isn't one of the terms. A
 /// share's owner can't change.
 ///
-/// It writes several rows: run it in a transaction.
+/// It writes several rows: run it in a transaction. The share stays locked
+/// until that ends, as it does after [`accept`] and [`revoke`], so a change
+/// is never decided from a state another one is replacing.
 // r[impl authz.share.shape]
 // r[impl authz.share.acceptance]
 // r[impl authz.share.unique]
@@ -237,7 +256,7 @@ pub async fn offer(
         ));
     }
     {
-        let existing = match get(conn, id).await {
+        let existing = match get_for_update(conn, id).await {
             Ok(existing) => Some(existing),
             Err(StoreError::NotFound) => None,
             Err(error) => return Err(error),
@@ -321,11 +340,11 @@ pub async fn offer(
 }
 
 /// Accepts an offered share for its recipient. Accepting it again changes
-/// nothing; a revoked share can't be accepted.
+/// nothing; a revoked share can't be accepted. Run it in a transaction.
 // r[impl authz.share.acceptance]
 pub async fn accept(conn: &mut AsyncPgConnection, id: ShareId) -> StoreResult<Share> {
     {
-        let current = get(conn, id).await?;
+        let current = get_for_update(conn, id).await?;
         match current.state {
             ShareState::Accepted => Ok(current),
             ShareState::Revoked => Err(StoreError::Conflict("the share was revoked".into())),
@@ -345,10 +364,10 @@ pub async fn accept(conn: &mut AsyncPgConnection, id: ShareId) -> StoreResult<Sh
 }
 
 /// Revokes a share for good, on behalf of `by`. Revoking it again changes
-/// nothing.
+/// nothing. Run it in a transaction.
 pub async fn revoke(conn: &mut AsyncPgConnection, id: ShareId, by: Side) -> StoreResult<Share> {
     {
-        let current = get(conn, id).await?;
+        let current = get_for_update(conn, id).await?;
         if current.state == ShareState::Revoked {
             return Ok(current);
         }

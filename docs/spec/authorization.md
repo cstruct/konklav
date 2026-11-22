@@ -217,7 +217,9 @@ r[authz.share.acceptance]
 A share MUST be offered first and take effect only once it has been
 accepted for the recipient tenant. Changing the terms of a share MUST offer
 it again. Either side MUST be able to revoke a share, and a revoked share
-MUST NOT be accepted or changed again.
+MUST NOT be accepted or changed again. Changes to one share that overlap
+MUST be applied one after another, each decided from the state the one
+before it left.
 
 r[authz.share.unique]
 At most one offered or accepted share MUST exist per owner scope and
