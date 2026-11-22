@@ -97,17 +97,51 @@ fn the_local_divisor_divides_window_sizes() {
 // r[verify relying.rate-limit.local]
 #[test]
 fn local_state_keeps_a_bounded_number_of_keys() {
-    let mut config = RateLimitConfig::new("test", vec![window(1, 60_000)]);
+    let mut config = RateLimitConfig::new("test", vec![window(3, 3000)]);
     config.max_local_keys = 2;
     let mut limiter = RateLimiter::new(config, None).unwrap();
     assert_eq!(add(&mut limiter, "a", 0), Ok(()));
+    assert_eq!(add(&mut limiter, "a", 0), Ok(()));
     assert_eq!(add(&mut limiter, "b", 0), Ok(()));
-    // Using `a` makes `b` the least recently used.
-    assert!(add(&mut limiter, "a", 1).is_err());
-    assert_eq!(add(&mut limiter, "c", 2), Ok(()));
+    // `b` has one event to drain and `a` two: `b` makes room.
+    assert_eq!(add(&mut limiter, "c", 0), Ok(()));
     assert_eq!(limiter.local_keys(), 2);
-    assert!(add(&mut limiter, "a", 3).is_err(), "a is kept");
-    assert_eq!(add(&mut limiter, "b", 4), Ok(()), "b was evicted");
+    assert_eq!(add(&mut limiter, "a", 0), Ok(()));
+    assert_eq!(add(&mut limiter, "a", 0), refused(1000), "a was kept");
+    for _ in 0..3 {
+        assert_eq!(add(&mut limiter, "b", 0), Ok(()), "b was dropped, then c");
+    }
+    // Both keys are refused now, so neither makes room: the new key's event
+    // is refused until one of them would be admitted again.
+    assert_eq!(add(&mut limiter, "d", 0), refused(1000));
+    assert_eq!(add(&mut limiter, "d", 999), refused(1));
+    assert_eq!(limiter.local_keys(), 2);
+    assert_eq!(add(&mut limiter, "b", 999), refused(1), "b was kept");
+    assert_eq!(add(&mut limiter, "d", 1000), Ok(()));
+    assert_eq!(limiter.local_keys(), 2);
+}
+
+// A limit keyed by what the client chooses, such as a login's address, must
+// not forget a key because the client sent many others.
+// r[verify relying.rate-limit.local]
+#[test]
+fn flooding_a_limit_with_keys_resets_no_key() {
+    let mut config = RateLimitConfig::new("test", vec![window(5, 60_000)]);
+    config.max_local_keys = 100;
+    let mut limiter = RateLimiter::new(config, None).unwrap();
+    for _ in 0..5 {
+        assert_eq!(add(&mut limiter, "refused", 0), Ok(()));
+    }
+    for _ in 0..4 {
+        assert_eq!(add(&mut limiter, "used", 0), Ok(()));
+    }
+    for filler in 0..1000 {
+        assert_eq!(add(&mut limiter, &format!("filler-{filler}"), filler), Ok(()));
+        assert!(limiter.local_keys() <= 100);
+    }
+    assert_eq!(add(&mut limiter, "refused", 1000), refused(11_000));
+    assert_eq!(add(&mut limiter, "used", 1000), Ok(()));
+    assert_eq!(add(&mut limiter, "used", 1000), refused(11_000));
 }
 
 // r[verify relying.rate-limit.expiry]

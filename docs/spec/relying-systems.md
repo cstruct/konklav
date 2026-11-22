@@ -226,7 +226,14 @@ Limits with the same name and windows MUST share their state in the store.
 r[relying.rate-limit.local]
 Every process MUST also apply each event to in-memory state of its own,
 whether or not a store is configured or answers, and MUST keep that state
-for a bounded number of keys, the least recently used going first.
+for a bounded number of keys. When a new key needs room, the key whose
+state would be dropped soonest (`relying.rate-limit.expiry`) MUST go first:
+every key kept then has at least as much use still to count, so sending
+events for many keys forgets no more of one key's use than those events
+count themselves. A key whose events are currently refused MUST NOT be
+dropped to make room: when the key that would go first is refused, the new
+key's event MUST be refused instead, reporting how long until that key is
+admitted again.
 
 r[relying.rate-limit.fallback]
 When the store fails, or doesn't answer within the limit's timeout, the
