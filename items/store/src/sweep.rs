@@ -98,7 +98,8 @@ pub async fn batch_results(
     .await?)
 }
 
-/// Deletes recorded client-assertion `jti`s whose assertions expired.
+/// Deletes recorded client-assertion `jti`s whose assertions are no longer
+/// accepted. Nothing else prunes them.
 // r[impl retention.assertions]
 pub async fn client_assertions(
     conn: &mut AsyncPgConnection,
@@ -135,7 +136,8 @@ pub async fn dpop_proofs(
     .await?)
 }
 
-/// Deletes recorded bearer-assertion `jti`s whose assertions expired.
+/// Deletes recorded bearer-assertion `jti`s whose assertions are no longer
+/// accepted. Nothing else prunes them.
 // r[impl retention.assertions]
 pub async fn bearer_assertions(
     conn: &mut AsyncPgConnection,

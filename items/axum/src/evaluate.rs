@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use axum::extract::{FromRequestParts, Query, RawPathParams};
+use axum::extract::{FromRequestParts, OriginalUri, Query, RawPathParams};
 use axum::http::request::Parts;
 use axum::http::{Method, header};
 use axum::response::{IntoResponse, Response};
@@ -11,7 +11,7 @@ use konklav_relying::policy::{Policy, ResolvedScope};
 use konklav_relying_client::{Presented, RequestDescriptor, Verified};
 use konklav_token::{AccessClaims, TokenKind};
 
-use crate::decider::RequestDecider;
+use crate::decider::{HeldPresentation, RequestDecider};
 use crate::outcome::{Forbidden, Scheme, Unauthenticated};
 use crate::{Denied, Konklav, RoutePolicyError};
 
@@ -83,36 +83,103 @@ pub(crate) struct PresentedToken {
     pub(crate) scheme: Scheme,
 }
 
-pub(crate) fn is_websocket(parts: &Parts) -> bool {
-    // HTTP/1.1 upgrades, and HTTP/2's extended CONNECT (RFC 8441).
-    parts.method == Method::CONNECT
-        || parts
-            .headers
-            .get(header::UPGRADE)
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+/// Whether `name`'s values, as comma-separated lists, include `token`.
+fn lists(parts: &Parts, name: header::HeaderName, token: &str) -> bool {
+    parts
+        .headers
+        .get_all(name)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|listed| listed.trim().eq_ignore_ascii_case(token))
 }
 
-/// The URL the client addressed, without the public-URL hook.
-fn own_url(parts: &Parts) -> String {
-    let path = parts.uri.path_and_query().map_or("/", |path| path.as_str());
-    if let (Some(scheme), Some(authority)) = (parts.uri.scheme_str(), parts.uri.authority()) {
-        let scheme = match scheme {
-            "ws" => "http",
-            "wss" => "https",
-            scheme => scheme,
-        };
-        return format!("{scheme}://{authority}{path}");
+/// Whether the request asks to open a websocket: an HTTP/1.1 upgrade (a
+/// `GET` with `Connection: upgrade` and `Upgrade: websocket`, RFC 6455), or
+/// HTTP/2's extended CONNECT with the `websocket` protocol (RFC 8441). The
+/// `Upgrade` header alone, on any other request, makes no websocket.
+// r[impl item.axum.websocket-requests]
+pub(crate) fn is_websocket(parts: &Parts) -> bool {
+    if parts.method == Method::CONNECT {
+        return parts
+            .extensions
+            .get::<hyper::ext::Protocol>()
+            .is_some_and(|protocol| protocol.as_str().eq_ignore_ascii_case("websocket"));
     }
-    let host = parts
-        .headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    format!("http://{host}{path}")
+    parts.method == Method::GET
+        && lists(parts, header::CONNECTION, "upgrade")
+        && lists(parts, header::UPGRADE, "websocket")
 }
+
+/// The path and query the client addressed. Inside a nested router the
+/// request's own URI has lost the prefix, so this reads the one axum kept.
+// r[impl item.axum.proof-url]
+fn addressed_path(parts: &Parts) -> &str {
+    let uri = parts
+        .extensions
+        .get::<OriginalUri>()
+        .map_or(&parts.uri, |original| &original.0);
+    uri.path_and_query().map_or("/", |path| path.as_str())
+}
+
+/// The authority the request names for itself: its target's, else its
+/// `Host` header. The client chooses it.
+fn named_authority(parts: &Parts) -> Option<&str> {
+    parts
+        .uri
+        .authority()
+        .map(axum::http::uri::Authority::as_str)
+        .or_else(|| {
+            parts
+                .headers
+                .get(header::HOST)
+                .and_then(|value| value.to_str().ok())
+        })
+}
+
+/// The URL the request names for itself, for `trust_host_header`.
+fn own_url(parts: &Parts) -> String {
+    let path = addressed_path(parts);
+    let scheme = match parts.uri.scheme_str() {
+        Some("https" | "wss") if parts.uri.authority().is_some() => "https",
+        _ => "http",
+    };
+    let authority = named_authority(parts).unwrap_or_default();
+    format!("{scheme}://{authority}{path}")
+}
+
+/// An evaluation, with what holds its accepted presentation, if any, until
+/// the request is answered.
+pub(crate) type Evaluated = (Evaluation, Option<HeldPresentation>);
 
 impl Konklav {
+    /// The URL a DPoP proof must name, from configuration: the public-URL
+    /// hook's, else a public origin with the request's path. `None` when
+    /// neither is configured, unless the application trusts the `Host`
+    /// header.
+    // r[impl item.axum.proof-url]
+    fn proof_url(&self, parts: &Parts) -> Option<String> {
+        if let Some(url) = &self.inner.public_url {
+            return Some(url(parts));
+        }
+        let origins = &self.inner.public_origins;
+        let Some(first) = origins.first() else {
+            return self.inner.trust_host_header.then(|| own_url(parts));
+        };
+        // The request only chooses among the configured origins.
+        let named = named_authority(parts);
+        let origin = origins
+            .iter()
+            .find(|origin| {
+                let authority = origin
+                    .split_once("://")
+                    .map_or("", |(_, authority)| authority);
+                named.is_some_and(|named| named.eq_ignore_ascii_case(authority))
+            })
+            .unwrap_or(first);
+        Some(format!("{origin}{}", addressed_path(parts)))
+    }
+
     /// The request's token: from `Authorization`, the cookie hook or, for
     /// websockets, the `token` query parameter.
     // r[impl item.axum.token-extraction]
@@ -126,17 +193,22 @@ impl Konklav {
         };
         let dpop = header(header::HeaderName::from_static("dpop"));
         let websocket = is_websocket(parts);
-        let request = Some(RequestDescriptor {
+        let url = self.proof_url(parts);
+        if url.is_none() && dpop.is_some() {
+            tracing::error!(
+                "a DPoP proof was presented but no public origin is configured \
+                 (KonklavBuilder::public_origin); refusing it"
+            );
+        }
+        // Without a URL the core refuses any proof.
+        let request = url.map(|url| RequestDescriptor {
             // A websocket opens with a GET.
             method: if websocket {
                 "GET".to_owned()
             } else {
                 parts.method.as_str().to_owned()
             },
-            url: match &self.inner.public_url {
-                Some(url) => url(parts),
-                None => own_url(parts),
-            },
+            url,
         });
         if let Some(authorization) = header(header::AUTHORIZATION).filter(|value| !value.is_empty())
         {
@@ -215,18 +287,20 @@ impl Konklav {
     }
 
     /// Evaluates `policy` for the request: nothing for a public one, else
-    /// one acceptance and one decision.
+    /// one acceptance and one decision. The accepted presentation is
+    /// released when what holds it is dropped, here for a refused request.
     pub(crate) async fn evaluate(
         &self,
         policy: &Policy,
         parts: &mut Parts,
-    ) -> Result<Evaluation, Response> {
+    ) -> Result<Evaluated, Response> {
         // r[impl item.axum.public]
         let Some(admitted) = policy.admitted_token_kinds() else {
-            return Ok(Evaluation::Public {
+            let public = Evaluation::Public {
                 verified: false,
                 token: None,
-            });
+            };
+            return Ok((public, None));
         };
         // Where each scope comes from, checked before reading any token.
         for kind in policy.scope_kinds() {
@@ -262,7 +336,10 @@ impl Konklav {
             }
             Err(_) => return Err(self.respond(Denied::Unavailable)),
         };
-        let token = accepted.claims();
+        // r[impl item.axum.request-decider]
+        let decider = RequestDecider::new(self.inner.host.clone(), accepted);
+        let held = HeldPresentation::new(decider.clone());
+        let token = decider.claims();
         self.run_hooks(parts, token).await?;
 
         // r[impl item.axum.token-tenant]
@@ -289,22 +366,21 @@ impl Konklav {
 
         // r[impl item.axum.single-decision]
         let token = token.clone();
-        let decider = RequestDecider::new(self.inner.host.clone(), accepted);
         let Ok(decision) = self
             .host()
             .decide_accepted(decider.accepted(), &requirements, true)
             .await
         else {
-            decider.release();
             return Err(self.respond(Denied::Unavailable));
         };
         let denied = match decision {
             Decision::Allow { .. } => {
-                return Ok(Evaluation::Allowed {
+                let allowed = Evaluation::Allowed {
                     token,
                     admitted,
                     decider,
-                });
+                };
+                return Ok((allowed, Some(held)));
             }
             Decision::StepUp { requirement } => Denied::StepUpRequired {
                 requirement,
@@ -324,7 +400,6 @@ impl Konklav {
             },
             Decision::Deny { reason } => Denied::Forbidden(Forbidden::Decision(reason)),
         };
-        decider.release();
         Err(self.respond(denied))
     }
 }

@@ -105,19 +105,15 @@ pub fn router(surfaces: &[Surface], state: AppState) -> Router {
         .nest("/v1", v1)
         .fallback(error::not_found)
         .method_not_allowed_fallback(error::method_not_allowed);
-    // DPoP for Konklav's own tokens, where its own sessions are used. On the
-    // root router, so it sees the whole path a proof names.
-    let router = if surfaces
-        .iter()
-        .any(|s| matches!(s, Surface::Subject | Surface::Control))
-    {
-        router.layer(middleware::from_fn_with_state(
-            state.clone(),
-            dpop::own_surfaces,
-        ))
-    } else {
-        router
-    };
+    // DPoP for Konklav's own tokens. On every listener: a service
+    // principal's token is as sender-constrained on the relying surface as
+    // on the others. On the root router, so it sees the whole path a proof
+    // names.
+    // r[impl session.dpop.surfaces]
+    let router = router.layer(middleware::from_fn_with_state(
+        state.clone(),
+        dpop::own_surfaces,
+    ));
     router
         .layer(middleware::from_fn_with_state(
             names,

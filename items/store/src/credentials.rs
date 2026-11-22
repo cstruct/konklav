@@ -479,6 +479,29 @@ pub async fn set_session_flags(
     Ok(())
 }
 
+/// Gives the credential `id` the restrictions of `from`, the credential it
+/// replaces: its session flags and whether it is break-glass. Returns the
+/// credential as it is afterwards.
+// r[impl authn.password.restrictions-kept]
+pub async fn inherit_restrictions(
+    conn: &mut AsyncPgConnection,
+    id: CredentialId,
+    from: &Credential,
+) -> StoreResult<Credential> {
+    diesel::update(credential::table.find(id.as_uuid()))
+        .set((
+            credential::session_flags.eq(&from.session_flags),
+            credential::break_glass.eq(from.break_glass),
+        ))
+        .returning(Row::as_returning())
+        .get_result(conn)
+        .await
+        .optional()?
+        .ok_or(StoreError::NotFound)?
+        .try_into()
+        .map_err(StoreError::from)
+}
+
 /// Marks a credential as a break-glass credential, or not.
 // r[impl federation.break-glass]
 pub async fn set_break_glass(

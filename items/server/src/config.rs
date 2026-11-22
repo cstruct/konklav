@@ -254,8 +254,9 @@ config_tree! {
             /// signing, such as the next key ahead of a rotation.
             #[facet(default)]
             pub published_key_files: Vec<String>,
-            /// Base URLs at which clients address the subject-facing and
-            /// control-plane surfaces, for the `htu` of DPoP proofs: a
+            /// Base URLs at which clients address the subject-facing,
+            /// relying and control-plane surfaces, for the `htu` of DPoP
+            /// proofs: a
             /// proof must name one of them followed by the request's path.
             /// List each prefix a reverse proxy mounts a surface under,
             /// such as `https://admin.example/control`. Defaults to the
@@ -297,6 +298,13 @@ config_tree! {
                 /// Every client.
                 All,
             },
+            /// Whether back-channel logout tokens may be sent to addresses
+            /// that aren't public (loopback, private, link-local), for
+            /// deployments whose clients are on Konklav's own network.
+            /// Off by default, since a client registration would otherwise
+            /// make Konklav post into that network.
+            #[facet(default)]
+            pub backchannel_logout_private_addresses: bool,
             /// A relying system's endpoint that userinfo asks for profile
             /// claims Konklav doesn't hold, such as `name`.
             pub claims_hook: Option<pub struct ClaimsHook {
@@ -733,6 +741,106 @@ impl ControlConfig {
                     })
             })
             .transpose()
+    }
+}
+
+/// Bootstrap tokens this repository has published, in its development and
+/// example secrets files, now or earlier.
+const PUBLISHED_BOOTSTRAP_TOKENS: [&str; 4] = [
+    "konklav-dev-control-token-0123456789",
+    "example-bootstrap-token-0123456789abcdef",
+    "konklav-dev-control-token",
+    "conclave-dev-control-token",
+];
+
+/// TOTP encryption keys this repository has published, decoded.
+const PUBLISHED_TOTP_KEYS: [&[u8]; 2] = [
+    b"dev-only-totp-encryption-key-32b",
+    b"example-only-totp-encryption-key",
+];
+
+/// Whether `url` is plain HTTP to this machine itself.
+fn is_loopback_http(url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    let address = host.trim_start_matches('[').trim_end_matches(']');
+    url.scheme() == "http"
+        && (host == "localhost"
+            || host.ends_with(".localhost")
+            || address.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback()))
+}
+
+/// Whether the configuration is plainly a development one: browser cookies
+/// are sent over plain HTTP, or the issuer is plain HTTP on this machine.
+#[must_use]
+pub fn is_development(tokens: &TokensConfig, browser: &BrowserConfig) -> bool {
+    browser
+        .browser
+        .as_ref()
+        .is_some_and(|browser| !browser.secure_cookies)
+        || is_loopback_http(&tokens.tokens.issuer)
+}
+
+/// Checks what only a development deployment may have: secrets this
+/// repository has published, and plain-HTTP URLs. Returns every problem,
+/// one per line.
+// r[impl platform.config.published-secrets]
+// r[impl platform.config.https]
+pub fn check_deployment(
+    tokens: &TokensConfig,
+    browser: &BrowserConfig,
+    control: &ControlConfig,
+    mfa: &MfaConfig,
+) -> Result<(), String> {
+    use base64::Engine;
+
+    if is_development(tokens, browser) {
+        return Ok(());
+    }
+    let mut problems = Vec::new();
+    let mut published = |setting: &str| {
+        problems.push(format!(
+            "{setting} is a secret published in Konklav's repository, which anyone can read: \
+             generate a new one (only a development configuration, with \
+             `browser.secure_cookies false` or an `http://` issuer on localhost, may use it)"
+        ));
+    };
+    if let Some(token) = control.bootstrap_token()
+        && PUBLISHED_BOOTSTRAP_TOKENS.contains(&token.trim())
+    {
+        published("control.bootstrap_token");
+    }
+    for key in mfa.mfa.iter().flat_map(|mfa| &mfa.totp_keys) {
+        let decoded = base64::engine::general_purpose::STANDARD.decode(&key.key);
+        if decoded.is_ok_and(|bytes| PUBLISHED_TOTP_KEYS.contains(&bytes.as_slice())) {
+            published(&format!("mfa.totp_keys `{}`", key.id));
+        }
+    }
+    let hook = tokens
+        .oidc_provider
+        .as_ref()
+        .and_then(|provider| provider.claims_hook.as_ref());
+    let urls = std::iter::once(("tokens.issuer", &tokens.tokens.issuer))
+        .chain(hook.map(|hook| ("oidc_provider.claims_hook.url", &hook.url)));
+    for (setting, url) in urls {
+        let https = reqwest::Url::parse(url).is_ok_and(|url| url.scheme() == "https");
+        if !https && !is_loopback_http(url) {
+            problems.push(format!(
+                "{setting} must be an `https://` URL, not `{url}` (only a development \
+                 configuration, with `browser.secure_cookies false`, may use plain HTTP \
+                 beyond localhost)"
+            ));
+        }
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(problems.join("\n"))
     }
 }
 

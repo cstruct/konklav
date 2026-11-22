@@ -32,11 +32,20 @@ address across identifiers, more loosely, so one source can't try many
 identifiers. An attempt MUST
 count toward the limit while it is being checked, so concurrent attempts
 can't exceed it, and every check of a credential's secret MUST count,
-including those made for step-up and password change.
+including those made for step-up and password change and to redeem an
+invite to an existing account (`authn.invite.emailed`), and every check of
+a code sent for a phone-code login. An IPv6 client address MUST be counted
+by its /64 prefix, and an IPv4-mapped IPv6 address as the IPv4 address it
+maps, so one source can't spread its attempts over the addresses it holds.
 
 r[authn.login.hashing-bound]
 Password and secret-key hashing MUST run with bounded concurrency, so a
-burst of login attempts queues instead of exhausting CPU.
+burst of login attempts queues instead of exhausting CPU. The queue MUST
+be bounded too: a request that finds no place in it MUST be refused at
+once with a typed error, before it counts as a login attempt
+(`authn.login.rate-limit`). A request on the subject-facing surface MUST
+NOT hold a database connection while it waits for hashing or hashes, so
+that queued logins can't keep connections from other requests.
 
 r[authn.login.timing]
 Failed and successful first-factor attempts MUST NOT be distinguishable by
@@ -109,10 +118,24 @@ A human subject MUST be able to register a passkey only from a full session
 ceremony's challenge MUST be single-use, bound to that session, and expire.
 Passkeys MUST NOT be created any other way.
 
+r[authn.passkey.session-flags]
+A passkey registered from a session that carries restrictive flags MUST
+carry those flags as its credential's session flags
+(`session.flags.credential`), whether the session got them from its
+credential or from its login request, so that registering a passkey can't
+be used to shed a restriction. An operator can change them afterwards, as
+for any credential.
+
 r[authn.passkey.discoverable]
 Passkey login MUST NOT require a login identifier. Konklav MUST find the
 credential by the credential ID the authenticator returns, and MUST refuse
 the assertion unless its user handle names the credential's subject.
+
+r[authn.passkey.login-start-limit]
+Starting a passkey login stores a ceremony for a caller that has proven
+nothing, so starts MUST be limited per client address, keyed as
+`authn.login.rate-limit` keys addresses, over several windows. A start
+beyond the limit MUST be refused as rate-limited.
 
 r[authn.passkey.origin]
 Registrations and assertions MUST be refused unless the client data's origin
@@ -286,14 +309,21 @@ browser login, or federated sign-in, without a DPoP proof or `dpop_jkt` is
 then refused.
 
 r[session.dpop.surfaces]
-The subject-facing and control-plane surfaces MUST accept Konklav's own
+Every surface, on whichever listener it is served, MUST accept Konklav's own
 sender-constrained access tokens under the `DPoP` scheme with a valid proof,
 and refuse them under `Bearer` (`r[token.dpop.scheme]`). A proof's `htu`
 MUST be one of the configured base URLs at which clients address Konklav,
 followed by the request's path, so a reverse proxy that mounts a surface
 under a prefix can be described. Unless configured, the base URLs MUST be
 the issuer and each allowed browser origin, with and without the
-console's `/control` prefix.
+console's `/control` prefix; a surface addressed at another URL, such as
+the relying surface on its own port, needs its base URL configured.
+
+r[session.dpop.fail-closed]
+Authenticating a request by its access token MUST refuse a
+sender-constrained token whose DPoP proof was not verified for that
+request, whatever the listener's routing, so that leaving the proof check
+out of a route can't turn the token into a bearer token.
 
 r[session.client-kind]
 Whether a login returns cookies or body tokens MUST be decided by the
@@ -332,6 +362,12 @@ delivery, and their challenge material MUST expire with the challenge.
 r[authn.invite.redeem]
 Redeeming an invite MUST link a credential to a new or existing subject and
 MUST activate any membership the invite targets.
+
+r[authn.invite.active-subject]
+Redeeming an invite for an existing subject MUST fail, as a login by that
+subject would, unless the subject is active. A refused redemption MUST
+leave the invite pending and MUST NOT activate its membership or assign
+its roles.
 
 r[authn.invite.membership-id]
 An invite to a tenant MAY name the id of the membership its redemption
@@ -381,7 +417,17 @@ decides who it shares it with. It MUST be redeemable either
   (`authn.login.rate-limit`, `authn.login.timing`,
   `platform.error.no-enumeration`, `credential.mfa-requirement`), which
   then starts a session as the password login would, with the `client` and
-  `flags` of `authn.login.session-request`.
+  `flags` of `authn.login.session-request` (but see
+  `authn.invite.mfa-first`).
+
+r[authn.invite.mfa-first]
+When the password credential that redeems a link-only invite requires MFA
+(`credential.mfa-requirement`), the redemption MUST start the partial
+session a password login would and nothing more: it MUST NOT consume the
+invite, activate its membership or assign its roles, since the password
+alone would otherwise let whoever knows it attach the subject to a tenant.
+The subject redeems the invite signed in, once MFA has made the session
+full.
 
 Redeeming a link-only invite MUST NOT create a subject or credential: no
 address was proved, and the holder of a bearer link could claim anyone's.
@@ -418,10 +464,29 @@ r[authn.reset-password]
 Password reset MUST go through a challenge, and completing it MUST revoke
 the subject's other sessions.
 
+r[authn.reset-password.token-first]
+Completing a password reset MUST check that its token names a usable
+challenge before hashing the new password, so requests without one can't
+occupy password hashing (`authn.login.hashing-bound`). The token MUST
+still be consumed together with the password change.
+
+r[authn.password.restrictions-kept]
+A password that replaces another, set by its subject through password reset
+or password change or by an operator through the control plane, MUST keep
+the restrictions of the credential it replaces: its session
+flags (`session.flags.credential`), its MFA requirement and whether it is
+a break-glass credential (`federation.break-glass`).
+
 r[authn.impersonation.actor-chain]
 Impersonation MUST require an explicit grant (a control-plane capability or
 an assumption grant). It MUST create a session for the target subject whose
 tokens carry the impersonating subject in the actor chain.
+
+r[authn.impersonation.flags]
+An impersonation session MUST carry the session flags of the session that
+started it, so the impersonating subject's restrictions, and their
+confinements (`session.flags.confine.tenant`), hold for what it does as
+the target.
 
 r[authn.impersonation.time-bounded]
 Impersonation and assumption sessions MUST be time-bounded and auditable,

@@ -11,6 +11,10 @@ use sha2::{Digest, Sha256};
 /// Proofs larger than this are refused before they are parsed.
 pub const MAX_PROOF_LEN: usize = 4096;
 
+/// The longest `jti` a proof may carry, in bytes. A verifier remembers the
+/// `jti` of every proof it accepts, and anyone can sign a proof.
+pub const MAX_JTI_LEN: usize = 128;
+
 /// The proof algorithms Konklav accepts, as discovery lists them.
 pub const PROOF_ALGORITHMS: [&str; 2] = ["ES256", "EdDSA"];
 
@@ -75,6 +79,8 @@ pub enum ProofError {
     BadSignature,
     #[error("DPoP proof lacks a required claim")]
     MissingClaim,
+    #[error("DPoP proof has too long a jti")]
+    JtiTooLong,
     #[error("DPoP proof is for another method")]
     WrongMethod,
     #[error("DPoP proof is for another URL")]
@@ -161,6 +167,9 @@ pub fn verify_proof(proof: &str, request: &ProofRequest<'_>) -> Result<Proof, Pr
     };
     if jti.is_empty() {
         return Err(ProofError::MissingClaim);
+    }
+    if jti.len() > MAX_JTI_LEN {
+        return Err(ProofError::JtiTooLong);
     }
     if htm != request.method {
         return Err(ProofError::WrongMethod);
@@ -456,6 +465,19 @@ mod tests {
                 "{missing}"
             );
         }
+    }
+
+    // r[verify token.dpop.proof]
+    #[test]
+    fn a_jti_longer_than_the_limit_is_refused() {
+        let key = Key::new(1);
+        let with_jti = |length: usize| with(claims(), "jti", json!("j".repeat(length)));
+        let longest = verify_proof(&key.proof(&with_jti(MAX_JTI_LEN)), &request());
+        assert_eq!(longest.unwrap().jti.len(), MAX_JTI_LEN);
+        assert_eq!(
+            verify_proof(&key.proof(&with_jti(MAX_JTI_LEN + 1)), &request()),
+            Err(ProofError::JtiTooLong)
+        );
     }
 
     // r[verify token.dpop.proof]

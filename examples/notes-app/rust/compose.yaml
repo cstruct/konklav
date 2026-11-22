@@ -4,6 +4,8 @@
 #   docker compose -f examples/notes-app/rust/compose.yaml up --build
 #
 # Then open http://localhost:3000 (the app) or http://localhost:4000 (admin).
+# Ports are published on 127.0.0.1 only: every password and key here is a
+# well-known example value.
 name: konklav-notes-app-rust
 
 x-rust: &rust
@@ -96,7 +98,7 @@ services:
     command: ["sso-login"]
     environment:
       KONKLAV_SUBJECT_URL: http://konklav:8080
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
     depends_on:
       setup: {condition: service_completed_successfully}
 
@@ -108,7 +110,7 @@ services:
       ISSUER: http://localhost:8000
       CLIENT_ID: app
       API_URL: http://localhost:3001
-    ports: ["3000:3000"]
+    ports: ["127.0.0.1:3000:3000"]
     depends_on:
       setup: {condition: service_completed_successfully}
 
@@ -126,7 +128,7 @@ services:
       REDIS_URL: redis://valkey:6379
     volumes:
       - shared:/shared:ro
-    ports: ["3001:3001"]
+    ports: ["127.0.0.1:3001:3001"]
     depends_on:
       setup: {condition: service_completed_successfully}
       # Healthy: the Rust services connect to Valkey as they start. Once
@@ -148,7 +150,7 @@ services:
       REDIS_URL: redis://valkey:6379
     volumes:
       - shared:/shared:ro
-    ports: ["4000:4000"]
+    ports: ["127.0.0.1:4000:4000"]
     depends_on:
       setup: {condition: service_completed_successfully}
       # Healthy: the Rust services connect to Valkey as they start. Once

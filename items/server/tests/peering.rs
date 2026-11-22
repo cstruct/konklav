@@ -443,6 +443,16 @@ async fn workloads_exchange_upstream_tokens_for_local_service_principals() {
         replayed.body["error"], "invalid_grant",
         "assertions work once"
     );
+    // An assertion is accepted for a while after its `exp`, for clock skew,
+    // and is remembered for as long.
+    let late = just_expired(&upstream_token(up, &ci_secret).await);
+    let accepted = exchange(&down, &late).await;
+    assert_eq!(accepted.status, StatusCode::OK, "{:?}", accepted.body);
+    let replayed = exchange(&down, &late).await;
+    assert_eq!(
+        replayed.body["error"], "invalid_grant",
+        "assertions work once, also just after exp"
+    );
 
     // A token for another audience isn't accepted.
     control_ok(
@@ -496,6 +506,23 @@ async fn upstream_token(up: &TestApp, secret: &str) -> String {
         .as_str()
         .unwrap()
         .to_owned()
+}
+
+/// The upstream's token as if it had expired five seconds ago, signed
+/// again with the upstream's key (the test apps' key 1).
+fn just_expired(token: &str) -> String {
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use ed25519_dalek::Signer;
+    let mut parts = token.split('.');
+    let (header, payload) = (parts.next().unwrap(), parts.next().unwrap());
+    let mut claims: Value =
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap();
+    claims["exp"] = json!(chrono::Utc::now().timestamp() - 5);
+    let signed = format!("{header}.{}", URL_SAFE_NO_PAD.encode(claims.to_string()));
+    let key = ed25519_dalek::SigningKey::from_bytes(&[1; 32]);
+    let signature = key.sign(signed.as_bytes()).to_bytes();
+    format!("{signed}.{}", URL_SAFE_NO_PAD.encode(signature))
 }
 
 async fn exchange(down: &TestApp, token: &str) -> common::Reply {

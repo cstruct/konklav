@@ -133,8 +133,11 @@ async fn main() -> ExitCode {
         },
         // Validates what `serve` needs, which is every context.
         Command::CheckConfig => match load::<ServeContexts>(&cli) {
-            Ok((_, _, _, _, _, control, _, _)) => {
-                if let Err(error) = control.bootstrap_expiry() {
+            Ok((_, _, _, tokens, browser, control, _, mfa)) => {
+                let checked = control
+                    .bootstrap_expiry()
+                    .and_then(|_| config::check_deployment(&tokens, &browser, &control, &mfa));
+                if let Err(error) = checked {
                     eprintln!("{error}");
                     return ExitCode::FAILURE;
                 }
@@ -293,6 +296,7 @@ async fn serve(
     feed: FeedConfig,
     mfa: MfaConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    config::check_deployment(&tokens, &browser, &control, &mfa)?;
     let oidc = tokens
         .oidc_provider
         .as_ref()

@@ -10,6 +10,13 @@ import { proof } from "/shared/dpop.js";
 
 const $ = (id) => document.getElementById(id);
 const loginRequest = new URLSearchParams(location.search).get("login_request");
+// The request's id comes from the address bar and goes into the path of
+// calls made with this session, so it must be an id and nothing else: with
+// `/`, `?`, `#` or `..` in it, a link here could aim those calls at another
+// endpoint.
+const loginRequestPath = /^[A-Za-z0-9_-]+$/.test(loginRequest ?? "")
+  ? `/v1/oauth2/login-requests/${loginRequest}`
+  : null;
 
 /// The Konklav session's access token, in memory only.
 let accessToken = null;
@@ -60,12 +67,12 @@ async function restore() {
 
 /// Accepts the app's request with this session and follows Konklav back.
 async function accept() {
-  const { redirect_to } = await konklav("POST", `/v1/oauth2/login-requests/${loginRequest}/accept`);
+  const { redirect_to } = await konklav("POST", `${loginRequestPath}/accept`);
   location.replace(redirect_to);
 }
 
 async function reject(error) {
-  const { redirect_to } = await konklav("POST", `/v1/oauth2/login-requests/${loginRequest}/reject`, { error });
+  const { redirect_to } = await konklav("POST", `${loginRequestPath}/reject`, { error });
   location.replace(redirect_to);
 }
 
@@ -116,9 +123,10 @@ async function signIn(request) {
 let request = null;
 
 async function main() {
-  if (loginRequest) {
+  if (loginRequest !== null) {
     try {
-      request = await konklav("GET", `/v1/oauth2/login-requests/${loginRequest}`);
+      if (!loginRequestPath) throw new Error("not a login request's id");
+      request = await konklav("GET", loginRequestPath);
     } catch {
       $("status").textContent = "This sign-in request has expired. Go back to the app and try again.";
       return;

@@ -793,6 +793,263 @@ async fn a_service_principal_with_a_client_is_not_erased_until_the_client_is_dis
 }
 
 /// How many rows of each kind a personal data read holds.
+/// Seeds what Konklav can hold about an address without naming a subject:
+/// a login attempt, an invite, its delivery request and a batch answer.
+async fn unnamed_rows(conn: &mut Connection, address: &str) {
+    login_attempts::begin(conn, CredentialKind::Password, address, None)
+        .await
+        .unwrap();
+    let mut invite = challenge(None, address);
+    invite.purpose = Purpose::Invite;
+    challenges::create(conn, invite).await.unwrap();
+    delivery(conn, None, address).await;
+    let now = Utc::now();
+    batch_results::remember(
+        conn,
+        "bootstrap",
+        &format!("invited-{address}"),
+        &batch_results::Remembered {
+            request_hash: vec![7],
+            answer: json!({"results": [{"status": 201, "body": {"identifier": address}}]}),
+        },
+        now,
+        now + Duration::hours(1),
+    )
+    .await
+    .unwrap();
+}
+
+/// The tables [`unnamed_rows`] writes to, with how many rows hold `address`.
+async fn unnamed_rows_holding(conn: &mut Connection, address: &str) -> Vec<(String, i64)> {
+    let unnamed = ["batch_result", "challenge", "event", "login_attempt"];
+    let mut found = rows_holding(conn, address).await;
+    found.retain(|(table, _)| unnamed.contains(&table.as_str()));
+    found
+}
+
+async fn human(conn: &mut Connection) -> SubjectId {
+    let id = SubjectId::new_v7();
+    subjects::create(conn, id, SubjectKind::Human)
+        .await
+        .unwrap();
+    id
+}
+
+async fn email_factor(conn: &mut Connection, subject: SubjectId, email: &str) -> mfa::Factor {
+    let data = FactorData::EmailCode(EmailCodeData {
+        email: email.into(),
+    });
+    mfa::create(conn, subject, &data).await.unwrap()
+}
+
+// Anyone signed in can enrol any address as an email factor. Until it is
+// proven, it must not make someone else's rows theirs.
+// r[verify subject.erasure.own-addresses]
+// r[verify subject.erasure.removes]
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unproven_factor_address_claims_no_one_elses_rows() {
+    let db = TestDatabase::new().await;
+    let (_, grace) = seeded(&db, false).await;
+    let mut conn = db.pool().get().await.unwrap();
+    let before = rows_holding(&mut conn, &grace.email).await;
+    assert_eq!(
+        unnamed_rows_holding(&mut conn, &grace.email).await.len(),
+        4,
+        "{before:?}"
+    );
+
+    let mallory = human(&mut conn).await;
+    password(&mut conn, mallory, "mallory@login.example").await;
+    let factor = email_factor(&mut conn, mallory, &grace.email).await;
+    let mut code = challenge(Some(mallory), &grace.email);
+    code.mfa_factor_id = Some(factor.id);
+    let code = challenges::create(&mut conn, code).await.unwrap();
+    delivery(&mut conn, Some(mallory), &grace.email).await;
+
+    // Only what was made for mallory: the code, and no attempt of grace's.
+    let held = personal_data::of(&mut conn, mallory).await.unwrap();
+    assert_eq!(held.login_attempts, vec![]);
+    let challenges: Vec<_> = held.challenges.iter().map(|held| held.id).collect();
+    assert_eq!(challenges, vec![code.id]);
+
+    // Mallory's own rows that hold the address go, and nothing of grace's.
+    subjects::erase(&mut conn, mallory).await.unwrap();
+    assert_eq!(rows_holding(&mut conn, &grace.email).await, before);
+    assert_eq!(
+        rows_holding(&mut conn, "mallory@login.example").await,
+        vec![]
+    );
+
+    // An unproven address no one else holds isn't the subject's either.
+    let trent = human(&mut conn).await;
+    email_factor(&mut conn, trent, "unproven@factor.example").await;
+    unnamed_rows(&mut conn, "unproven@factor.example").await;
+    let before = rows_holding(&mut conn, "unproven@factor.example").await;
+    let held = personal_data::of(&mut conn, trent).await.unwrap();
+    assert_eq!((held.login_attempts.len(), held.challenges.len()), (0, 0));
+    subjects::erase(&mut conn, trent).await.unwrap();
+    let after = rows_holding(&mut conn, "unproven@factor.example").await;
+    assert_eq!(
+        after,
+        before
+            .into_iter()
+            .filter(|(table, _)| table != "mfa_factor")
+            .collect::<Vec<_>>()
+    );
+}
+
+// r[verify subject.erasure.own-addresses]
+// r[verify subject.erasure.removes]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proven_factor_address_is_the_subjects_own() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let address = "proven@factor.example";
+    let peggy = human(&mut conn).await;
+    let factor = email_factor(&mut conn, peggy, address).await;
+    mfa::activate(&mut conn, factor.id).await.unwrap();
+    unnamed_rows(&mut conn, address).await;
+
+    let held = personal_data::of(&mut conn, peggy).await.unwrap();
+    assert_eq!((held.login_attempts.len(), held.challenges.len()), (1, 1));
+    subjects::erase(&mut conn, peggy).await.unwrap();
+    assert_eq!(rows_holding(&mut conn, address).await, vec![]);
+}
+
+// A revoked credential keeps its login identifier, which someone else may
+// hold by now.
+// r[verify subject.erasure.own-addresses]
+// r[verify subject.erasure.removes]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_login_identifier_someone_else_took_is_theirs() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let address = "shared@login.example";
+    let olga = human(&mut conn).await;
+    let old = password(&mut conn, olga, address).await;
+    assert!(
+        credentials::revoke(&mut conn, old, "replaced")
+            .await
+            .unwrap()
+    );
+    let nina = human(&mut conn).await;
+    password(&mut conn, nina, address).await;
+    unnamed_rows(&mut conn, address).await;
+    let before = unnamed_rows_holding(&mut conn, address).await;
+    assert_eq!(before.len(), 4, "{before:?}");
+
+    let held = personal_data::of(&mut conn, olga).await.unwrap();
+    assert_eq!((held.login_attempts.len(), held.challenges.len()), (0, 0));
+    subjects::erase(&mut conn, olga).await.unwrap();
+    assert_eq!(unnamed_rows_holding(&mut conn, address).await, before);
+
+    let held = personal_data::of(&mut conn, nina).await.unwrap();
+    assert_eq!((held.login_attempts.len(), held.challenges.len()), (1, 1));
+    subjects::erase(&mut conn, nina).await.unwrap();
+    assert_eq!(rows_holding(&mut conn, address).await, vec![]);
+}
+
+/// Waits until some statement in this database waits for a lock.
+async fn until_a_statement_waits(conn: &mut Connection) {
+    #[derive(diesel::QueryableByName)]
+    struct Count {
+        #[diesel(sql_type = BigInt)]
+        waiting: i64,
+    }
+    for _ in 0..200 {
+        let count = diesel::sql_query(
+            "select count(*) as waiting from pg_stat_activity
+             where datname = current_database() and wait_event_type = 'Lock'",
+        )
+        .get_result::<Count>(conn)
+        .await
+        .unwrap();
+        if count.waiting > 0 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("no statement waited for a lock");
+}
+
+// A write that starts while an erasure is under way waits for it, and
+// must then see the erased subject rather than commit behind its deletes.
+// r[verify subject.erasure.blocks-writes]
+// r[verify subject.erasure.removes]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_write_that_waits_for_an_erasure_is_refused() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let id = human(&mut conn).await;
+    password(&mut conn, id, "ada@login.example").await;
+
+    let (erased, until_erased) = tokio::sync::oneshot::channel::<()>();
+    let (commit, until_commit) = tokio::sync::oneshot::channel::<()>();
+    let pool = db.pool().clone();
+    let eraser = tokio::spawn(async move {
+        let mut conn = pool.get().await.unwrap();
+        conn.transaction::<(), StoreError, _>(async move |conn| {
+            subjects::erase(conn, id).await?;
+            erased.send(()).unwrap();
+            until_commit.await.unwrap();
+            Ok(())
+        })
+        .await
+        .unwrap();
+    });
+    until_erased.await.unwrap();
+
+    let pool = db.pool().clone();
+    let writer = tokio::spawn(async move {
+        let mut conn = pool.get().await.unwrap();
+        let new = NewCredential {
+            id: CredentialId::new_v7(),
+            subject_id: id,
+            identifier: "late@login.example".into(),
+            data: CredentialData::Password(PasswordData { hash: HASH.into() }),
+            mfa_factors_required: 0,
+            replaces: None,
+            metadata: metadata::empty(),
+        };
+        credentials::insert(&mut conn, new).await
+    });
+    until_a_statement_waits(&mut conn).await;
+    commit.send(()).unwrap();
+    eraser.await.unwrap();
+
+    refused_as_erased("a credential", &writer.await.unwrap());
+    assert_eq!(rows_holding(&mut conn, "late@login.example").await, vec![]);
+}
+
+// Kept here with the other ways a session ends under a caller's feet.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_revoked_session_is_not_upgraded_by_a_verified_mfa_factor() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let id = human(&mut conn).await;
+    let credential = password(&mut conn, id, "ada@login.example").await;
+    let mut new = new_session(id, credential, "ada-key-thumbprint");
+    new.stage = Stage::Partial;
+    let (session, _) = sessions::insert(&mut conn, new).await.unwrap();
+    let filter = SessionFilter {
+        subject: Some(id),
+        ..Default::default()
+    };
+    let revoked = sessions::revoke(&mut conn, &filter, None, "logout")
+        .await
+        .unwrap();
+    assert_eq!(revoked.len(), 1);
+    let before = sessions::get(&mut conn, session.id).await.unwrap();
+
+    let result =
+        sessions::verify_mfa_factor(&mut conn, session.id, "factor", "otp", 1, b"hash").await;
+
+    assert!(matches!(result, Err(StoreError::NotFound)), "{result:?}");
+    let after = sessions::get(&mut conn, session.id).await.unwrap();
+    assert_eq!(after.stage, Stage::Partial);
+    assert_eq!(after.version, before.version);
+}
+
 fn amounts(held: &PersonalData) -> [usize; 7] {
     [
         held.credentials.len(),

@@ -163,6 +163,21 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for Bound {
     }
 }
 
+tokio::task_local! {
+    /// The sender-constrained access token whose proof [`own_surfaces`]
+    /// verified for the request this task is handling.
+    static PROVEN: String;
+}
+
+/// Whether [`own_surfaces`] verified a DPoP proof for `token` on the
+/// request being handled. False wherever the middleware didn't run, so
+/// authentication refuses a sender-constrained token there instead of
+/// taking it as a bearer token.
+// r[impl session.dpop.fail-closed]
+pub(crate) fn proven(token: &str) -> bool {
+    PROVEN.try_with(|proven| proven == token).unwrap_or(false)
+}
+
 /// The client endpoints of the OpenID provider, which check their proofs
 /// themselves and take client tokens.
 const PROVIDER_ENDPOINTS: [&str; 3] = [
@@ -203,11 +218,10 @@ fn own_bases(state: &AppState) -> Vec<String> {
         .collect()
 }
 
-/// DPoP for Konklav's own tokens on the subject-facing and control-plane
-/// surfaces:
+/// DPoP for Konklav's own tokens, on every surface:
 ///
 /// - under `DPoP`, the proof is verified against the token, and the
-///   handlers then see a plain bearer token
+///   handlers then see a bearer token that [`proven`] vouches for
 /// - under `Bearer`, a sender-constrained token is refused
 /// - without a token, a `DPoP` header is verified as a binding proof, which
 ///   session-starting handlers and the cookie refresh find as [`Binding`]
@@ -264,6 +278,7 @@ pub(crate) async fn own_surfaces(
                 }
                 Err(_) => return invalid_resource_request("the access token is malformed"),
             }
+            return PROVEN.scope(token, next.run(request)).await;
         }
         Some((scheme, token)) if scheme == "bearer" => {
             if own(&token).is_some_and(|claims| claims.cnf.is_some()) {
@@ -300,4 +315,22 @@ async fn checked(
 ) -> Result<Result<Option<Proof>, &'static str>, ApiError> {
     let mut conn = state.pool.get().await?;
     check(state, &mut conn, headers, expected).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // r[verify session.dpop.fail-closed]
+    #[tokio::test]
+    async fn only_the_token_whose_proof_was_verified_is_proven() {
+        assert!(!proven("token"), "nothing verified a proof here");
+        PROVEN
+            .scope("token".to_owned(), async {
+                assert!(proven("token"));
+                assert!(!proven("another"));
+            })
+            .await;
+        assert!(!proven("token"), "it ends with the request");
+    }
 }

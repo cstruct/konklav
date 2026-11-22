@@ -4,10 +4,18 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="referrer" content="no-referrer">
+    <!--
+      Only the console's own files run or load, and it talks only to its own
+      origin. 'wasm-unsafe-eval' lets the WASM module compile. What a meta
+      tag cannot say (frame-ancestors) is the server's to send: see
+      "Response headers" in README.md.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
     <title>Konklav console</title>
     <link data-trunk rel="icon" href="favicon.svg">
     <link data-trunk rel="css" href="style.css">
     <link data-trunk rel="rust" data-bin="konklav-console" data-wasm-opt="z">
+    <script data-trunk type="module" src="boot.js"></script>
   </head>
   <body></body>
 </html>

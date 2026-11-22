@@ -524,6 +524,61 @@ async fn changing_the_password_keeps_the_current_session() {
     assert_eq!(ended.code(), "SESSION_ENDED");
 }
 
+/// The metadata of the subject's active password credential.
+async fn password_metadata(app: &TestApp, subject: &str) -> Value {
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    let credentials = detail.body["credentials"].as_array().unwrap();
+    let active = credentials.iter().find(|c| c["revoked_at"].is_null());
+    active.expect("an active credential")["metadata"].clone()
+}
+
+// r[verify metadata.write.create]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_password_its_subject_sets_keeps_the_credentials_metadata() {
+    let app = TestApp::new().await;
+    let mailer = mailer(&app).await;
+    let subject = app.human(EMAIL, PASSWORD).await;
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    let credential = detail.body["credentials"][0]["id"].as_str().unwrap();
+    let noted = app
+        .control(
+            Method::PATCH,
+            &format!("/v1/credentials/{credential}/metadata"),
+            Some(json!({"source": "crm"})),
+        )
+        .await;
+    assert_eq!(noted.status, StatusCode::OK, "{:?}", noted.body);
+
+    let session = token(&app.login(EMAIL, PASSWORD).await);
+    let changed = post_bearer(
+        &app,
+        "/v1/password/change",
+        &session,
+        json!({"current": PASSWORD, "new": "another password"}),
+    )
+    .await;
+    assert_eq!(changed.status, StatusCode::OK, "{:?}", changed.body);
+    let kept = password_metadata(&app, &subject).await;
+    assert_eq!(kept, json!({"source": "crm"}), "after a change");
+
+    app.post("/v1/password-reset/start", json!({"identifier": EMAIL}))
+        .await;
+    let link = delivered(&app, &mailer, EMAIL).await["token"].clone();
+    let reset = app
+        .post(
+            "/v1/password-reset/complete",
+            json!({"token": link, "password": "a fresh password"}),
+        )
+        .await;
+    assert_eq!(reset.status, StatusCode::OK, "{:?}", reset.body);
+    let kept = password_metadata(&app, &subject).await;
+    assert_eq!(kept, json!({"source": "crm"}), "after a reset");
+}
+
 // r[verify authn.invite.redeem]
 #[tokio::test(flavor = "multi_thread")]
 async fn invites_create_accounts_with_memberships() {
@@ -890,6 +945,44 @@ async fn changing_factors_needs_a_recent_authentication() {
         )
         .await;
     assert_eq!(removed.body["removed"], true, "{:?}", removed.body);
+}
+
+/// Which encryption keys are configured is for the server log, not for
+/// clients.
+#[tokio::test(flavor = "multi_thread")]
+async fn encryption_failures_dont_name_keys_to_clients() {
+    let app = TestApp::new().await;
+    app.human(EMAIL, PASSWORD).await;
+    let session = token(&app.login(EMAIL, PASSWORD).await);
+    let enrolled = post_bearer(&app, "/v1/mfa/totp", &session, json!({})).await;
+    let factor = enrolled.body["factor_id"].as_str().unwrap().to_owned();
+    {
+        // The seed is under a key this server doesn't have.
+        let mut conn = app.db.pool().get().await.unwrap();
+        diesel::sql_query(r#"update mfa_factor set data = jsonb_set(data, '{key_id}', '"k1"')"#)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+    }
+    let activated = post_bearer(
+        &app,
+        &format!("/v1/mfa/{factor}/activate"),
+        &session,
+        json!({"code": "000000"}),
+    )
+    .await;
+    assert_eq!(activated.code(), "INTERNAL", "{:?}", activated.body);
+    assert_eq!(activated.body["error"]["message"], "internal error");
+
+    let keyless = TestApp::with_auth(|auth| {
+        auth.secrets = konklav_authn::SecretBox::new([]).unwrap();
+    })
+    .await;
+    keyless.human(EMAIL, PASSWORD).await;
+    let session = token(&keyless.login(EMAIL, PASSWORD).await);
+    let enrolled = post_bearer(&keyless, "/v1/mfa/totp", &session, json!({})).await;
+    assert_eq!(enrolled.code(), "INTERNAL", "{:?}", enrolled.body);
+    assert_eq!(enrolled.body["error"]["message"], "internal error");
 }
 
 // r[verify challenge.send-limit]
@@ -1401,4 +1494,345 @@ async fn passwordless_and_invite_logins_stay_native_by_default() {
         assert!(login.set_cookies().is_empty(), "{proof:?}");
         assert_eq!(app.verify(&token(&login)).await.sfl, vec!["personal_only"]);
     }
+}
+
+// r[verify authn.impersonation.flags]
+// r[verify session.flags.confine.tenant]
+#[tokio::test(flavor = "multi_thread")]
+async fn impersonation_keeps_the_impersonators_flags() {
+    let app = TestApp::new().await;
+    let tenant = confining_world(&app).await;
+    let support = app.human("support@example.com", PASSWORD).await;
+    let target = app.human(EMAIL, PASSWORD).await;
+    app.control(
+        Method::PUT,
+        "/v1/tenants/root/roles/SUPPORT",
+        Some(json!({"policies": [{"action": "konklav:subject:impersonate", "effect": "allow"}]})),
+    )
+    .await;
+    let assigned = app
+        .control(
+            Method::POST,
+            &format!("/v1/subjects/{support}/global-assignments"),
+            Some(json!({"role": "SUPPORT"})),
+        )
+        .await;
+    assert_eq!(assigned.status, StatusCode::CREATED, "{:?}", assigned.body);
+    let joined = app
+        .control(
+            Method::PUT,
+            &format!("/v1/memberships/{}", uuid::Uuid::now_v7()),
+            Some(json!({"subject": target, "tenant": tenant})),
+        )
+        .await;
+    assert_eq!(joined.status, StatusCode::CREATED, "{:?}", joined.body);
+
+    let restricted = app
+        .post(
+            "/v1/login/password",
+            json!({"identifier": "support@example.com", "password": PASSWORD,
+                   "flags": ["personal_only"]}),
+        )
+        .await;
+    assert_eq!(restricted.status, StatusCode::OK, "{:?}", restricted.body);
+    let restricted = token(&restricted);
+    let body = json!({"subject": target});
+    let impersonating = post_bearer(&app, "/v1/impersonate", &restricted, body).await;
+    assert_eq!(
+        impersonating.status,
+        StatusCode::OK,
+        "{:?}",
+        impersonating.body
+    );
+    let claims = app.verify(&token(&impersonating)).await;
+    assert_eq!(claims.sfl, ["personal_only"]);
+
+    // Nor does it start in a tenant outside the flag's confinement.
+    let body = json!({"subject": target, "tenant": tenant});
+    let outside = post_bearer(&app, "/v1/impersonate", &restricted, body).await;
+    assert_eq!(outside.code(), "FORBIDDEN", "{:?}", outside.body);
+    let sessions = app
+        .control(Method::GET, &format!("/v1/sessions?subject={target}"), None)
+        .await;
+    let sessions = sessions.body["sessions"].as_array().unwrap().len();
+    assert_eq!(sessions, 1, "the refused impersonation starts no session");
+}
+
+/// How many `break_glass.used` events there are.
+async fn break_glass_uses(app: &TestApp, reader: &str) -> usize {
+    let events = app
+        .with_bearer(
+            Method::GET,
+            "/v1/events/batch?after=0&kinds=break_glass.used",
+            reader,
+        )
+        .await;
+    events.body["events"].as_array().unwrap().len()
+}
+
+// r[verify authn.password.restrictions-kept]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_password_an_operator_sets_keeps_the_credentials_restrictions() {
+    let app = TestApp::new().await;
+    confining_world(&app).await;
+    let subject = app.human(EMAIL, PASSWORD).await;
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    let credential = detail.body["credentials"][0]["id"].as_str().unwrap();
+    for (setting, body) in [
+        ("session-flags", json!({"session_flags": ["personal_only"]})),
+        ("break-glass", json!({"break_glass": true})),
+    ] {
+        let path = format!("/v1/credentials/{credential}/{setting}");
+        let set = app.control(Method::PUT, &path, Some(body)).await;
+        assert_eq!(set.status, StatusCode::OK, "{:?}", set.body);
+    }
+    let replaced = app
+        .control(
+            Method::POST,
+            &format!("/v1/credentials/{credential}/replace"),
+            Some(json!({"password": "set by an operator"})),
+        )
+        .await;
+    assert_eq!(replaced.status, StatusCode::CREATED, "{:?}", replaced.body);
+    assert_eq!(replaced.body["session_flags"], json!(["personal_only"]));
+    assert_eq!(replaced.body["break_glass"], true, "{:?}", replaced.body);
+    let login = app.login(EMAIL, "set by an operator").await;
+    assert_eq!(login.status, StatusCode::OK, "{:?}", login.body);
+    assert_eq!(app.verify(&token(&login)).await.sfl, ["personal_only"]);
+}
+
+// r[verify authn.password.restrictions-kept]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_password_its_subject_sets_keeps_the_credentials_restrictions() {
+    let app = TestApp::new().await;
+    let mailer = mailer(&app).await;
+    confining_world(&app).await;
+    let subject = app.human(EMAIL, PASSWORD).await;
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    let credential = detail.body["credentials"][0]["id"].as_str().unwrap();
+    for (setting, body) in [
+        ("session-flags", json!({"session_flags": ["personal_only"]})),
+        ("break-glass", json!({"break_glass": true})),
+    ] {
+        let path = format!("/v1/credentials/{credential}/{setting}");
+        let set = app.control(Method::PUT, &path, Some(body)).await;
+        assert_eq!(set.status, StatusCode::OK, "{:?}", set.body);
+    }
+    // Each login must be flagged and recorded, whichever password it uses.
+    let mut uses = 0;
+    let mut restricted_login = async |password: &str| {
+        let login = app.login(EMAIL, password).await;
+        assert_eq!(login.status, StatusCode::OK, "{:?}", login.body);
+        let flags = app.verify(&token(&login)).await.sfl;
+        assert_eq!(flags, ["personal_only"], "after setting {password}");
+        uses += 1;
+        assert_eq!(break_glass_uses(&app, &mailer).await, uses, "{password}");
+        login
+    };
+    let session = restricted_login(PASSWORD).await;
+
+    let changed = post_bearer(
+        &app,
+        "/v1/password/change",
+        &token(&session),
+        json!({"current": PASSWORD, "new": "another password"}),
+    )
+    .await;
+    assert_eq!(changed.status, StatusCode::OK, "{:?}", changed.body);
+    restricted_login("another password").await;
+
+    app.post("/v1/password-reset/start", json!({"identifier": EMAIL}))
+        .await;
+    let link = delivered(&app, &mailer, EMAIL).await["token"].clone();
+    let reset = app
+        .post(
+            "/v1/password-reset/complete",
+            json!({"token": link, "password": "a fresh password"}),
+        )
+        .await;
+    assert_eq!(reset.status, StatusCode::OK, "{:?}", reset.body);
+    restricted_login("a fresh password").await;
+}
+
+// r[verify authn.login.rate-limit]
+#[tokio::test(flavor = "multi_thread")]
+async fn phone_code_guesses_count_toward_the_address_limit() {
+    let app = TestApp::new().await;
+    let guess = |peer: &str, n: usize| {
+        let peer = peer.parse().unwrap();
+        let app = &app;
+        async move {
+            app.send_from(
+                Some(peer),
+                Method::POST,
+                "/v1/login/phone/complete",
+                &[],
+                Some(json!({"phone": format!("+4670{n:07}"), "code": "000000"})),
+            )
+            .await
+        }
+    };
+    for n in 0..100 {
+        assert_eq!(
+            guess("203.0.113.9:1000", n).await.code(),
+            "INVALID_CREDENTIALS"
+        );
+    }
+    assert_eq!(guess("203.0.113.9:1001", 100).await.code(), "RATE_LIMITED");
+    assert_eq!(
+        guess("198.51.100.1:1000", 100).await.code(),
+        "INVALID_CREDENTIALS",
+        "other addresses are unaffected"
+    );
+}
+
+// r[verify authn.login.rate-limit]
+#[tokio::test(flavor = "multi_thread")]
+async fn one_ipv6_network_cannot_spread_its_attempts_over_its_addresses() {
+    let app = TestApp::new().await;
+    let login = |peer: String, n: usize| {
+        let peer = peer.parse().unwrap();
+        let app = &app;
+        async move {
+            app.send_from(
+                Some(peer),
+                Method::POST,
+                "/v1/login/password",
+                &[],
+                Some(json!({"identifier": format!("user{n}@example.com"), "password": "x"})),
+            )
+            .await
+        }
+    };
+    for n in 0..100 {
+        // A new address in the same /64 for every attempt.
+        let peer = format!("[2001:db8:0:1::{n:x}]:1000");
+        assert_eq!(login(peer, n).await.code(), "INVALID_CREDENTIALS");
+    }
+    let same = "[2001:db8:0:1:ffff::1]:1000".to_owned();
+    assert_eq!(login(same, 100).await.code(), "RATE_LIMITED");
+    let other = "[2001:db8:0:2::1]:1000".to_owned();
+    assert_eq!(login(other, 100).await.code(), "INVALID_CREDENTIALS");
+}
+
+// r[verify authn.reset-password.token-first]
+#[tokio::test(flavor = "multi_thread")]
+async fn resets_without_a_usable_token_hash_nothing() {
+    // No hashing slots: a request that reaches hashing never answers.
+    let app = TestApp::with_auth(|auth| {
+        auth.hashing_slots = konklav_server::HashingSlots::new(0, 8);
+    })
+    .await;
+    let unknown = format!("{}.secret", uuid::Uuid::now_v7());
+    for junk in ["junk", unknown.as_str()] {
+        let reset = app.post(
+            "/v1/password-reset/complete",
+            json!({"token": junk, "password": "a fresh password"}),
+        );
+        let reset = tokio::time::timeout(std::time::Duration::from_secs(10), reset)
+            .await
+            .expect("the token is refused before the password is hashed");
+        assert_eq!(reset.code(), "INVALID_CREDENTIALS", "{junk}");
+    }
+}
+
+/// How many login attempts are recorded.
+async fn login_attempts(app: &TestApp) -> i64 {
+    #[derive(diesel::QueryableByName)]
+    struct Count {
+        #[diesel(sql_type = diesel::sql_types::BigInt)]
+        count: i64,
+    }
+    let mut conn = app.db.pool().get().await.unwrap();
+    let counted: Count = diesel::sql_query("select count(*) as count from login_attempt")
+        .get_result(&mut conn)
+        .await
+        .unwrap();
+    counted.count
+}
+
+// r[verify authn.login.hashing-bound]
+#[tokio::test(flavor = "multi_thread")]
+async fn logins_beyond_the_hashing_queue_are_refused_at_once() {
+    // No hashing slot and nowhere to wait for one.
+    let app = TestApp::with_auth(|auth| {
+        auth.hashing_slots = konklav_server::HashingSlots::new(0, 0);
+    })
+    .await;
+    for (uri, body) in [
+        (
+            "/v1/login/password",
+            json!({"identifier": EMAIL, "password": PASSWORD}),
+        ),
+        (
+            "/v1/login/secret-key",
+            json!({"key_id": "key", "secret": "secret"}),
+        ),
+    ] {
+        let login = tokio::time::timeout(std::time::Duration::from_secs(10), app.post(uri, body))
+            .await
+            .expect("refused without waiting for a slot");
+        assert_eq!(login.status, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+        assert_eq!(login.code(), "OVERLOADED", "{uri}: {:?}", login.body);
+    }
+    assert_eq!(login_attempts(&app).await, 0, "nothing was tried");
+}
+
+// r[verify authn.login.hashing-bound]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_login_waiting_for_a_hashing_slot_holds_no_database_connection() {
+    // No hashing slot, so logins wait in the queue for good.
+    let app = TestApp::with_auth(|auth| {
+        auth.hashing_slots = konklav_server::HashingSlots::new(0, 8);
+    })
+    .await;
+    let password = app.post(
+        "/v1/login/password",
+        json!({"identifier": EMAIL, "password": PASSWORD}),
+    );
+    let secret_key = app.post(
+        "/v1/login/secret-key",
+        json!({"key_id": "key", "secret": "secret"}),
+    );
+    // Both have counted their attempt once they wait for a slot.
+    let idle = async {
+        loop {
+            let attempts = login_attempts(&app).await;
+            let pool = app.state.pool.status();
+            if attempts == 2 && pool.available == pool.size {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    };
+    tokio::select! {
+        _ = password => panic!("no slot is free"),
+        _ = secret_key => panic!("no slot is free"),
+        idle = tokio::time::timeout(std::time::Duration::from_secs(10), idle) => {
+            idle.expect("the waiting logins hand their connections back");
+        }
+    }
+}
+
+// r[verify authn.login.staged]
+#[tokio::test(flavor = "multi_thread")]
+async fn partial_sessions_cannot_use_the_relying_surface() {
+    let app = TestApp::new().await;
+    let service = app.service_token().await;
+    let path = format!("/v1/entitlements/{}", app.verify(&service).await.sub);
+    let served = app.with_bearer(Method::GET, &path, &service).await;
+    assert_eq!(served.status, StatusCode::OK, "{:?}", served.body);
+    {
+        let mut conn = app.db.pool().get().await.unwrap();
+        diesel::sql_query("update session set stage = 'partial'")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+    }
+    let refused = app.with_bearer(Method::GET, &path, &service).await;
+    assert_eq!(refused.code(), "FORBIDDEN", "{:?}", refused.body);
 }

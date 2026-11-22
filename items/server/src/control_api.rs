@@ -3,8 +3,8 @@
 //!
 //! Every route needs an operator: the bootstrap token, when configured, or
 //! an access token whose subject holds the route group's capability
-//! (`konklav:control:all` holds them all). The batch route needs only an
-//! operator, since each of its operations is guarded on its own.
+//! (`konklav:control:all` holds them all). The batch route needs only some
+//! capability, since each of its operations is guarded on its own.
 
 use axum::extract::{Extension, Path, Query, Request, State};
 use axum::http::{StatusCode, header};
@@ -131,7 +131,8 @@ pub fn routes(state: &AppState) -> Router<AppState> {
 
 /// Guards control-plane routes: the bootstrap token (when configured), or an
 /// operator's access token whose subject holds `capability` or
-/// `konklav:control:all`. Without a capability, any operator passes.
+/// `konklav:control:all`. Without a capability, a subject holding any
+/// capability passes.
 pub(crate) fn guard(state: &AppState, capability: Option<&'static str>) -> GuardLayer {
     middleware::from_fn_with_state(
         (state.clone(), capability),
@@ -197,14 +198,21 @@ async fn authorize_operator(
         });
     }
     let mut conn = db.get().await?;
-    let (_, session) = crate::subject_api::verify_access_token(state, &mut conn, presented)
+    let invalid = || {
+        ApiError::new(
+            ErrorCode::Unauthenticated,
+            "missing or invalid control-plane credentials",
+        )
+    };
+    let (claims, session) = crate::subject_api::verify_access_token(state, &mut conn, presented)
         .await
-        .map_err(|_| {
-            ApiError::new(
-                ErrorCode::Unauthenticated,
-                "missing or invalid control-plane credentials",
-            )
-        })?;
+        .map_err(|_| invalid())?;
+    // As in `subject_api::authenticate`: not trusted on the middleware
+    // being mounted.
+    // r[impl session.dpop.fail-closed]
+    if claims.cnf.is_some() && !crate::dpop::proven(presented) {
+        return Err(invalid());
+    }
     if session.stage == konklav_store::sessions::Stage::Partial {
         return Err(ApiError::new(ErrorCode::Forbidden, "complete MFA first"));
     }
@@ -215,7 +223,19 @@ async fn authorize_operator(
         subject: Some(session.subject_id),
     };
     let Some(capability) = capability else {
-        return Ok(operator);
+        // r[impl platform.batch.caller]
+        return if all
+            || !capabilities::held(&mut conn, session.subject_id)
+                .await?
+                .is_empty()
+        {
+            Ok(operator)
+        } else {
+            Err(ApiError::new(
+                ErrorCode::Forbidden,
+                "missing any control-plane capability",
+            ))
+        };
     };
     if all || capabilities::holds(&mut conn, session.subject_id, capability).await? {
         Ok(operator)
@@ -869,7 +889,6 @@ async fn replace_password(
         )));
     }
     let mut conn = db.get().await?;
-    // Outside the transaction: entitlement compilation opens its own.
     if let Ok(old) = credentials::get(&mut conn, old_id).await {
         operator.may_change(&mut conn, old.subject_id).await?;
     }
@@ -931,6 +950,8 @@ async fn replace_password(
                 },
             )
             .await?;
+            // r[impl authn.password.restrictions-kept]
+            let credential = credentials::inherit_restrictions(conn, credential.id, &old).await?;
             let filter = SessionFilter {
                 credential: Some(old_id),
                 ..Default::default()
@@ -959,6 +980,7 @@ async fn replace_password(
 async fn rotate_secret_slot(
     State(state): State<AppState>,
     db: Db,
+    Extension(operator): Extension<Operator>,
     Path((id, slot)): Path<(String, String)>,
     body: Option<ApiJson<RotateSlot>>,
 ) -> Result<Json<RotatedSlot>, ApiError> {
@@ -972,6 +994,7 @@ async fn rotate_secret_slot(
             let credential = credentials::get_for_update(conn, id)
                 .await
                 .map_err(|_| ApiError::not_found("credential"))?;
+            operator.may_change(conn, credential.subject_id).await?;
             let CredentialData::SecretKey(mut data) = credential.data.clone() else {
                 return Err(ApiError::invalid_request("only secret keys have slots"));
             };

@@ -66,6 +66,14 @@ fn provider() -> OpenIdProvider {
     .unwrap()
 }
 
+/// A provider that sends logout tokens to private addresses too, as the
+/// tests' relying systems are on this machine.
+fn provider_for_private_clients() -> OpenIdProvider {
+    let mut provider = provider();
+    provider.logout_private_addresses = true;
+    provider
+}
+
 async fn world() -> World {
     world_with(provider()).await
 }
@@ -695,6 +703,82 @@ async fn requests_are_only_accepted_by_sessions_that_satisfy_them() {
     );
 }
 
+/// Makes a tenant and the subject's membership in it, returning both ids.
+async fn join_tenant(world: &World) -> (String, String) {
+    let tenant = uuid::Uuid::now_v7().to_string();
+    let membership = uuid::Uuid::now_v7().to_string();
+    for (path, body) in [
+        (format!("/v1/tenants/{tenant}"), json!({})),
+        (
+            format!("/v1/memberships/{membership}"),
+            json!({"subject": world.subject, "tenant": tenant}),
+        ),
+    ] {
+        let reply = world.app.control(Method::PUT, &path, Some(body)).await;
+        assert_eq!(reply.status, StatusCode::CREATED, "{:?}", reply.body);
+    }
+    (tenant, membership)
+}
+
+/// Moves the login application's session into `tenant`.
+async fn select_tenant(world: &mut World, tenant: &str) {
+    let auth = format!("Bearer {}", world.login_token);
+    let selected = world
+        .app
+        .send(
+            Method::POST,
+            "/v1/login/tenant",
+            &[("authorization", &auth)],
+            Some(json!({"tenant": tenant})),
+        )
+        .await;
+    assert_eq!(selected.status, StatusCode::OK, "{:?}", selected.body);
+    let token = selected.body["access_token"].as_str().unwrap();
+    token.clone_into(&mut world.login_token);
+}
+
+// r[verify oidc.provider.tenant]
+#[tokio::test(flavor = "multi_thread")]
+async fn clients_get_the_tenant_the_request_was_accepted_in() {
+    let mut world = world().await;
+    let (first, membership) = join_tenant(&world).await;
+    let (second, _) = join_tenant(&world).await;
+    let scope = format!("openid tenant:{first}");
+
+    // The sign-in moves to another tenant between accepting the request
+    // and the client exchanging its code.
+    select_tenant(&mut world, &first).await;
+    let code = authorize(&world, &[("scope", &scope)]).await;
+    select_tenant(&mut world, &second).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    assert_eq!(tokens.status, StatusCode::OK, "{:?}", tokens.body);
+    assert_eq!(tokens.body["scope"], scope);
+    let access = tokens.body["access_token"].as_str().unwrap();
+    let claims = konklav_token::decode_claims_unverified(access).unwrap();
+    assert_eq!(claims.tid.unwrap().to_string(), first);
+    assert_eq!(claims.mid.unwrap().to_string(), membership);
+
+    // A code for a tenant the subject has since left is refused.
+    select_tenant(&mut world, &first).await;
+    let code = authorize(&world, &[("scope", &scope)]).await;
+    select_tenant(&mut world, &second).await;
+    let ended = world
+        .app
+        .control(
+            Method::POST,
+            &format!("/v1/memberships/{membership}/end"),
+            None,
+        )
+        .await;
+    assert!(ended.status.is_success(), "{:?}", ended.body);
+    let refused = exchange(&world, &code, VERIFIER).await;
+    assert_eq!(refused.body["error"], "invalid_grant", "{:?}", refused.body);
+    assert_eq!(
+        refused.body["error_description"],
+        "the sign-in's tenant is no longer available"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn public_clients_use_pkce_alone_and_can_get_eddsa_id_tokens() {
     let world = world().await;
@@ -755,6 +839,11 @@ const KEY_X: &str = "Y6_1EEzqCvOEimuWQdUYPZi0Vo88sqdVzRqcBdc1zB4";
 const KEY_Y: &str = "Pw2tFlEGx2LLaNm81VIuU-rOYrc_hgsMC1Kgo0J5ey0";
 
 fn assertion(client: &str, jti: &str) -> String {
+    assertion_expiring(client, jti, 60)
+}
+
+/// A client assertion whose `exp` is `expires_in` seconds from now.
+fn assertion_expiring(client: &str, jti: &str, expires_in: i64) -> String {
     let now = chrono::Utc::now().timestamp();
     let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
     header.kid = Some("robot-key".into());
@@ -762,7 +851,7 @@ fn assertion(client: &str, jti: &str) -> String {
         &header,
         &json!({
             "iss": client, "sub": client, "aud": format!("{ISSUER}/v1/oauth2/token"),
-            "jti": jti, "iat": now, "exp": now + 60,
+            "jti": jti, "iat": now, "exp": now + expires_in,
         }),
         &jsonwebtoken::EncodingKey::from_ec_pem(ID_TOKEN_KEY.as_bytes()).unwrap(),
     )
@@ -824,6 +913,35 @@ async fn bound_clients_get_service_tokens_with_private_key_jwt() {
     assert_eq!(claims.sub.to_string(), principal.to_string());
     assert_eq!(claims.aud, "robot-api");
     assert_eq!(claims.amr, ["sk"]);
+    assert_eq!(tokens.body["token_type"], "Bearer");
+    assert!(claims.cnf.is_none());
+
+    // With a DPoP proof, the token is bound to its key and says so.
+    // r[verify oidc.provider.dpop.token]
+    let proof = DpopKey::new(1).proof("POST", TOKEN_URL, None);
+    let bound = app
+        .send_form(
+            "/v1/oauth2/token",
+            &[("dpop", &proof)],
+            &[
+                ("grant_type", "client_credentials"),
+                (
+                    "client_assertion_type",
+                    "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+                ),
+                ("client_assertion", &assertion("robot", "jti-dpop")),
+            ],
+        )
+        .await;
+    assert_eq!(bound.status, StatusCode::OK, "{:?}", bound.body);
+    assert_eq!(bound.body["token_type"], "DPoP");
+    let access = bound.body["access_token"].as_str().unwrap();
+    assert!(
+        konklav_token::decode_claims_unverified(access)
+            .unwrap()
+            .cnf
+            .is_some()
+    );
 
     let replayed = grant(assertion("robot", "jti-1")).await;
     assert_eq!(
@@ -834,6 +952,17 @@ async fn bound_clients_get_service_tokens_with_private_key_jwt() {
     assert_eq!(
         forged.body["error"], "invalid_client",
         "console has no keys"
+    );
+    // An assertion is accepted for a while after its `exp`, for clock skew,
+    // and is remembered for as long.
+    // r[verify oidc.provider.client-assertion.replay]
+    let late = assertion_expiring("robot", "jti-late", -5);
+    let accepted = grant(late.clone()).await;
+    assert_eq!(accepted.status, StatusCode::OK, "{:?}", accepted.body);
+    let replayed = grant(late).await;
+    assert_eq!(
+        replayed.body["error"], "invalid_client",
+        "each jti works once, also just after exp"
     );
 
     // Unbinding the principal ends client credentials.
@@ -905,7 +1034,8 @@ async fn logout_ends_the_sign_in_and_notifies_clients() {
     );
     tokio::spawn(async move { axum::serve(listener, rp).await.unwrap() });
 
-    let world = world().await;
+    // The relying system is on this machine.
+    let world = world_with(provider_for_private_clients()).await;
     let app = &world.app;
     let updated = app
         .control(
@@ -962,8 +1092,7 @@ async fn logout_ends_the_sign_in_and_notifies_clients() {
         .await;
     assert_eq!(own.code(), "SESSION_ENDED");
 
-    let http = reqwest::Client::new();
-    let tried = konklav_server::oidc::deliver_logouts(&app.state, &http)
+    let tried = konklav_server::oidc::deliver_logouts(&app.state)
         .await
         .unwrap();
     assert_eq!(tried, 1);
@@ -978,12 +1107,208 @@ async fn logout_ends_the_sign_in_and_notifies_clients() {
     assert_eq!(claims["sid"], sid);
     assert!(claims["events"]["http://schemas.openid.net/event/backchannel-logout"].is_object());
     assert_eq!(
-        konklav_server::oidc::deliver_logouts(&app.state, &http)
+        konklav_server::oidc::deliver_logouts(&app.state)
             .await
             .unwrap(),
         0,
         "delivered once"
     );
+}
+
+/// A relying system whose back-channel logout URI redirects to `/moved`,
+/// which records the tokens it gets.
+async fn redirecting_backchannel() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use axum::routing::post;
+    let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let uri = format!("http://{}/logout", listener.local_addr().unwrap());
+    let sink = received.clone();
+    let rp = axum::Router::new()
+        .route(
+            "/logout",
+            post(|| async { axum::response::Redirect::temporary("/moved") }),
+        )
+        .route(
+            "/moved",
+            post(move |body: String| async move { sink.lock().unwrap().push(body) }),
+        );
+    tokio::spawn(async move { axum::serve(listener, rp).await.unwrap() });
+    (uri, received)
+}
+
+// r[verify federation.outbound.redirects]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_redirected_logout_token_is_not_delivered() {
+    let (backchannel, received) = redirecting_backchannel().await;
+    let world = world_with(provider_for_private_clients()).await;
+    let app = &world.app;
+    let updated = app
+        .control(
+            Method::PUT,
+            "/v1/oidc/clients/console",
+            Some(json!({
+                "kind": "confidential",
+                "redirect_uris": [REDIRECT],
+                "scopes": ["openid", "email", "groups", "tenant"],
+                "audience": "console",
+                "backchannel_logout_uri": backchannel,
+            })),
+        )
+        .await;
+    assert_eq!(updated.status, StatusCode::OK, "{:?}", updated.body);
+    let code = authorize(&world, &[]).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    let id_token = tokens.body["id_token"].as_str().unwrap();
+    let out = app
+        .send(
+            Method::GET,
+            &format!("/v1/oauth2/logout?id_token_hint={id_token}"),
+            &[],
+            None,
+        )
+        .await;
+    assert!(out.status.is_success(), "{:?}", out.body);
+
+    let tried = konklav_server::oidc::deliver_logouts(&app.state)
+        .await
+        .unwrap();
+    assert_eq!(tried, 1);
+    assert!(
+        received.lock().unwrap().is_empty(),
+        "the token didn't follow the redirect"
+    );
+}
+
+/// Signs in to the console client and out again, so a logout token is due,
+/// and returns how many deliveries were tried.
+async fn sign_in_and_out(world: &World) -> usize {
+    let app = &world.app;
+    let code = authorize(world, &[]).await;
+    let tokens = exchange(world, &code, VERIFIER).await;
+    let id_token = tokens.body["id_token"].as_str().unwrap();
+    let out = app
+        .send(
+            Method::GET,
+            &format!("/v1/oauth2/logout?id_token_hint={id_token}"),
+            &[],
+            None,
+        )
+        .await;
+    assert!(out.status.is_success(), "{:?}", out.body);
+    konklav_server::oidc::deliver_logouts(&app.state)
+        .await
+        .unwrap()
+}
+
+// r[verify oidc.provider.logout.destinations]
+#[tokio::test(flavor = "multi_thread")]
+async fn logout_tokens_are_not_sent_to_private_addresses() {
+    use diesel_async::RunQueryDsl;
+    let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let sink = received.clone();
+    let rp = axum::Router::new().route(
+        "/logout",
+        axum::routing::post(move |body: String| async move { sink.lock().unwrap().push(body) }),
+    );
+    tokio::spawn(async move { axum::serve(listener, rp).await.unwrap() });
+
+    // By address and by name.
+    for host in ["127.0.0.1", "localhost"] {
+        let uri = format!("http://{host}:{port}/logout");
+        let world = world().await;
+        let registered = world
+            .app
+            .control(
+                Method::PUT,
+                "/v1/oidc/clients/console",
+                Some(json!({
+                    "kind": "confidential",
+                    "redirect_uris": [REDIRECT],
+                    "audience": "console",
+                    "backchannel_logout_uri": uri,
+                })),
+            )
+            .await;
+        assert_eq!(registered.code(), "INVALID_REQUEST", "{host}");
+        // A registration from before such URIs were refused.
+        let mut conn = world.app.db.pool().get().await.unwrap();
+        diesel::sql_query(format!(
+            "update oidc_client set backchannel_logout_uri = '{uri}' where id = 'console'"
+        ))
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(sign_in_and_out(&world).await, 1);
+        assert!(received.lock().unwrap().is_empty(), "{host}");
+    }
+
+    // A deployment whose clients are on its own network allows them.
+    let world = world_with(provider_for_private_clients()).await;
+    let registered = world
+        .app
+        .control(
+            Method::PUT,
+            "/v1/oidc/clients/console",
+            Some(json!({
+                "kind": "confidential",
+                "redirect_uris": [REDIRECT],
+                "scopes": ["openid", "email", "groups"],
+                "audience": "console",
+                "backchannel_logout_uri": format!("http://localhost:{port}/logout"),
+            })),
+        )
+        .await;
+    assert_eq!(registered.status, StatusCode::OK, "{:?}", registered.body);
+    assert_eq!(sign_in_and_out(&world).await, 1);
+    assert_eq!(received.lock().unwrap().len(), 1);
+}
+
+// r[verify oidc.provider.client-urls]
+#[tokio::test(flavor = "multi_thread")]
+async fn clients_register_only_https_and_loopback_urls() {
+    let world = world().await;
+    let put = async |urls: Value| {
+        let mut client = json!({
+            "kind": "public",
+            "redirect_uris": ["https://spa.example/callback"],
+            "audience": "spa",
+        });
+        for (field, value) in urls.as_object().unwrap() {
+            client[field] = value.clone();
+        }
+        world
+            .app
+            .control(Method::PUT, "/v1/oidc/clients/spa", Some(client))
+            .await
+    };
+    for refused in [
+        json!({"redirect_uris": ["javascript:alert(document.cookie)"]}),
+        json!({"redirect_uris": ["data:text/html,<script>alert(1)</script>"]}),
+        json!({"redirect_uris": ["file:///etc/passwd"]}),
+        json!({"redirect_uris": ["com.example.app:/callback"]}),
+        json!({"redirect_uris": ["http://spa.example/callback"]}),
+        json!({"redirect_uris": ["https://spa.example/callback#fragment"]}),
+        json!({"post_logout_redirect_uris": ["javascript:alert(1)"]}),
+        json!({"post_logout_redirect_uris": ["https://spa.example/#bye"]}),
+        json!({"login_url": "javascript:alert(1)"}),
+        json!({"login_url": "http://login.example/"}),
+        json!({"backchannel_logout_uri": "http://spa.example/logout"}),
+        json!({"backchannel_logout_uri": "https://169.254.169.254/latest/meta-data/"}),
+        json!({"backchannel_logout_uri": "https://10.0.0.5/logout"}),
+    ] {
+        let reply = put(refused.clone()).await;
+        assert_eq!(reply.code(), "INVALID_REQUEST", "{refused}");
+    }
+    let accepted = put(json!({
+        "redirect_uris": ["https://spa.example/callback", "http://127.0.0.1:8400/callback"],
+        "post_logout_redirect_uris": ["http://localhost:8400/"],
+        "login_url": "https://login.spa.example/",
+        "backchannel_logout_uri": "https://spa.example/logout",
+    }))
+    .await;
+    assert_eq!(accepted.status, StatusCode::OK, "{:?}", accepted.body);
 }
 
 // r[verify oidc.provider.client-audience]
@@ -1457,6 +1782,10 @@ enum HookAnswer {
     Profile,
     Missing,
     Broken,
+    /// A redirect to where the profile is.
+    Redirect,
+    /// The profile, in two megabytes.
+    Long,
 }
 
 struct FakeHook {
@@ -1474,7 +1803,8 @@ impl FakeHook {
         let answer = std::sync::Arc::new(std::sync::Mutex::new(HookAnswer::Profile));
         let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let (answering, recording) = (answer.clone(), requests.clone());
-        let router = axum::Router::new().route(
+        let profile = || async { axum::Json(json!({"name": "Ada Lovelace"})) };
+        let router = axum::Router::new().route("/profile", post(profile)).route(
             "/claims",
             post(move |body: String| {
                 recording.lock().unwrap().push(body);
@@ -1493,6 +1823,14 @@ impl FakeHook {
                         .into_response(),
                         HookAnswer::Missing => StatusCode::NOT_FOUND.into_response(),
                         HookAnswer::Broken => StatusCode::BAD_GATEWAY.into_response(),
+                        HookAnswer::Redirect => {
+                            axum::response::Redirect::temporary("/profile").into_response()
+                        }
+                        HookAnswer::Long => axum::Json(json!({
+                            "name": "Ada Lovelace",
+                            "locale": "x".repeat(2 * 1024 * 1024),
+                        }))
+                        .into_response(),
                     }
                 }
             }),
@@ -1653,6 +1991,20 @@ async fn claims_hook_failures_omit_or_refuse_as_configured() {
         "{:?}",
         info.body
     );
+}
+
+// r[verify federation.outbound.redirects]
+// r[verify federation.outbound.size]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_claims_hook_that_redirects_or_answers_at_length_has_failed() {
+    use konklav_server::config::ClaimsHookFailure;
+    let hook = FakeHook::start().await;
+    let world = world_with(hook.provider(ClaimsHookFailure::Fail, 0)).await;
+    for answer in [HookAnswer::Redirect, HookAnswer::Long] {
+        *hook.answer.lock().unwrap() = answer;
+        let info = userinfo_for(&world, "openid email profile").await;
+        assert_eq!(info.status, StatusCode::SERVICE_UNAVAILABLE);
+    }
 }
 
 // r[verify oidc.provider.claims-hook.cache]

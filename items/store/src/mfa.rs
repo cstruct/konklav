@@ -27,7 +27,9 @@ impl FactorKind {
 }
 
 /// A TOTP seed encrypted with a configured key, plus the last accepted step
-/// (so a code can't be replayed).
+/// (so a code can't be replayed). The ciphertext says whether the seed is
+/// bound to its factor (see [`totp_binding`]); seeds stored before they
+/// were bound are not.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TotpData {
     pub key_id: String,
@@ -78,6 +80,28 @@ pub struct Factor {
     pub removed_at: Option<DateTime<Utc>>,
 }
 
+/// What a TOTP seed is bound to when it is encrypted: its factor and the
+/// factor's subject. A seed copied to another factor, or a factor moved to
+/// another subject, then no longer decrypts.
+// r[impl credential.mfa-seed.bound]
+#[must_use]
+pub fn totp_binding(id: uuid::Uuid, subject: SubjectId) -> Vec<u8> {
+    [
+        b"konklav:mfa_factor:totp:".as_slice(),
+        id.as_bytes(),
+        subject.as_uuid().as_bytes(),
+    ]
+    .concat()
+}
+
+impl Factor {
+    /// The [`totp_binding`] of this factor, to decrypt its seed with.
+    #[must_use]
+    pub fn totp_binding(&self) -> Vec<u8> {
+        totp_binding(self.id, self.subject_id)
+    }
+}
+
 #[derive(Queryable, Selectable)]
 #[diesel(table_name = mfa_factor)]
 struct Row {
@@ -118,9 +142,20 @@ pub async fn create(
     subject: SubjectId,
     data: &FactorData,
 ) -> StoreResult<Factor> {
+    create_with_id(conn, uuid::Uuid::now_v7(), subject, data).await
+}
+
+/// [`create`] with an id the caller chose, which it needs before the factor
+/// exists to bind a TOTP seed to it.
+pub async fn create_with_id(
+    conn: &mut AsyncPgConnection,
+    id: uuid::Uuid,
+    subject: SubjectId,
+    data: &FactorData,
+) -> StoreResult<Factor> {
     let row = diesel::insert_into(mfa_factor::table)
         .values((
-            mfa_factor::id.eq(uuid::Uuid::now_v7()),
+            mfa_factor::id.eq(id),
             mfa_factor::subject_id.eq(subject.as_uuid()),
             mfa_factor::kind.eq(data.kind().as_str()),
             mfa_factor::data.eq(data.to_json()),

@@ -47,8 +47,11 @@ use konklav_token::{AccessClaims, JwkSet, TokenKind};
 use serde::Deserialize;
 use tokio::sync::{Notify, mpsc};
 
+/// How long connecting to Konklav may take, and any request but the feed.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Where Konklav is and how to authenticate to it.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ClientConfig {
     /// Base URL of the relying surface, such as `https://konklav:8081`.
     pub relying_url: String,
@@ -58,6 +61,20 @@ pub struct ClientConfig {
     pub key_id: String,
     pub secret: String,
     pub core: Config,
+}
+
+// The secret stays out of logs.
+// r[impl item.relying-client.http]
+impl std::fmt::Debug for ClientConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientConfig")
+            .field("relying_url", &self.relying_url)
+            .field("subject_url", &self.subject_url)
+            .field("key_id", &self.key_id)
+            .field("secret", &"[redacted]")
+            .field("core", &self.core)
+            .finish()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -102,6 +119,71 @@ impl AcceptedRequest {
     }
 }
 
+/// A presentation the core holds while the check API verifies its token:
+/// released when dropped, so a token the check API refuses, an error or a
+/// cancelled request leaves nothing held, unless it is kept.
+struct Held<'a> {
+    client: &'a RelyingClient,
+    presentation: Option<PresentationId>,
+}
+
+impl Held<'_> {
+    /// The check API vouched for the token: the presentation stays held.
+    fn keep(mut self) -> PresentationId {
+        self.presentation
+            .take()
+            .expect("a presentation is held until it is kept")
+    }
+}
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        if let Some(presentation) = self.presentation.take() {
+            self.client.core().release_accepted(presentation);
+        }
+    }
+}
+
+/// A fetch under way. Dropped before it landed, it is reported to the core
+/// as failed.
+struct Unreported<'a> {
+    client: &'a RelyingClient,
+    need: Option<&'a Need>,
+}
+
+impl Drop for Unreported<'_> {
+    fn drop(&mut self) {
+        if let Some(need) = self.need {
+            self.client.core().on_fetch_failed(need);
+        }
+    }
+}
+
+/// The shortest wait after background work in which a fetch failed.
+const FETCH_BACKOFF_MIN: Duration = Duration::from_millis(250);
+/// The longest.
+const FETCH_BACKOFF_MAX: Duration = Duration::from_secs(10);
+
+/// How long background work waits after a fetch failed: twice as long for
+/// each round that failed in a row, up to the longest wait.
+#[derive(Default)]
+struct FetchBackoff {
+    failures: u32,
+}
+
+impl FetchBackoff {
+    /// The next wait, drawn from its upper half so that hosts that lost
+    /// Konklav together don't all come back at once.
+    fn next(&mut self) -> Duration {
+        let doubled = FETCH_BACKOFF_MIN.saturating_mul(1 << self.failures.min(16));
+        let full = doubled.min(FETCH_BACKOFF_MAX);
+        self.failures = self.failures.saturating_add(1);
+        let half = full / 2;
+        let spread = u64::try_from(half.as_micros()).unwrap_or(u64::MAX);
+        half + Duration::from_micros(pacing::below(spread.saturating_add(1)))
+    }
+}
+
 /// Every token kind, for verifying a token through the check API whatever
 /// its kind.
 const EVERY_TOKEN_KIND: [TokenKind; 5] = [
@@ -113,8 +195,28 @@ const EVERY_TOKEN_KIND: [TokenKind; 5] = [
 ];
 
 /// `value` as one percent-encoded URL path segment: scope ids are opaque.
-fn path_segment(value: &str) -> String {
-    percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC).to_string()
+/// `None` for what no path segment can carry: nothing, and `.` and `..`,
+/// which a URL takes for dot segments however they are encoded, so the
+/// request would go to another path.
+// r[impl item.relying-client.path-segments]
+fn path_segment(value: &str) -> Option<String> {
+    if matches!(value, "" | "." | "..") {
+        return None;
+    }
+    Some(
+        percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC)
+            .to_string(),
+    )
+}
+
+/// Where Konklav answers for the registered scope `kind`/`id`, if a path
+/// can name it.
+fn registered_scope_path(kind: &str, id: &str) -> Option<String> {
+    Some(format!(
+        "/v1/registered-scopes/{}/{}",
+        path_segment(kind)?,
+        path_segment(id)?
+    ))
 }
 
 /// The current time in Unix milliseconds.
@@ -158,15 +260,35 @@ struct LoginResponse {
     expires_in: u64,
 }
 
+/// The HTTP client: it gives up on a Konklav that doesn't answer, and never
+/// follows a redirect, which would send the secret key or a token wherever
+/// the redirect points.
+// r[impl item.relying-client.http]
+fn http_client(core: &Config) -> reqwest::Client {
+    // The feed's stream stays open, so only its silence is bounded: by when
+    // the core stops trusting it anyway (`relying.fallback.lag`).
+    let silence = core.heartbeat_ms.saturating_mul(core.missed_heartbeats);
+    reqwest::Client::builder()
+        .connect_timeout(REQUEST_TIMEOUT)
+        .read_timeout(Duration::from_millis(silence.max(1)))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("the HTTP client can be built")
+}
+
 impl RelyingClient {
+    /// # Panics
+    ///
+    /// If the HTTP client can't be built, as `reqwest::Client::new` does.
     #[must_use]
     pub fn new(config: ClientConfig) -> Self {
         let core = Relying::new(config.core.clone());
+        let http = http_client(&config.core);
         Self {
             inner: Arc::new(Inner {
                 config,
                 core: Mutex::new(core),
-                http: reqwest::Client::new(),
+                http,
                 token: tokio::sync::Mutex::new(None),
                 wake: Notify::new(),
                 erasures: Mutex::new(None),
@@ -277,6 +399,7 @@ impl RelyingClient {
                 "key_id": self.inner.config.key_id,
                 "secret": self.inner.config.secret,
             }))
+            .timeout(REQUEST_TIMEOUT)
             .send()
             .await?;
         let login: LoginResponse = checked(response).await?.json().await?;
@@ -296,6 +419,7 @@ impl RelyingClient {
             .http
             .get(url)
             .bearer_auth(self.bearer().await?)
+            .timeout(REQUEST_TIMEOUT)
             .send()
             .await?;
         Ok(response)
@@ -327,17 +451,30 @@ impl RelyingClient {
         // The core checks any DPoP proof; the check API takes the token
         // alone.
         let token = presented.access_token().unwrap_or_default();
-        self.decide_with(token, requirements, |core| {
-            core.decide_presented(presented, requirements, now())
-        })
-        .await
+        for _ in 0..4 {
+            let outcome = self.core().decide_presented(presented, requirements, now());
+            let needs = match outcome {
+                Outcome::Decided { decision } => return Ok(decision),
+                Outcome::Need { needs } => needs,
+            };
+            if needs.contains(&Need::Check) {
+                let decision = self.check(token, requirements, None).await?;
+                // The proof is used once the check API vouches for the token.
+                return match self.core().on_check_presented(presented, decision, now()) {
+                    Outcome::Decided { decision } => Ok(decision),
+                    Outcome::Need { .. } => Err(Error::Exhausted),
+                };
+            }
+            self.fetch_all(&needs).await?;
+        }
+        Err(Error::Exhausted)
     }
 
     /// Accepts a request's presentation: verifies the token, its session
     /// and any DPoP proof, once, and returns the verified claims with the
     /// presentation to decide for with [`RelyingClient::decide_accepted`],
     /// which doesn't check the proof again. Fails closed: an error means
-    /// deny.
+    /// deny. Only an accepted request leaves a presentation held.
     // r[impl relying.verify.accepted-presentation]
     pub async fn accept_request(
         &self,
@@ -351,10 +488,20 @@ impl RelyingClient {
                     claims,
                     presentation,
                 } => (*claims, presentation),
-                Acceptance::Check { presentation } => match self.verify_centrally(token).await? {
-                    Some(claims) => (claims, presentation),
-                    None => return Ok(Verified::Invalid),
-                },
+                Acceptance::Check { presentation } => {
+                    // Held until this request is answered, or dropped.
+                    let held = Held {
+                        client: self,
+                        presentation: Some(presentation),
+                    };
+                    let Some(claims) = self.verify_centrally(token).await? else {
+                        return Ok(Verified::Invalid);
+                    };
+                    if !self.core().confirm_presented(presented, now()) {
+                        return Ok(Verified::InvalidProof);
+                    }
+                    (claims, held.keep())
+                }
                 Acceptance::Invalid => return Ok(Verified::Invalid),
                 Acceptance::InvalidProof => return Ok(Verified::InvalidProof),
                 Acceptance::Need { needs } => {
@@ -437,35 +584,19 @@ impl RelyingClient {
                 Verification::InvalidProof => return Ok(Verified::InvalidProof),
                 Verification::Need { needs } if needs.contains(&Need::Check) => {
                     let token = presented.access_token().unwrap_or_default();
-                    return Ok(match self.verify_centrally(token).await? {
-                        Some(claims) => Verified::Valid(claims),
-                        None => Verified::Invalid,
+                    let Some(claims) = self.verify_centrally(token).await? else {
+                        return Ok(Verified::Invalid);
+                    };
+                    // The proof is used once the check API vouches for the
+                    // token.
+                    return Ok(if self.core().confirm_presented(presented, now()) {
+                        Verified::Valid(claims)
+                    } else {
+                        Verified::InvalidProof
                     });
                 }
                 Verification::Need { needs } => self.fetch_all(&needs).await?,
             }
-        }
-        Err(Error::Exhausted)
-    }
-
-    /// Asks the core with `ask` until it decides, fetching what it needs,
-    /// or asks the check API for `token` when the core can't decide.
-    async fn decide_with(
-        &self,
-        token: &str,
-        requirements: &Requirements,
-        mut ask: impl FnMut(&mut Relying) -> Outcome,
-    ) -> Result<Decision, Error> {
-        for _ in 0..4 {
-            let outcome = ask(&mut self.core());
-            let needs = match outcome {
-                Outcome::Decided { decision } => return Ok(decision),
-                Outcome::Need { needs } => needs,
-            };
-            if needs.contains(&Need::Check) {
-                return self.check(token, requirements, None).await;
-            }
-            self.fetch_all(&needs).await?;
         }
         Err(Error::Exhausted)
     }
@@ -525,6 +656,7 @@ impl RelyingClient {
             .post(url)
             .bearer_auth(self.bearer().await?)
             .json(&body)
+            .timeout(REQUEST_TIMEOUT)
             .send()
             .await?;
         match Relying::from_check(checked(response).await?.json::<Decision>().await?) {
@@ -533,11 +665,19 @@ impl RelyingClient {
         }
     }
 
-    /// Fetches one thing the core needs and hands it over.
+    /// Fetches one thing the core needs and hands it over. The core hears
+    /// of every fetch that doesn't land: one that fails, and one given up
+    /// because its request's future was dropped, as when the client goes
+    /// away. The core takes it to be in flight until then.
+    // r[impl item.relying-client.fetch-reported]
     async fn fetch(&self, need: &Need) -> Result<(), Error> {
+        let mut unreported = Unreported {
+            client: self,
+            need: Some(need),
+        };
         let result = self.fetch_inner(need).await;
-        if result.is_err() {
-            self.core().on_fetch_failed(need);
+        if result.is_ok() {
+            unreported.need = None;
         }
         result
     }
@@ -568,11 +708,11 @@ impl RelyingClient {
                 self.core().on_entitlements(set, now());
             }
             Need::RegisteredScope { kind, id } => {
-                let path = format!(
-                    "/v1/registered-scopes/{}/{}",
-                    path_segment(kind),
-                    path_segment(id)
-                );
+                let Some(path) = registered_scope_path(kind, id) else {
+                    // Konklav can't be asked for it, so it holds no such scope.
+                    self.core().on_registered_scope_unknown(kind, id, now());
+                    return Ok(());
+                };
                 let response = self.get(&path).await?;
                 if response.status() == reqwest::StatusCode::NOT_FOUND {
                     self.core().on_registered_scope_unknown(kind, id, now());
@@ -603,14 +743,25 @@ impl RelyingClient {
         }
     }
 
+    // r[impl relying.cache.background-backoff]
     async fn run_work(&self) {
+        let mut backoff = FetchBackoff::default();
         loop {
             let work = self.core().poll_work(now());
+            let mut failed = false;
             for need in &work.fetch {
                 if let Err(error) = self.fetch(need).await {
                     tracing::warn!(%error, ?need, "background fetch failed");
+                    failed = true;
                 }
             }
+            if failed {
+                // The core asks for a failed fetch again at once: with
+                // Konklav down that would spin.
+                tokio::time::sleep(backoff.next()).await;
+                continue;
+            }
+            backoff = FetchBackoff::default();
             if !work.fetch.is_empty() {
                 continue;
             }
@@ -706,5 +857,125 @@ async fn checked(response: reqwest::Response) -> Result<reqwest::Response, Error
             status: response.status().as_u16(),
             body: response.text().await.unwrap_or_default(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use konklav_relying::{Config, Need};
+    use tokio::sync::Notify;
+    use tracing::span;
+
+    use super::{ClientConfig, RelyingClient, now, registered_scope_path};
+
+    /// Counts this crate's warnings, and tells when there are a hundred.
+    struct Warnings {
+        count: Arc<AtomicUsize>,
+        many: Arc<Notify>,
+    }
+
+    impl tracing::Subscriber for Warnings {
+        fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+            *metadata.level() == tracing::Level::WARN && metadata.target().starts_with("konklav")
+        }
+
+        fn event(&self, _: &tracing::Event<'_>) {
+            if self.count.fetch_add(1, Ordering::Relaxed) + 1 == 100 {
+                self.many.notify_one();
+            }
+        }
+
+        fn new_span(&self, _: &span::Attributes<'_>) -> span::Id {
+            span::Id::from_u64(1)
+        }
+
+        fn record(&self, _: &span::Id, _: &span::Record<'_>) {}
+
+        fn record_follows_from(&self, _: &span::Id, _: &span::Id) {}
+
+        fn enter(&self, _: &span::Id) {}
+
+        fn exit(&self, _: &span::Id) {}
+    }
+
+    // The core asks for a failed fetch again at once, and for a JWKS until
+    // it lands: with Konklav down, background work polled without a pause.
+    // r[verify relying.cache.background-backoff]
+    #[tokio::test(start_paused = true)]
+    async fn background_work_backs_off_while_fetches_fail() {
+        // Nowhere to send to, so every fetch fails at once.
+        let client = RelyingClient::new(ClientConfig {
+            relying_url: "no url".into(),
+            subject_url: "no url".into(),
+            key_id: "key".into(),
+            secret: "secret".into(),
+            core: Config::default(),
+        });
+        let (count, many) = (Arc::new(AtomicUsize::new(0)), Arc::new(Notify::new()));
+        let _counting = tracing::subscriber::set_default(Warnings {
+            count: count.clone(),
+            many: many.clone(),
+        });
+        let work = tokio::spawn(async move { client.run_work().await });
+
+        let minute = Duration::from_secs(60);
+        let spun = tokio::time::timeout(minute, many.notified()).await;
+        work.abort();
+        assert!(spun.is_err(), "polled again at once after each failure");
+        // Waits from 250 ms doubling to 10 s, each drawn from its upper half.
+        let failed = count.load(Ordering::Relaxed);
+        assert!((10..=18).contains(&failed), "{failed} fetches in a minute");
+    }
+
+    // The core asks for no second JWKS while it takes one to be in flight,
+    // so a fetch dropped with its request must not stay in flight for ever.
+    // r[verify item.relying-client.fetch-reported]
+    #[tokio::test]
+    async fn a_fetch_dropped_with_its_request_is_reported_as_failed() {
+        // Accepts connections and says nothing.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let client = RelyingClient::new(ClientConfig {
+            relying_url: url.clone(),
+            subject_url: url,
+            key_id: "key".into(),
+            secret: "secret".into(),
+            core: Config::default(),
+        });
+        assert_eq!(client.core().poll_work(now()).fetch, [Need::Jwks]);
+        assert_eq!(client.core().poll_work(now()).fetch, [], "in flight");
+
+        let fetch = client.fetch(&Need::Jwks);
+        let dropped = tokio::time::timeout(Duration::from_millis(50), fetch).await;
+        assert!(dropped.is_err(), "still waiting when it was dropped");
+        assert_eq!(client.core().poll_work(now()).fetch, [Need::Jwks]);
+    }
+
+    // `..` percent-encoded is still a dot segment to a URL: the request for
+    // `document/..` went to `/v1/registered-scopes/`.
+    // r[verify item.relying-client.path-segments]
+    #[test]
+    fn scope_ids_never_retarget_the_request() {
+        let addressed = |kind, id| {
+            let path = registered_scope_path(kind, id)?;
+            let url = reqwest::Url::parse(&format!("http://konklav{path}")).unwrap();
+            Some(url.path().to_owned())
+        };
+        assert_eq!(
+            addressed("document", "a/b ..?").as_deref(),
+            Some("/v1/registered-scopes/document/a%2Fb%20%2E%2E%3F")
+        );
+        assert_eq!(
+            addressed("document", "...").as_deref(),
+            Some("/v1/registered-scopes/document/%2E%2E%2E")
+        );
+        for unnameable in ["", ".", ".."] {
+            assert_eq!(addressed("document", unnameable), None);
+            assert_eq!(addressed(unnameable, "d-1"), None);
+        }
     }
 }

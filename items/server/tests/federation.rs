@@ -905,3 +905,58 @@ async fn configured_claims_are_kept_on_the_federated_session() {
         "only configured claims the provider reported"
     );
 }
+
+/// Starts a provider that only serves the discovery document `discovery`
+/// makes for its issuer, and returns the issuer.
+async fn provider_with(discovery: impl FnOnce(String) -> axum::routing::MethodRouter) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let issuer = format!("http://{}", listener.local_addr().unwrap());
+    let router = Router::new().route(
+        "/.well-known/openid-configuration",
+        discovery(issuer.clone()),
+    );
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    issuer
+}
+
+// r[verify federation.outbound.redirects]
+// r[verify federation.outbound.size]
+#[tokio::test(flavor = "multi_thread")]
+async fn providers_that_redirect_or_answer_at_length_are_failures() {
+    // A provider that redirects discovery to a document naming it.
+    let real = FakeProvider::start().await;
+    let elsewhere = format!("{}/.well-known/openid-configuration", real.issuer);
+    let redirecting = provider_with(|_| {
+        get(move || async move { axum::response::Redirect::temporary(&elsewhere) })
+    })
+    .await;
+    real.state.lock().unwrap().issuer.clone_from(&redirecting);
+
+    // One whose discovery document is right, and two megabytes long.
+    let long = provider_with(|issuer| {
+        get(move || async move {
+            axum::Json(json!({
+                "issuer": issuer,
+                "authorization_endpoint": format!("{issuer}/authorize"),
+                "token_endpoint": format!("{issuer}/token"),
+                "jwks_uri": format!("{issuer}/jwks"),
+                "padding": "x".repeat(2 * 1024 * 1024),
+            }))
+        })
+    })
+    .await;
+
+    for (issuer, reason) in [(redirecting, "answered 307"), (long, "is larger than")] {
+        let settings = Settings {
+            issuer,
+            ..real.settings()
+        };
+        let app = TestApp::with_identity_providers(Providers::from_settings([settings])).await;
+        let reply = app
+            .send(Method::GET, "/v1/login/oidc/ops/start", &[], None)
+            .await;
+        assert_eq!(reply.status, StatusCode::INTERNAL_SERVER_ERROR);
+        let message = reply.body["error"]["message"].as_str().unwrap();
+        assert!(message.contains(reason), "{message}");
+    }
+}

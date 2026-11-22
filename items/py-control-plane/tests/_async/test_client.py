@@ -506,3 +506,23 @@ async def test_metadata_filters_are_sent_as_a_json_object():
         await client.invites.list(tenant="root", metadata={"tenant_id": "t-1", "seats": 3})
     (request,) = konklav.requests
     assert dict(request.url.params) == {"tenant": "root", "metadata": '{"seats":3,"tenant_id":"t-1"}'}
+
+
+# httpx resolves dot segments, so the id `..` sent `DELETE /v1/x`.
+# r[verify item.py-control-plane.path-segments]
+@pytest.mark.parametrize("unnameable", ["", ".", ".."])
+async def test_ids_never_retarget_the_request(unnameable):
+    konklav = Konklav(httpx.Response(200, json={"cursor": 1}), httpx.Response(200, json={"cursor": 2}))
+    async with konklav.client() as client:
+        with pytest.raises(ValueError, match="can't be sent as an id"):
+            await client.registered_scopes.remove(unnameable, "x")
+        with pytest.raises(ValueError, match="can't be sent as an id"):
+            await client.registered_scopes.remove("document", unnameable)
+        assert konklav.requests == []
+        # Anything else stays one escaped segment.
+        await client.registered_scopes.remove("document", "a/b ..?")
+        await client.registered_scopes.remove("document", "...")
+    assert [request.url.raw_path for request in konklav.requests] == [
+        b"/v1/registered-scopes/document/a%2Fb%20..%3F",
+        b"/v1/registered-scopes/document/...",
+    ]

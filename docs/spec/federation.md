@@ -120,6 +120,16 @@ type (`confidential` or `public`), registered redirect URIs, allowed grants
 and scopes, the audience of their access tokens, and the claims they may
 receive. Redirect URIs MUST match exactly.
 
+r[oidc.provider.client-urls]
+A client's redirect URIs, post-logout redirect URIs, login URL and
+back-channel logout URI MUST be refused when written unless they are
+absolute `https` URLs, or plain `http` URLs on a loopback host (`localhost`,
+a name under it, `127.0.0.0/8` or `::1`). A development configuration
+(`r[platform.config.published-secrets]`) MAY register plain `http` URLs on
+any host. No other scheme MUST ever be accepted, and redirect URIs MUST NOT
+have fragments. Registrations stored before this rule MUST stay readable
+and usable.
+
 r[oidc.provider.cors]
 The discovery document and the key set MUST allow cross-origin reads from
 any origin. The token, revocation and userinfo endpoints MUST allow
@@ -142,8 +152,8 @@ The authorization endpoint MUST accept requests by `GET` and by form
 confidential client is registered without it. A token request MUST present
 a `code_verifier` exactly when the authorization request sent a
 `code_challenge`. Authorization codes MUST be single-use, short-lived, and
-bound to the client, the redirect URI, the code challenge, the nonce and
-the session. A missing `response_type` MUST be refused as
+bound to the client, the redirect URI, the code challenge, the nonce, the
+session and the tenant the session was in when the request was accepted. A missing `response_type` MUST be refused as
 `invalid_request`, and any other than `code` as
 `unsupported_response_type`.
 
@@ -221,7 +231,11 @@ reuse detection.
 r[oidc.provider.tenant]
 A client MUST be able to target a tenant, either with a `tenant:<id>` scope
 or through tenant selection in the login application. Tokens then carry the
-tenant and membership as they do for direct logins.
+tenant and membership as they do for direct logins. The client's session
+MUST get the tenant the accepting session was in when it accepted the login
+request, even if that session has moved to another tenant by the time the
+code is exchanged, and the code MUST be refused if the subject may no longer
+act in that tenant.
 
 r[oidc.provider.claims]
 `userinfo` and ID tokens MUST only contain claims Konklav holds (the
@@ -280,6 +294,11 @@ r[oidc.provider.client-credentials]
 Service principals MUST be able to obtain access tokens with the client
 credentials grant, authenticating with a client secret or `private_key_jwt`.
 
+r[oidc.provider.client-assertion.replay]
+A `private_key_jwt` client assertion MUST carry a `jti`, and each one MUST
+authenticate its client at most once for as long as the assertion is
+accepted, the clock-skew allowance after its `exp` included.
+
 r[oidc.provider.revocation]
 Clients MUST be able to revoke a refresh or access token they were issued
 (RFC 7009), which MUST end the session behind it. Revoking an unknown token
@@ -327,6 +346,15 @@ Konklav MUST support RP-initiated logout, and MUST send back-channel logout
 tokens to clients that registered a back-channel URI whenever a session
 they received tokens for ends.
 
+r[oidc.provider.logout.destinations]
+Logout tokens MUST only be sent to public addresses, unless the OpenID
+provider is configured to allow private ones: a back-channel logout URI
+whose host is, or resolves to, a loopback, private, link-local or otherwise
+non-public address MUST NOT be connected to, and MUST be refused when
+written if its host already shows it. Konklav MUST connect to the addresses
+it checked, so a name can't resolve differently between the check and the
+request.
+
 ## Federation between instances
 
 r[federation.peer.standard]
@@ -348,6 +376,20 @@ r[federation.peer.pinning]
 A downstream instance MUST be able to pin the upstream's signing keys
 instead of discovering them.
 
+## Outbound requests
+
+r[federation.outbound.redirects]
+Konklav MUST NOT follow redirects on the requests it sends to identity
+providers, upstream instances, the claims hook and back-channel logout URIs.
+A redirect MUST count as a failed request, so client secrets, access tokens,
+signed claims requests and logout tokens only go to the URL that was
+configured, discovered or registered.
+
+r[federation.outbound.size]
+Konklav MUST give up on each of those requests after a bounded time, and
+MUST read at most 1 MiB of an answer. A longer answer MUST count as a failed
+request.
+
 ## Break-glass
 
 r[federation.break-glass]
@@ -364,7 +406,9 @@ principal's.
 
 r[federation.jwt-bearer.replay]
 An assertion MUST carry a `jti`, and each one MUST be exchanged at most
-once per upstream issuer until it expires.
+once per upstream issuer for as long as the assertion is accepted, the
+clock-skew allowance after its `exp` included. An assertion whose `exp` is
+not a representable time MUST be refused.
 
 ## Audit
 

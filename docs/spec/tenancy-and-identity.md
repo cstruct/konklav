@@ -107,6 +107,15 @@ r[credential.mfa-requirement]
 A credential MUST be able to declare how many MFA factors it requires
 before login completes.
 
+r[credential.mfa-seed.bound]
+A TOTP seed MUST be encrypted bound to its MFA factor and that factor's
+subject, as authenticated data of the encryption, so that its ciphertext
+stored on another factor, or its factor moved to another subject, does not
+decrypt. The stored ciphertext MUST say that it is bound, and one that does
+MUST NOT be decrypted without its binding. Seeds stored before they were
+bound MUST keep decrypting, and stay unbound until the factor is enrolled or
+imported again.
+
 r[credential.revocation-ends-sessions]
 Revoking or replacing a credential MUST revoke the sessions established with
 it, except where the operation explicitly keeps the caller's current
@@ -156,14 +165,27 @@ MUST:
   as impersonation sessions, and erase the claims an identity provider
   passed and the key thumbprint from each
 - delete its credentials, its MFA factors and the challenges made for it,
-  or sent to one of its recipients without naming a subject
-- delete the login attempts recorded for its login identifiers
+  or sent to one of its own addresses (`subject.erasure.own-addresses`)
+  without naming a subject
+- delete the login attempts recorded for its own addresses
 - end its memberships and remove their facts
 - delete its role assignments, global ones included
 - delete the stored `delivery.requested` events made for it, or sent to
-  one of its recipients without naming a subject
-- delete the remembered batch answers that name it or one of its login
-  identifiers
+  one of its own addresses without naming a subject
+- delete the remembered batch answers that name it or one of its own
+  addresses
+
+r[subject.erasure.own-addresses]
+Where erasure or the personal data report matches data that doesn't name
+the subject, it MUST match by the subject's own addresses only: the login
+identifiers of its credentials, the email addresses its federated
+credentials carry, and the email addresses of the MFA factors it has
+proven. The address of a factor that was never proven, and the recipient
+of a challenge made for the subject, MUST NOT count, since anyone can name
+any address there. An address that another subject holds at the time, as
+the login identifier of a credential that isn't revoked or in a proven MFA
+factor that isn't removed, MUST NOT count either, unless it is the login
+identifier of one of the subject's own credentials that isn't revoked.
 
 r[subject.erasure.metadata]
 Erasure MUST remove the metadata of the subject, of its credentials, of
@@ -195,6 +217,8 @@ Every later operation that would give an erased subject a credential, MFA
 factor, membership, role assignment, challenge or session MUST fail with `SUBJECT_ERASED`, whichever way it arrives: the control
 plane, a batch, an import, a bootstrap set or an identity provider's claim
 mapping.
+A write that is under way while the erasure commits MUST either be erased
+with the rest or fail the same way.
 
 r[subject.erasure.identifier-released]
 After erasure, each of the subject's login identifiers MUST be free for

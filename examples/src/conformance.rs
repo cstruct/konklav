@@ -216,9 +216,12 @@ async fn profile() -> axum::Json<Value> {
     }))
 }
 
+/// The login request's id is a UUID, and is taken as nothing else: it comes
+/// from the query or a form, and goes into the path of calls to Konklav and
+/// into the page.
 #[derive(serde::Deserialize)]
 struct Request {
-    login_request: String,
+    login_request: uuid::Uuid,
 }
 
 fn remembered(page: &LoginPage, headers: &HeaderMap) -> Option<String> {
@@ -233,7 +236,7 @@ fn remembered(page: &LoginPage, headers: &HeaderMap) -> Option<String> {
 /// where to send the browser, or `None` when Konklav refuses.
 async fn answer(
     page: &LoginPage,
-    request: &str,
+    request: uuid::Uuid,
     verb: &str,
     token: Option<&str>,
     body: Option<Value>,
@@ -284,7 +287,7 @@ async fn show(
     let token = remembered(&page, &headers);
     if !prompts("login")
         && let Some(token) = &token
-        && let Some(to) = answer(&page, &query.login_request, "accept", Some(token), None).await
+        && let Some(to) = answer(&page, query.login_request, "accept", Some(token), None).await
     {
         return Redirect::to(&to).into_response();
     }
@@ -296,7 +299,7 @@ async fn show(
         };
         return match answer(
             &page,
-            &query.login_request,
+            query.login_request,
             "reject",
             None,
             Some(json!({"error": error})),
@@ -337,7 +340,7 @@ async fn sign_in(State(page): State<Arc<LoginPage>>, Form(form): Form<Request>) 
         )
             .into_response();
     };
-    let Some(to) = answer(&page, &form.login_request, "accept", Some(token), None).await else {
+    let Some(to) = answer(&page, form.login_request, "accept", Some(token), None).await else {
         return (StatusCode::BAD_GATEWAY, "Konklav refused the sign-in").into_response();
     };
     let cookie = uuid::Uuid::now_v7().simple().to_string();
@@ -352,4 +355,76 @@ async fn sign_in(State(page): State<Arc<LoginPage>>, Form(form): Form<Request>) 
         Redirect::to(&to),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::Uri;
+
+    use super::*;
+
+    /// A login page whose Konklav records the paths it is asked for.
+    async fn page() -> (String, Arc<Mutex<Vec<String>>>) {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let seen = asked.clone();
+        let konklav = Router::new().fallback(move |uri: Uri| async move {
+            seen.lock().unwrap().push(uri.path().to_owned());
+            axum::Json(json!({"prompt": ""}))
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let konklav_url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, konklav).await });
+
+        let page = Arc::new(LoginPage {
+            konklav: konklav_url,
+            origin: "http://login.example".into(),
+            password: String::new(),
+            http: reqwest::Client::new(),
+            remembered: Mutex::new(HashMap::new()),
+        });
+        let router = Router::new()
+            .route("/sign-in", get(show).post(sign_in))
+            .with_state(page);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, router).await });
+        (url, asked)
+    }
+
+    #[tokio::test]
+    async fn the_login_page_takes_only_an_id_as_the_login_request() {
+        let (url, asked) = page().await;
+        let http = reqwest::Client::new();
+        let id = "018f2b6e-7c1a-7000-8000-000000000001";
+
+        let shown = http
+            .get(format!("{url}/sign-in?login_request={id}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(shown.status(), StatusCode::OK);
+        assert_eq!(
+            *asked.lock().unwrap(),
+            [format!("/v1/oauth2/login-requests/{id}")]
+        );
+
+        // Another endpoint's path, and markup for the page.
+        for bad in ["..%2F..%2Flogin%2Fpassword%3F", "%22%3E%3Cscript%3E"] {
+            let refused = http
+                .get(format!("{url}/sign-in?login_request={bad}"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{bad}");
+            let posted = http
+                .post(format!("{url}/sign-in"))
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(format!("login_request={bad}"))
+                .send()
+                .await
+                .unwrap();
+            assert!(posted.status().is_client_error(), "{bad}");
+        }
+        assert_eq!(asked.lock().unwrap().len(), 1);
+    }
 }

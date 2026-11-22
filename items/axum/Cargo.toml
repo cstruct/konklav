@@ -16,6 +16,8 @@ konklav-relying-client.workspace = true
 konklav-token.workspace = true
 axum.workspace = true
 getrandom.workspace = true
+# For `hyper::ext::Protocol`, which names an extended CONNECT's protocol.
+hyper = { version = "1.12.0", default-features = false, features = ["http2"] }
 serde_json.workspace = true
 tower.workspace = true
 tracing.workspace = true

@@ -17,7 +17,7 @@ publishes it to PyPI with the other Python packages.
 - `KonklavRoutes`: the application's configuration, installed once. It holds
   the started `RelyingClient`, a scope resolver per scope kind, an optional
   route-tenant resolver, hooks run on every verified token, an optional
-  cookie hook and the public URL behind a proxy.
+  cookie hook and the public origin DPoP proofs are checked against.
 - Evaluation, per request:
   1. Merge the route's policies, outermost first, admitting flags only from
      the route's own.
@@ -49,9 +49,15 @@ publishes it to PyPI with the other Python packages.
 - Client addresses: `KonklavRoutes.client_address`, which reads
   `X-Forwarded-For` only from `trusted_proxies`.
 - Injected tokens: `CurrentToken`, `OptionalToken`, `IdentityToken`,
-  `TenantToken`, and `RequestDecider`, refused on public routes.
+  `TenantToken`, and `RequestDecider`, refused on public routes. There
+  `OptionalToken` injects the token of a signed-in subject (`identity` or
+  `tenant`) and `None` for any other valid token, such as a `partial` one
+  from before the second factor; `OptionalTokenOfAnyKind` injects those
+  too.
 - Startup validation over every HTTP and websocket route, and
-  `x-konklav-policy` in OpenAPI.
+  `x-konklav-policy` in OpenAPI. A route that can't declare a `RoutePolicy`
+  (a plain Starlette route, a mount such as static files) is refused unless
+  its path is named in `KonklavRoutes(unprotected=...)`.
 - Pacing: `RoutePacing`, a dependency that paces the routes it is
   declared on, and `PacingMiddleware`, which paces every answer for chosen
   paths (`konklav_relying.pacing`).
@@ -156,6 +162,25 @@ before the hooks and the decision:
 people = APIRouter(dependencies=[RoutePolicy(audiences={"app"})])
 ```
 
+### Routes without a policy
+
+Every API and websocket route must declare a `RoutePolicy` on some layer,
+`RoutePolicy.public()` included, or the application doesn't start. A plain
+Starlette route (`app.add_route`, `add_websocket_route`) and a mount
+(`app.mount("/static", StaticFiles(...))`) take no dependencies, so they
+can't declare one and nothing in this package sees their requests: they
+are served to anyone. Startup validation refuses them too, unless the
+application says it means to serve them that way:
+
+```python
+routes = KonklavRoutes(unprotected={"/static", "/metrics"})
+```
+
+FastAPI's own documentation routes (`/openapi.json`, `/docs`, `/redoc`)
+pass; turn them off on `FastAPI(...)` if they shouldn't be public.
+Validation looks at nothing inside a mount: a FastAPI application mounted
+there installs its own `KonklavRoutes`.
+
 ### Verification and DPoP
 
 The relying core answers each DPoP proof once and refuses it as a replay
@@ -167,6 +192,52 @@ resolvers only ever see that verified token. One `decide_accepted_typed`
 call then decides for the handle, rechecking the session but not the proof
 (`relying.verify.accepted-presentation`). It is the request's route
 decision.
+
+A DPoP proof names the URL it was made for, and is checked against the URL
+this application is configured with, never against the request's `Host`
+header, which the client chooses: a proof made for another server that
+takes the same tokens would pass here whenever the client could reach this
+one under that server's name. So set `public_origin` on `KonklavRoutes` to
+the origin clients address, such as `https://api.example` (or a list of
+them; the request's `Host` then only chooses among them). The proof is
+checked against that origin and the request's whole path, including a
+mount's or the server's root path. `public_url` is a hook for what an
+origin can't say, such as a proxy that rewrites paths; it must not read the
+origin from the request either.
+
+Without `public_origin` or `public_url`, every DPoP proof is refused
+(`invalid_dpop_proof`) and an error is logged; bearer tokens are unaffected.
+`trust_host_header=True` brings back the request's own URL, so its `Host`
+header: use it only in tests, or behind a proxy that refuses every `Host`
+but the application's own.
+
+### Cookie tokens
+
+The `cookie` hook lets a browser application keep its token in a cookie:
+a request without an `Authorization` header is evaluated with the token
+the hook reads. A browser attaches cookies to requests other sites make it
+send, so **an application that sets the cookie hook must protect itself
+against cross-site request forgery; this package does not.** A token from the
+cookie is accepted on every method and on websocket upgrades, whatever the
+request's `Origin`, and no CSRF token or custom header is asked for.
+
+What the application has to do, before the route's policy or in an
+`on_verified` hook:
+
+- Set the cookie `SameSite=Lax` or `Strict` (and `Secure`, `HttpOnly`), and
+  change no state on `GET`.
+- On every request that changes state, check that `Origin` is one of the
+  origins the application's pages are served from, or require a header a
+  cross-site form can't set, such as `X-Requested-With`, and refuse
+  cross-origin requests in CORS.
+- On websocket upgrades always check `Origin`: browsers send cookies with
+  them to any site, with no preflight and no same-origin policy.
+
+The origins set as `public_origin` are where this application is
+addressed, for DPoP proofs. They aren't the origins its pages may call it
+from, so nothing is checked against them here. A token presented in
+`Authorization` needs none of this: another site can't make a browser send
+that header.
 
 ### Deciding inside a handler
 

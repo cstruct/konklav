@@ -432,6 +432,25 @@ p1XNGpwF1zXMHj8NrRZRBsdiy2jZvNVSLlPqzmK3P4YLDAtSoKNCeXst
         "https://auth.example/.well-known/jwks.json"
     );
     assert!(provider.claims_hook.is_none());
+    assert!(
+        !provider.logout_private_addresses,
+        "logout tokens go to public addresses unless configured"
+    );
+    let private = format!(
+        "{CONFIG}oidc_provider {{\n    id_token_key_file \"{}\"\n    login_url \"https://login.example/\"\n    \
+         backchannel_logout_private_addresses true\n}}\n",
+        key.display()
+    );
+    let (_, _, _, tokens, ..) = load(
+        &files.write("private.styx", &private),
+        &files.write("s.styx", SECRETS),
+        &[],
+    )
+    .unwrap();
+    let config = tokens.oidc_provider.unwrap();
+    let provider =
+        konklav_server::oidc::OpenIdProvider::load(&config, &tokens.tokens.issuer).unwrap();
+    assert!(provider.logout_private_addresses);
 
     let hooked = |scopes: &str| {
         format!(
@@ -577,4 +596,135 @@ fn bootstrap_tokens_must_be_long_and_may_expire() {
         .unwrap();
     assert_eq!(expiry.to_rfc3339(), "2026-11-01T00:00:00+00:00");
     assert!(config(&long, Some("tomorrow")).bootstrap_expiry().is_err());
+}
+
+const DEV_SECRETS: &str = concat!(
+    "database {password x}\n",
+    "control {bootstrap_token konklav-dev-control-token-0123456789}\n",
+    "mfa {totp_keys ({id dev, key \"ZGV2LW9ubHktdG90cC1lbmNyeXB0aW9uLWtleS0zMmI=\"})}\n",
+);
+
+/// What `serve` and `check-config` answer for these files.
+fn check_deployment(files: &Files, config: &str, secrets: &str) -> Result<(), String> {
+    let (_, _, _, tokens, browser, control, _, mfa) = load(
+        &files.write("c.styx", config),
+        &files.write("s.styx", secrets),
+        &[],
+    )
+    .unwrap();
+    config::check_deployment(&tokens, &browser, &control, &mfa)
+}
+
+// r[verify platform.config.published-secrets]
+#[test]
+fn published_secrets_are_refused_outside_development() {
+    let files = Files::new("published-secrets");
+    let error = check_deployment(&files, CONFIG, DEV_SECRETS).unwrap_err();
+    for setting in ["control.bootstrap_token", "mfa.totp_keys `dev`"] {
+        assert!(error.contains(setting), "missing {setting} in:\n{error}");
+    }
+    assert!(error.contains("generate a new one"), "{error}");
+
+    let example = concat!(
+        "database {password x}\n",
+        "control {bootstrap_token example-bootstrap-token-0123456789abcdef}\n",
+        "mfa {totp_keys ({id new, key \"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\"} ",
+        "{id old, key \"ZXhhbXBsZS1vbmx5LXRvdHAtZW5jcnlwdGlvbi1rZXk=\"})}\n",
+    );
+    let error = check_deployment(&files, CONFIG, example).unwrap_err();
+    assert!(error.contains("control.bootstrap_token"), "{error}");
+    assert!(error.contains("mfa.totp_keys `old`"), "{error}");
+    assert!(!error.contains("`new`"), "{error}");
+
+    let own = DEV_SECRETS
+        .replace("konklav-dev-control-token-0123456789", &"a".repeat(32))
+        .replace(
+            "ZGV2LW9ubHktdG90cC1lbmNyeXB0aW9uLWtleS0zMmI=",
+            "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+        );
+    assert_eq!(check_deployment(&files, CONFIG, &own), Ok(()));
+
+    // Development configurations keep working with them.
+    let local = CONFIG.replace("https://auth.example", "http://127.0.0.1:8080");
+    assert_eq!(check_deployment(&files, &local, DEV_SECRETS), Ok(()));
+    let insecure = format!(
+        "{CONFIG}browser {{allowed_origins (\"http://app.test\"), secure_cookies false}}\n"
+    );
+    assert_eq!(check_deployment(&files, &insecure, DEV_SECRETS), Ok(()));
+    let secure = format!("{CONFIG}browser {{allowed_origins (\"https://app.example\")}}\n");
+    assert!(check_deployment(&files, &secure, DEV_SECRETS).is_err());
+}
+
+#[test]
+fn the_dev_and_example_configs_are_development_ones() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for (config, secrets) in [
+        ("config/dev.styx", "config/dev.secrets.styx"),
+        (
+            "examples/notes-app/konklav/config.styx",
+            "examples/notes-app/konklav/secrets.styx",
+        ),
+    ] {
+        let (_, _, _, tokens, browser, control, _, mfa) =
+            load(&root.join(config), &root.join(secrets), &[]).unwrap();
+        assert_eq!(
+            config::check_deployment(&tokens, &browser, &control, &mfa),
+            Ok(()),
+            "{config}"
+        );
+    }
+}
+
+// r[verify platform.config.https]
+#[test]
+fn the_issuer_and_claims_hook_must_use_https_outside_development() {
+    let files = Files::new("https-urls");
+    let hooked = |issuer: &str, hook: &str| {
+        format!(
+            "{}oidc_provider {{\n    id_token_key_file id.pem\n    login_url \"https://login.example/\"\n    \
+             claims_hook {{\n        url \"{hook}\"\n        scopes {{\n            profile (name)\n        }}\n    }}\n}}\n",
+            CONFIG.replace("https://auth.example", issuer)
+        )
+    };
+    let check = |issuer: &str, hook: &str| check_deployment(&files, &hooked(issuer, hook), SECRETS);
+    let secure = "https://profiles.example/claims";
+    assert_eq!(check("https://auth.example", secure), Ok(()));
+    // A hook beside the server needs no TLS.
+    for local in ["http://127.0.0.1:9000/claims", "http://[::1]:9000/claims"] {
+        assert_eq!(check("https://auth.example", local), Ok(()), "{local}");
+    }
+
+    let error = check("http://auth.example", secure).unwrap_err();
+    assert!(
+        error.contains("tokens.issuer must be an `https://` URL"),
+        "{error}"
+    );
+    for hook in [
+        "http://profiles.example/claims",
+        "http://localhost.example/claims",
+        "ftp://127.0.0.1/claims",
+        "profiles.example/claims",
+    ] {
+        let error = check("https://auth.example", hook).unwrap_err();
+        assert!(
+            error.contains("oidc_provider.claims_hook.url must be"),
+            "{hook}: {error}"
+        );
+    }
+    let both = check("http://auth.example", "http://profiles.example/claims").unwrap_err();
+    assert_eq!(both.lines().count(), 2, "{both}");
+
+    // Development: plain HTTP on this machine, or cookies without `Secure`.
+    assert_eq!(
+        check("http://localhost:8000", "http://profiles.test/claims"),
+        Ok(())
+    );
+    let insecure = format!(
+        "{}browser {{allowed_origins (\"http://app.test\"), secure_cookies false}}\n",
+        hooked(
+            "http://host.docker.internal:8080",
+            "http://profiles.test/claims"
+        )
+    );
+    assert_eq!(check_deployment(&files, &insecure, SECRETS), Ok(()));
 }

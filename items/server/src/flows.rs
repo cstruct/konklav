@@ -22,7 +22,7 @@ use konklav_store::credentials::{
 use konklav_store::mfa::{self, EmailCodeData, Factor, FactorData, FactorKind, TotpData};
 use konklav_store::sessions::{self, ClientKind, NewSession, Session, SessionFilter, Stage};
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
-use konklav_store::{Connection, events, login_attempts, memberships, tenants};
+use konklav_store::{Connection, StoreError, events, login_attempts, memberships, tenants};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
@@ -31,7 +31,7 @@ use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::issue::{self, IssuedToken};
 use crate::subject_api::{
     SessionRequest, authenticate, begin_attempt, check_browser_request, refresh_cookies,
-    refuse_impersonation, require_recent, start_passwordless_session, with_cookies,
+    refuse_impersonation, require_recent, session_ended, start_passwordless_session, with_cookies,
 };
 use crate::{AppState, capabilities, dpop, pacing, passkeys_api};
 
@@ -184,8 +184,9 @@ fn parse_link(token: &str) -> Option<(uuid::Uuid, &str)> {
     Some((id.parse().ok()?, secret))
 }
 
-/// Verifies a link token for `purpose` and consumes it.
-async fn redeem_link(
+/// Verifies a link token for `purpose` without consuming it: the token
+/// names a usable challenge and carries its secret.
+async fn check_link(
     conn: &mut Connection,
     purpose: Purpose,
     token: &str,
@@ -194,14 +195,23 @@ async fn redeem_link(
     let challenge = challenges::get(conn, id)
         .await
         .map_err(|_| invalid_code())?;
-    let now = Utc::now();
     let matches: bool = hash_challenge_secret(&id.to_string(), secret)
         .ct_eq(&challenge.secret_hash)
         .into();
-    if challenge.purpose != purpose.as_str() || !challenge.is_usable(now) || !matches {
+    if challenge.purpose != purpose.as_str() || !challenge.is_usable(Utc::now()) || !matches {
         return Err(invalid_code());
     }
-    if !challenges::consume(conn, id, now).await? {
+    Ok(challenge)
+}
+
+/// Verifies a link token for `purpose` and consumes it.
+async fn redeem_link(
+    conn: &mut Connection,
+    purpose: Purpose,
+    token: &str,
+) -> Result<challenges::Challenge, ApiError> {
+    let challenge = check_link(conn, purpose, token).await?;
+    if !challenges::consume(conn, challenge.id, Utc::now()).await? {
         return Err(invalid_code());
     }
     Ok(challenge)
@@ -323,7 +333,9 @@ struct TotpEnrollment {
     uri: String,
 }
 
-/// `POST /v1/mfa/totp`: registers an inactive TOTP factor.
+/// `POST /v1/mfa/totp`: registers an inactive TOTP factor, its seed bound
+/// to it.
+// r[impl credential.mfa-seed.bound]
 async fn enroll_totp(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -331,13 +343,15 @@ async fn enroll_totp(
     let mut conn = state.pool.get().await?;
     let session = recent_own_session(&state, &mut conn, &headers).await?;
     let seed = TotpSecret::generate();
+    let id = uuid::Uuid::now_v7();
     let sealed = state
         .auth
         .secrets
-        .encrypt(seed.as_bytes())
-        .map_err(|e| ApiError::new(ErrorCode::Internal, e.to_string()))?;
-    let factor = mfa::create(
+        .encrypt_bound(&mfa::totp_binding(id, session.subject_id), seed.as_bytes())
+        .map_err(ApiError::internal)?;
+    let factor = mfa::create_with_id(
         &mut conn,
+        id,
         session.subject_id,
         &FactorData::Totp(TotpData {
             key_id: sealed.key_id,
@@ -469,15 +483,16 @@ async fn verify_totp_locked(
             )));
         }
     }
+    let sealed = konklav_authn::EncryptedSecret {
+        key_id: data.key_id.clone(),
+        nonce: data.nonce.clone(),
+        ciphertext: data.ciphertext.clone(),
+    };
     let seed = state
         .auth
         .secrets
-        .decrypt(&konklav_authn::EncryptedSecret {
-            key_id: data.key_id.clone(),
-            nonce: data.nonce.clone(),
-            ciphertext: data.ciphertext.clone(),
-        })
-        .map_err(|e| ApiError::new(ErrorCode::Internal, e.to_string()))?;
+        .decrypt_bound(&factor.totp_binding(), &sealed)
+        .map_err(ApiError::internal)?;
     let step = verify_totp(
         &TotpSecret::from_bytes(seed),
         code,
@@ -597,7 +612,8 @@ async fn complete_mfa(
         required,
         &refresh.hash(),
     )
-    .await?;
+    .await
+    .map_err(ended_if_gone)?;
     let token = issue::access_token(&mut conn, &state.auth, &session).await?;
     // Once MFA is done, browsers get the refresh token as a cookie and
     // native clients in the body.
@@ -620,6 +636,16 @@ async fn complete_mfa(
         cursor,
     };
     Ok(with_cookies(Json(body).into_response(), cookies))
+}
+
+/// A session that authenticated the request and is gone, or revoked, by
+/// the time it is changed has ended: answered as such, not as a missing
+/// resource.
+fn ended_if_gone(error: StoreError) -> ApiError {
+    match error {
+        StoreError::NotFound => session_ended(),
+        other => other.into(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -653,7 +679,10 @@ async fn step_up(
             vec![verify_factor(&state, &mut conn, &factor, &code).await?]
         }
         (None, None, Some(password), None) => {
-            verify_password_of(&state, &mut conn, session.subject_id, &password, address).await?;
+            // No connection is held while the password is hashed.
+            drop(conn);
+            verify_password_of(&state, session.subject_id, &password, address).await?;
+            conn = state.pool.get().await?;
             vec!["pwd"]
         }
         (None, None, None, Some((ceremony, passkey))) => {
@@ -676,37 +705,47 @@ async fn step_up(
 }
 
 /// The subject's active password credential, if `password` matches it.
+///
+/// It checks out its own database connections and holds none while it
+/// waits for a hashing slot or hashes; callers must hold none either.
+// r[impl authn.login.hashing-bound]
 async fn verify_password_of(
     state: &AppState,
-    conn: &mut Connection,
     subject: SubjectId,
     password: &str,
     address: ClientAddress,
 ) -> Result<Credential, ApiError> {
-    let credential = credentials::list_for_subject(conn, subject)
-        .await?
-        .into_iter()
-        .find(|c| c.is_active() && c.kind() == CredentialKind::Password)
-        .ok_or_else(|| ApiError::new(ErrorCode::InvalidCredentials, "invalid credentials"))?;
+    // Taken first, so a check the queue has no place for counts nothing.
+    let place = state.auth.hashing_place()?;
+    let (attempt, credential) = {
+        let mut conn = state.pool.get().await?;
+        let credential = credentials::list_for_subject(&mut conn, subject)
+            .await?
+            .into_iter()
+            .find(|c| c.is_active() && c.kind() == CredentialKind::Password)
+            .ok_or_else(|| ApiError::new(ErrorCode::InvalidCredentials, "invalid credentials"))?;
+        // Counts toward the login limit, so step-up and password change
+        // can't be used to guess the password instead.
+        let attempt = begin_attempt(
+            &mut conn,
+            CredentialKind::Password,
+            &credential.identifier,
+            address,
+        )
+        .await?;
+        (attempt, credential)
+    };
     let CredentialData::Password(data) = &credential.data else {
         unreachable!("filtered to passwords")
     };
-    // Counts toward the login limit, so step-up and password change can't
-    // be used to guess the password instead.
-    let attempt = begin_attempt(
-        conn,
-        CredentialKind::Password,
-        &credential.identifier,
-        address,
-    )
-    .await?;
     let (password, hash) = (password.to_owned(), data.hash.clone());
-    let check = state
-        .auth
-        .hashing(move |hasher| hasher.verify(&password, &hash))
+    let check = place
+        .run(move |hasher| hasher.verify(&password, &hash))
         .await?;
     let matched = matches!(check, PasswordCheck::Match { .. });
-    attempt.finish(conn, matched).await?;
+    attempt
+        .finish(&mut *state.pool.get().await?, matched)
+        .await?;
     if matched {
         Ok(credential)
     } else {
@@ -839,19 +878,25 @@ struct CompletePhone {
     session: SessionRequest,
 }
 
-/// `POST /v1/login/phone/complete`
+/// `POST /v1/login/phone/complete`: a guess at a code is a login attempt,
+/// counted against the phone number and the client address like a guess at
+/// a password, whether or not the number has a code outstanding.
 // r[impl authn.login.session-request]
+// r[impl authn.login.rate-limit]
 async fn complete_phone(
     State(state): State<AppState>,
     dpop::Bound(dpop_jkt): dpop::Bound,
+    address: ClientAddress,
     headers: HeaderMap,
     ApiJson(body): ApiJson<CompletePhone>,
 ) -> Result<Response, ApiError> {
     let mut conn = state.pool.get().await?;
     let browser = body.session.check(&state, &mut conn, &headers).await?;
     let recipient = credentials::normalize_identifier(&body.phone);
-    let challenge =
-        redeem_code(&mut conn, Purpose::PhoneCode, &recipient, &body.code, None).await?;
+    let attempt = begin_attempt(&mut conn, CredentialKind::PhoneOtp, &recipient, address).await?;
+    let redeemed = redeem_code(&mut conn, Purpose::PhoneCode, &recipient, &body.code, None).await;
+    attempt.finish(&mut conn, redeemed.is_ok()).await?;
+    let challenge = redeemed?;
     let credential =
         credentials::get(&mut conn, challenge.credential_id.ok_or_else(invalid_code)?).await?;
     start_passwordless_session(
@@ -916,14 +961,17 @@ fn check_password(password: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Replaces a password credential with a new one holding `hash`.
+/// Replaces a password credential with a new one holding `hash`, which
+/// keeps the old one's metadata and restrictions. Call it in a transaction,
+/// so the new credential never exists without them.
+// r[impl authn.password.restrictions-kept]
 async fn replace_password(
     conn: &mut Connection,
     old: &Credential,
     hash: String,
 ) -> Result<Credential, ApiError> {
     credentials::revoke(conn, old.id, "replaced").await?;
-    Ok(credentials::insert(
+    let new = credentials::insert(
         conn,
         NewCredential {
             id: CredentialId::new_v7(),
@@ -932,10 +980,12 @@ async fn replace_password(
             data: CredentialData::Password(PasswordData { hash }),
             mfa_factors_required: old.mfa_factors_required,
             replaces: Some(old.id),
-            metadata: konklav_store::metadata::empty(),
+            // r[impl metadata.write.create]
+            metadata: old.metadata.clone(),
         },
     )
-    .await?)
+    .await?;
+    Ok(credentials::inherit_restrictions(conn, new.id, old).await?)
 }
 
 #[derive(Deserialize)]
@@ -945,14 +995,24 @@ struct CompleteReset {
 }
 
 /// `POST /v1/password-reset/complete`: sets a new password and ends every
-/// session of the subject.
+/// session of the subject. The token is checked before the password is
+/// hashed, so only someone holding a usable token can take a hashing slot,
+/// and again when it is consumed with the change.
 // r[impl authn.reset-password]
+// r[impl authn.reset-password.token-first]
 async fn complete_reset(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<CompleteReset>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_password(&body.password)?;
+    check_link(
+        &mut *state.pool.get().await?,
+        Purpose::ResetPassword,
+        &body.token,
+    )
+    .await?;
     let password = body.password.clone();
+    // No connection is held while the password is hashed.
     let hash = state
         .auth
         .hashing(move |hasher| hasher.hash(&password))
@@ -992,21 +1052,15 @@ async fn change_password(
     ApiJson(body): ApiJson<ChangePassword>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_password(&body.new)?;
-    let mut conn = state.pool.get().await?;
-    let session = own_session(&state, &mut conn, &headers).await?;
-    let old = verify_password_of(
-        &state,
-        &mut conn,
-        session.subject_id,
-        &body.current,
-        address,
-    )
-    .await?;
+    let session = own_session(&state, &mut *state.pool.get().await?, &headers).await?;
+    // No connection is held while the passwords are hashed.
+    let old = verify_password_of(&state, session.subject_id, &body.current, address).await?;
     let password = body.new.clone();
     let hash = state
         .auth
         .hashing(move |hasher| hasher.hash(&password))
         .await?;
+    let mut conn = state.pool.get().await?;
     let cursor = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let new = replace_password(conn, &old, hash).await?;
@@ -1058,13 +1112,19 @@ async fn impersonate(
         Some(reference) => {
             let tenant = tenants::parse_reference(reference)
                 .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
-            Some(
-                memberships::find_active(&mut conn, target.id, tenant)
-                    .await?
-                    .ok_or_else(|| {
-                        ApiError::new(ErrorCode::Forbidden, "no active membership in that tenant")
-                    })?,
-            )
+            let membership = memberships::find_active(&mut conn, target.id, tenant)
+                .await?
+                .ok_or_else(|| {
+                    ApiError::new(ErrorCode::Forbidden, "no active membership in that tenant")
+                })?;
+            // The session keeps the caller's flags, and so their
+            // confinements.
+            // r[impl session.flags.confine.tenant]
+            if !parent.flags.is_empty() {
+                let tenant = tenants::get(&mut conn, tenant).await?;
+                issue::check_confinement(&mut conn, &parent.flags, &tenant).await?;
+            }
+            Some(membership)
         }
         None => None,
     };
@@ -1085,7 +1145,10 @@ async fn impersonate(
             client_kind: parent.client_kind,
             amr: parent.amr.clone(),
             auth_time: parent.auth_time,
-            flags: Vec::new(),
+            // The caller's restrictions hold for what it does as the
+            // target too.
+            // r[impl authn.impersonation.flags]
+            flags: parent.flags.clone(),
             impersonator_subject_id: Some(parent.subject_id),
             parent_session_id: Some(parent.id),
             refresh_hash: RefreshToken::generate(id).hash(),
@@ -1109,4 +1172,19 @@ async fn impersonate(
         refresh_token: None,
         cursor,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_session_revoked_under_a_request_has_ended() {
+        assert_eq!(
+            ended_if_gone(StoreError::NotFound).code,
+            ErrorCode::SessionEnded
+        );
+        let other = ended_if_gone(StoreError::Conflict("taken".into()));
+        assert_ne!(other.code, ErrorCode::SessionEnded);
+    }
 }

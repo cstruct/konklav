@@ -8,8 +8,10 @@
 //! `max(tat, now) + T`. A key whose TATs have all passed is as good as new,
 //! so its state can be dropped.
 //!
-//! [`RateLimiter`] keeps that state in memory for a bounded number of keys
-//! and, when a rate-limit store (Redis) is configured, says what to ask the
+//! [`RateLimiter`] keeps that state in memory for a bounded number of keys:
+//! when there is no room for a new one it drops the key that drains
+//! soonest, and refuses the new key's event if that key is refused itself.
+//! And, when a rate-limit store (Redis) is configured, says what to ask the
 //! store: [`STORE_SCRIPT`] with the keys and arguments in a [`StoreCall`].
 //! The host runs the call and reports its answer or failure; while the
 //! store is failing, the limiter answers from memory and backs off.
@@ -103,7 +105,9 @@ pub struct RateLimitConfig {
     /// for processes answering from memory together.
     #[serde(default = "RateLimitConfig::default_local_divisor")]
     pub local_divisor: u32,
-    /// The most keys kept in memory; the least recently used go first.
+    /// The most keys kept in memory. When a new key needs room, the one
+    /// that drains soonest is dropped, unless its own events are being
+    /// refused: then the new key's event is refused instead.
     #[serde(default = "RateLimitConfig::default_max_local_keys")]
     pub max_local_keys: usize,
 }
@@ -246,8 +250,13 @@ pub enum Attempt {
 struct Entry {
     /// One TAT per window, in microseconds.
     tats: Vec<u64>,
-    used: u64,
+    /// Where `order` has this key.
+    drains: Drains,
 }
+
+/// When a key's TATs have all passed, in microseconds, and a number that
+/// tells keys draining together apart.
+type Drains = (u64, u64);
 
 #[derive(Debug)]
 struct Backoff {
@@ -267,9 +276,10 @@ pub struct RateLimiter {
     store_args: Vec<String>,
     store_suffixes: Vec<String>,
     entries: HashMap<Vec<u8>, Entry>,
-    /// Keys by when they were last used, the least recent first.
-    order: BTreeMap<u64, Vec<u8>>,
-    clock: u64,
+    /// Keys by when they drain, the soonest first.
+    order: BTreeMap<Drains, Vec<u8>>,
+    /// Numbers the entries of `order`.
+    sequence: u64,
     backoff: Backoff,
 }
 
@@ -306,7 +316,7 @@ impl RateLimiter {
             store_suffixes,
             entries: HashMap::new(),
             order: BTreeMap::new(),
-            clock: 0,
+            sequence: 0,
             backoff: Backoff {
                 until_ms: 0,
                 next_ms: STORE_BACKOFF_MIN_MS,
@@ -388,32 +398,14 @@ impl RateLimiter {
     fn apply_local(&mut self, key: &[u8], now_ms: u64) -> Result<(), RateLimited> {
         let now = now_ms.saturating_mul(1000);
         self.drop_expired(now);
-        self.clock += 1;
-        let used = self.clock;
-        let entry = if let Some(entry) = self.entries.get_mut(key) {
-            self.order.remove(&entry.used);
-            entry.used = used;
-            entry
-        } else {
-            if self.entries.len() >= self.config.max_local_keys
-                && let Some((_, oldest)) = self.order.pop_first()
-            {
-                self.entries.remove(&oldest);
-            }
-            self.entries.entry(key.to_vec()).or_insert(Entry {
-                tats: vec![0; self.local_gcra.len()],
-                used,
-            })
-        };
-        self.order.insert(used, key.to_vec());
-
-        let over = entry
-            .tats
-            .iter()
-            .zip(&self.local_gcra)
-            .map(|(&tat, &(_, tolerance))| (tat.max(now) - now).saturating_sub(tolerance))
-            .max()
-            .unwrap_or(0);
+        if !self.entries.contains_key(key) {
+            self.make_room(now)?;
+        }
+        let entry = self.entries.entry(key.to_vec()).or_insert_with(|| Entry {
+            tats: vec![0; self.local_gcra.len()],
+            drains: (0, 0),
+        });
+        let over = Self::over(&self.local_gcra, entry, now);
         if over > 0 {
             return Err(RateLimited {
                 retry_after_ms: over.div_ceil(1000),
@@ -422,25 +414,62 @@ impl RateLimiter {
         for (tat, &(emission, _)) in entry.tats.iter_mut().zip(&self.local_gcra) {
             *tat = (*tat).max(now) + emission;
         }
+        self.order.remove(&entry.drains);
+        self.sequence += 1;
+        entry.drains = (entry.tats.iter().copied().max().unwrap_or(0), self.sequence);
+        self.order.insert(entry.drains, key.to_vec());
         Ok(())
     }
 
-    /// Drops the least recently used keys whose TATs have all passed. Keys
-    /// are dropped in use order, so this looks at only a few per call.
+    /// How long, in microseconds, until every window admits an event of
+    /// `entry`: zero when they do now.
+    fn over(gcra: &[(u64, u64)], entry: &Entry, now: u64) -> u64 {
+        entry
+            .tats
+            .iter()
+            .zip(gcra)
+            .map(|(&tat, &(_, tolerance))| (tat.max(now) - now).saturating_sub(tolerance))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Makes room for a new key by dropping the one that drains soonest:
+    /// whatever else is kept has at least as much use still to count, so
+    /// flooding the limit with keys forgets no more of a key's use than the
+    /// flood's own keys carry. A key whose events are being refused is
+    /// never dropped: if the one draining soonest is, the new key's event
+    /// is refused until it isn't.
+    // r[impl relying.rate-limit.local]
+    fn make_room(&mut self, now: u64) -> Result<(), RateLimited> {
+        if self.entries.len() < self.config.max_local_keys {
+            return Ok(());
+        }
+        let Some((&drains, soonest)) = self.order.first_key_value() else {
+            return Ok(());
+        };
+        let over = self
+            .entries
+            .get(soonest)
+            .map_or(0, |entry| Self::over(&self.local_gcra, entry, now));
+        if over > 0 {
+            return Err(RateLimited {
+                retry_after_ms: over.div_ceil(1000),
+            });
+        }
+        let soonest = self.order.remove(&drains).expect("present");
+        self.entries.remove(&soonest);
+        Ok(())
+    }
+
+    /// Drops keys whose TATs have all passed, at most a few per call.
     // r[impl relying.rate-limit.expiry]
     fn drop_expired(&mut self, now: u64) {
         for _ in 0..2 {
-            let Some((&used, key)) = self.order.first_key_value() else {
-                return;
-            };
-            let expired = self
-                .entries
-                .get(key)
-                .is_none_or(|entry| entry.tats.iter().all(|&tat| tat <= now));
-            if !expired {
-                return;
+            match self.order.first_key_value() {
+                Some((&(drains, _), _)) if drains <= now => {}
+                _ => return,
             }
-            let key = self.order.remove(&used).expect("present");
+            let (_, key) = self.order.pop_first().expect("present");
             self.entries.remove(&key);
         }
     }

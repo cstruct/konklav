@@ -35,6 +35,15 @@ pub struct OpenIdProvider {
     pub dpop_max_age: i64,
     /// Which clients must use DPoP regardless of their registration.
     pub require_dpop: crate::config::DpopRequirement,
+    /// Whether back-channel logout tokens may be sent to addresses that
+    /// aren't public: loopback, private, link-local and the like. Off
+    /// unless the deployment's clients are on its own network, since a
+    /// client registration would otherwise make Konklav post into it. Read
+    /// when the first logout token is sent.
+    pub logout_private_addresses: bool,
+    /// The HTTP client back-channel logout tokens are sent with, built
+    /// when first needed.
+    logout_http: std::sync::OnceLock<reqwest::Client>,
 }
 
 impl OpenIdProvider {
@@ -60,6 +69,7 @@ impl OpenIdProvider {
         };
         provider.dpop_max_age = i64::from(config.dpop_max_age_seconds);
         provider.require_dpop = config.require_dpop;
+        provider.logout_private_addresses = config.backchannel_logout_private_addresses;
         provider.claims_hook = config
             .claims_hook
             .as_ref()
@@ -143,7 +153,51 @@ impl OpenIdProvider {
             claims_hook: None,
             dpop_max_age: 60,
             require_dpop: crate::config::DpopRequirement::None,
+            logout_private_addresses: false,
+            logout_http: std::sync::OnceLock::new(),
         })
+    }
+
+    /// The HTTP client back-channel logout tokens are sent with. Unless
+    /// private addresses are allowed, it connects to public ones only.
+    ///
+    /// # Panics
+    ///
+    /// If the client can't be built, which only happens without TLS roots.
+    // r[impl oidc.provider.logout.destinations]
+    fn logout_http(&self) -> &reqwest::Client {
+        self.logout_http.get_or_init(|| {
+            let builder = crate::outbound::builder(LOGOUT_TIMEOUT);
+            if self.logout_private_addresses {
+                builder
+            } else {
+                crate::outbound::public_only(builder)
+            }
+            .build()
+            .expect("an HTTP client")
+        })
+    }
+
+    /// Sends a logout token to a client's back-channel logout URI, if
+    /// tokens may go there. A redirect isn't followed, and isn't a
+    /// delivery.
+    // r[impl oidc.provider.logout.destinations]
+    // r[impl federation.outbound.redirects]
+    async fn send_logout(&self, uri: &str, token: String) -> Result<(), String> {
+        let url = reqwest::Url::parse(uri).map_err(|error| error.to_string())?;
+        if !self.logout_private_addresses {
+            crate::outbound::public_destination(&url)?;
+        }
+        let request = self
+            .logout_http()
+            .post(url)
+            .form(&[("logout_token", token)]);
+        crate::telemetry::http::send(request, "backchannel_logout")
+            .await
+            .map_err(crate::outbound::ResponseError::from)
+            .and_then(crate::outbound::succeeded)
+            .map(drop)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -413,13 +467,16 @@ pub fn logout_token(
 
 /// Attempts before an undeliverable logout token is dropped.
 const LOGOUT_ATTEMPTS: i32 = 8;
+/// How long a relying system has to take a logout token.
+const LOGOUT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Delivers due back-channel logout tokens. Returns how many were tried.
+///
+/// # Panics
+///
+/// If the HTTP client can't be built, which only happens without TLS roots.
 // r[impl oidc.provider.logout]
-pub async fn deliver_logouts(
-    state: &crate::AppState,
-    http: &reqwest::Client,
-) -> Result<usize, ApiError> {
+pub async fn deliver_logouts(state: &crate::AppState) -> Result<usize, ApiError> {
     let Some(provider) = state.auth.oidc.as_ref() else {
         return Ok(0);
     };
@@ -429,7 +486,7 @@ pub async fn deliver_logouts(
         return Ok(0);
     }
     let span = tracing::info_span!("backchannel_logouts", count = pending.len());
-    deliver_leased(state, provider, http, &mut conn, &pending)
+    deliver_leased(state, provider, &mut conn, &pending)
         .instrument(span)
         .await?;
     Ok(pending.len())
@@ -438,7 +495,6 @@ pub async fn deliver_logouts(
 async fn deliver_leased(
     state: &crate::AppState,
     provider: &OpenIdProvider,
-    http: &reqwest::Client,
     conn: &mut konklav_store::Connection,
     pending: &[konklav_store::backchannel::Pending],
 ) -> Result<(), ApiError> {
@@ -462,14 +518,9 @@ async fn deliver_leased(
             logout.subject_id,
             logout.session_id,
         )?;
-        let sent = crate::telemetry::http::send(
-            http.post(uri).form(&[("logout_token", token)]),
-            "backchannel_logout",
-        )
-        .await
-        .and_then(reqwest::Response::error_for_status);
+        let sent = provider.send_logout(uri, token).await;
         match sent {
-            Ok(_) => {
+            Ok(()) => {
                 delivered("delivered");
                 konklav_store::backchannel::complete(conn, logout.id).await?;
             }
@@ -483,8 +534,7 @@ async fn deliver_leased(
                 let backoff =
                     chrono::Duration::seconds(10 * 2_i64.pow(logout.attempts.unsigned_abs()));
                 let retry_at = chrono::Utc::now() + backoff.min(chrono::Duration::hours(1));
-                konklav_store::backchannel::retry(conn, logout.id, &error.to_string(), retry_at)
-                    .await?;
+                konklav_store::backchannel::retry(conn, logout.id, &error, retry_at).await?;
             }
         }
     }
@@ -497,12 +547,8 @@ async fn deliver_leased(
 ///
 /// If the HTTP client can't be built, which only happens without TLS roots.
 pub async fn deliver_logouts_forever(state: crate::AppState) {
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .expect("an HTTP client");
     loop {
-        if let Err(error) = deliver_logouts(&state, &http).await {
+        if let Err(error) = deliver_logouts(&state).await {
             tracing::warn!(?error, "delivering back-channel logouts failed");
         }
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;

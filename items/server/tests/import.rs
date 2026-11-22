@@ -62,11 +62,43 @@ async fn imported_password_hashes_keep_working_and_imports_rerun() {
             Some(json!({"credentials": [{"id": uuid::Uuid::now_v7(), "subject": subject, "identifier": "x@y", "kind": "password", "password_hash": "plaintext"}]})),
         )
         .await;
-    assert_eq!(
-        bad.code(),
-        "CONFLICT",
-        "the database refuses non-Argon2 hashes"
-    );
+    assert_eq!(bad.code(), "INVALID_REQUEST", "{:?}", bad.body);
+}
+
+// r[verify import.credentials.cost-limit]
+#[tokio::test(flavor = "multi_thread")]
+async fn hashes_that_cost_too_much_are_not_imported() {
+    let app = TestApp::new().await;
+    let (human, service) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+    app.control(
+        Method::POST,
+        "/v1/import/subjects",
+        Some(json!({"subjects": [
+            {"id": human, "kind": "human"}, {"id": service, "kind": "service"},
+        ]})),
+    )
+    .await;
+    // 4 GiB of memory for every login attempt.
+    let costly = HUNTER2.replace("m=65536", "m=4194304");
+    let slot = |hash: &str| json!({"hash": hash, "created_at": "2026-01-01T00:00:00Z"});
+    let key = uuid::Uuid::now_v7();
+    for credential in [
+        json!({"id": uuid::Uuid::now_v7(), "subject": human, "identifier": "costly@example.com",
+            "kind": "password", "password_hash": costly}),
+        json!({"id": key, "subject": service, "identifier": key,
+            "kind": "secret_key", "a": slot(HUNTER2), "b": slot(&costly)}),
+    ] {
+        let reply = app
+            .control(
+                Method::POST,
+                "/v1/import/credentials",
+                Some(json!({"credentials": [credential]})),
+            )
+            .await;
+        assert_eq!(reply.code(), "INVALID_REQUEST", "{:?}", reply.body);
+    }
+    let login = app.login("costly@example.com", "hunter2").await;
+    assert_eq!(login.code(), "INVALID_CREDENTIALS", "{:?}", login.body);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -277,6 +309,319 @@ async fn imported_sessions_refresh_with_the_carried_over_secret() {
         .await;
     assert_eq!(claims.sid.to_string(), session.to_string());
     assert_eq!(claims.sv, 8, "the imported version carries on");
+}
+
+/// A human with a password credential, as `(subject, credential)`.
+async fn person(app: &TestApp, email: &str) -> (String, String) {
+    let subject = app.human(email, "correct horse battery").await;
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    let credential = detail.body["credentials"][0]["id"].as_str().unwrap();
+    (subject, credential.to_owned())
+}
+
+/// A new tenant with `subject` as a member, as `(tenant, membership)`.
+async fn member(app: &TestApp, subject: &str) -> (String, String) {
+    let (tenant, membership) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+    let reply = app
+        .control(
+            Method::PUT,
+            &format!("/v1/tenants/{tenant}"),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{:?}", reply.body);
+    let reply = app
+        .control(
+            Method::PUT,
+            &format!("/v1/memberships/{membership}"),
+            Some(json!({"subject": subject, "tenant": tenant})),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{:?}", reply.body);
+    (tenant.to_string(), membership.to_string())
+}
+
+// r[verify import.sessions.consistent]
+#[tokio::test(flavor = "multi_thread")]
+async fn imported_sessions_must_fit_their_subject() {
+    let app = TestApp::new().await;
+    let reply = app
+        .control(
+            Method::PUT,
+            "/v1/catalog",
+            Some(json!({"session_flags": [{"name": "device_bound", "kind": "assertive"}]})),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+    let (ada, ada_credential) = person(&app, "ada@example.com").await;
+    let (eve, eve_credential) = person(&app, "eve@example.com").await;
+    let (_, bob_credential) = person(&app, "bob@example.com").await;
+    let (ada_tenant, ada_membership) = member(&app, &ada).await;
+    let (eve_tenant, eve_membership) = member(&app, &eve).await;
+
+    let import = async |fields: serde_json::Value| {
+        let id = uuid::Uuid::now_v7();
+        let mut session = json!({
+            "id": id, "subject": eve, "credential": eve_credential, "stage": "identity",
+            "amr": ["pwd"], "auth_time": "2026-10-01T00:00:00Z", "version": 1,
+            "refresh_hash": hex(&Sha256::digest(b"refresh")),
+            "expires_at": (chrono::Utc::now() + chrono::Duration::days(5)).to_rfc3339(),
+        });
+        for (key, value) in fields.as_object().unwrap() {
+            session[key] = value.clone();
+        }
+        let reply = app
+            .control(
+                Method::POST,
+                "/v1/import/sessions",
+                Some(json!({"sessions": [session]})),
+            )
+            .await;
+        (id.to_string(), reply)
+    };
+    let in_tenant = |tenant: &str, membership: &str| json!({"stage": "tenant", "tenant": tenant, "membership": membership});
+    for (fields, problem) in [
+        (
+            json!({"subject": ada}),
+            "credential belongs to another subject",
+        ),
+        (
+            json!({"credential": uuid::Uuid::now_v7()}),
+            "credential does not exist",
+        ),
+        (
+            json!({"impersonator": ada, "credential": bob_credential}),
+            "credential belongs to another subject",
+        ),
+        (
+            in_tenant(&ada_tenant, &ada_membership),
+            "membership belongs to another subject",
+        ),
+        (
+            in_tenant(&ada_tenant, &eve_membership),
+            "membership is in another tenant",
+        ),
+        (
+            in_tenant(&eve_tenant, &uuid::Uuid::now_v7().to_string()),
+            "membership does not exist",
+        ),
+        (
+            json!({"tenant": ada_tenant}),
+            "needs a tenant and a membership",
+        ),
+        (
+            json!({"stage": "tenant"}),
+            "needs a tenant and a membership",
+        ),
+        (
+            json!({"flags": ["device_bound", "undeclared"]}),
+            "`undeclared` is not in the catalog",
+        ),
+    ] {
+        let (id, reply) = import(fields.clone()).await;
+        assert_eq!(
+            reply.code(),
+            "INVALID_REQUEST",
+            "{fields}: {:?}",
+            reply.body
+        );
+        let message = reply.body["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains(&id) && message.contains(problem),
+            "{fields}: {message}"
+        );
+    }
+
+    for fields in [
+        json!({"flags": ["device_bound"]}),
+        in_tenant(&eve_tenant, &eve_membership),
+        // Ada impersonating Eve, with Ada's credential.
+        json!({"impersonator": ada, "credential": ada_credential}),
+    ] {
+        let (_, reply) = import(fields.clone()).await;
+        assert_eq!(reply.body["imported"], 1, "{fields}: {:?}", reply.body);
+    }
+}
+
+// r[verify import.subjects.disabled]
+// r[verify subject.state]
+#[tokio::test(flavor = "multi_thread")]
+async fn importing_a_subject_as_disabled_ends_its_sessions() {
+    let app = TestApp::new().await;
+    let (ada, credential) = person(&app, "ada@example.com").await;
+    let login = app.login("ada@example.com", "correct horse battery").await;
+    let refresh = login.body["refresh_token"].as_str().unwrap().to_owned();
+    let session = app
+        .verify(login.body["access_token"].as_str().unwrap())
+        .await
+        .sid;
+    let revoked = async |session: &str| {
+        let reply = app
+            .control(Method::GET, &format!("/v1/sessions/{session}"), None)
+            .await;
+        assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+        !reply.body["revoked_at"].is_null()
+    };
+    assert!(!revoked(&session.to_string()).await);
+
+    let reply = app
+        .control(
+            Method::POST,
+            "/v1/import/subjects",
+            Some(json!({"subjects": [{"id": ada, "kind": "human", "state": "disabled"}]})),
+        )
+        .await;
+    assert_eq!(reply.body["skipped"], 1, "{:?}", reply.body);
+    assert!(revoked(&session.to_string()).await);
+    let refreshed = app
+        .post("/v1/refresh", json!({"refresh_token": refresh}))
+        .await;
+    assert_ne!(refreshed.status, StatusCode::OK, "{:?}", refreshed.body);
+
+    // A session carried over for the disabled subject arrives revoked.
+    let carried = uuid::Uuid::now_v7();
+    let reply = app
+        .control(
+            Method::POST,
+            "/v1/import/sessions",
+            Some(json!({"sessions": [{
+                "id": carried, "subject": ada, "credential": credential, "stage": "identity",
+                "amr": ["pwd"], "auth_time": "2026-10-01T00:00:00Z", "version": 1,
+                "refresh_hash": hex(&Sha256::digest(b"refresh")),
+                "expires_at": (chrono::Utc::now() + chrono::Duration::days(5)).to_rfc3339(),
+            }]})),
+        )
+        .await;
+    assert_eq!(reply.body["imported"], 1, "{:?}", reply.body);
+    assert!(revoked(&carried.to_string()).await);
+}
+
+// r[verify credential.mfa-seed.bound]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_totp_seed_copied_to_another_subjects_factor_proves_nothing() {
+    use konklav_store::mfa::{self, FactorData};
+
+    let app = TestApp::new().await;
+    let ada = app.human("ada@example.com", "correct horse battery").await;
+    let eve = app.human("eve@example.com", "correct horse battery").await;
+    let (ada_factor, eve_factor) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+    let eve_seed = TotpSecret::generate();
+    let reply = app
+        .control(
+            Method::POST,
+            "/v1/import/mfa-factors",
+            Some(json!({"factors": [
+                {"id": ada_factor, "subject": ada, "kind": "totp",
+                 "seed_base32": TotpSecret::generate().to_base32()},
+                {"id": eve_factor, "subject": eve, "kind": "totp",
+                 "seed_base32": eve_seed.to_base32()},
+            ]})),
+        )
+        .await;
+    assert_eq!(reply.body["imported"], 2, "{:?}", reply.body);
+
+    // Eve, writing to the database, puts her seed on Ada's factor.
+    let mut conn = app.db.pool().get().await.unwrap();
+    let hers = mfa::get(&mut conn, eve.parse().unwrap(), eve_factor)
+        .await
+        .unwrap();
+    let FactorData::Totp(data) = &hers.data else {
+        panic!("a TOTP factor");
+    };
+    assert!(data.ciphertext.starts_with("b1:"), "the seed is bound");
+    mfa::set_data(&mut conn, ada_factor, &hers.data)
+        .await
+        .unwrap();
+
+    let step_up = async |email: &str, factor: uuid::Uuid| {
+        let login = app.login(email, "correct horse battery").await;
+        let auth = format!("Bearer {}", login.body["access_token"].as_str().unwrap());
+        let code = eve_seed.code_at_step(chrono::Utc::now().timestamp() / 30);
+        app.send(
+            Method::POST,
+            "/v1/step-up",
+            &[("authorization", &auth)],
+            Some(json!({"factor_id": factor, "code": code})),
+        )
+        .await
+    };
+    let as_ada = step_up("ada@example.com", ada_factor).await;
+    assert_ne!(as_ada.status, StatusCode::OK, "{:?}", as_ada.body);
+    let as_eve = step_up("eve@example.com", eve_factor).await;
+    assert_eq!(as_eve.status, StatusCode::OK, "{:?}", as_eve.body);
+}
+
+// r[verify credential.mfa-seed.bound]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_bound_totp_seed_moved_to_another_factor_does_not_decrypt() {
+    use konklav_authn::{EncryptedSecret, EncryptionError};
+    use konklav_store::mfa::{self, FactorData, TotpData};
+
+    let app = TestApp::new().await;
+    let secrets = &app.state.auth.secrets;
+    let mut conn = app.db.pool().get().await.unwrap();
+    let ada = app.human("ada@example.com", "correct horse battery").await;
+    let eve = app.human("eve@example.com", "correct horse battery").await;
+    let stored = |sealed: EncryptedSecret| {
+        FactorData::Totp(TotpData {
+            key_id: sealed.key_id,
+            nonce: sealed.nonce,
+            ciphertext: sealed.ciphertext,
+            last_step: None,
+        })
+    };
+    let mut factors = Vec::new();
+    for (subject, seed) in [(&ada, b"ada's seed"), (&eve, b"eve's seed")] {
+        let subject = subject.parse().unwrap();
+        let id = uuid::Uuid::now_v7();
+        let sealed = secrets
+            .encrypt_bound(&mfa::totp_binding(id, subject), seed)
+            .unwrap();
+        let factor = mfa::create_with_id(&mut conn, id, subject, &stored(sealed))
+            .await
+            .unwrap();
+        factors.push(factor);
+    }
+    let open = |factor: &mfa::Factor| {
+        let FactorData::Totp(data) = &factor.data else {
+            panic!("a TOTP factor");
+        };
+        let sealed = EncryptedSecret {
+            key_id: data.key_id.clone(),
+            nonce: data.nonce.clone(),
+            ciphertext: data.ciphertext.clone(),
+        };
+        secrets.decrypt_bound(&factor.totp_binding(), &sealed)
+    };
+    assert_eq!(open(&factors[0]).unwrap(), b"ada's seed");
+    assert_eq!(open(&factors[1]).unwrap(), b"eve's seed");
+
+    // Eve, writing to the database, puts her seed on Ada's factor.
+    mfa::set_data(&mut conn, factors[0].id, &factors[1].data)
+        .await
+        .unwrap();
+    let moved = mfa::get(&mut conn, factors[0].subject_id, factors[0].id)
+        .await
+        .unwrap();
+    assert_eq!(moved.data, factors[1].data);
+    assert_eq!(open(&moved), Err(EncryptionError::Decrypt));
+
+    // Or she makes her own factor one of Ada's.
+    let mut given = factors[1].clone();
+    given.subject_id = factors[0].subject_id;
+    assert_eq!(open(&given), Err(EncryptionError::Decrypt));
+
+    // A seed stored before seeds were bound still decrypts.
+    let old = mfa::create(
+        &mut conn,
+        factors[0].subject_id,
+        &stored(secrets.encrypt(b"old seed").unwrap()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(open(&old).unwrap(), b"old seed");
 }
 
 #[tokio::test(flavor = "multi_thread")]

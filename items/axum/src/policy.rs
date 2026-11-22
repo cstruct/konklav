@@ -13,7 +13,7 @@ use konklav_token::TokenKind;
 use serde_json::{Value, json};
 use tower::{Layer, Service};
 
-use crate::decider::RequestDecider;
+use crate::decider::HeldPresentation;
 use crate::evaluate::{Evaluation, read_path_params};
 use crate::host::BoxFuture;
 use crate::{Konklav, RoutePolicyError, RouteRateLimit};
@@ -182,13 +182,17 @@ impl RoutePolicy {
     }
 
     /// Evaluates the request, keeping what it found in its extensions.
-    async fn evaluate(&self, parts: &mut axum::http::request::Parts) -> Result<(), Response> {
+    /// Returns what holds the accepted presentation of an allowed request.
+    async fn evaluate(
+        &self,
+        parts: &mut axum::http::request::Parts,
+    ) -> Result<Option<HeldPresentation>, Response> {
         let konklav = Konklav::of(parts).map_err(IntoResponse::into_response)?;
         if parts.extensions.get::<Evaluation>().is_some() {
             return Err(RoutePolicyError::Twice.into_response());
         }
         read_path_params(parts).await;
-        let evaluation = konklav.evaluate(&self.inner.policy, parts).await?;
+        let (evaluation, held) = konklav.evaluate(&self.inner.policy, parts).await?;
         let token = evaluation.token().cloned();
         if let Evaluation::Allowed { decider, .. } = &evaluation {
             parts.extensions.insert(decider.clone());
@@ -197,7 +201,7 @@ impl RoutePolicy {
         for limit in &self.inner.rate_limits {
             limit.add(&konklav, parts, token.as_ref()).await?;
         }
-        Ok(())
+        Ok(held)
     }
 
     /// The token kinds the policy admits, `None` when public.
@@ -249,26 +253,16 @@ where
         let policy = self.policy.clone();
         Box::pin(async move {
             let (mut parts, body) = request.into_parts();
-            if let Err(response) = policy.evaluate(&mut parts).await {
-                release(&parts);
-                return Ok(response);
-            }
-            let decider = parts.extensions.get::<RequestDecider>().cloned();
+            // r[impl item.axum.request-decider]: held by this future, so
+            // released once the handler has answered, and also if it
+            // panics or the future is dropped.
+            let held = match policy.evaluate(&mut parts).await {
+                Ok(held) => held,
+                Err(response) => return Ok(response),
+            };
             let response = inner.call(Request::from_parts(parts, body)).await?;
-            // r[impl item.axum.request-decider]: decides nothing after its
-            // request.
-            if let Some(decider) = decider {
-                decider.release();
-            }
+            drop(held);
             Ok(response.into_response())
         })
-    }
-}
-
-/// Releases a presentation a refused request's evaluation still holds, such
-/// as when a rate limit refused it after it was allowed.
-fn release(parts: &axum::http::request::Parts) {
-    if let Some(decider) = parts.extensions.get::<RequestDecider>() {
-        decider.release();
     }
 }

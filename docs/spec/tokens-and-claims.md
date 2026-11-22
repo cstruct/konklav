@@ -76,6 +76,8 @@ A DPoP proof MUST be refused unless:
 - its `jwk` header holds a public key and no private key material
 - its signature verifies with that key
 - it carries `jti`, `htm`, `htu` and `iat`
+- its `jti` is at most 128 bytes long, so that remembering it
+  (`token.dpop.replay`) takes bounded room
 
 r[token.dpop.request-match]
 A DPoP proof MUST be refused unless its `htm` equals the request method and

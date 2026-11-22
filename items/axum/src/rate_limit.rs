@@ -366,10 +366,11 @@ impl RouteRateLimit {
                         refuse(format!("uses {part}, but the verified token has none"))
                     })?
                 }
-                Part::ClientAddress => konklav
-                    .client_address(parts)
-                    .ok_or(RoutePolicyError::NoClientAddress)?
-                    .to_string(),
+                Part::ClientAddress => crate::client_address::key(
+                    konklav
+                        .client_address(parts)
+                        .ok_or(RoutePolicyError::NoClientAddress)?,
+                ),
             };
             values.push(value);
         }

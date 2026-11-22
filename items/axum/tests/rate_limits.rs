@@ -86,6 +86,37 @@ async fn policy_limits_key_on_the_verified_token_and_answer_429() {
     );
 }
 
+// r[verify item.axum.client-address-key]
+// r[verify item.axum.client-address]
+#[tokio::test]
+async fn ipv6_clients_share_a_limit_per_64_bit_prefix() {
+    let host = FakeHost::allowing();
+    let app = Router::new()
+        .route(
+            "/login",
+            get(ok)
+                .route_layer(RouteRateLimit::new(limit("login6", 1), "{client:address}").unwrap())
+                .route_layer(RoutePolicy::public()),
+        )
+        .layer(konklav(&host, &["203.0.113.0/24"]).layer());
+    let from = |forwarded: &str| request("/login", &[("x-forwarded-for", forwarded)]);
+    let status = async |forwarded: &str| send(&app, from(forwarded)).await.status;
+    assert_eq!(status("2001:db8:1:2::1").await, StatusCode::OK);
+    assert_eq!(
+        status("2001:db8:1:2:ffff::2").await,
+        StatusCode::TOO_MANY_REQUESTS,
+        "another address in the same /64"
+    );
+    assert_eq!(status("2001:db8:1:3::1").await, StatusCode::OK);
+    // A hop that doesn't parse isn't skipped for one the client wrote: the
+    // proxy itself is the client then, whatever comes before.
+    assert_eq!(status("198.51.100.1, 192.0.2.7:4711").await, StatusCode::OK);
+    assert_eq!(
+        status("198.51.100.2, 192.0.2.7:4711").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
 // r[verify item.axum.rate-limit]
 // r[verify item.axum.client-address]
 #[tokio::test]

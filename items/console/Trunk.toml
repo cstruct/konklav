@@ -5,18 +5,27 @@
 target = "index.html"
 # Outside the source tree, next to cargo's output.
 dist = "../../target/console/dist"
+# Trunk's own loader is an inline script, which the Content-Security-Policy
+# in index.html refuses. This element names the bundle instead, and boot.js
+# loads it.
+pattern_script = """<meta id="bundle" data-js="{base}{js}" data-wasm="{base}{wasm}">"""
 
 [watch]
-watch = ["src", "index.html", "style.css", "favicon.svg", "Cargo.toml"]
+watch = ["src", "index.html", "boot.js", "style.css", "favicon.svg", "Cargo.toml"]
 
 [serve]
 addresses = ["127.0.0.1"]
 port = 8083
 open = false
+# Trunk's reload script is inline too, so the policy would refuse it: reload
+# the page by hand after a rebuild.
+no_autoreload = true
+# What a deployment's server has to send as well (see README.md).
+headers = { "Content-Security-Policy" = "frame-ancestors 'none'", "X-Content-Type-Options" = "nosniff", "Cache-Control" = "no-store" }
 
 # The console reaches Konklav on its own origin, so the refresh cookie
-# (SameSite=Strict, scoped to /v1/refresh and /v1/sign-out) is first-party
-# and no CORS is involved. These match `mise run serve` and config/dev.styx.
+# (SameSite=Strict, Path=/) is first-party and no CORS is involved. These
+# match `mise run serve` and config/dev.styx.
 
 # The subject-facing surface keeps its /v1 paths.
 [[proxy]]

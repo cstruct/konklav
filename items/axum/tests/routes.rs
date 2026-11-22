@@ -12,9 +12,9 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use konklav_authz::{Decision, DenyReason, StepUp};
 use konklav_axum::{
-    CurrentToken, Denied, IdentityToken, Konklav, OptionalToken, Policy, PolicyError,
-    RequestDecider, ResolvedScope, RoutePolicy, RoutePolicyError, RouterPolicy, TenantToken,
-    path_param,
+    CurrentToken, Denied, IdentityToken, Konklav, KonklavBuilder, OptionalToken,
+    OptionalTokenOfAnyKind, Policy, PolicyError, RequestDecider, ResolvedScope, RoutePolicy,
+    RoutePolicyError, RouterPolicy, TenantToken, path_param,
 };
 use konklav_core::TenantId;
 use konklav_relying_client::Error;
@@ -27,7 +27,10 @@ fn app(konklav: &Konklav, routes: Router) -> Router {
 }
 
 fn konklav(host: &Arc<FakeHost>) -> Konklav {
-    Konklav::builder(host.clone()).build().unwrap()
+    Konklav::builder(host.clone())
+        .public_origin("http://api.example")
+        .build()
+        .unwrap()
 }
 
 fn strings(values: &[&str]) -> BTreeSet<String> {
@@ -162,6 +165,7 @@ async fn public_routes_read_no_token() {
 async fn tokens_come_from_the_header_the_cookie_hook_or_a_websockets_query() {
     let host = FakeHost::allowing();
     let konklav = Konklav::builder(host.clone())
+        .public_origin("http://api.example")
         .cookie(|parts| {
             parts
                 .headers
@@ -216,7 +220,11 @@ async fn tokens_come_from_the_header_the_cookie_hook_or_a_websockets_query() {
         host.accepted().pop().unwrap().authorization,
         "Bearer tenant"
     );
-    let bound = [("upgrade", "websocket"), ("dpop", "proof")];
+    let bound = [
+        ("connection", "keep-alive, Upgrade"),
+        ("upgrade", "WebSocket"),
+        ("dpop", "proof"),
+    ];
     send(&app, request("/socket?token=tenant", &bound)).await;
     assert_eq!(host.accepted().pop().unwrap().authorization, "DPoP tenant");
 
@@ -228,26 +236,243 @@ async fn tokens_come_from_the_header_the_cookie_hook_or_a_websockets_query() {
     );
 }
 
+// An `Upgrade` header alone must not turn a request into a `GET` for its
+// proof, nor let its token come from the query.
+// r[verify item.axum.websocket-requests]
+// r[verify item.axum.token-extraction]
+// r[verify item.axum.verify-then-decide]
 #[tokio::test]
-async fn proofs_are_checked_against_the_public_url() {
+async fn only_a_websocket_upgrade_is_taken_for_one() {
+    use axum::http::Method;
+
     let host = FakeHost::allowing();
+    let policy = RoutePolicy::new(&Policy::new()).unwrap();
+    let app = app(
+        &konklav(&host),
+        Router::new().route("/things", axum::routing::any(ok).layer(policy)),
+    );
+    let upgrade = [("connection", "upgrade"), ("upgrade", "websocket")];
+    let with = |method: Method, uri: &str, headers: &[(&str, &str)]| {
+        let mut request = request(uri, headers);
+        *request.method_mut() = method;
+        request
+    };
+
+    for method in [Method::POST, Method::DELETE, Method::CONNECT] {
+        let headers = [upgrade[0], upgrade[1], ("authorization", "DPoP tenant")];
+        let sent = send(&app, with(method.clone(), "/things", &headers)).await;
+        assert_eq!(sent.status, StatusCode::OK, "{method}");
+        let descriptor = host.accepted().pop().unwrap().request.unwrap();
+        assert_eq!(descriptor.method, method.as_str(), "a GET proof won't do");
+        let query = send(&app, with(method, "/things?token=tenant", &upgrade)).await;
+        assert_eq!(query.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(query.body, json!({"error": {"code": "missing_token"}}));
+    }
+    // Nor does a GET that names the protocol without asking to upgrade.
+    for headers in [
+        [("connection", "keep-alive"), ("upgrade", "websocket")],
+        [("connection", "upgrade"), ("upgrade", "h2c")],
+    ] {
+        let query = send(&app, request("/things?token=tenant", &headers)).await;
+        assert_eq!(query.status, StatusCode::UNAUTHORIZED);
+    }
+    assert_eq!(host.accepted().len(), 3, "no query token was read");
+
+    // HTTP/2 opens a websocket with an extended CONNECT.
+    let mut connect = with(Method::CONNECT, "/things?token=tenant", &[]);
+    connect
+        .extensions_mut()
+        .insert(hyper::ext::Protocol::from_static("websocket"));
+    assert_eq!(send(&app, connect).await.status, StatusCode::OK);
+    let presented = host.accepted().pop().unwrap();
+    assert_eq!(presented.authorization, "Bearer tenant");
+    assert_eq!(presented.request.unwrap().method, "GET");
+}
+
+/// A route whose request can be refused after its presentation was
+/// accepted: by a hook, the route tenant or a scope resolver, each when its
+/// header is sent.
+fn refusable(host: &Arc<FakeHost>, handler: axum::routing::MethodRouter) -> Router {
+    let refusal = |parts: &axum::http::request::Parts, header: &str| {
+        let refuse = parts.headers.contains_key(header);
+        async move {
+            if refuse {
+                Err(StatusCode::PAYMENT_REQUIRED.into_response())
+            } else {
+                Ok(())
+            }
+        }
+    };
     let konklav = Konklav::builder(host.clone())
-        .public_url(|parts| format!("https://public.example{}", parts.uri.path()))
+        .on_verified(move |parts, _| refusal(parts, "x-hook"))
+        .route_tenant(|parts, _| {
+            let other = parts.headers.contains_key("x-tenant");
+            async move { Ok(other.then(|| OTHER_TENANT.parse().unwrap())) }
+        })
+        .scope_resolver("project", move |parts, _| {
+            let refused = refusal(parts, "x-scope");
+            async move { refused.await.map(|()| ResolvedScope::new("p-1")) }
+        })
         .build()
         .unwrap();
+    let policy = RoutePolicy::new(&Policy::new().scope_actions("project", ["project:read"]));
+    app(
+        &konklav,
+        Router::new().route("/", handler.route_layer(policy.unwrap())),
+    )
+}
+
+// A presentation left held takes room in the relying core until it expires,
+// and when the room is gone every request is refused.
+// r[verify item.axum.request-decider]
+#[tokio::test]
+async fn a_presentation_is_released_however_its_request_ends() {
+    let unreachable = FakeHost::deciding(|_| Err(Error::Exhausted));
+    let unavailable = send(
+        &refusable(&unreachable, get(ok)),
+        request("/", &[("authorization", &bearer("tenant"))]),
+    )
+    .await;
+    assert_eq!(unavailable.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(unreachable.released(), 1, "the decision failed");
+
+    let host = FakeHost::allowing();
+    let app = refusable(&host, get(ok));
+    for (header, status) in [
+        ("x-hook", StatusCode::PAYMENT_REQUIRED),
+        ("x-tenant", StatusCode::FORBIDDEN),
+        ("x-scope", StatusCode::PAYMENT_REQUIRED),
+    ] {
+        let before = host.released();
+        let headers = [("authorization", &*bearer("tenant")), (header, "1")];
+        assert_eq!(send(&app, request("/", &headers)).await.status, status);
+        assert_eq!(host.released(), before + 1, "refused by {header}");
+    }
+    assert_eq!(host.accepted().len(), 3);
+    assert_eq!(host.decided().len(), 0, "all refused before deciding");
+}
+
+// r[verify item.axum.request-decider]
+#[tokio::test]
+async fn a_presentation_is_released_when_its_handler_panics_or_is_dropped() {
+    use tower::ServiceExt;
+
+    let host = FakeHost::allowing();
+    let token = bearer("tenant");
+    let panicking = refusable(
+        &host,
+        get(|headers: axum::http::HeaderMap| async move {
+            // Indexing by a header the request lacks panics.
+            headers["x-absent"].len().to_string()
+        }),
+    );
+    let call = panicking.oneshot(request("/", &[("authorization", &token)]));
+    assert!(tokio::spawn(call).await.unwrap_err().is_panic());
+    assert_eq!(host.released(), 1, "the handler panicked");
+
+    // The client goes away while the handler is still working.
+    let (started, working) = tokio::sync::oneshot::channel::<()>();
+    let started = Arc::new(Mutex::new(Some(started)));
+    let waiting = refusable(
+        &host,
+        get(move || {
+            drop(started.lock().unwrap().take());
+            std::future::pending::<()>()
+        }),
+    );
+    let call = tokio::spawn(waiting.oneshot(request("/", &[("authorization", &token)])));
+    let _ = working.await;
+    assert_eq!(host.released(), 1, "held while the handler works");
+    call.abort();
+    assert!(call.await.unwrap_err().is_cancelled());
+    assert_eq!(host.released(), 2, "the request's future was dropped");
+    assert_eq!(host.accepted().len(), 2);
+}
+
+/// The URL a DPoP request for `/things`, sent with `host_header`, is
+/// presented with under the configuration `configure` makes.
+async fn proof_url(
+    configure: impl FnOnce(KonklavBuilder) -> KonklavBuilder,
+    host_header: &str,
+) -> Option<String> {
+    let host = FakeHost::allowing();
+    let konklav = configure(Konklav::builder(host.clone())).build().unwrap();
+    let policy = RoutePolicy::new(&Policy::new()).unwrap();
     let app = app(
         &konklav,
-        Router::new().route(
-            "/things",
-            axum::routing::post(ok).route_layer(RoutePolicy::new(&Policy::new()).unwrap()),
-        ),
+        Router::new().route("/things", axum::routing::post(ok).route_layer(policy)),
     );
-    let mut post = request("/things", &[("authorization", &bearer("tenant"))]);
+    let headers = [("authorization", "DPoP tenant"), ("dpop", "proof")];
+    let mut post = request("/things?x=1", &headers);
     *post.method_mut() = axum::http::Method::POST;
+    post.headers_mut()
+        .insert("host", host_header.parse().unwrap());
     send(&app, post).await;
-    let descriptor = host.accepted().pop().unwrap().request.unwrap();
+    let descriptor = host.accepted().pop().unwrap().request?;
     assert_eq!(descriptor.method, "POST");
-    assert_eq!(descriptor.url, "https://public.example/things");
+    Some(descriptor.url)
+}
+
+// A proof made for another server that takes the same tokens must not pass
+// here because the client named that server in `Host`.
+// r[verify item.axum.proof-url]
+#[tokio::test]
+async fn proofs_are_checked_against_the_configured_origin_not_the_host_header() {
+    assert_eq!(
+        proof_url(|builder| builder, "other.example").await,
+        None,
+        "nothing configured: no URL, so the core refuses the proof"
+    );
+
+    let origin = |builder: KonklavBuilder| builder.public_origin("https://api.example/");
+    assert_eq!(
+        proof_url(origin, "other.example").await.as_deref(),
+        Some("https://api.example/things?x=1")
+    );
+    // The request chooses only among the configured origins.
+    for (named, url) in [
+        ("APP.example:8443", "https://app.example:8443/things?x=1"),
+        ("api.example", "https://api.example/things?x=1"),
+        ("other.example", "https://api.example/things?x=1"),
+    ] {
+        let origins = |builder| origin(builder).public_origin("https://app.example:8443");
+        assert_eq!(proof_url(origins, named).await.as_deref(), Some(url));
+    }
+
+    let hook = |builder| {
+        origin(builder).public_url(|parts| format!("https://hook.example{}", parts.uri.path()))
+    };
+    assert_eq!(
+        proof_url(hook, "other.example").await.as_deref(),
+        Some("https://hook.example/things")
+    );
+    let trusting = |builder: KonklavBuilder| builder.trust_host_header();
+    assert_eq!(
+        proof_url(trusting, "other.example").await.as_deref(),
+        Some("http://other.example/things?x=1"),
+        "only when asked for"
+    );
+}
+
+// A proof for `/documents/1` must not pass on the route a nested router
+// really serves at `/admin/documents/1`.
+// r[verify item.axum.proof-url]
+#[tokio::test]
+async fn proofs_on_nested_routes_are_checked_against_the_whole_path() {
+    let host = FakeHost::allowing();
+    let policy = RoutePolicy::new(&Policy::new()).unwrap();
+    let admin = Router::new().route("/documents/{document}", get(ok).route_layer(policy));
+    let nested = Router::new().nest("/admin", Router::new().nest("/v1", admin));
+    let app = app(&konklav(&host), nested);
+
+    let headers = [("authorization", "DPoP tenant"), ("dpop", "proof")];
+    let answer = send(&app, request("/admin/v1/documents/1?x=1", &headers)).await;
+    assert_eq!(answer.status, StatusCode::OK);
+    let descriptor = host.accepted().pop().unwrap().request.unwrap();
+    assert_eq!(
+        descriptor.url,
+        "http://api.example/admin/v1/documents/1?x=1"
+    );
 }
 
 fn deciding(decision: Result<Decision, Error>) -> Arc<FakeHost> {
@@ -694,6 +919,57 @@ async fn extractors_inject_the_verified_token() {
     .await;
     assert_eq!(invalid.status, StatusCode::UNAUTHORIZED);
     assert_eq!(host.decided().len(), 3, "public routes decide nothing");
+}
+
+async fn any_kind(token: OptionalTokenOfAnyKind) -> String {
+    token.0.map_or_else(
+        || "anonymous".to_owned(),
+        |token| serde_json::to_value(token.knd).unwrap().to_string(),
+    )
+}
+
+// A `partial` token is valid before the second factor: a public route that
+// greets whoever `OptionalToken` gives it must not take it for a sign-in.
+// r[verify item.axum.injected-tokens]
+#[tokio::test]
+async fn optional_tokens_on_public_routes_are_those_of_signed_in_subjects() {
+    let host = FakeHost::allowing();
+    let hooked = Arc::new(Mutex::new(0));
+    let counter = hooked.clone();
+    let konklav = Konklav::builder(host.clone())
+        .on_verified(move |_, _| {
+            *counter.lock().unwrap() += 1;
+            async { Ok(()) }
+        })
+        .build()
+        .unwrap();
+    let app = app(
+        &konklav,
+        Router::new()
+            .route("/public", get(optional).route_layer(RoutePolicy::public()))
+            .route("/any", get(any_kind).route_layer(RoutePolicy::public())),
+    );
+    let with = |token: &'static str| [("authorization", token)];
+    for (token, seen) in [
+        ("Bearer partial", json!("anonymous")),
+        ("Bearer identity", json!(SUBJECT)),
+        ("Bearer tenant", json!(SUBJECT)),
+    ] {
+        let answer = send(&app, request("/public", &with(token))).await;
+        assert_eq!(answer.body, seen, "{token}");
+    }
+    assert_eq!(*hooked.lock().unwrap(), 3, "verified, and the hooks ran");
+    let invalid = send(&app, request("/public", &with("Bearer invalid"))).await;
+    assert_eq!(invalid.status, StatusCode::UNAUTHORIZED);
+
+    // Only when asked for.
+    let partial = send(&app, request("/any", &with("Bearer partial"))).await;
+    assert_eq!(partial.body, json!("partial"));
+    assert_eq!(
+        send(&app, request("/any", &[])).await.body,
+        json!("anonymous")
+    );
+    assert_eq!(host.decided().len(), 0);
 }
 
 // r[verify item.axum.injected-kinds]

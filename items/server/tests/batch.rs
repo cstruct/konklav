@@ -181,6 +181,34 @@ async fn a_failing_operation_leaves_no_trace() {
     );
 }
 
+// r[verify platform.batch.caller]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_batch_needs_some_capability() {
+    let app = TestApp::new().await;
+    app.human("nobody@example.com", PASSWORD).await;
+    let token = app.login("nobody@example.com", PASSWORD).await.body["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let auth = format!("Bearer {token}");
+    // Refused as a whole: no operation was tried, so none is named.
+    let operations = json!([{"method": "PUT", "path": "/tenants/not-a-uuid", "body": {}}]);
+    let reply = app
+        .send(
+            Method::POST,
+            "/v1/batch",
+            &[("authorization", &auth)],
+            Some(json!({"operations": operations})),
+        )
+        .await;
+    assert_eq!(reply.code(), "FORBIDDEN", "{:?}", reply.body);
+    assert!(
+        reply.body["error"]["operation"].is_null(),
+        "{:?}",
+        reply.body
+    );
+}
+
 // r[verify platform.batch.same-as-alone]
 #[tokio::test(flavor = "multi_thread")]
 async fn each_operation_needs_its_own_capability() {

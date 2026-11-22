@@ -42,9 +42,10 @@ impersonator?, expires_at, revoked_at?, revoked_reason? }`
   version.
 - Impersonation (`POST /v1/impersonate`) needs the
   `konklav:subject:impersonate` capability. It creates a child session for
-  the target with `act` naming the impersonator. The child lasts at most an
-  hour and never outlives its parent: revoking a session revokes its
-  children.
+  the target with `act` naming the impersonator. The child carries its
+  parent's session flags, so the impersonator's restrictions hold for it
+  too. It lasts at most an hour and never outlives its parent: revoking a
+  session revokes its children.
 
 ## Challenges and delivery
 
@@ -76,7 +77,10 @@ copy-paste or a QR code. Whoever holds the link redeems it:
   when the person signs in.
 - or with the identifier and password of an existing account, which is
   checked as a password login would check it and starts a session the same
-  way, `client`, `flags` and MFA included.
+  way, `client`, `flags` and MFA included. An account that requires MFA
+  gets only its partial session from this: the invite stays pending, and
+  is redeemed signed in once MFA has completed, so the password alone
+  never joins the account to a tenant.
 
 A link-only invite never creates an account. Nobody proved an address, and
 a bearer link's holder could claim anyone's, then appear to the inviter

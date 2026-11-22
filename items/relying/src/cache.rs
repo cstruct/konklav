@@ -25,7 +25,9 @@ pub struct Key {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "need", rename_all = "snake_case")]
 pub enum Need {
-    /// Fetch `/.well-known/jwks.json` and call [`Relying::on_jwks`].
+    /// Fetch `/.well-known/jwks.json` and call [`Relying::on_jwks`], or
+    /// [`Relying::on_fetch_failed`] when it fails or is given up: the core
+    /// asks for no other while it takes this one to be in flight.
     Jwks,
     /// Fetch `/v1/session-states/{session}` and call
     /// [`Relying::on_session`].
@@ -201,11 +203,27 @@ struct Entry {
 #[derive(Clone, Debug, Default)]
 struct Feed {
     connected: bool,
+    /// Connected, but the stream may still be replaying what this core
+    /// missed, so the caches are as stale as when the feed was lost.
+    catching_up: bool,
     last_seen: u64,
     cursor: Option<Cursor>,
     /// When the last event was applied, for telling the host since when
     /// erasures may have been missed.
     applied_at: Option<u64>,
+}
+
+/// Whether the cached JWKS reflects every key change the core heard of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum JwksTrust {
+    Current,
+    /// The signing keys changed since the JWKS was fetched: a key in it may
+    /// be revoked, so it isn't trusted until the next fetch lands.
+    Changed,
+    /// As `Changed`, and fetches in flight were asked for before the
+    /// change, so they may not reflect it either. No other is asked for
+    /// until each of them has landed or failed.
+    Superseded,
 }
 
 /// The relying core's state. See the crate docs for how hosts drive it.
@@ -215,7 +233,10 @@ pub struct Relying {
     jwks: Option<JwkSet>,
     jwks_fetched_at: Option<u64>,
     jwks_wanted: bool,
-    jwks_in_flight: bool,
+    /// The JWKS fetches asked for, by `poll_work` or of a request's host
+    /// (`Need::Jwks`), whose result or failure hasn't been reported.
+    jwks_in_flight: usize,
+    jwks_trust: JwksTrust,
     sessions: BTreeMap<SessionId, SessionChanged>,
     /// Sessions Konklav doesn't know: tokens for them are never valid.
     unknown_sessions: BTreeSet<SessionId>,
@@ -238,7 +259,8 @@ impl Relying {
             jwks: None,
             jwks_fetched_at: None,
             jwks_wanted: true,
-            jwks_in_flight: false,
+            jwks_in_flight: 0,
+            jwks_trust: JwksTrust::Current,
             sessions: BTreeMap::new(),
             unknown_sessions: BTreeSet::new(),
             entries: BTreeMap::new(),
@@ -255,13 +277,18 @@ impl Relying {
         &self.config
     }
 
-    /// Whether local decisions can be trusted: the feed is connected and has
-    /// been heard from recently.
+    /// Whether local decisions can be trusted: the feed is connected, has
+    /// caught up and has been heard from recently, and the signing keys
+    /// haven't changed since the cached JWKS was fetched.
     // r[impl relying.fallback.lag]
+    // r[impl relying.fallback.signing-keys]
     #[must_use]
     pub fn is_trusted(&self, now: u64) -> bool {
         let silence = self.config.heartbeat_ms * self.config.missed_heartbeats;
-        self.feed.connected && now.saturating_sub(self.feed.last_seen) < silence
+        self.feed.connected
+            && !self.feed.catching_up
+            && self.jwks_trust == JwksTrust::Current
+            && now.saturating_sub(self.feed.last_seen) < silence
     }
 
     /// The cursor to resume the feed from (`Last-Event-ID`).
@@ -294,11 +321,7 @@ impl Relying {
             Ok((_, needs)) | Err(Outcome::Need { needs }) => Verification::Need { needs },
             Err(Outcome::Decided { .. }) => Verification::Invalid,
         };
-        let answered = match &verification {
-            Verification::Need { needs } => needs.contains(&Need::Check),
-            _ => true,
-        };
-        if answered && !self.remember(accepted, now) {
+        if matches!(verification, Verification::Verified { .. }) && !self.remember(accepted, now) {
             return Verification::InvalidProof;
         }
         verification
@@ -307,7 +330,10 @@ impl Relying {
     /// [`Relying::verify_presented`] for a host that decides afterwards:
     /// accepts the presentation once, remembering its proof, and holds it
     /// for [`Relying::decide_accepted`], which doesn't check the proof again,
-    /// until it expires or is released.
+    /// until it expires or is released. After [`Acceptance::Check`] the
+    /// proof isn't remembered yet: the host verifies the token with the
+    /// check API, then calls [`Relying::confirm_presented`], and releases
+    /// the presentation if either refuses or fails.
     // r[impl relying.verify.accepted-presentation]
     pub fn accept_presented(&mut self, presented: &Presented, now: u64) -> Acceptance {
         let (token, accepted) =
@@ -334,16 +360,9 @@ impl Relying {
                 }
                 None
             }
-            Err(Outcome::Decided { .. }) => {
-                // Answered, so the proof is used.
-                return if self.remember(accepted, now) {
-                    Acceptance::Invalid
-                } else {
-                    Acceptance::InvalidProof
-                };
-            }
+            Err(Outcome::Decided { .. }) => return Acceptance::Invalid,
         };
-        if !self.remember(accepted, now) {
+        if verified.is_some() && !self.remember(accepted, now) {
             return Acceptance::InvalidProof;
         }
         let capacity = self.config.dpop_replay_capacity;
@@ -461,10 +480,53 @@ impl Relying {
         }
     }
 
-    /// Remembers an accepted proof once the core has answered with it: a
-    /// decision, or a hand-off to the check API. Not while it still waits
-    /// for a fetch, since the host then asks again with the same proof.
-    /// Returns false if the replay set is full.
+    /// The check API vouched for the token `presented` carries, after
+    /// [`Need::Check`] or [`Acceptance::Check`]: remembers its DPoP proof,
+    /// as a local answer would have. Returns false if the proof can't be
+    /// accepted any more, because it was used meanwhile, is no longer
+    /// fresh, or the replay set is full: refuse the request as
+    /// [`Verification::InvalidProof`]. True for a bearer token.
+    // r[impl relying.verify.dpop-replay]
+    pub fn confirm_presented(&mut self, presented: &Presented, now: u64) -> bool {
+        match presented::token(presented, &self.replays, &self.proof_settings(), now) {
+            Ok((_, accepted)) => self.remember(accepted, now),
+            Err(_) => false,
+        }
+    }
+
+    /// [`Relying::from_check`] for a decision [`Relying::decide_presented`]
+    /// handed off: unless the check API found the token invalid, the proof
+    /// is remembered ([`Relying::confirm_presented`]), and a proof that
+    /// can't be is denied as `invalid_dpop_proof`.
+    // r[impl relying.fallback.equivalence]
+    // r[impl relying.verify.dpop-replay]
+    pub fn on_check_presented(
+        &mut self,
+        presented: &Presented,
+        decision: Decision,
+        now: u64,
+    ) -> Outcome {
+        let invalid = matches!(
+            decision,
+            Decision::Deny {
+                reason: DenyReason::InvalidToken | DenyReason::InvalidDpopProof
+            }
+        );
+        if invalid || self.confirm_presented(presented, now) {
+            return Outcome::Decided { decision };
+        }
+        Outcome::Decided {
+            decision: Decision::Deny {
+                reason: DenyReason::InvalidDpopProof,
+            },
+        }
+    }
+
+    /// Remembers an accepted proof once its token has verified, here or by
+    /// the check API. Not for a token that doesn't verify, or anyone could
+    /// fill the replay set, and not while the core still waits for a fetch,
+    /// since the host then asks again with the same proof. Returns false if
+    /// the proof was remembered already or the replay set is full.
     fn remember(&mut self, accepted: Option<presented::Accepted>, now: u64) -> bool {
         accepted.is_none_or(|accepted| {
             self.replays
@@ -510,6 +572,9 @@ impl Relying {
                 return Err(invalid());
             }
             self.jwks_wanted = true;
+            // The host fetches it now: a key change heard of before it
+            // lands must know of it (`distrust_jwks`).
+            self.jwks_in_flight += 1;
             return Err(Outcome::Need {
                 needs: vec![Need::Jwks],
             });
@@ -591,12 +656,9 @@ impl Relying {
                 Err(Refused::Token) => return deny(DenyReason::InvalidToken),
                 Err(Refused::Proof) => return deny(DenyReason::InvalidDpopProof),
             };
-        let outcome = self.decide_token(token, requirements, None, now);
-        let answered = match &outcome {
-            Outcome::Need { needs } => needs.contains(&Need::Check),
-            Outcome::Decided { .. } => true,
-        };
-        if answered && !self.remember(accepted, now) {
+        let (outcome, verified) = self.decide_verified(token, requirements, None, now);
+        let decided = matches!(outcome, Outcome::Decided { .. });
+        if verified && decided && !self.remember(accepted, now) {
             return deny(DenyReason::InvalidDpopProof);
         }
         outcome
@@ -611,9 +673,21 @@ impl Relying {
         route_authority: Option<&RouteAuthority>,
         now: u64,
     ) -> Outcome {
+        self.decide_verified(token, requirements, route_authority, now)
+            .0
+    }
+
+    /// [`Relying::decide_token`], and whether the token itself verified.
+    fn decide_verified(
+        &mut self,
+        token: &str,
+        requirements: &Requirements,
+        route_authority: Option<&RouteAuthority>,
+        now: u64,
+    ) -> (Outcome, bool) {
         let (claims, mut needs) = match self.check_token(token, now) {
             Ok(checked) => checked,
-            Err(outcome) => return outcome,
+            Err(outcome) => return (outcome, false),
         };
         let now_seconds = i64::try_from(now / 1000).unwrap_or(i64::MAX);
 
@@ -627,13 +701,13 @@ impl Relying {
         }
         let Some(set) = usable else {
             needs.push(Need::Entitlements { key });
-            return Outcome::Need { needs };
+            return (Outcome::Need { needs }, true);
         };
         let registered = self.registered_for(&set, requirements, now, &mut needs);
         if !needs.is_empty() {
-            return Outcome::Need { needs };
+            return (Outcome::Need { needs }, true);
         }
-        Outcome::Decided {
+        let outcome = Outcome::Decided {
             decision: evaluate_with_route_authority(
                 requirements,
                 route_authority,
@@ -644,7 +718,8 @@ impl Relying {
                 &registered,
                 now_seconds,
             ),
-        }
+        };
+        (outcome, true)
     }
 
     /// The records of the registered scopes `requirements` name, adding a
@@ -818,11 +893,42 @@ impl Relying {
         Some(set.clone())
     }
 
+    // r[impl relying.fallback.signing-keys]
     pub fn on_jwks(&mut self, jwks: JwkSet, now: u64) {
         self.jwks = Some(jwks);
         self.jwks_fetched_at = Some(now);
+        if self.jwks_reported() {
+            // Asked for before the keys changed: fetch again.
+            return;
+        }
         self.jwks_wanted = false;
-        self.jwks_in_flight = false;
+        self.jwks_trust = JwksTrust::Current;
+    }
+
+    /// One JWKS fetch has landed or failed. Returns whether it was asked
+    /// for before a key change, so that it may not reflect it. Once the
+    /// last such fetch is reported, the next one asked for is trusted.
+    fn jwks_reported(&mut self) -> bool {
+        self.jwks_in_flight = self.jwks_in_flight.saturating_sub(1);
+        if self.jwks_trust != JwksTrust::Superseded {
+            return false;
+        }
+        if self.jwks_in_flight == 0 {
+            self.jwks_trust = JwksTrust::Changed;
+        }
+        true
+    }
+
+    /// The signing keys may have changed: the cached JWKS isn't trusted
+    /// until it is fetched again.
+    // r[impl relying.fallback.signing-keys]
+    fn distrust_jwks(&mut self) {
+        self.jwks_wanted = true;
+        self.jwks_trust = if self.jwks_in_flight > 0 {
+            JwksTrust::Superseded
+        } else {
+            JwksTrust::Changed
+        };
     }
 
     pub fn on_session(&mut self, state: SessionChanged) {
@@ -861,10 +967,13 @@ impl Relying {
         entry.in_flight = false;
     }
 
-    /// A fetch the core asked for failed; it may be asked for again.
+    /// A fetch the core asked for failed, or the host gave it up; it may be
+    /// asked for again.
     pub fn on_fetch_failed(&mut self, need: &Need) {
         match need {
-            Need::Jwks => self.jwks_in_flight = false,
+            Need::Jwks => {
+                self.jwks_reported();
+            }
             Need::Entitlements { key } => {
                 if let Some(entry) = self.entries.get_mut(key) {
                     entry.in_flight = false;
@@ -883,12 +992,25 @@ impl Relying {
         }
     }
 
+    /// The feed's stream opened. A stream resumed from this core's cursor
+    /// first replays what the core missed, so the caches stay untrusted
+    /// until it has caught up: Konklav says so with a `position` event
+    /// marked `caught_up`, and a heartbeat says the stream had nothing to
+    /// send for a whole interval. A stream opened without a cursor starts
+    /// at the head, with nothing to replay.
+    // r[impl relying.fallback.lag]
     pub fn on_feed_connected(&mut self, now: u64) {
         self.feed.connected = true;
+        self.feed.catching_up = self.feed.cursor.is_some();
         self.feed.last_seen = now;
+        if self.feed.cursor.is_none() {
+            // Key changes before the stream's start are never replayed.
+            self.distrust_jwks();
+        }
     }
 
-    /// Anything arrived on the feed, including heartbeats.
+    /// A heartbeat arrived on the feed: the stream is alive. It may still
+    /// be replaying what this core missed.
     pub fn on_feed_activity(&mut self, now: u64) {
         self.feed.last_seen = now;
     }
@@ -916,7 +1038,8 @@ impl Relying {
             FeedPayload::EntitlementsChanged(changed) => {
                 self.invalidate(&changed, event.cursor, now);
             }
-            FeedPayload::SigningKeysChanged(_) => self.jwks_wanted = true,
+            // r[impl relying.fallback.signing-keys]
+            FeedPayload::SigningKeysChanged(_) => self.distrust_jwks(),
             FeedPayload::ScopeChanged(changed) => {
                 self.invalidate_scopes(&changed, event.cursor, now);
             }
@@ -931,7 +1054,7 @@ impl Relying {
             FeedPayload::Reset => {
                 self.sessions.clear();
                 self.unknown_sessions.clear();
-                self.jwks_wanted = true;
+                self.distrust_jwks();
                 for entry in self.entries.values_mut() {
                     entry.stale.get_or_insert((now, event.cursor));
                 }
@@ -956,6 +1079,15 @@ impl Relying {
                 }
             }
             FeedPayload::Other => {}
+        }
+        // Only a stream's own `position` and `reset` events say so.
+        // r[impl relying.fallback.lag]
+        if matches!(
+            event.kind.as_str(),
+            konklav_core::feed::POSITION | konklav_core::feed::RESET
+        ) && event.payload.get("caught_up") == Some(&serde_json::Value::Bool(true))
+        {
+            self.feed.catching_up = false;
         }
         self.feed.cursor = Some(event.cursor);
         self.feed.applied_at = Some(now);
@@ -1014,8 +1146,8 @@ impl Relying {
         let mut fetch = Vec::new();
         let mut next = now + config.heartbeat_ms;
 
-        if self.jwks_wanted && !self.jwks_in_flight {
-            self.jwks_in_flight = true;
+        if self.jwks_wanted && self.jwks_in_flight == 0 {
+            self.jwks_in_flight = 1;
             fetch.push(Need::Jwks);
         }
 

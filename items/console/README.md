@@ -75,7 +75,7 @@ Out of scope:
 | --- | --- |
 | `konklav-server` (over HTTP) | The only backend. The console uses the subject-facing surface to sign in and the control-plane surface for everything else. It shares no Rust types with the server and keeps its own DTOs. |
 | Leptos, `leptos_router` | Rendering, fine-grained reactivity and client-side routing. |
-| Trunk | Compiles the WASM, runs `wasm-bindgen`, bundles the page, and proxies Konklav during development. |
+| Trunk | Compiles the WASM, runs `wasm-bindgen`, bundles the page, and proxies Konklav during development. Its inline loader script is replaced by `boot.js`, which the page's Content-Security-Policy allows. |
 
 ### Dependent summary
 
@@ -86,8 +86,7 @@ None. Operators use it in a browser.
 The console must reach Konklav on its own origin
 (`r[item.console.same-origin]`):
 
-- `/v1/` goes to the subject-facing surface, keeping its paths, because
-  the refresh cookie is scoped to `/v1/refresh` and `/v1/sign-out`.
+- `/v1/` goes to the subject-facing surface, keeping its paths.
 - `/control/v1/` goes to the control-plane surface's `/v1/`.
 - Everything else serves the built files, with `index.html` as the
   fallback for client-side routes.
@@ -99,6 +98,74 @@ first-party, and Konklav serves no CORS. Konklav still checks the
 header, which the console sends on every request. In development, Trunk
 does the routing (see `Trunk.toml`), and `config/dev.styx` allows
 `http://127.0.0.1:8083`.
+
+### The refresh cookie
+
+The refresh cookie has `Path=/`, which its `__Host-` prefix requires, so
+the browser sends it with every request to the console's origin: not only
+the `/v1/refresh` and `/v1/sign-out` calls that need it, but also the
+`/control/v1/` calls and the static files. The control-plane surface
+never reads it. So the proxy should remove the `Cookie` header from what it forwards
+to the control-plane surface, as the nginx example below does, and must
+not log that header on any route: the cookie is a session's refresh
+token.
+
+### Response headers
+
+The page carries a Content-Security-Policy in a `<meta>` tag
+(`r[item.console.content-security-policy]`): scripts, styles, images and
+connections from its own origin only, nothing inline, and no `eval` beyond
+compiling the WASM. A deployment doesn't have to send that policy, but a
+page can't declare everything, so whatever serves the console must send
+these (`r[item.console.response-headers]`):
+
+| Header | On | Why |
+| --- | --- | --- |
+| `Content-Security-Policy: frame-ancestors 'none'` | every response | No other page can frame the console and trick an operator into clicking in it. A `<meta>` policy can't say this. Add `X-Frame-Options: DENY` for browsers that predate it. |
+| `X-Content-Type-Options: nosniff` | every response | The browser runs only what is served as a script. |
+| `Cache-Control: no-store` | `index.html`, including when it is the fallback | The browser always gets the current policy and bundle names. Every other file has a content hash in its name and can be cached for as long as you like. |
+
+Over HTTPS, send `Strict-Transport-Security` too. With nginx, for
+example:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name console.example.com;
+    root /srv/konklav-console;
+
+    add_header Content-Security-Policy "frame-ancestors 'none'" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Strict-Transport-Security "max-age=63072000" always;
+
+    location /v1/ {
+        proxy_pass http://konklav.internal:8080;
+    }
+    location /control/v1/ {
+        proxy_pass http://konklav.internal:8082/v1/;
+        # The control plane has no use for the refresh cookie.
+        proxy_set_header Cookie "";
+    }
+
+    # Hashed file names: safe to cache.
+    location / {
+        try_files $uri /index.html;
+    }
+    # A location with its own add_header inherits none, so they repeat.
+    location = /index.html {
+        add_header Cache-Control no-store always;
+        add_header Content-Security-Policy "frame-ancestors 'none'" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Strict-Transport-Security "max-age=63072000" always;
+    }
+}
+```
+
+In development, `trunk serve` sends the same headers (`Trunk.toml`). Its
+reload script is inline, which the policy refuses, so auto-reload is off:
+reload the page after a rebuild.
+
+### DPoP
 
 The console's sessions are bound to a DPoP key (`r[item.console.dpop]`):
 a non-extractable WebCrypto P-256 key, kept in IndexedDB, that signs a
@@ -140,6 +207,9 @@ builds are large, so the first load takes a few seconds.
 cargo test -p konklav-console   # request building, errors, DTOs, grants, token decisions
 mise run console:smoke           # builds the app with trunk and checks the bundle
 ```
+
+`tests/page.rs` checks the page's Content-Security-Policy and that
+nothing in `index.html` or Trunk's configuration is inline.
 
 `mise run lint` also runs clippy for the `wasm32-unknown-unknown` target,
 and `mise run test` includes the smoke build.

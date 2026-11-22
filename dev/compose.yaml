@@ -8,8 +8,10 @@ services:
       POSTGRES_USER: konklav
       POSTGRES_PASSWORD: konklav
       POSTGRES_DB: konklav
+    # Published on the loopback interface only: the credentials are
+    # well-known.
     ports:
-      - "${KONKLAV_DEV_PG_PORT:-15432}:5432"
+      - "127.0.0.1:${KONKLAV_DEV_PG_PORT:-15432}:5432"
     # Postgres 18 images keep data in a versioned directory below
     # /var/lib/postgresql, so the volume is mounted there instead of at
     # .../data. That also lets future major upgrades live side by side.
@@ -27,8 +29,9 @@ services:
   valkey:
     image: valkey/valkey:8.1-alpine
     command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    # On the loopback interface only: it takes commands from anyone.
     ports:
-      - "${KONKLAV_DEV_VALKEY_PORT:-16379}:6379"
+      - "127.0.0.1:${KONKLAV_DEV_VALKEY_PORT:-16379}:6379"
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 1s

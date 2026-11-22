@@ -147,9 +147,7 @@ impl ClaimsHook {
         reqwest::Url::parse(&config.url)
             .map_err(|error| format!("claims_hook.url `{}`: {error}", config.url))?;
         check_served("claims_hook.scopes", &config.scopes)?;
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_millis(config.timeout_ms.into()))
-            .build()
+        let http = crate::outbound::client(Duration::from_millis(config.timeout_ms.into()))
             .map_err(|error| error.to_string())?;
         Ok(Self {
             url: config.url.clone(),
@@ -240,6 +238,8 @@ impl ClaimsHook {
 
     /// Asks the hook, returning the claims it may supply and how long the
     /// answer may be cached for, if the hook limited it.
+    // r[impl federation.outbound.redirects]
+    // r[impl federation.outbound.size]
     async fn call(
         &self,
         provider: &OpenIdProvider,
@@ -274,12 +274,9 @@ impl ClaimsHook {
         if response.status() == StatusCode::NOT_FOUND {
             return Ok((Map::new(), cache_limit(response.headers())));
         }
-        if !response.status().is_success() {
-            return Err(format!("answered {}", response.status()));
-        }
         let max_age = cache_limit(response.headers());
-        let Value::Object(answer) = response
-            .json::<Value>()
+        // A redirect or an answer over the size limit is a failure.
+        let Value::Object(answer) = crate::outbound::json::<Value>(response)
             .await
             .map_err(|error| error.to_string())?
         else {

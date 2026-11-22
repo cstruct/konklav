@@ -4,9 +4,10 @@ use std::collections::BTreeSet;
 
 use diesel_async::AsyncConnection;
 use konklav_authz::{Effect, Group, Policy, Scope, compile};
-use konklav_core::{Cursor, MembershipId, SubjectId, TenantId};
+use konklav_core::{Cursor, MembershipId, ShareId, SubjectId, TenantId};
 use konklav_store::catalog::{self, ActionEntry, CatalogDocument, GroupEntry, ScopeKindEntry};
 use konklav_store::roles::{self, AssignmentTarget, RoleDefinition};
+use konklav_store::shares::{self, Share, ShareState, ShareTerms, Side};
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
 use konklav_store::tenants::{self, ROOT, TenantState};
 use konklav_store::{Connection, StoreError, compile_input, events, memberships, templates};
@@ -653,4 +654,166 @@ async fn the_write_cursor_counts_events_from_savepoints() {
         .await
         .unwrap();
     assert_eq!(untouched, None);
+}
+
+/// Waits until some statement in this database waits for a lock.
+async fn until_a_statement_waits(conn: &mut Connection) {
+    #[derive(diesel::QueryableByName)]
+    struct Count {
+        #[diesel(sql_type = diesel::sql_types::BigInt)]
+        waiting: i64,
+    }
+    for _ in 0..200 {
+        let count = diesel_async::RunQueryDsl::get_result::<Count>(
+            diesel::sql_query(
+                "select count(*) as waiting from pg_stat_activity
+                 where datname = current_database() and wait_event_type = 'Lock'",
+            ),
+            conn,
+        )
+        .await
+        .unwrap();
+        if count.waiting > 0 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("no statement waited for a lock");
+}
+
+fn share_terms(owner: TenantId, recipient: TenantId, actions: &[&str]) -> ShareTerms {
+    ShareTerms {
+        owner,
+        scope: Scope {
+            kind: "project".into(),
+            id: "p1".into(),
+        },
+        recipient,
+        recipient_scope: None,
+        actions: actions.iter().map(|action| (*action).to_owned()).collect(),
+        attributes: serde_json::Map::new(),
+        valid_from: None,
+        valid_until: None,
+    }
+}
+
+// A change that starts while another is under way waits for it, and is
+// decided from the state the other left.
+// r[verify authz.share.acceptance]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_share_change_that_waits_for_a_revocation_sees_it() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let (_, owner, _) = setup(&mut conn).await;
+    let recipient = TenantId::new_v7();
+    tenants::create(&mut conn, recipient, ROOT, &json!({}))
+        .await
+        .unwrap();
+    let terms = share_terms(owner, recipient, &["project:read"]);
+    let wider = share_terms(owner, recipient, &["project:read", "document:read"]);
+
+    for accepting in [true, false] {
+        let id = ShareId::new_v7();
+        shares::offer(&mut conn, id, &terms, &json!({}))
+            .await
+            .unwrap();
+        let (revoked, until_revoked) = tokio::sync::oneshot::channel::<()>();
+        let (commit, until_commit) = tokio::sync::oneshot::channel::<()>();
+        let pool = db.pool().clone();
+        let revoker = tokio::spawn(async move {
+            let mut conn = pool.get().await.unwrap();
+            conn.transaction::<(), StoreError, _>(async move |conn| {
+                shares::revoke(conn, id, Side::Owner).await?;
+                revoked.send(()).unwrap();
+                until_commit.await.unwrap();
+                Ok(())
+            })
+            .await
+            .unwrap();
+        });
+        until_revoked.await.unwrap();
+
+        let pool = db.pool().clone();
+        let wider = wider.clone();
+        let late = tokio::spawn(async move {
+            let mut conn = pool.get().await.unwrap();
+            conn.transaction::<_, StoreError, _>(async move |conn| {
+                if accepting {
+                    shares::accept(conn, id).await
+                } else {
+                    shares::offer(conn, id, &wider, &json!({})).await
+                }
+            })
+            .await
+        });
+        until_a_statement_waits(&mut conn).await;
+        commit.send(()).unwrap();
+        revoker.await.unwrap();
+
+        let refused = late.await.unwrap();
+        assert!(
+            matches!(&refused, Err(StoreError::Conflict(why)) if why.contains("revoked")),
+            "accepting {accepting}: {refused:?}"
+        );
+        let share = shares::get(&mut conn, id).await.unwrap();
+        assert_eq!(share.state, ShareState::Revoked);
+        assert_eq!(share.terms, terms);
+    }
+}
+
+// An acceptance under way covers the terms it saw: new terms offered
+// meanwhile wait for it, and then offer the share again.
+// r[verify authz.share.acceptance]
+#[tokio::test(flavor = "multi_thread")]
+async fn terms_offered_during_an_acceptance_are_not_accepted_by_it() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let (_, owner, _) = setup(&mut conn).await;
+    let recipient = TenantId::new_v7();
+    tenants::create(&mut conn, recipient, ROOT, &json!({}))
+        .await
+        .unwrap();
+    let terms = share_terms(owner, recipient, &["project:read"]);
+    let wider = share_terms(owner, recipient, &["project:read", "document:read"]);
+    let id = ShareId::new_v7();
+    shares::offer(&mut conn, id, &terms, &json!({}))
+        .await
+        .unwrap();
+
+    let (accepted, until_accepted) = tokio::sync::oneshot::channel::<Share>();
+    let (commit, until_commit) = tokio::sync::oneshot::channel::<()>();
+    let pool = db.pool().clone();
+    let accepter = tokio::spawn(async move {
+        let mut conn = pool.get().await.unwrap();
+        conn.transaction::<(), StoreError, _>(async move |conn| {
+            accepted.send(shares::accept(conn, id).await?).unwrap();
+            until_commit.await.unwrap();
+            Ok(())
+        })
+        .await
+        .unwrap();
+    });
+    assert_eq!(until_accepted.await.unwrap().terms, terms);
+
+    let pool = db.pool().clone();
+    let offered = wider.clone();
+    let offerer = tokio::spawn(async move {
+        let mut conn = pool.get().await.unwrap();
+        conn.transaction::<_, StoreError, _>(async move |conn| {
+            shares::offer(conn, id, &offered, &json!({})).await
+        })
+        .await
+    });
+    until_a_statement_waits(&mut conn).await;
+    commit.send(()).unwrap();
+    accepter.await.unwrap();
+
+    let share = offerer.await.unwrap().unwrap();
+    assert_eq!(share.terms, wider);
+    assert_eq!(share.state, ShareState::Offered);
+    assert_eq!(share.accepted_at, None);
+    assert_eq!(
+        shares::accepted_for(&mut conn, recipient).await.unwrap(),
+        vec![]
+    );
 }

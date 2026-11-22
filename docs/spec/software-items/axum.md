@@ -28,7 +28,8 @@ r[item.axum.configuration]
 `Konklav` MUST hold what evaluating route policies needs from the
 application: the relying host, a scope resolver per scope kind, an optional
 route-tenant resolver, hooks run on every verified token, an optional cookie
-hook, the public URL behind a proxy, trusted proxies and an optional answer
+hook, the public origins or the public-URL hook DPoP proofs are checked
+against (`item.axum.proof-url`), trusted proxies and an optional answer
 for outcomes (`item.axum.respond-with`). The application MUST install it
 once on its router, as a request extension. A route policy evaluated
 without it MUST fail closed (`item.axum.misconfiguration`).
@@ -64,15 +65,41 @@ the `token` query parameter. A token from the cookie hook or the query
 parameter MUST be presented with the `DPoP` scheme when a `DPoP` header is
 present and as a bearer token otherwise.
 
+A token from the cookie hook is taken on every method and on websocket
+upgrade requests, whatever the request's `Origin`: protecting against
+cross-site request forgery is the relying system's part, as the README
+says where it describes the hook.
+
+r[item.axum.websocket-requests]
+A request MUST be taken for a websocket upgrade request only when it is a
+`GET` whose `Connection` header lists `upgrade` and whose `Upgrade` header
+lists `websocket`, or an extended CONNECT whose `:protocol` is `websocket`
+(HTTP/2, RFC 8441). An `Upgrade` header on any other request MUST change
+nothing: its method stays its own for the DPoP proof, the `token` query
+parameter isn't read, and it is paced.
+
 r[item.axum.verify-then-decide]
 A route that isn't public MUST accept the request's presentation once
 (`relying.verify.accepted-presentation`) with the presented `Authorization`
 and `DPoP` values, the request's method (`GET` for a websocket upgrade) and
-its URL as the client addressed it: the public-URL hook's, else the
-request's own scheme and authority, else `http://` and its `Host` header.
+its URL as the client addressed it (`item.axum.proof-url`).
 Only then, in this order, MUST it run the hooks, check the route tenant,
 resolve the scopes and decide, so no application code sees claims that
 weren't verified.
+
+r[item.axum.proof-url]
+The URL a DPoP proof is checked against MUST come from the application's
+configuration, never from what the request says of its own origin, as for
+Konklav's own endpoints (`oidc.provider.dpop.htu`): the public-URL hook's
+answer, else a configured public origin followed by the path the client
+addressed: the whole path, also on a route of a nested router, whose
+requests axum hands on without the prefix it is nested at. With several public origins configured, the request's authority
+or `Host` header MUST only choose among them, the first when it names none
+of them. With neither a hook nor an origin, the presentation MUST be
+accepted without a URL, so that the relying core refuses any DPoP proof
+(`relying.verify.dpop`), and an error MUST be logged. Only an application
+that asks for it (`trust_host_header`) MUST get the request's own scheme
+and authority, else `http://` and its `Host` header.
 
 r[item.axum.single-decision]
 A route that isn't public MUST make exactly one decision per request, for
@@ -90,7 +117,11 @@ made but without checking the proof again and never as the route decision,
 so with the route's route authority (`relying.verify.route-authority`),
 and that fails closed. Once the
 handler has answered, the layer MUST release the presentation, so the
-request decider decides nothing after its request.
+request decider decides nothing after its request. The layer MUST release
+it however else the request ends too: refused after it was accepted (by a
+hook, the route tenant, a scope resolver, the decision or a rate limit), by
+a handler that panics, or by its future being dropped, as when the client
+goes away.
 
 r[item.axum.scope-resolvers]
 The relying system MUST be able to configure one scope resolver per scope
@@ -174,8 +205,18 @@ r[item.axum.client-address]
 (addresses or networks in CIDR notation, IPv4-mapped IPv6 addresses read as
 IPv4). Then it MUST answer the last address in `X-Forwarded-For` that isn't
 a trusted proxy, or the first when all are, or the peer without one, like
-the server's `platform.server.client-address`. A request without a peer
+the server's `platform.server.client-address`. A hop that isn't an address,
+such as `ip:port`, MUST end the walk from the last hop backwards, answering
+the nearest hop before it was reached (the peer if none), rather than be
+skipped for a hop the client may have written. A request without a peer
 address MUST be refused rather than given an empty key.
+
+r[item.axum.client-address-key]
+`{client:address}` MUST render an IPv4 address, or an IPv4-mapped IPv6
+address, as the IPv4 address, and any other IPv6 address as its /64 prefix
+(`2001:db8:1:2::/64`), so that one client can't spread over the addresses
+of its own network. It MUST render the same key as `konklav-fastapi`
+(`item.py-fastapi.client-address-key`).
 
 r[item.axum.rate-limited]
 A refused event MUST be answered as `Denied::RateLimited`: 429, a JSON body
@@ -215,13 +256,19 @@ token), `IdentityToken` (only `identity` tokens) and `TenantToken` (only
 handler receives a token its route's policy hasn't allowed, and MUST fail
 closed on a route without a `RoutePolicy`. On a public route,
 `OptionalToken` MUST verify a presented token without a decision and run
-the hooks, and refuse an invalid one.
+the hooks, and refuse an invalid one. A public route admits no token kinds,
+so there `OptionalToken` MUST give only an `identity` or `tenant` token, the
+token of a signed-in subject, and `None` for a valid token of any other
+kind, such as a `partial` token from before the second factor.
+`OptionalTokenOfAnyKind` MUST give what `OptionalToken` does, and on a
+public route a valid token of any kind
+(`item.py-fastapi.injected-tokens`).
 
 r[item.axum.injected-kinds]
 An extractor whose accepted token kinds don't include every kind the
 route's policy admits (its token kinds, or only `tenant` when unset), and
-any extractor other than `OptionalToken` on a public route, MUST fail
-closed (`item.axum.misconfiguration`) whatever the request's token.
+any extractor other than `OptionalToken` and `OptionalTokenOfAnyKind` on a
+public route, MUST fail closed (`item.axum.misconfiguration`) whatever the request's token.
 
 ## Validation
 
@@ -236,6 +283,16 @@ outside the route's own policy, an empty allowed set
 can't render. What depends on the matched route or the configuration MUST
 be checked on each request it concerns
 (`item.axum.misconfiguration`).
+
+A route that carries no `RoutePolicy` is outside what this crate can check,
+unlike in `konklav-fastapi`, which refuses to start with one
+(`item.py-fastapi.validation`): nothing evaluates its requests, and it is
+served to anyone unless its handler takes one of the extractors, which fail
+closed (`item.axum.injected-tokens`). A layer around the router can't
+refuse such a request either, since it runs before the route's own layers
+and can't tell whether one of them is a `RoutePolicy`. The relying system
+MUST therefore give every route a `RoutePolicy`, `RoutePolicy::public()`
+for the ones anyone may use.
 
 r[item.axum.misconfiguration]
 A request that meets a route the application set up wrongly MUST fail

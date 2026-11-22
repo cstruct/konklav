@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 from fastapi import APIRouter, FastAPI, HTTPException, WebSocket
-from fastapi.requests import HTTPConnection
-from fastapi.responses import StreamingResponse
+from fastapi.requests import HTTPConnection, Request
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.testclient import TestClient
 from konklav_relying import AccessToken, KonklavError, StepUp
 from starlette.websockets import WebSocketDisconnect
@@ -19,6 +19,7 @@ from konklav_fastapi import (
     IdentityToken,
     KonklavRoutes,
     OptionalToken,
+    OptionalTokenOfAnyKind,
     RequestDecider,
     ResolvedScope,
     RoutePolicy,
@@ -29,7 +30,7 @@ from support import FakeClient, token
 
 
 def serve(app: FastAPI, routes: KonklavRoutes | None = None, client: FakeClient | None = None) -> TestClient:
-    routes = routes or KonklavRoutes()
+    routes = routes or KonklavRoutes(public_origin="http://testserver")
     routes.client = client or FakeClient()
     routes.install(app)
     return TestClient(app)
@@ -110,6 +111,46 @@ def test_included_websocket_routes_merge_their_layers_and_take_the_token_from_th
     assert requirements(fake) == [{"tenant": ["include", "route", "router"]}]
     assert fake.decided[0]["method"] == "GET"
     assert fake.decided[0]["url"].startswith("http://testserver/ws/live")
+
+
+# A proof made for another server that takes the same tokens must not pass
+# here because the client named that server in `Host`.
+# r[verify item.py-fastapi.proof-url]
+def test_proofs_are_checked_against_the_configured_origin_not_the_host_header() -> None:
+    def url(routes: KonklavRoutes, host: str) -> str:
+        mounted = FastAPI(dependencies=[RoutePolicy(tenant_actions={"a"})])
+
+        @mounted.post("/things")
+        async def things() -> None:
+            return None
+
+        # The proof names the whole path the client addressed.
+        app = FastAPI()
+        app.mount("/admin", mounted)
+        routes.client = FakeClient()
+        routes.install(mounted)
+        headers = {"authorization": f"DPoP {token()}", "dpop": "proof", "host": host}
+        with TestClient(app) as http:
+            assert http.post("/admin/things?x=1", headers=headers).status_code == 200
+        return str(routes.client.accepted[-1]["url"])
+
+    # Nothing configured: no URL, so the core refuses the proof.
+    assert url(KonklavRoutes(), "other.example") == ""
+    assert url(KonklavRoutes(public_origin="https://api.example/"), "other.example") == (
+        "https://api.example/admin/things?x=1"
+    )
+    # The request chooses only among the configured origins.
+    origins = ["https://api.example", "https://app.example:8443"]
+    for host, expected in [
+        ("APP.example:8443", "https://app.example:8443/admin/things?x=1"),
+        ("api.example", "https://api.example/admin/things?x=1"),
+        ("other.example", "https://api.example/admin/things?x=1"),
+    ]:
+        assert url(KonklavRoutes(public_origin=origins), host) == expected
+    hook = KonklavRoutes(public_origin=origins, public_url=lambda connection: "https://hook.example/things")
+    assert url(hook, "other.example") == "https://hook.example/things"
+    # Only when asked for.
+    assert url(KonklavRoutes(trust_host_header=True), "other.example") == "http://other.example/admin/things?x=1"
 
 
 # r[verify item.py-fastapi.token-extraction]
@@ -199,6 +240,41 @@ def test_optional_tokens_on_public_routes_are_verified() -> None:
         assert http.get("/hello", headers=bearer("unreachable")).status_code == 503
     assert len(fake.verified) == 3 and fake.decided == []
     assert seen == ["s-1"]
+
+
+# A `partial` token is valid before the second factor: a public route that
+# greets whoever `OptionalToken` gives it must not take it for a sign-in.
+# r[verify item.py-fastapi.injected-tokens]
+def test_optional_tokens_on_public_routes_are_those_of_signed_in_subjects() -> None:
+    app = FastAPI(dependencies=[RoutePolicy.public()])
+    seen: list[str] = []
+
+    @app.get("/hello")
+    async def hello(token: OptionalToken) -> str:
+        return "anyone" if token is None else token.knd
+
+    @app.get("/any")
+    async def any_kind(token: OptionalTokenOfAnyKind, signed_in: OptionalToken) -> list[str | None]:
+        return [None if token is None else token.knd, None if signed_in is None else signed_in.knd]
+
+    async def hook(connection: HTTPConnection, verified: AccessToken) -> None:
+        seen.append(verified.knd)
+
+    fake = FakeClient()
+    with serve(app, KonklavRoutes(on_verified=[hook]), fake) as http:
+        for kind in ("partial", "reset_password", "invite"):
+            assert http.get("/hello", headers=bearer(token(kind=kind, tenant=None))).json() == "anyone"
+        assert http.get("/hello", headers=bearer(token(kind="identity", tenant=None))).json() == "identity"
+        assert http.get("/hello", headers=bearer()).json() == "tenant"
+        assert http.get("/hello", headers=bearer("invalid")).status_code == 401
+        assert len(fake.verified) == 6
+        # Only when asked for, and verified once for both.
+        partial = bearer(token(kind="partial", tenant=None))
+        assert http.get("/any", headers=partial).json() == ["partial", None]
+        assert http.get("/any").json() == [None, None]
+        assert len(fake.verified) == 7
+    assert seen == ["partial", "reset_password", "invite", "identity", "tenant", "partial"]
+    assert fake.decided == []
 
 
 # r[verify item.py-fastapi.outcomes]
@@ -472,6 +548,42 @@ def test_tokens_of_a_kind_are_injected() -> None:
         assert http.get("/me", headers=bearer(token(kind="identity", tenant=None))).json() == "identity"
         assert http.get("/here", headers=bearer()).json() == "tenant:t-1"
     assert len(fake.decided) == 2
+
+
+# A mount or a plain Starlette route can't declare a policy: it must not be
+# served to anyone only because nobody looked.
+# r[verify item.py-fastapi.validation]
+def test_startup_validation_refuses_routes_that_can_declare_no_policy() -> None:
+    async def plain(request: Request) -> PlainTextResponse:
+        return PlainTextResponse("plain")
+
+    def application() -> FastAPI:
+        included = APIRouter()
+        included.add_route("/plain", plain)
+        included.add_websocket_route("/socket", plain)
+        app = FastAPI(dependencies=[RoutePolicy(tenant_actions={"a"})])
+        app.include_router(included, prefix="/in")
+        app.mount("/files", FastAPI())
+        app.add_route("/metrics", plain)
+        return app
+
+    with pytest.raises(RoutePolicyError) as refused:
+        KonklavRoutes().validate(application())
+    assert str(refused.value).splitlines()[1:] == [
+        f"{kind} {path}: can't declare a RoutePolicy, so it is served to anyone; "
+        "if that is meant, name its path in KonklavRoutes(unprotected=...)"
+        for kind, path in [
+            ("ROUTE", "/in/plain"),
+            ("WEBSOCKETROUTE", "/in/socket"),
+            ("MOUNT", "/files"),
+            ("ROUTE", "/metrics"),
+        ]
+    ]
+    # FastAPI's own documentation routes pass, and what the application names.
+    named = KonklavRoutes(unprotected={"/in/plain", "/in/socket", "/files", "/metrics"})
+    named.validate(application())
+    with pytest.raises(RoutePolicyError, match="ROUTE /metrics"), serve(application(), KonklavRoutes()):
+        pass
 
 
 # r[verify item.py-fastapi.validation]

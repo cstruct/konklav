@@ -15,6 +15,16 @@ pub enum PasswordCheck {
     Mismatch,
 }
 
+/// Whether the cost parameters recorded in `parsed` are valid for Argon2
+/// and within [`PasswordHasher`]'s limits.
+fn affordable(parsed: &PasswordHash) -> bool {
+    Params::try_from(parsed).is_ok_and(|params| {
+        params.m_cost() <= PasswordHasher::MAX_MEMORY_KIB
+            && params.t_cost() <= PasswordHasher::MAX_ITERATIONS
+            && params.p_cost() <= PasswordHasher::MAX_PARALLELISM
+    })
+}
+
 /// Hashes and verifies secrets with Argon2id.
 ///
 /// The default policy (t=3, m=64 MiB, p=4, 32-byte output, 16-byte salt)
@@ -33,6 +43,15 @@ impl Default for PasswordHasher {
 }
 
 impl PasswordHasher {
+    /// The most memory (KiB), iterations and parallelism a stored hash may
+    /// ask for: four times the default policy's memory and well above its
+    /// other costs, so hashes from other systems fit, while a hash hashed
+    /// elsewhere can't make every login attempt against it arbitrarily
+    /// expensive.
+    pub const MAX_MEMORY_KIB: u32 = 262_144;
+    pub const MAX_ITERATIONS: u32 = 16;
+    pub const MAX_PARALLELISM: u32 = 16;
+
     /// A hasher with the given memory (KiB), iterations and parallelism.
     pub fn new(memory_kib: u32, iterations: u32, parallelism: u32) -> Result<Self, argon2::Error> {
         Ok(Self {
@@ -58,12 +77,18 @@ impl PasswordHasher {
     }
 
     /// Checks `secret` against a stored PHC string, using the parameters
-    /// recorded in it. Unparsable hashes never match.
+    /// recorded in it. Unparsable hashes never match, and neither do hashes
+    /// whose parameters cost more than the limits allow: those are refused
+    /// without hashing.
+    // r[impl import.credentials.cost-limit]
     #[must_use]
     pub fn verify(&self, secret: &str, stored: &str) -> PasswordCheck {
         let Ok(parsed) = PasswordHash::new(stored) else {
             return PasswordCheck::Mismatch;
         };
+        if !affordable(&parsed) {
+            return PasswordCheck::Mismatch;
+        }
         if self
             .argon2()
             .verify_password(secret.as_bytes(), &parsed)
@@ -79,17 +104,27 @@ impl PasswordHasher {
         }
     }
 
-    /// Whether `stored` is an Argon2id PHC string with valid parameters, as
-    /// [`Self::verify`] can check secrets against.
+    /// Whether `stored` is an Argon2 PHC string, of any variant, with valid
+    /// parameters within the cost limits, as [`Self::verify`] can check
+    /// secrets against.
+    // r[impl import.credentials.cost-limit]
+    #[must_use]
+    pub fn is_argon2(stored: &str) -> bool {
+        PasswordHash::new(stored).is_ok_and(|parsed| {
+            matches!(
+                parsed.algorithm.as_str(),
+                "argon2id" | "argon2i" | "argon2d"
+            ) && parsed.hash.is_some()
+                && parsed.salt.is_some()
+                && affordable(&parsed)
+        })
+    }
+
+    /// [`Self::is_argon2`], for Argon2id only.
     // r[impl credential.password.hash-input]
     #[must_use]
     pub fn is_argon2id(stored: &str) -> bool {
-        PasswordHash::new(stored).is_ok_and(|parsed| {
-            parsed.algorithm.as_str() == "argon2id"
-                && parsed.hash.is_some()
-                && parsed.salt.is_some()
-                && Params::try_from(&parsed).is_ok()
-        })
+        stored.starts_with("$argon2id$") && Self::is_argon2(stored)
     }
 
     /// Spends the same effort as a real verification without any stored
@@ -145,6 +180,54 @@ mod tests {
     fn never_matches_garbage() {
         assert_eq!(cheap().verify("pw", "not a hash"), PasswordCheck::Mismatch);
         assert_eq!(cheap().verify("pw", ""), PasswordCheck::Mismatch);
+    }
+
+    /// `hash` with its parameters replaced, as an operator could plant.
+    fn with_params(hash: &str, params: &str) -> String {
+        let mut parts: Vec<&str> = hash.split('$').collect();
+        parts[3] = params;
+        parts.join("$")
+    }
+
+    // r[verify import.credentials.cost-limit]
+    #[test]
+    fn refuses_hashes_that_cost_too_much() {
+        let hasher = cheap();
+        let hash = hasher.hash("pw");
+        assert!(PasswordHasher::is_argon2id(&hash));
+        assert!(PasswordHasher::is_argon2id(&with_params(
+            &hash,
+            "m=262144,t=16,p=16"
+        )));
+        for params in [
+            "m=262145,t=1,p=1",
+            "m=4294967295,t=1,p=1",
+            "m=8,t=17,p=1",
+            "m=128,t=1,p=17",
+        ] {
+            let costly = with_params(&hash, params);
+            assert!(!PasswordHasher::is_argon2id(&costly), "{params}");
+            // Returns at once: hashing with these would take gigabytes.
+            assert_eq!(hasher.verify("pw", &costly), PasswordCheck::Mismatch);
+        }
+    }
+
+    #[test]
+    fn tells_argon2_variants_apart() {
+        let argon2i = "$argon2i$v=19$m=16,t=2,p=1$c29tZXNhbHQ$Iv7FuOybn2c7RtUrVZWQjQ";
+        assert!(PasswordHasher::is_argon2(argon2i));
+        assert!(!PasswordHasher::is_argon2id(argon2i));
+        assert!(!PasswordHasher::is_argon2("plaintext"));
+        assert!(!PasswordHasher::is_argon2(
+            "$argon2i$v=19$m=4294967295,t=2,p=1$c29tZXNhbHQ$Iv7FuOybn2c7RtUrVZWQjQ"
+        ));
+    }
+
+    // The limits leave room for the policy Konklav hashes with.
+    #[test]
+    fn accepts_its_default_policy() {
+        let hash = "$argon2id$v=19$m=65536,t=3,p=4$MVCOUWPIMIJHbBE8MJIPLg$dPyh03xOkyCVNP5STWcNJy8ENnhtBiv84a3FtUXX7Os";
+        assert!(PasswordHasher::is_argon2id(hash));
     }
 
     // r[verify credential.password.hashing]

@@ -85,6 +85,7 @@ import base64
 import contextlib
 import json
 import logging
+import random
 import threading
 import time
 import urllib.parse
@@ -156,6 +157,29 @@ class InvalidDpopProof(Exception):
     """
 
 
+_REQUEST_TIMEOUT = 10.0
+"""Seconds connecting to Konklav may take, and any request but the feed."""
+
+
+_FETCH_BACKOFF_MIN = 0.25
+"""Seconds: the shortest wait after background work in which a fetch failed."""
+_FETCH_BACKOFF_MAX = 10.0
+"""Seconds: the longest."""
+
+_sleep = asyncio.sleep
+
+
+def _fetch_backoff(failures: int) -> float:
+    """
+    How long background work waits after a fetch failed, in seconds: twice
+    as long for each of the `failures` in a row before it, up to the longest
+    wait, and drawn from its upper half so that hosts that lost Konklav
+    together don't all come back at once.
+    """
+    full = min(_FETCH_BACKOFF_MIN * 2 ** min(failures, 16), _FETCH_BACKOFF_MAX)
+    return random.uniform(full / 2, full)
+
+
 def _now() -> int:
     return time.time_ns() // 1_000_000
 
@@ -182,6 +206,19 @@ def _audiences(audience: str | None, audiences: Collection[str] | None) -> list[
     if not audiences:
         raise ValueError("audiences is empty, so no token would be accepted")
     return sorted(set(audiences))
+
+
+# r[impl item.py.path-segments]
+def _registered_scope_path(kind: str, id: str) -> str | None:
+    """
+    Where Konklav answers for the registered scope `kind`/`id`, each one
+    escaped path segment. `None` when a path can't name it: an empty
+    segment, or `.` or `..`, which clients and proxies resolve as dot
+    segments, so the request would go to another path.
+    """
+    if any(segment in ("", ".", "..") for segment in (kind, id)):
+        return None
+    return f"/v1/registered-scopes/{urllib.parse.quote(kind, safe='')}/{urllib.parse.quote(id, safe='')}"
 
 
 def _token_of(authorization: str) -> str:
@@ -224,7 +261,12 @@ class RelyingClient:
         self._subject_url = subject_url.rstrip("/")
         self._key_id = key_id
         self._secret = secret
-        self._http = http or httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None))
+        # r[impl item.py.http]
+        self._http = http or httpx.AsyncClient(timeout=httpx.Timeout(_REQUEST_TIMEOUT))
+        # The feed's stream stays open, so only its silence is bounded: by
+        # when the core stops trusting it anyway (`relying.fallback.lag`).
+        silence = config.get("heartbeat_ms", 10_000) * config.get("missed_heartbeats", 3)
+        self._feed_timeout = httpx.Timeout(_REQUEST_TIMEOUT, read=max(silence, 1) / 1000)
         self._audiences = _audiences(audience, audiences)
         self._core = Core(json.dumps({"issuer": issuer, "audiences": self._audiences, **config}))
         # Decisions are synchronous calls into Rust; the lock only guards
@@ -301,10 +343,15 @@ class RelyingClient:
             _token_of(authorization),
             requirements,
             lambda: self._core.decide_presented(presented, encoded, _now()),
+            presented,
         )
 
     async def _decide(
-        self, token: str, requirements: Mapping[str, Any], ask: Callable[[], str]
+        self,
+        token: str,
+        requirements: Mapping[str, Any],
+        ask: Callable[[], str],
+        presented: str | None = None,
     ) -> _DecisionJson:
         for _ in range(4):
             with self._lock:
@@ -315,7 +362,13 @@ class RelyingClient:
             if any(need["need"] == "check" for need in needs):
                 # The core has checked any DPoP proof; the check API takes
                 # the token alone.
-                return await self._check(token, requirements)
+                decision = await self._check(token, requirements)
+                if presented is None:
+                    return decision
+                # The proof is used once the check API vouches for the token.
+                with self._lock:
+                    checked = json.loads(self._core.on_check_presented(presented, json.dumps(decision), _now()))
+                return checked["decision"]
             await asyncio.gather(*(self._fetch(need) for need in needs))
         raise KonklavError("could not reach a decision")
 
@@ -376,9 +429,22 @@ class RelyingClient:
                 case "accepted":
                     claims = outcome["claims"]
                 case "check":
-                    claims = await self._verify_centrally(token)
-                    if claims is None:
-                        return None
+                    # Held until this request is answered: released unless
+                    # the check API vouches for the token and the proof is
+                    # still unused.
+                    confirmed = False
+                    try:
+                        claims = await self._verify_centrally(token)
+                        if claims is None:
+                            return None
+                        with self._lock:
+                            confirmed = self._core.confirm_presented(presented, _now())
+                        if not confirmed:
+                            raise InvalidDpopProof("the DPoP proof or scheme is invalid")
+                    finally:
+                        if not confirmed:
+                            with self._lock:
+                                self._core.release_accepted(json.dumps(outcome["presentation"]))
                 case "invalid":
                     return None
                 case "invalid_proof":
@@ -463,9 +529,12 @@ class RelyingClient:
         return await self._verify(
             _token_of(authorization),
             lambda: self._core.verify_presented(presented, _now()),
+            presented,
         )
 
-    async def _verify(self, token: str, ask: Callable[[], str]) -> dict[str, Any] | None:
+    async def _verify(
+        self, token: str, ask: Callable[[], str], presented: str | None = None
+    ) -> dict[str, Any] | None:
         for _ in range(4):
             with self._lock:
                 outcome = json.loads(ask())
@@ -476,7 +545,14 @@ class RelyingClient:
             if outcome["outcome"] == "invalid_proof":
                 raise InvalidDpopProof("the DPoP proof or scheme is invalid")
             if any(need["need"] == "check" for need in outcome["needs"]):
-                return await self._verify_centrally(token)
+                claims = await self._verify_centrally(token)
+                if claims is not None and presented is not None:
+                    # The proof is used once the check API vouches for the token.
+                    with self._lock:
+                        confirmed = self._core.confirm_presented(presented, _now())
+                    if not confirmed:
+                        raise InvalidDpopProof("the DPoP proof or scheme is invalid")
+                return claims
             await asyncio.gather(*(self._fetch(need) for need in outcome["needs"]))
         raise KonklavError("could not verify the token")
 
@@ -577,10 +653,13 @@ class RelyingClient:
         body.pop("revision", None)
         return body
 
+    # r[impl item.py.fetch-reported]
     async def _fetch(self, need: Mapping[str, Any]) -> None:
         try:
             await self._fetch_inner(need)
-        except Exception:
+        except BaseException:
+            # Also a fetch cancelled with its request: the core takes it to
+            # be in flight until it hears otherwise.
             with self._lock:
                 self._core.on_fetch_failed(json.dumps(need))
             raise
@@ -609,9 +688,13 @@ class RelyingClient:
             with self._lock:
                 self._core.on_entitlements(response.text, _now())
         elif kind == "registered_scope":
-            kind_segment = urllib.parse.quote(need["kind"], safe="")
-            id_segment = urllib.parse.quote(need["id"], safe="")
-            response = await self._get(f"/v1/registered-scopes/{kind_segment}/{id_segment}")
+            path = _registered_scope_path(need["kind"], need["id"])
+            if path is None:
+                # Konklav can't be asked for it, so it holds no such scope.
+                with self._lock:
+                    self._core.on_registered_scope_unknown(need["kind"], need["id"], _now())
+                return
+            response = await self._get(path)
             if response.status_code == 404:
                 with self._lock:
                     self._core.on_registered_scope_unknown(need["kind"], need["id"], _now())
@@ -620,15 +703,26 @@ class RelyingClient:
                 with self._lock:
                     self._core.on_registered_scope(text, _now())
 
+    # r[impl relying.cache.background-backoff]
     async def _run_work(self) -> None:
+        failures = 0
         while True:
             with self._lock:
                 work = json.loads(self._core.poll_work(_now()))
+            failed = False
             for need in work["fetch"]:
                 try:
                     await self._fetch(need)
                 except Exception:
                     _log.warning("background fetch failed: %s", need, exc_info=True)
+                    failed = True
+            if failed:
+                # The core asks for a failed fetch again at once: with
+                # Konklav down that would spin.
+                await _sleep(_fetch_backoff(failures))
+                failures += 1
+                continue
+            failures = 0
             if work["fetch"]:
                 continue
             wait = max(work["next_poll_at"] - _now(), 1) / 1000
@@ -670,7 +764,7 @@ class RelyingClient:
         if cursor is not None:
             headers["last-event-id"] = str(cursor)
         url = f"{self._relying_url}/v1/events"
-        async with self._http.stream("GET", url, headers=headers) as response:
+        async with self._http.stream("GET", url, headers=headers, timeout=self._feed_timeout) as response:
             _checked(response)
             with self._lock:
                 self._core.on_feed_connected(_now())

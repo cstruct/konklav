@@ -44,7 +44,10 @@ pub struct Config {
     /// How old a DPoP proof may be, in seconds.
     pub dpop_max_age_seconds: i64,
     /// The most DPoP proofs remembered at once, to refuse replays. When it
-    /// is full of proofs that are still fresh, new proofs are refused.
+    /// is full of proofs that are still fresh, new proofs are refused. One
+    /// key's proofs take at most a hundredth of it (at least one), after
+    /// which that key's further proofs are refused until some expire: with
+    /// the defaults, about 1000 proofs per key in a minute and a half.
     pub dpop_replay_capacity: usize,
 }
 

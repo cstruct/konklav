@@ -67,6 +67,7 @@ cargo run -p konklav-examples --bin delivery-worker
 - **Codes:** MFA email codes are sent as text.
 - **Other channels:** phone requests are left to another worker.
 - **Restarts:** the worker keeps its feed cursor in memory, so a restart reads the feed again from `KONKLAV_DELIVERY_AFTER`. Requests whose challenge has expired carry no material and are skipped.
+- **Failures:** a request that can never be sent (a recipient that is no address or that the SMTP server refuses for good, a purpose the worker doesn't know) is logged and skipped, so it can't hold up the mail after it. Anything else, such as an SMTP server that can't be reached or refuses the worker's sign-in, is retried from the same request.
 - **Production:** keep the cursor durable.
 
 To see its mail by hand, point it at a local catcher such as Mailpit with `SMTP_TLS=none`.

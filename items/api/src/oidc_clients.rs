@@ -28,7 +28,8 @@ pub enum IdTokenAlgorithm {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct OidcClientDefinition {
     pub kind: OidcClientKind,
-    /// Matched exactly; no fragments.
+    /// Matched exactly. `https` URLs, or `http` on a loopback host,
+    /// without fragments.
     pub redirect_uris: Vec<String>,
     /// Scopes the client may request; must include `openid`.
     #[serde(default = "default_scopes")]
@@ -39,7 +40,8 @@ pub struct OidcClientDefinition {
     /// a trailing `*` matches a prefix.
     #[serde(default)]
     pub visible_groups: Vec<String>,
-    /// The client's own login page, instead of the provider's.
+    /// The client's own login page, instead of the provider's. An `https`
+    /// URL, or `http` on a loopback host.
     #[serde(default)]
     pub login_url: Option<String>,
     #[serde(default)]
@@ -55,8 +57,12 @@ pub struct OidcClientDefinition {
     #[serde(default)]
     #[schema(value_type = Option<Object>)]
     pub jwks: Option<serde_json::Value>,
+    /// Where a logout may send the browser afterwards; as `redirect_uris`.
     #[serde(default)]
     pub post_logout_redirect_uris: Vec<String>,
+    /// Where logout tokens are posted when a session of the client ends.
+    /// An `https` URL, and at a public address unless the deployment
+    /// allows private ones.
     #[serde(default)]
     pub backchannel_logout_uri: Option<String>,
     /// Whether authorization requests must use PKCE. Only a confidential

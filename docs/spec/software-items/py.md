@@ -108,6 +108,27 @@ collection of strings, or one as `audience`, and MUST refuse both, neither,
 a bare string as `audiences` and an empty collection. Its verified
 `AccessToken`'s `aud` is the audience the token carried.
 
+r[item.py.http]
+The `httpx` client `RelyingClient` makes for itself MUST give up on any
+part of a request after 10 seconds and MUST NOT follow redirects. On the
+change feed's stream, with its own client or one it was given,
+`RelyingClient` MUST instead give up once nothing arrived for as long as
+the core takes to stop trusting it (`relying.fallback.lag`).
+
+r[item.py.path-segments]
+`RelyingClient` MUST ask Konklav for a registered scope with its kind and
+id as one percent-encoded path segment each, and MUST NOT ask at all for a
+kind or id that is empty, `.` or `..`, which no path segment can carry: it
+MUST tell the core that Konklav doesn't know the scope
+(`relying.cache.registered-unknown`), as `konklav-relying-client` does
+(`item.relying-client.path-segments`).
+
+r[item.py.fetch-reported]
+`RelyingClient` MUST report to the core every fetch the core asked for:
+its result, or its failure, also for a fetch cancelled with the request
+that needed it, as `item.relying-client.fetch-reported` requires of the
+Rust host.
+
 r[item.py.accepted-request]
 `RelyingClient.accept_request` MUST accept a request's presentation
 (`relying.verify.accepted-presentation`), taking the arguments

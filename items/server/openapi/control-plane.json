@@ -1480,7 +1480,7 @@
           "oidc-clients"
         ],
         "summary": "Registers or replaces an OIDC client.",
-        "description": "A disabled client is enabled again.",
+        "description": "Redirect URIs, the login URL and the back-channel logout URI must be\n`https` URLs; plain `http` is for loopback hosts and development\ndeployments. A disabled client is enabled again. Binding the client to a service\nprincipal that holds control-plane capabilities, or replacing a client\nbound to one, needs `konklav:control:all`.",
         "operationId": "put_oidc_client",
         "parameters": [
           {
@@ -1651,7 +1651,7 @@
           "oidc-clients"
         ],
         "summary": "Issues a new OIDC client secret.",
-        "description": "Only for confidential clients. The secret is shown only once, and the\nprevious one stops working.",
+        "description": "Only for confidential clients. The secret is shown only once, and the\nprevious one stops working. For a client bound to a service principal\nthat holds control-plane capabilities, it needs `konklav:control:all`.",
         "operationId": "new_oidc_client_secret",
         "parameters": [
           {
@@ -5769,7 +5769,7 @@
               },
               "password_hash": {
                 "type": "string",
-                "description": "The password's hash, an Argon2 PHC string; never the password."
+                "description": "The password's hash, never the password: an Argon2 PHC string\nasking for at most 256 MiB of memory, 16 iterations and a\nparallelism of 16."
               }
             }
           },
@@ -5921,7 +5921,7 @@
           },
           "hash": {
             "type": "string",
-            "description": "The slot secret's hash, an Argon2 PHC string."
+            "description": "The slot secret's hash, an Argon2 PHC string asking for at most\n256 MiB of memory, 16 iterations and a parallelism of 16."
           }
         }
       },
@@ -5953,7 +5953,8 @@
             "$ref": "#/components/schemas/ClientKind"
           },
           "credential": {
-            "$ref": "#/components/schemas/CredentialId"
+            "$ref": "#/components/schemas/CredentialId",
+            "description": "One of the subject's credentials or, for an impersonation session,\nof the impersonator's."
           },
           "expires_at": {
             "type": "string",
@@ -5983,7 +5984,8 @@
           "membership": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/MembershipId"
+                "$ref": "#/components/schemas/MembershipId",
+                "description": "One of the subject's memberships. Set exactly when `stage` is\n`tenant`."
               },
               {
                 "type": "null"
@@ -6010,7 +6012,8 @@
           "tenant": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/TenantId"
+                "$ref": "#/components/schemas/TenantId",
+                "description": "The membership's tenant. Set exactly when `stage` is `tenant`."
               },
               {
                 "type": "null"
@@ -6025,7 +6028,7 @@
       },
       "ImportedSubject": {
         "type": "object",
-        "description": "A subject; an existing one keeps its kind but takes the record's state.",
+        "description": "A subject; an existing one keeps its kind but takes the record's state.\nIts sessions end if that state is `disabled`.",
         "required": [
           "id",
           "kind"
@@ -6405,7 +6408,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Where logout tokens are posted when a session of the client ends.\nAn `https` URL, and at a public address unless the deployment\nallows private ones."
           },
           "id_token_alg": {
             "$ref": "#/components/schemas/IdTokenAlgorithm"
@@ -6425,7 +6429,7 @@
               "string",
               "null"
             ],
-            "description": "The client's own login page, instead of the provider's."
+            "description": "The client's own login page, instead of the provider's. An `https`\nURL, or `http` on a loopback host."
           },
           "metadata": {
             "type": "object",
@@ -6435,14 +6439,15 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Where a logout may send the browser afterwards; as `redirect_uris`."
           },
           "redirect_uris": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Matched exactly; no fragments."
+            "description": "Matched exactly. `https` URLs, or `http` on a loopback host,\nwithout fragments."
           },
           "refresh": {
             "type": "boolean",

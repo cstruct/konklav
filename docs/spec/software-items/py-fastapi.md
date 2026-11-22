@@ -81,18 +81,37 @@ parameter MUST be presented with the `DPoP` scheme when a `DPoP` header is
 present, and as a bearer token otherwise. The query parameter MUST NOT be
 read for HTTP requests.
 
+A token from the cookie hook is taken on every method and on websockets,
+whatever the request's `Origin`: protecting against cross-site request
+forgery is the relying system's part, as the README says where it
+describes the hook.
+
 r[item.py-fastapi.verify-then-decide]
 A route that isn't public MUST verify the request's token, its session and
 any DPoP proof before anything else reads it, by accepting the presentation
 with `accept_request` (`item.py.accepted-request`), with the presented
 `Authorization` and `DPoP` values, the request's method (`GET` for a
-websocket) and its URL as the client addressed it. Only then, in this order,
+websocket) and its URL as the client addressed it
+(`item.py-fastapi.proof-url`). Only then, in this order,
 MUST it check the token's audience (`item.py-fastapi.audiences`), run the
 hooks (`item.py-fastapi.hooks`), check the route tenant
 (`item.py-fastapi.token-tenant`), resolve the scope ids
 (`item.py-fastapi.scope-resolvers`) and decide. So no application code sees
 claims that weren't verified, and resolvers look nothing up in a tenant the
 token doesn't belong to.
+
+r[item.py-fastapi.proof-url]
+The URL a DPoP proof is checked against MUST come from the application's
+configuration, never from what the request says of its own origin, as for
+`item.axum.proof-url`: the public-URL hook's answer, else a configured
+public origin followed by the whole path the client addressed, including a
+mount's and the server's root path. With several public origins configured,
+the request's `Host` header MUST only choose among them, the first when it
+names none of them. With neither a hook nor an origin, the presentation
+MUST be accepted with an empty URL, so that the relying core refuses any
+DPoP proof (`relying.verify.dpop`), and an error MUST be logged. Only an
+application that asks for it (`trust_host_header`) MUST get the request's
+own URL, which takes its authority from the `Host` header.
 
 r[item.py-fastapi.single-decision]
 A route that isn't public MUST then make exactly one decision per request,
@@ -181,8 +200,17 @@ r[item.py-fastapi.client-address]
 peer address unless the peer is one of `trusted_proxies` (addresses or
 networks). Then it MUST answer the last address in `X-Forwarded-For` that
 isn't a trusted proxy, or the first when all are, like the server's
-`platform.server.client-address`. A connection without a peer address
-MUST be refused rather than given an empty key.
+`platform.server.client-address`. A hop that isn't an address, such as
+`ip:port`, MUST end the walk from the last hop backwards, answering the
+nearest hop before it was reached (the peer if none), rather than be
+skipped for a hop the client may have written. A connection without a peer
+address MUST be refused rather than given an empty key.
+
+r[item.py-fastapi.client-address-key]
+`{client:address}` MUST render an IPv4 address, or an IPv4-mapped IPv6
+address, as the IPv4 address, and any other IPv6 address as its /64 prefix
+(`2001:db8:1:2::/64`), so that one client can't spread over the addresses
+of its own network.
 
 r[item.py-fastapi.rate-limited]
 `KonklavRoutes.install` MUST handle `konklav_relying.RateLimited`, whether
@@ -203,6 +231,11 @@ without a token), `IdentityToken` (only `identity` tokens) and
 evaluation, so no handler receives a token its route's policy hasn't
 allowed. On a public route, `OptionalToken` MUST verify a presented token
 with `verify_request_typed` and run the hooks, and refuse an invalid one.
+A public route admits no token kinds, so there `OptionalToken` MUST inject
+only an `identity` or `tenant` token, the token of a signed-in subject, and
+`None` for a valid token of any other kind, such as a `partial` token from
+before the second factor. `OptionalTokenOfAnyKind` MUST inject what
+`OptionalToken` does, and on a public route a valid token of any kind.
 
 r[item.py-fastapi.request-decider]
 The package MUST offer a `RequestDecider` dependency, which depends on the
@@ -221,7 +254,7 @@ Startup validation MUST refuse a route that injects a token dependency
 whose accepted token kinds don't include every kind the route's policy
 admits (its `token_kinds`, or only `tenant` when unset, Konklav's default),
 and a route with a public policy that injects any token dependency other
-than `OptionalToken`, or a `RequestDecider`.
+than `OptionalToken` and `OptionalTokenOfAnyKind`, or a `RequestDecider`.
 
 ## Pacing
 
@@ -274,6 +307,15 @@ error listing each route that fails a check. A route fails when:
   (`item.py-fastapi.injected-kinds`);
 - it declares a `RoutePacing` that FastAPI resolves after the route's
   policy (`item.py-fastapi.route-pacing.order`).
+
+A route that can't declare dependencies, so no `RoutePolicy`, is served to
+anyone: a plain Starlette route or websocket route, a mount or a host
+route. Validation MUST refuse each one whose path, as the application
+serves it, the relying system hasn't named in `KonklavRoutes`'s
+`unprotected`, except FastAPI's own documentation routes (the OpenAPI
+document, the Swagger UI with its OAuth2 redirect, and ReDoc). It checks
+nothing inside a mount: an application mounted there installs a
+`KonklavRoutes` of its own.
 
 ## OpenAPI
 

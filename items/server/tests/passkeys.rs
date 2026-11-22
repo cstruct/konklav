@@ -112,10 +112,16 @@ impl Device {
 async fn with_passkey(app: &TestApp, device: &mut Device) -> String {
     app.human(EMAIL, PASSWORD).await;
     let session = token(&app.login(EMAIL, PASSWORD).await);
+    register(app, device, &session).await;
+    session
+}
+
+/// Registers a passkey on `device` from the session `session` is for.
+async fn register(app: &TestApp, device: &mut Device, session: &str) {
     let started = post_bearer(
         app,
         "/v1/passkeys/registration/options",
-        &session,
+        session,
         json!({"label": "Laptop"}),
     )
     .await;
@@ -124,7 +130,7 @@ async fn with_passkey(app: &TestApp, device: &mut Device) -> String {
     let registered = post_bearer(
         app,
         "/v1/passkeys/registration",
-        &session,
+        session,
         json!({"ceremony": started.body["ceremony"], "credential": credential}),
     )
     .await;
@@ -135,7 +141,6 @@ async fn with_passkey(app: &TestApp, device: &mut Device) -> String {
         registered.body
     );
     assert_eq!(registered.body["label"], "Laptop");
-    session
 }
 
 async fn login_options(app: &TestApp) -> Value {
@@ -200,6 +205,51 @@ async fn a_registered_passkey_logs_in_without_an_identifier() {
     assert!(listed.body[0]["last_used_at"].is_string());
 }
 
+// r[verify authn.passkey.session-flags]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_passkey_keeps_the_flags_of_the_session_that_registered_it() {
+    let app = app().await;
+    let catalog = json!({
+        "actions": [{"name": "me"}],
+        "session_flags": [
+            {"name": "read_only", "kind": "restrictive"},
+            {"name": "kiosk", "kind": "restrictive", "requestable": true}
+        ]
+    });
+    let reply = app.control(Method::PUT, "/v1/catalog", Some(catalog)).await;
+    assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+    let subject = app.human(EMAIL, PASSWORD).await;
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    let credential = detail.body["credentials"][0]["id"].as_str().unwrap();
+    let set = app
+        .control(
+            Method::PUT,
+            &format!("/v1/credentials/{credential}/session-flags"),
+            Some(json!({"session_flags": ["read_only"]})),
+        )
+        .await;
+    assert_eq!(set.status, StatusCode::OK, "{:?}", set.body);
+
+    // One flag from the credential and one the login asked for.
+    let restricted = app
+        .post(
+            "/v1/login/password",
+            json!({"identifier": EMAIL, "password": PASSWORD, "flags": ["kiosk"]}),
+        )
+        .await;
+    assert_eq!(restricted.status, StatusCode::OK, "{:?}", restricted.body);
+    let mut device = Device::new();
+    register(&app, &mut device, &token(&restricted)).await;
+
+    let reply = log_in(&app, &mut device).await;
+    assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+    let mut flags = app.verify(&token(&reply)).await.sfl;
+    flags.sort();
+    assert_eq!(flags, ["kiosk", "read_only"]);
+}
+
 // r[verify challenge.single-use]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_login_ceremony_works_once() {
@@ -211,6 +261,26 @@ async fn a_login_ceremony_works_once() {
     let first = login(&app, &started["ceremony"], credential.clone()).await;
     assert_eq!(first.status, StatusCode::OK, "{:?}", first.body);
     refused(&login(&app, &started["ceremony"], credential).await);
+}
+
+// r[verify authn.passkey.login-start-limit]
+#[tokio::test(flavor = "multi_thread")]
+async fn login_starts_are_limited_per_client_address() {
+    let app = app().await;
+    let start = async |peer: &str| {
+        let peer = Some(peer.parse().unwrap());
+        app.send_from(peer, Method::POST, "/v1/login/passkey/options", &[], None)
+            .await
+    };
+    for n in 0..300 {
+        // A new address in the same /64 for every start.
+        let started = start(&format!("[2001:db8:0:1::{n:x}]:1000")).await;
+        assert_eq!(started.status, StatusCode::OK, "{:?}", started.body);
+    }
+    let limited = start("[2001:db8:0:1:ffff::1]:1000").await;
+    assert_eq!(limited.code(), "RATE_LIMITED", "{:?}", limited.body);
+    let other = start("[2001:db8:0:2::1]:1000").await;
+    assert_eq!(other.status, StatusCode::OK, "{:?}", other.body);
 }
 
 // r[verify authn.passkey.origin]

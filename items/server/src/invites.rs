@@ -28,7 +28,7 @@ use konklav_store::credentials::{
     self, CredentialData, CredentialKind, NewCredential, PasswordData,
 };
 use konklav_store::roles::{self, AssignmentTarget};
-use konklav_store::subjects::{self, SubjectKind};
+use konklav_store::subjects::{self, SubjectKind, SubjectState};
 use konklav_store::{events, memberships, tenants};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -37,8 +37,8 @@ use utoipa_axum::routes;
 
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::subject_api::{
-    Client, SessionRequest, begin_token_attempt, check_password, start_passwordless_session,
-    start_session,
+    Client, SessionRequest, begin_attempt, begin_token_attempt, check_password,
+    invalid_credentials, start_passwordless_session, start_session,
 };
 use crate::{AppState, metadata, pacing};
 
@@ -446,26 +446,42 @@ struct PreviewRequest {
 
 /// The password credential already registered for `email`, if any, after
 /// checking `password` against it: redeeming an invite to an existing
-/// account proves ownership with that account's password.
+/// account proves ownership with that account's password. The check counts
+/// toward the login limits, like any check of a password.
+///
+/// It checks out its own database connections and holds none while it
+/// hashes; callers must hold none either.
+// r[impl authn.login.hashing-bound]
+// r[impl authn.login.rate-limit]
 async fn existing_account(
     state: &AppState,
-    conn: &mut konklav_store::Connection,
     email: &str,
     password: &str,
+    address: ClientAddress,
 ) -> Result<Option<konklav_store::credentials::Credential>, ApiError> {
-    let Some(existing) = credentials::find_active(conn, CredentialKind::Password, email).await?
-    else {
-        return Ok(None);
+    // Taken first, so a check the queue has no place for counts nothing.
+    let place = state.auth.hashing_place()?;
+    let (existing, attempt) = {
+        let mut conn = state.pool.get().await?;
+        let kind = CredentialKind::Password;
+        let Some(existing) = credentials::find_active(&mut conn, kind, email).await? else {
+            return Ok(None);
+        };
+        let attempt = begin_attempt(&mut conn, kind, &existing.identifier, address).await?;
+        (existing, attempt)
     };
     let CredentialData::Password(data) = &existing.data else {
         return Err(invalid_invite());
     };
     let (password, hash) = (password.to_owned(), data.hash.clone());
-    let check = state
-        .auth
-        .hashing(move |hasher| hasher.verify(&password, &hash))
+    let check = place
+        .run(move |hasher| hasher.verify(&password, &hash))
         .await?;
-    if matches!(check, PasswordCheck::Match { .. }) {
+    let matched = matches!(check, PasswordCheck::Match { .. });
+    attempt
+        .finish(&mut *state.pool.get().await?, matched)
+        .await?;
+    if matched {
         Ok(Some(existing))
     } else {
         Err(ApiError::new(
@@ -544,7 +560,8 @@ async fn preview_invite(
 /// link-only invite is redeemed by whoever holds it: a signed-in subject
 /// (with an `Authorization` header), or the owner of an existing password
 /// account. Either way the invited membership is activated, and a login
-/// starts a session.
+/// starts a session. Only an account that requires MFA gets its partial
+/// session without redeeming anything, and redeems signed in after MFA.
 // r[impl authn.invite.redeem]
 // r[impl authn.login.session-request]
 async fn redeem_invite(
@@ -577,7 +594,11 @@ async fn redeem_invite(
                  password of an existing account",
             )
         })?;
-        Some(check_password(&state, &mut conn, identifier, password.clone(), address).await?)
+        // No connection is held while the password is hashed.
+        drop(conn);
+        let credential = check_password(&state, identifier, password.clone(), address).await?;
+        conn = state.pool.get().await?;
+        Some(credential)
     } else if body.identifier.is_some() {
         return Err(ApiError::invalid_request(
             "an invite to an address is redeemed with its password alone",
@@ -586,7 +607,12 @@ async fn redeem_invite(
         None
     };
     if let Some(credential) = credential {
-        consume_and_join(&mut conn, &challenge, credential.subject_id).await?;
+        // A password alone doesn't prove an account that requires MFA, so
+        // it redeems nothing: the invite waits for the full session.
+        // r[impl authn.invite.mfa-first]
+        if credential.mfa_factors_required == 0 {
+            consume_and_join(&mut conn, &challenge, credential.subject_id).await?;
+        }
         // The account signs in as password login would, MFA and all.
         return start_session(
             &state,
@@ -600,7 +626,9 @@ async fn redeem_invite(
         )
         .await;
     }
-    let credential = redeem_emailed(&state, &mut conn, &challenge, &password).await?;
+    drop(conn);
+    let credential = redeem_emailed(&state, &challenge, &password, address).await?;
+    let mut conn = state.pool.get().await?;
     start_passwordless_session(
         &state,
         &mut conn,
@@ -624,15 +652,27 @@ fn usable(challenge: challenges::Challenge) -> Result<challenges::Challenge, Api
 
 /// Redeems an emailed invite with `password`: links a password credential
 /// for the address to a new subject, or proves the existing account's.
+/// The caller holds no database connection: the passwords are hashed
+/// before one is checked out for the redemption.
 async fn redeem_emailed(
     state: &AppState,
-    conn: &mut konklav_store::Connection,
     challenge: &challenges::Challenge,
     password: &str,
+    address: ClientAddress,
 ) -> Result<konklav_store::credentials::Credential, ApiError> {
     let new = password.to_owned();
     let new_hash = state.auth.hashing(move |hasher| hasher.hash(&new)).await?;
-    let existing = existing_account(state, conn, &challenge.recipient, password).await?;
+    let existing = existing_account(state, &challenge.recipient, password, address).await?;
+    let mut conn = state.pool.get().await?;
+    // An account that can't log in redeems nothing: checked before the
+    // invite is consumed or its membership activated.
+    // r[impl authn.invite.active-subject]
+    if let Some(credential) = &existing {
+        let subject = subjects::get(&mut conn, credential.subject_id).await?;
+        if subject.state != SubjectState::Active || subject.kind != SubjectKind::Human {
+            return Err(invalid_credentials());
+        }
+    }
     conn.transaction::<_, ApiError, _>(async |conn| {
         let credential = match existing {
             Some(credential) => credential,
@@ -693,9 +733,7 @@ async fn redeem_signed_in(
         ));
     }
     let subject = subjects::get(&mut conn, session.subject_id).await?;
-    if subject.state != konklav_store::subjects::SubjectState::Active
-        || subject.kind != SubjectKind::Human
-    {
+    if subject.state != SubjectState::Active || subject.kind != SubjectKind::Human {
         return Err(ApiError::new(
             ErrorCode::Forbidden,
             "only people can redeem invites",

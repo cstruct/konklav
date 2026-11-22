@@ -1,8 +1,10 @@
 import asyncio
+import json
 import uuid
 from typing import Any
 
 import httpx
+import konklav_relying
 import pytest
 
 from konklav_relying import (
@@ -13,6 +15,7 @@ from konklav_relying import (
     ErasureNotice,
     ErasuresMissed,
     InvalidDpopProof,
+    KonklavError,
     Policy,
     RelyingClient,
 )
@@ -253,6 +256,112 @@ def test_accepted_requests_are_decided_once_with_their_one_proof() -> None:
     asyncio.run(scenario())
 
 
+def unstarted(fake: FakeKonklav, handle: Any = None) -> RelyingClient:
+    """A client with room for one proof and one presentation, deciding through the check API."""
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handle or fake.handle))
+    return RelyingClient(
+        relying_url="http://konklav",
+        subject_url="http://konklav",
+        key_id="key",
+        secret="secret",
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        http=http,
+        dpop_replay_capacity=1,
+    )
+
+
+# With room for one presentation, one that stayed held would refuse the
+# next request.
+# r[verify item.py.accepted-request]
+# r[verify relying.verify.accepted-presentation]
+def test_presentations_the_check_api_refuses_or_fails_are_released() -> None:
+    async def scenario() -> None:
+        keys = Keys()
+        key = DpopKey()
+        subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
+        fake = FakeKonklav(keys, subject, tenant, session)
+        failing = False
+
+        async def handle(request: httpx.Request) -> httpx.Response:
+            if failing and request.url.path == "/v1/check":
+                return httpx.Response(500)
+            return await fake.handle(request)
+
+        client = unstarted(fake, handle)
+        url = "https://api.example/projects/1"
+
+        def headers(token: str) -> dict[str, str]:
+            return {"authorization": f"DPoP {token}", "dpop": key.proof("GET", url, token), "method": "GET", "url": url}
+
+        # The fake check API refuses tokens for another audience.
+        other = keys.token(subject=subject, session=session, tenant=tenant, jkt=key.jkt(), audience="other")
+        assert await client.accept_request(**headers(other)) is None
+        token = keys.token(subject=subject, session=session, tenant=tenant, jkt=key.jkt())
+        failing = True
+        with pytest.raises(KonklavError):
+            await client.accept_request(**headers(token))
+        failing = False
+        accepted = await client.accept_request(**headers(token))
+        assert accepted is not None, "the earlier presentations are still held"
+        # The accepted one is held until it is released.
+        with pytest.raises(InvalidDpopProof):
+            await client.accept_request(**headers(token))
+
+    asyncio.run(scenario())
+
+
+# r[verify relying.verify.dpop-replay]
+# r[verify relying.verify.dpop-before-check]
+def test_a_proof_the_check_api_decided_with_is_refused_again() -> None:
+    async def scenario() -> None:
+        keys = Keys()
+        key = DpopKey()
+        subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
+        fake = FakeKonklav(keys, subject, tenant, session)
+        client = unstarted(fake)
+        url = "https://api.example/projects/1"
+
+        def headers(token: str) -> dict[str, str]:
+            return {"authorization": f"DPoP {token}", "dpop": key.proof("GET", url, token), "method": "GET", "url": url}
+
+        # A proof for a token the check API refuses takes none of the room.
+        other = keys.token(subject=subject, session=session, tenant=tenant, jkt=key.jkt(), audience="other")
+        refused = await client.decide_request(**headers(other), requirements={})
+        assert refused == {"decision": "deny", "reason": "invalid_token"}
+        assert await client.verify_request(**headers(other)) is None
+
+        token = keys.token(subject=subject, session=session, tenant=tenant, jkt=key.jkt())
+        once = headers(token)
+        assert await client.decide_request(**once, requirements={}) == {"decision": "allow"}
+        replayed = await client.decide_request(**once, requirements={})
+        assert replayed == {"decision": "deny", "reason": "invalid_dpop_proof"}
+        with pytest.raises(InvalidDpopProof):
+            await client.verify_request(**once)
+        with pytest.raises(InvalidDpopProof):
+            await client.accept_request(**once)
+
+    asyncio.run(scenario())
+
+
+# r[verify item.py.http]
+def test_requests_time_out_but_the_feed_only_when_silent() -> None:
+    fake = FakeKonklav(Keys(), *(str(uuid.uuid4()) for _ in range(3)))
+    client = RelyingClient(
+        relying_url="http://konklav",
+        subject_url="http://konklav",
+        key_id="key",
+        secret="secret",
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        heartbeat_ms=2_000,
+    )
+    assert client._http.timeout == httpx.Timeout(10.0)
+    assert client._http.follow_redirects is False
+    assert client._feed_timeout == httpx.Timeout(10.0, read=6.0)
+    assert fake.calls == []
+
+
 # r[verify item.py.accepted-request]
 # r[verify relying.verify.route-authority]
 def test_a_route_decision_vouches_for_its_requests_later_decisions() -> None:
@@ -442,5 +551,119 @@ def test_erasures_reach_the_handler_and_the_list_catches_up() -> None:
             assert await client.erased_subjects(since=1_900_000_000) == []
         finally:
             await client.stop()
+
+    asyncio.run(scenario())
+
+
+# httpx resolves dot segments, so the scope `document/..` was asked for at
+# `/v1/registered-scopes/`.
+# r[verify item.py.path-segments]
+def test_scope_ids_never_retarget_the_request() -> None:
+    async def scenario() -> None:
+        asked: list[bytes] = []
+
+        def konklav(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/v1/login/secret-key":
+                return httpx.Response(200, json={"access_token": "service", "expires_in": 900})
+            asked.append(request.url.raw_path)
+            return httpx.Response(404)
+
+        client = RelyingClient(
+            relying_url="http://konklav",
+            subject_url="http://konklav",
+            key_id="key",
+            secret="secret",
+            issuer=ISSUER,
+            audience=AUDIENCE,
+            http=httpx.AsyncClient(transport=httpx.MockTransport(konklav)),
+        )
+        for unnameable in ["", ".", ".."]:
+            await client._fetch({"need": "registered_scope", "kind": "document", "id": unnameable})
+            await client._fetch({"need": "registered_scope", "kind": unnameable, "id": "d-1"})
+        assert asked == [], "not asked: the core takes them for unknown"
+        await client._fetch({"need": "registered_scope", "kind": "document", "id": "a/b ..?"})
+        assert asked == [b"/v1/registered-scopes/document/a%2Fb%20..%3F"]
+
+    asyncio.run(scenario())
+
+
+# The core asks for no second JWKS while it takes one to be in flight, so a
+# fetch cancelled with its request must not stay in flight for ever.
+# r[verify item.py.fetch-reported]
+def test_a_fetch_cancelled_with_its_request_is_reported_as_failed() -> None:
+    async def scenario() -> None:
+        async def silent(request: httpx.Request) -> httpx.Response:
+            await asyncio.Event().wait()
+            raise AssertionError("never answers")
+
+        client = RelyingClient(
+            relying_url="http://konklav",
+            subject_url="http://konklav",
+            key_id="key",
+            secret="secret",
+            issuer=ISSUER,
+            audience=AUDIENCE,
+            http=httpx.AsyncClient(transport=httpx.MockTransport(silent)),
+        )
+
+        def due() -> list[dict[str, Any]]:
+            fetch: list[dict[str, Any]] = json.loads(client._core.poll_work(1_800_000_000_000))["fetch"]
+            return fetch
+
+        assert due() == [{"need": "jwks"}]
+        assert due() == [], "in flight"
+        fetch = asyncio.create_task(client._fetch({"need": "jwks"}))
+        await asyncio.sleep(0.01)
+        fetch.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await fetch
+        assert due() == [{"need": "jwks"}]
+
+    asyncio.run(scenario())
+
+
+# The core asks for a failed fetch again at once, and for a JWKS until it
+# lands: with Konklav down, background work polled without a pause.
+# r[verify relying.cache.background-backoff]
+def test_background_work_backs_off_while_fetches_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        attempts = 0
+        waits: list[float] = []
+        enough = asyncio.Event()
+
+        async def down(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 100:
+                enough.set()
+            await asyncio.sleep(0)
+            raise httpx.ConnectError("down")
+
+        async def sleep(seconds: float) -> None:
+            waits.append(seconds)
+            if len(waits) == 8:
+                enough.set()
+            await asyncio.sleep(0)
+
+        monkeypatch.setattr(konklav_relying, "_sleep", sleep)
+        client = RelyingClient(
+            relying_url="http://konklav",
+            subject_url="http://konklav",
+            key_id="key",
+            secret="secret",
+            issuer=ISSUER,
+            audience=AUDIENCE,
+            http=httpx.AsyncClient(transport=httpx.MockTransport(down)),
+        )
+        work = asyncio.create_task(client._run_work())
+        await asyncio.wait_for(enough.wait(), timeout=5)
+        work.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await work
+
+        assert attempts == len(waits) == 8, "one wait after each failure"
+        # From 250 ms doubling to 10 s, each drawn from its upper half.
+        for wait, full in zip(waits, [0.25, 0.5, 1, 2, 4, 8, 10, 10], strict=True):
+            assert full / 2 <= wait <= full
 
     asyncio.run(scenario())

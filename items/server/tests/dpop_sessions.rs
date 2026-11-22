@@ -1,10 +1,11 @@
-//! DPoP for Konklav's own sessions: binding at login, and the subject-facing
-//! and control-plane surfaces taking bound tokens only with proofs.
+//! DPoP for Konklav's own sessions: binding at login, and every surface
+//! taking bound tokens only with proofs.
 
 mod common;
 
 use axum::http::{Method, StatusCode, header};
 use common::{ISSUER, ORIGIN, TestApp};
+use diesel_async::RunQueryDsl;
 use konklav_test_support::DpopKey;
 use serde_json::json;
 
@@ -98,6 +99,53 @@ async fn a_login_with_a_proof_binds_the_session_to_its_key() {
             .status,
         StatusCode::OK
     );
+}
+
+/// A login whose binding proof carries a `jti` of `length` bytes.
+async fn login_with_jti(app: &TestApp, key: &DpopKey, length: usize) -> common::Reply {
+    let proof = key.sign(&json!({
+        "jti": "j".repeat(length),
+        "htm": "POST",
+        "htu": url("/v1/login/password"),
+        "iat": chrono::Utc::now().timestamp(),
+    }));
+    app.send(
+        Method::POST,
+        "/v1/login/password",
+        &[("dpop", &proof)],
+        Some(json!({"identifier": EMAIL, "password": PASSWORD})),
+    )
+    .await
+}
+
+// r[verify token.dpop.proof]
+// r[verify token.dpop.replay]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proof_with_an_overlong_jti_is_refused_and_not_remembered() {
+    #[derive(diesel::QueryableByName)]
+    struct Count {
+        #[diesel(sql_type = diesel::sql_types::BigInt)]
+        count: i64,
+    }
+    let app = TestApp::new().await;
+    app.human(EMAIL, PASSWORD).await;
+    let key = DpopKey::new(1);
+    let refused = login_with_jti(&app, &key, 129).await;
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+    assert!(challenge(&refused).starts_with("DPoP error=\"invalid_dpop_proof\""));
+    let remembered = async || {
+        let mut conn = app.db.pool().get().await.unwrap();
+        let rows: Count = diesel::sql_query("select count(*) as count from dpop_proof")
+            .get_result(&mut conn)
+            .await
+            .unwrap();
+        rows.count
+    };
+    assert_eq!(remembered().await, 0);
+
+    let accepted = login_with_jti(&app, &key, 128).await;
+    assert_eq!(accepted.status, StatusCode::OK, "{:?}", accepted.body);
+    assert_eq!(remembered().await, 1);
 }
 
 // r[verify session.dpop.surfaces]
@@ -299,4 +347,99 @@ async fn a_console_on_an_allowed_origin_needs_no_dpop_urls() {
         )
         .await;
     assert_eq!(listed.status, StatusCode::OK, "{:?}", listed.body);
+}
+
+/// A service principal's access token, sender-constrained to `key` when
+/// given one, and the principal's id.
+async fn service_login(app: &TestApp, key: Option<&DpopKey>) -> (String, String) {
+    let id = uuid::Uuid::now_v7();
+    app.control(
+        Method::PUT,
+        &format!("/v1/subjects/{id}"),
+        Some(json!({"kind": "service"})),
+    )
+    .await;
+    let created = app
+        .control(
+            Method::POST,
+            &format!("/v1/subjects/{id}/credentials"),
+            Some(json!({"kind": "secret_key"})),
+        )
+        .await;
+    let (key_id, secret) = created.body["secret_keys"]["a"]
+        .as_str()
+        .unwrap()
+        .split_once('.')
+        .unwrap();
+    let proof = key.map(|key| key.proof("POST", &url("/v1/login/secret-key"), None));
+    let headers: Vec<(&str, &str)> = proof.iter().map(|proof| ("dpop", &**proof)).collect();
+    let login = app
+        .send(
+            Method::POST,
+            "/v1/login/secret-key",
+            &headers,
+            Some(json!({"key_id": key_id, "secret": secret})),
+        )
+        .await;
+    assert_eq!(login.status, StatusCode::OK, "{:?}", login.body);
+    let access = login.body["access_token"].as_str().unwrap().to_owned();
+    (access, id.to_string())
+}
+
+/// The status of a `GET` on a listener that serves only the relying
+/// surface, as the default layout's relying port does.
+async fn relying_get(app: &TestApp, path: &str, headers: &[(&str, &str)]) -> StatusCode {
+    use konklav_server::surface::{Surface, router};
+    use tower::ServiceExt;
+    let mut request = axum::http::Request::builder().method(Method::GET).uri(path);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let request = request.body(axum::body::Body::empty()).unwrap();
+    router(&[Surface::Relying], app.state.clone())
+        .oneshot(request)
+        .await
+        .unwrap()
+        .status()
+}
+
+// r[verify session.dpop.surfaces]
+// r[verify session.dpop.fail-closed]
+// r[verify token.dpop.scheme]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_relying_surface_alone_takes_bound_tokens_only_with_proofs() {
+    let app = TestApp::new().await;
+    let key = DpopKey::new(1);
+    let (access, principal) = service_login(&app, Some(&key)).await;
+    assert_eq!(app.verify(&access).await.cnf.unwrap().jkt, key.jkt());
+    let path = format!("/v1/entitlements/{principal}");
+
+    let bearer = format!("Bearer {access}");
+    let as_bearer = relying_get(&app, &path, &[("authorization", &bearer)]).await;
+    assert_eq!(as_bearer, StatusCode::UNAUTHORIZED, "no proof, no access");
+    let dpop_auth = format!("DPoP {access}");
+    let without = relying_get(&app, &path, &[("authorization", &dpop_auth)]).await;
+    assert_eq!(without, StatusCode::UNAUTHORIZED);
+    let stolen = DpopKey::new(2).proof("GET", &url(&path), Some(&access));
+    let headers = [("authorization", &*dpop_auth), ("dpop", &*stolen)];
+    assert_eq!(
+        relying_get(&app, &path, &headers).await,
+        StatusCode::UNAUTHORIZED
+    );
+    let proof = key.proof("GET", &url(&path), Some(&access));
+    let headers = [("authorization", &*dpop_auth), ("dpop", &*proof)];
+    assert_eq!(relying_get(&app, &path, &headers).await, StatusCode::OK);
+    assert_eq!(
+        relying_get(&app, &path, &headers).await,
+        StatusCode::UNAUTHORIZED,
+        "a proof works once"
+    );
+
+    // Bearer tokens of unbound sessions work as before.
+    let (unbound, _) = service_login(&app, None).await;
+    let bearer = format!("Bearer {unbound}");
+    assert_eq!(
+        relying_get(&app, &path, &[("authorization", &bearer)]).await,
+        StatusCode::OK
+    );
 }

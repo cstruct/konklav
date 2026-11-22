@@ -117,10 +117,14 @@ assignments.
 
 r[authz.control-plane.escalation]
 Granting or withdrawing control-plane capabilities (writing or deleting a
-role or template whose policies allow one, or assigning or unassigning such
-a role) MUST require `konklav:control:all`. So MUST changing the state or
-credentials of a subject that holds any capability. No narrower capability
-may lead to more capabilities.
+role or template whose policies name one, to allow or to deny it, or
+assigning or unassigning such a role) MUST require `konklav:control:all`. So
+MUST changing the state or credentials of a subject that is assigned a
+global role naming a capability, by any control-plane endpoint, imports
+included. A disabled subject counts, since enabling it gives it its
+capabilities back. An OIDC client bound to a service principal counts as
+its credential: binding it, writing or disabling it while bound, and
+issuing its secret. No narrower capability may lead to more capabilities.
 
 r[authz.control-plane.own-capabilities]
 The subject-facing surface MUST let a subject with a full (non-partial)
@@ -213,7 +217,9 @@ r[authz.share.acceptance]
 A share MUST be offered first and take effect only once it has been
 accepted for the recipient tenant. Changing the terms of a share MUST offer
 it again. Either side MUST be able to revoke a share, and a revoked share
-MUST NOT be accepted or changed again.
+MUST NOT be accepted or changed again. Changes to one share that overlap
+MUST be applied one after another, each decided from the state the one
+before it left.
 
 r[authz.share.unique]
 At most one offered or accepted share MUST exist per owner scope and

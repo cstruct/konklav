@@ -219,6 +219,12 @@ fn sse(event: &FeedEvent) -> Event {
         .data(serde_json::to_string(event).unwrap_or_default())
 }
 
+/// The payload of the `position` or `reset` event that tells a consumer it
+/// has everything up to the head.
+fn caught_up_payload() -> serde_json::Value {
+    serde_json::json!({"caught_up": true})
+}
+
 struct StreamState {
     pool: Pool,
     hub: std::sync::Arc<FeedHub>,
@@ -227,6 +233,8 @@ struct StreamState {
     /// What the consumer may see.
     access: Access,
     buffer: VecDeque<FeedEvent>,
+    /// The consumer has been told that it has everything up to the head.
+    caught_up: bool,
     /// Held until the stream ends.
     _slot: StreamSlot,
 }
@@ -276,6 +284,8 @@ async fn stream_events(
         .or(query.after)
         .map(Cursor::new);
     let (cursor, reset) = resume_point(&mut conn, requested).await?;
+    // With nothing after the cursor, the stream has nothing to replay.
+    let caught_up = events::head(&mut conn).await? <= cursor;
     drop(conn);
 
     // Every stream starts by saying where it starts, so a consumer that
@@ -284,7 +294,11 @@ async fn stream_events(
     let buffer = VecDeque::from([FeedEvent {
         cursor,
         kind: if reset { RESET } else { POSITION }.into(),
-        payload: serde_json::json!({}),
+        payload: if caught_up {
+            caught_up_payload()
+        } else {
+            serde_json::json!({})
+        },
     }]);
     let initial = StreamState {
         pool: state.pool.clone(),
@@ -293,6 +307,7 @@ async fn stream_events(
         kinds: kinds(&query),
         access,
         buffer,
+        caught_up,
         _slot: StreamSlot::new(slot),
     };
     let stream = futures_util::stream::unfold(initial, |mut state| async move {
@@ -301,16 +316,30 @@ async fn stream_events(
                 return Some((Ok(sse(&event)), state));
             }
             // Register for wake-ups before reading, so nothing slips between.
-            let notified = state.hub.notify.notified();
+            let hub = state.hub.clone();
+            let notified = hub.notify.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
             let mut conn = state.pool.get().await.ok()?;
             let page = events::after(&mut conn, state.cursor, PAGE).await.ok()?;
             drop(conn);
             if page.is_empty() {
+                // The backlog is replayed: say so once, at the cursor
+                // reached, which may be past the last event the consumer
+                // could see.
+                // r[impl feed.sse.caught-up]
+                if !state.caught_up {
+                    state.caught_up = true;
+                    let event = FeedEvent {
+                        cursor: state.cursor,
+                        kind: POSITION.into(),
+                        payload: caught_up_payload(),
+                    };
+                    return Some((Ok(sse(&event)), state));
+                }
                 tokio::select! {
                     () = &mut notified => {}
-                    () = tokio::time::sleep(state.hub.poll_interval) => {}
+                    () = tokio::time::sleep(hub.poll_interval) => {}
                 }
                 continue;
             }

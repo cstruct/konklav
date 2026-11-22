@@ -22,7 +22,8 @@ rate-limit key templates, in axum's terms (layers, extractors,
   (`.layer(konklav.layer())`). It holds the relying host (a started
   `RelyingClient`), a scope resolver per scope kind, an optional
   route-tenant resolver, hooks run on every verified token, an optional
-  cookie hook, the public URL behind a proxy, trusted proxies and an
+  cookie hook, the public origin DPoP proofs are checked against, trusted
+  proxies and an
   optional answer for every `Denied`.
 - Evaluation, once per request, before the handler:
   1. Take the token from the `Authorization` header, the cookie hook or, for
@@ -42,7 +43,10 @@ rate-limit key templates, in axum's terms (layers, extractors,
   and `RateLimited` (429).
 - Extractors: `CurrentToken`, `OptionalToken`, `IdentityToken`,
   `TenantToken`, `RequestDecider` (`item.axum.request-decider`), and
-  `ClientAddress`.
+  `ClientAddress`. On a public route `OptionalToken` gives the token of a
+  signed-in subject (`identity` or `tenant`) and `None` for any other valid
+  token, such as a `partial` one from before the second factor;
+  `OptionalTokenOfAnyKind` gives those too.
 - `RoutePacing`: a layer pacing the answers it wraps
   (`konklav_relying_client::pacing`, re-exported as `Pacing` and `paced`).
 - Rate limits: `RouteRateLimit(limit, key)` over
@@ -167,6 +171,25 @@ so:
 These fail closed, before the handler, the first time a request reaches the
 route; test each route once to find them.
 
+**A route without a `RoutePolicy` layer is open.** Nothing in this crate
+sees a route it wasn't applied to, so its requests are evaluated by no one
+and served to anyone; `konklav-fastapi` refuses to start with such a route,
+and this crate can't. Only the extractors fail closed there, for a handler
+that takes one. A layer around the whole router can't close the gap: it
+runs before the route's own layers and can't tell whether one of them is a
+`RoutePolicy`, and after the handler it is too late. So:
+
+- Give every route a `RoutePolicy`, and the ones anyone may use
+  `RoutePolicy::public()`, so that a route without one is a mistake to
+  look for rather than a choice.
+- Add routes through one function of the application's that takes the
+  policy as an argument, instead of calling `Router::route` with a bare
+  handler.
+- Have handlers of routes that aren't public take an extractor
+  (`CurrentToken`, `TenantToken`, `RequestDecider`): it answers 500 on a
+  route without a policy.
+- Test each route once without a token and expect 401.
+
 ### Verification and DPoP
 
 The relying core answers each DPoP proof once and refuses it as a replay
@@ -188,9 +211,53 @@ route requiring `user:write` still forbids a subject who doesn't hold it.
 The handler's decisions vouch for nothing further. `RelyingHost`
 implementations take the flag as `decide_accepted`'s `route` argument.
 
-The URL proofs are checked against
-is the `public_url` hook's, else the request's own scheme and authority,
-else `http://` and its `Host` header: set `public_url` behind TLS or a proxy.
+A DPoP proof names the URL it was made for, and is checked against the URL
+this application is configured with, never against the request's `Host`
+header, which the client chooses: a proof made for another server that
+takes the same tokens would pass here whenever the client could reach this
+one under that server's name. So set `public_origin` to the origin clients
+address, such as `https://api.example` (call it again for each further
+origin; the request's `Host` then only chooses among them). The proof is
+checked against that origin and the path the client addressed, which on a
+route of a nested router includes the prefix it is nested at. `public_url`
+is a hook for what an origin can't say, such as a proxy that rewrites
+paths; it must not read the origin from the request either, and inside a
+nested router it finds the whole path in `axum::extract::OriginalUri`, not
+in `parts.uri`.
+
+Without `public_origin` or `public_url`, every DPoP proof is refused
+(`invalid_dpop_proof`) and an error is logged; bearer tokens are unaffected.
+`trust_host_header` brings back the request's own scheme and authority, or
+`http://` and its `Host` header: use it only in tests, or behind a proxy
+that refuses every `Host` but the application's own.
+
+### Cookie tokens
+
+The `cookie` hook lets a browser application keep its token in a cookie:
+a request without an `Authorization` header is evaluated with the token
+the hook reads. A browser attaches cookies to requests other sites make it
+send, so **an application that sets the cookie hook must protect itself
+against cross-site request forgery; this crate does not.** A token from the
+cookie is accepted on every method and on websocket upgrades, whatever the
+request's `Origin`, and no CSRF token or custom header is asked for.
+
+What the application has to do, before the route's policy or in an
+`on_verified` hook:
+
+- Set the cookie `SameSite=Lax` or `Strict` (and `Secure`, `HttpOnly`), and
+  change no state on `GET`.
+- On every request that changes state, check that `Origin` is one of the
+  origins the application's pages are served from, or require a header a
+  cross-site form can't set, such as `X-Requested-With`, and refuse
+  cross-origin requests in CORS.
+- On websocket upgrades always check `Origin`: browsers send cookies with
+  them to any site, with no preflight and no same-origin policy.
+
+The origins set with `public_origin` are where this application is
+addressed, for DPoP proofs. They aren't the origins its pages may call it
+from, so nothing is checked against them here. A token presented in
+`Authorization` needs none of this: another site can't make a browser send
+that header.
 
 ### Answers
 

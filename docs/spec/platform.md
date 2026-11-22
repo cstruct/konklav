@@ -31,7 +31,10 @@ r[platform.server.client-address]
 The server MUST take a client's address from the connection, unless the
 connection comes from a configured trusted proxy. Then it MUST use the last
 address in `X-Forwarded-For` that is not a trusted proxy, so clients can't
-choose their own address by sending the header.
+choose their own address by sending the header. An entry that is not an IP
+address MUST end the search, leaving the last address found, or the
+connection's: entries before it are not skipped to, since a client can
+choose them.
 
 r[platform.server.limits]
 Every listener MUST bound request body size, how long a request may take to
@@ -60,6 +63,19 @@ A bootstrap control-plane token MUST be at least 32 characters, or the
 server MUST refuse to start. Its use MUST be logged, the server MUST warn
 at startup while one is configured, and it MUST stop being accepted after
 its configured expiry.
+
+r[platform.config.published-secrets]
+The server MUST refuse to start with a bootstrap token or TOTP encryption
+key that Konklav's repository has published in its development or example
+configuration, naming the setting and asking for a new secret,
+unless the configuration is a development one: browser cookies are not
+marked `Secure`, or the issuer is a plain-HTTP URL on a loopback host.
+
+r[platform.config.https]
+The server MUST refuse to start unless the issuer, and the claims hook's URL
+if one is configured, are `https` URLs, or plain-HTTP URLs on a loopback
+host. A development configuration (`r[platform.config.published-secrets]`)
+is exempt.
 
 r[platform.config.report-all-errors]
 Configuration loading MUST report every problem it finds (unknown keys,
@@ -103,8 +119,10 @@ passed since it was made.
 
 r[retention.assertions]
 A recorded client-assertion, bearer-assertion or DPoP-proof identifier
-MUST be deleted once the assertion or proof it was recorded for has expired
-(for a DPoP proof: once it is too old to pass the freshness check).
+MUST be deleted once the assertion or proof it was recorded for is no longer
+accepted, and not before: for an assertion, once its expiry and the allowed
+clock skew have passed; for a DPoP proof, once it is too old to pass the
+freshness check.
 
 r[retention.sessions]
 A session MUST be deleted a configured period after it expired or was
@@ -442,6 +460,11 @@ answered exactly as it would be on its own, against the capabilities of
 the batch's caller. A batch MUST NOT add an operation that doesn't exist
 on its own.
 
+r[platform.batch.caller]
+A batch MUST be refused, before any of its operations is tried, unless its
+caller holds at least one control-plane capability or uses the bootstrap
+token.
+
 r[platform.batch.limits]
 A batch MUST hold at most a configured number of operations, 100 by
 default, and MUST count as one request against `platform.server.limits`.
@@ -495,6 +518,13 @@ r[import.credentials]
 Imported password and secret-key credentials MUST be accepted as Argon2
 hashes and stored as given, so existing secrets keep working.
 
+r[import.credentials.cost-limit]
+An imported hash MUST be rejected as an invalid request unless it parses as
+Argon2 with valid parameters of at most 256 MiB of memory, 16 iterations
+and a parallelism of 16. Konklav MUST NOT hash a presented secret against a
+stored hash that asks for more, however it was stored: such a hash never
+matches.
+
 r[import.credentials.secret-key-rotation]
 Re-importing an active secret-key credential with different slots MUST
 replace its slots, so a source system that still rotates keys before
@@ -508,6 +538,19 @@ r[import.sessions]
 Imported sessions MUST keep their identifiers, versions and expiry, with a
 refresh-token hash supplied by the importer, so that people stay signed in
 across a migration.
+
+r[import.subjects.disabled]
+Importing a subject as `disabled` MUST revoke the sessions of a subject that
+exists, as disabling it does (`r[subject.state]`), and a session imported
+for a disabled subject MUST be stored as revoked.
+
+r[import.sessions.consistent]
+An imported session MUST be refused as invalid, naming the session, unless
+its credential belongs to its subject (or to the impersonator, for an
+impersonation session), its membership belongs to its subject and is in its
+tenant, it has a tenant and a membership exactly when its login stage is
+`tenant`, and its session flags are declared in the action catalog. A
+session whose identifier already exists is skipped without these checks.
 
 ## Bootstrap
 
@@ -645,7 +688,8 @@ conflict.
 
 r[bootstrap.secrets]
 Passwords and secret keys MUST arrive as Argon2 hashes, as
-`import.credentials` describes. Plaintext passwords MUST be refused unless
+`import.credentials` describes, and a hash over the limits of
+`import.credentials.cost-limit` MUST be reported as a problem. Plaintext passwords MUST be refused unless
 the run explicitly allows them, and are then hashed before they are
 stored. TOTP seeds MUST be encrypted on arrival, as `import.mfa` describes.
 

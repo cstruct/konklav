@@ -26,14 +26,16 @@ the handler has answered.
 from __future__ import annotations
 
 import ipaddress
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from functools import cache
 from typing import Annotated, Any, ClassVar, Literal, Self, Unpack, cast
 
 from fastapi import FastAPI
+from fastapi.datastructures import URL
 from fastapi.params import Depends
 from fastapi.requests import HTTPConnection
 from fastapi.websockets import WebSocket
@@ -50,6 +52,7 @@ from konklav_relying import (
     RelyingClient,
 )
 from konklav_relying.policy import PolicyFields
+from starlette.routing import Route
 
 from konklav_fastapi import _routing
 from konklav_fastapi.errors import (
@@ -70,6 +73,7 @@ __all__ = [
     "IdentityToken",
     "KonklavRoutes",
     "OptionalToken",
+    "OptionalTokenOfAnyKind",
     "RequestDecider",
     "ResolvedScope",
     "RouteTenantResolver",
@@ -80,10 +84,18 @@ __all__ = [
     "TokenHook",
 ]
 
+_log = logging.getLogger(__name__)
+
 TOKEN_KINDS = frozenset({"partial", "identity", "tenant", "reset_password", "invite"})
 """Every token kind Konklav issues."""
 DEFAULT_TOKEN_KINDS = frozenset({"tenant"})
 """What a policy without `token_kinds` admits, as Konklav decides."""
+SIGNED_IN_TOKEN_KINDS = frozenset({"identity", "tenant"})
+"""
+The token kinds of a signed-in subject. The others (`partial`, after only a
+first factor, `reset_password` and `invite`) are valid tokens that sign
+nobody in.
+"""
 
 _SCOPE_KEY = "konklav_fastapi"
 
@@ -261,18 +273,31 @@ def _method(connection: HTTPConnection) -> str:
 
 def _ip(address: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
     """`address` parsed, an IPv4-mapped IPv6 address as IPv4."""
+    if "%" in address:
+        # A zone isn't part of an address `konklav-axum` and Konklav parse.
+        raise ValueError(address)
     parsed = ipaddress.ip_address(address)
     if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped is not None:
         return parsed.ipv4_mapped
     return parsed
 
 
-def _parses(address: str) -> bool:
+# r[impl item.py-fastapi.client-address-key]
+def address_key(address: str) -> str:
+    """
+    `address` as `{client:address}` keys a rate limit: an IPv6 address by
+    its /64 prefix, since whoever holds one address there usually holds them
+    all, and an IPv4-mapped one as the IPv4 address it maps.
+    """
     try:
-        _ip(address)
+        parsed = _ip(address)
     except ValueError:
-        return False
-    return True
+        # Not an IP address, such as a Unix socket peer: as given.
+        return address
+    if isinstance(parsed, ipaddress.IPv4Address):
+        return str(parsed)
+    prefix = int(parsed) & ~((1 << 64) - 1)
+    return f"{ipaddress.IPv6Address(prefix)}/64"
 
 
 def _canonical(address: str) -> str:
@@ -283,11 +308,12 @@ def _canonical(address: str) -> str:
         return address
 
 
-def _url(connection: HTTPConnection) -> str:
+def _own_url(connection: HTTPConnection) -> URL:
+    """The URL the connection names for itself: its `Host` header is the client's choice."""
     url = connection.url
     if url.scheme in ("ws", "wss"):
         url = url.replace(scheme="https" if url.scheme == "wss" else "http")
-    return str(url)
+    return url
 
 
 @dataclass(kw_only=True)
@@ -306,9 +332,45 @@ class KonklavRoutes:
     on_verified: Sequence[TokenHook] = ()
     """Run in order on every verified token."""
     cookie: Callable[[HTTPConnection], str | None] | None = None
-    """Reads the token from a cookie, for requests without an `Authorization` header."""
+    """
+    Reads the token from a cookie, for requests without an `Authorization`
+    header.
+
+    A browser attaches cookies to requests other sites make it send, and
+    this package checks neither `Origin` nor a CSRF token: a token from the
+    cookie is accepted on every method and on websockets. An application
+    that sets this hook must protect itself against cross-site request
+    forgery: a `SameSite` cookie, and an `Origin` check or a required custom
+    header on requests that change state and on websockets.
+    """
+    public_origin: str | Sequence[str] | None = None
+    """
+    The origin clients address this application at, such as
+    `https://api.example`: DPoP proofs are checked against it and the
+    request's path. Of several, the request's `Host` chooses, the first when
+    it names none. Without it or `public_url`, every DPoP proof is refused.
+    """
     public_url: Callable[[HTTPConnection], str] | None = None
-    """The URL the client addressed, behind a proxy; DPoP proofs are checked against it."""
+    """
+    The URL the client addressed, when `public_origin` can't say it, such as
+    behind a proxy that rewrites paths. It must not build the URL's origin
+    from the request's `Host` or forwarded headers, which the client chooses.
+    """
+    trust_host_header: bool = False
+    """
+    Checks DPoP proofs against the request's own URL, so its `Host` header,
+    when neither `public_origin` nor `public_url` is set. The client chooses
+    it, so a proof made for another server that takes the same tokens passes
+    here when the client can address this one by that server's name: only
+    for tests, or behind a proxy that refuses every other `Host`.
+    """
+    unprotected: Collection[str] = ()
+    """
+    The paths of the plain Starlette routes and the mounts the application
+    serves to anyone, such as `/static`. They can't declare a `RoutePolicy`,
+    so nothing here evaluates their requests, and startup validation refuses
+    each one that isn't named here.
+    """
     trusted_proxies: Sequence[str] = ()
     """
     Proxies' addresses or networks, such as `10.0.0.0/8`: behind one, the
@@ -317,8 +379,11 @@ class KonklavRoutes:
 
     _owners: dict[int, tuple[Any, Any]] = field(default_factory=dict, init=False, repr=False)
     _trusted: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = field(default=(), init=False, repr=False)
+    _origins: tuple[URL, ...] = field(default=(), init=False, repr=False)
 
     def __post_init__(self) -> None:
+        origins = [self.public_origin] if isinstance(self.public_origin, str) else list(self.public_origin or ())
+        self._origins = tuple(URL(origin.rstrip("/")) for origin in origins)
         self._trusted = tuple(ipaddress.ip_network(proxy, strict=False) for proxy in self.trusted_proxies)
 
     STATE_ATTRIBUTE: ClassVar[str] = "konklav_routes"
@@ -385,22 +450,29 @@ class KonklavRoutes:
         peer address. It is the peer, unless the peer is a trusted proxy:
         then the last address in `X-Forwarded-For` that isn't one too, since
         proxies append and everything before that is the client's own claim.
+        A hop that isn't an address ends the walk for the same reason.
         """
         if connection.client is None:
             return None
         peer = connection.client.host
         if not self._is_trusted(peer):
             return _canonical(peer)
-        hops = [
-            hop.strip()
-            for value in connection.headers.getlist("x-forwarded-for")
-            for hop in value.split(",")
-            if _parses(hop.strip())
-        ]
+        hops = [hop.strip() for value in connection.headers.getlist("x-forwarded-for") for hop in value.split(",")]
+        # From the peer backwards, each trusted proxy vouches for the hop
+        # before it. The walk ends at the first hop that isn't trusted,
+        # which is the client, or that isn't an address, such as `ip:port`:
+        # skipping that one would hand the choice to a hop the client wrote.
+        # Then the client is the nearest proxy that was vouched for.
+        client = peer
         for hop in reversed(hops):
+            try:
+                _ip(hop)
+            except ValueError:
+                break
+            client = hop
             if not self._is_trusted(hop):
-                return _canonical(hop)
-        return _canonical(hops[0]) if hops else _canonical(peer)
+                break
+        return _canonical(client)
 
     def _is_trusted(self, address: str) -> bool:
         try:
@@ -413,7 +485,8 @@ class KonklavRoutes:
 
     def validate(self, app: FastAPI) -> None:
         """
-        Checks every API and websocket route's policy.
+        Checks every API and websocket route's policy, and that every other
+        route (a plain Starlette route, a mount) is named in `unprotected`.
 
         Raises:
             RoutePolicyError: listing every route that fails, and why.
@@ -423,6 +496,15 @@ class KonklavRoutes:
             f"{served.label}: {problem}"
             for served in _routing.served_routes(app)
             if (problem := self._problem(served)) is not None
+        ]
+        # FastAPI's own documentation routes are plain routes too.
+        documentation = {app.openapi_url, app.docs_url, app.redoc_url, app.swagger_ui_oauth2_redirect_url}
+        errors += [
+            f"{plain.label}: can't declare a RoutePolicy, so it is served to anyone; "
+            "if that is meant, name its path in KonklavRoutes(unprotected=...)"
+            for plain in _routing.plain_routes(app)
+            if plain.name not in self.unprotected
+            and not (type(plain.original) is Route and plain.name in documentation)
         ]
         if errors:
             raise RoutePolicyError("Routes without a valid route policy:\n" + "\n".join(errors))
@@ -452,7 +534,7 @@ class KonklavRoutes:
             for name, _ in injected:
                 if name == "RequestDecider":
                     return "injects RequestDecider, but its policy is public, so there is nothing to decide with"
-                if name != "OptionalToken":
+                if name not in ("OptionalToken", "OptionalTokenOfAnyKind"):
                     return f"injects {name}, but its policy is public; use OptionalToken"
             return None
         if policy.token_kinds == frozenset():
@@ -518,8 +600,30 @@ class KonklavRoutes:
             return None
         return _Presented(f"{'DPoP' if dpop else 'Bearer'} {token}", dpop, token)
 
+    # r[impl item.py-fastapi.proof-url]
     def _url(self, connection: HTTPConnection) -> str:
-        return self.public_url(connection) if self.public_url is not None else _url(connection)
+        """
+        The URL a DPoP proof must name, from configuration: the public-URL
+        hook's, else a public origin with the request's path. Empty when
+        neither is configured, unless `trust_host_header`: the relying core
+        then refuses any proof.
+        """
+        if self.public_url is not None:
+            return self.public_url(connection)
+        own = _own_url(connection)
+        if self._origins:
+            # The request only chooses among the configured origins.
+            named = own.netloc.lower()
+            origin = next((origin for origin in self._origins if origin.netloc.lower() == named), self._origins[0])
+            return str(own.replace(scheme=origin.scheme, netloc=origin.netloc))
+        if self.trust_host_header:
+            return str(own)
+        if "dpop" in connection.headers:
+            _log.error(
+                "a DPoP proof was presented but no public origin is configured "
+                "(KonklavRoutes(public_origin=...)); refusing it"
+            )
+        return ""
 
     def _client(self) -> RelyingClient:
         if self.client is None:
@@ -652,13 +756,28 @@ class KonklavRoutes:
 _Evaluated = Annotated[None, Depends(_evaluate)]
 
 
+_PUBLIC_KEY = "konklav_fastapi.public"
+"""The scope key of a public route's presented token, once verified, of any kind."""
+
+
+async def _optional_token_of_any_kind(connection: HTTPConnection, _: _Evaluated) -> AccessToken | None:
+    outcome: _Outcome = connection.scope[_SCOPE_KEY]
+    if not outcome.public:
+        return outcome.token
+    if _PUBLIC_KEY not in connection.scope:
+        connection.scope[_PUBLIC_KEY] = await KonklavRoutes.of(connection)._verify(connection)
+    return cast(AccessToken | None, connection.scope[_PUBLIC_KEY])
+
+
 # r[impl item.py-fastapi.injected-tokens]
 async def _optional_token(connection: HTTPConnection, _: _Evaluated) -> AccessToken | None:
+    token = await _optional_token_of_any_kind(connection, _)
     outcome: _Outcome = connection.scope[_SCOPE_KEY]
-    if outcome.public:
-        outcome = _Outcome(public=True, token=await KonklavRoutes.of(connection)._verify(connection))
-        connection.scope[_SCOPE_KEY] = replace(outcome, public=False)
-    return outcome.token
+    if outcome.public and token is not None and token.knd not in SIGNED_IN_TOKEN_KINDS:
+        # A valid token that signs nobody in, such as one from before the
+        # second factor: a public route's handler gets no one.
+        return None
+    return token
 
 
 async def _current_token(token: Annotated[AccessToken | None, Depends(_optional_token)]) -> AccessToken:
@@ -683,7 +802,18 @@ _tenant_token = _of_kind("tenant")
 CurrentToken = Annotated[AccessToken, Depends(_current_token)]
 """The request's verified token, of any kind the route's policy admits."""
 OptionalToken = Annotated[AccessToken | None, Depends(_optional_token)]
-"""The request's verified token, or `None` on a public route without one."""
+"""
+The request's verified token, or `None` on a public route without one. A
+public route admits no token kinds, so there this is only the token of a
+signed-in subject, an `identity` or `tenant` token, and `None` for any other
+valid token, such as a `partial` one from before the second factor.
+"""
+OptionalTokenOfAnyKind = Annotated[AccessToken | None, Depends(_optional_token_of_any_kind)]
+"""
+As `OptionalToken`, but on a public route a valid token of any kind, also
+`partial`, `reset_password` and `invite` tokens, which sign nobody in: check
+its `knd` before relying on it.
+"""
 IdentityToken = Annotated[AccessToken, Depends(_identity_token)]
 """The request's verified `identity` token."""
 TenantToken = Annotated[AccessToken, Depends(_tenant_token)]
@@ -742,6 +872,7 @@ RequestDecider = Annotated[Decider, Depends(_request_decider)]
 # r[impl item.py-fastapi.injected-kinds]
 _INJECTED: dict[Callable[..., Any], tuple[str, frozenset[str]]] = {
     _optional_token: ("OptionalToken", TOKEN_KINDS),
+    _optional_token_of_any_kind: ("OptionalTokenOfAnyKind", TOKEN_KINDS),
     _current_token: ("CurrentToken", TOKEN_KINDS),
     _identity_token: ("IdentityToken", frozenset({"identity"})),
     _tenant_token: ("TenantToken", frozenset({"tenant"})),

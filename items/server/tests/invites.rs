@@ -423,6 +423,119 @@ async fn link_only_invites_redeem_with_an_existing_accounts_password_only() {
     assert_eq!(refused.code(), "INVALID_REQUEST");
 }
 
+/// The token delivered for the newest emailed invite.
+async fn emailed_token(app: &TestApp, worker: &str) -> Value {
+    let deliveries = events(app, worker, "delivery.requested").await;
+    deliveries.last().unwrap()["payload"]["material"]["token"].clone()
+}
+
+// r[verify authn.login.rate-limit]
+#[tokio::test(flavor = "multi_thread")]
+async fn password_guesses_through_an_invite_count_toward_the_login_limit() {
+    let app = TestApp::new().await;
+    let worker = worker(&app).await;
+    app.human("ada@example.com", PASSWORD).await;
+    invite(&app, json!({"email": "ada@example.com"})).await;
+    let link = emailed_token(&app, &worker).await;
+    let guess = async |password: &str| {
+        app.post(
+            "/v1/invites/redeem",
+            json!({"token": link, "password": password}),
+        )
+        .await
+    };
+    // As many failures as a login identifier is allowed in ten minutes.
+    for n in 0..30 {
+        let wrong = guess(&format!("wrong password {n}")).await;
+        assert_eq!(wrong.code(), "INVALID_CREDENTIALS", "{:?}", wrong.body);
+    }
+    assert_eq!(guess(PASSWORD).await.code(), "RATE_LIMITED");
+    let login = app.login("ada@example.com", PASSWORD).await;
+    assert_eq!(login.code(), "RATE_LIMITED", "{:?}", login.body);
+}
+
+/// How many rows `table` has.
+async fn rows(app: &TestApp, table: &str) -> i64 {
+    let mut conn = app.db.pool().get().await.unwrap();
+    let counted: Count = diesel::sql_query(format!("select count(*) as count from {table}"))
+        .get_result(&mut conn)
+        .await
+        .unwrap();
+    counted.count
+}
+
+// r[verify authn.invite.active-subject]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_disabled_subject_redeems_nothing() {
+    let app = TestApp::new().await;
+    let worker = worker(&app).await;
+    let tenant = tenant_with_reader(&app).await;
+    let subject = app.human("ada@example.com", PASSWORD).await;
+    let invited = json!({"email": "ada@example.com", "tenant": tenant, "roles": ["viewer"]});
+    invite(&app, invited).await;
+    let link = emailed_token(&app, &worker).await;
+    let state = async |state: &str| {
+        let path = format!("/v1/subjects/{subject}/{state}");
+        let changed = app.control(Method::POST, &path, None).await;
+        assert_eq!(changed.status, StatusCode::OK, "{:?}", changed.body);
+    };
+    state("disable").await;
+
+    let redeem = json!({"token": link, "password": PASSWORD});
+    let refused = app.post("/v1/invites/redeem", redeem.clone()).await;
+    assert_eq!(refused.code(), "INVALID_CREDENTIALS", "{:?}", refused.body);
+    assert_eq!(rows(&app, "membership").await, 0, "no membership");
+    let redemptions = events(&app, &worker, "invite.redeemed").await;
+    assert_eq!(redemptions, Vec::<Value>::new());
+    let pending = preview(&app, link.as_str().unwrap()).await;
+    assert_eq!(pending.body["state"], "pending", "{:?}", pending.body);
+
+    // The invite is still there once the subject is active again.
+    state("enable").await;
+    let redeemed = app.post("/v1/invites/redeem", redeem).await;
+    assert_eq!(redeemed.status, StatusCode::OK, "{:?}", redeemed.body);
+    assert_eq!(rows(&app, "membership").await, 1);
+}
+
+// r[verify authn.invite.mfa-first]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_password_that_needs_mfa_redeems_nothing_before_mfa() {
+    let app = TestApp::new().await;
+    let worker = worker(&app).await;
+    let tenant = tenant_with_reader(&app).await;
+    app.human("ada@example.com", PASSWORD).await;
+    let require_mfa = async |factors: i16| {
+        let mut conn = app.db.pool().get().await.unwrap();
+        let update = format!("update credential set mfa_factors_required = {factors}");
+        diesel::sql_query(update).execute(&mut conn).await.unwrap();
+    };
+    require_mfa(1).await;
+    let link = token(&invite(&app, json!({"tenant": tenant, "roles": ["viewer"]})).await);
+
+    let redeem = json!({"token": link, "identifier": "ada@example.com", "password": PASSWORD});
+    let partial = app.post("/v1/invites/redeem", redeem).await;
+    assert_eq!(partial.status, StatusCode::OK, "{:?}", partial.body);
+    assert_eq!(partial.body["token_kind"], "partial");
+    assert_eq!(rows(&app, "membership").await, 0, "no membership");
+    let redemptions = events(&app, &worker, "invite.redeemed").await;
+    assert_eq!(redemptions, Vec::<Value>::new());
+    assert_eq!(preview(&app, &link).await.body["state"], "pending");
+    let early = redeem_signed_in(&app, &access(&partial), json!({"token": link})).await;
+    assert_eq!(early.code(), "FORBIDDEN", "{:?}", early.body);
+    assert_eq!(
+        rows(&app, "membership").await,
+        0,
+        "nor with the partial session"
+    );
+
+    // A full session redeems it, signed in.
+    require_mfa(0).await;
+    let full = access(&app.login("ada@example.com", PASSWORD).await);
+    let redeemed = redeem_signed_in(&app, &full, json!({"token": link})).await;
+    assert_eq!(redeemed.status, StatusCode::OK, "{:?}", redeemed.body);
+    assert_eq!(rows(&app, "membership").await, 1);
+}
+
 // r[verify authn.invite.preview]
 // r[verify authn.invite.revoke]
 // r[verify metadata.public]

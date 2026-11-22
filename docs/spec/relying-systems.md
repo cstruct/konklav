@@ -45,7 +45,17 @@ r[relying.verify.dpop-replay]
 One relying core MUST remember the `jti`s of the DPoP proofs it accepted
 for as long as they could pass the freshness check, so it can refuse a
 replay (`r[token.dpop.replay]`). It need not detect replays across separate
-relying cores.
+relying cores. A proof MUST be remembered only once its access token has
+verified, locally or by the check API, and never for a token that doesn't,
+so that proofs anyone can sign take no room. A proof MUST NOT be accepted
+twice for a token that verifies, also when requests carrying it are decided
+at the same time or through the check API. A proof whose `jti` is longer
+than 128 bytes MUST be refused. What is remembered MUST be bounded, and a
+proof there is no room for MUST be refused rather than an older one
+forgotten. The proofs made with one key MUST take at most a hundredth of
+that room (at least one proof), and that key's further proofs MUST be
+refused until some of them expire, so that whoever holds one valid token
+can't have every other client's proofs refused.
 
 r[relying.verify.dpop-challenge]
 When the relying SDK refuses an access token for its DPoP proof or scheme,
@@ -74,7 +84,8 @@ decision does, so a session that ended in between is denied. A handle:
 The relying SDK MUST let the relying system release a handle, and the
 relying system SHOULD release it once its request is answered. A decision
 with a handle that is unknown, released or expired MUST deny with
-`invalid_token`.
+`invalid_token`. The relying SDK MUST itself release a handle it doesn't
+return: when the check API finds the token invalid, or can't be reached.
 
 r[relying.verify.route-authority]
 When the relying system decides with a handle, it MUST be able to mark the
@@ -116,6 +127,14 @@ r[relying.cache.background-refresh]
 The relying SDK MUST refresh entries that are invalidated or close to
 expiry in the background, debounced and coalesced per (subject, tenant), so
 that frequently used entries do not expire on the request path.
+
+r[relying.cache.background-backoff]
+When a background fetch fails, the relying SDK MUST wait before it does
+background work again, rather than ask for the failed fetch at once: 250 ms
+after the first failure, doubling with each further failure in a row to at
+most 10 seconds, each wait drawn at random from its upper half so that
+relying systems that lost Konklav together don't return together. Work in
+which no fetch fails MUST start the waits over.
 
 r[relying.cache.debounce-bound]
 After an `entitlements.changed` event, an affected entry MAY be used for at
@@ -179,7 +198,22 @@ it can't know what happened before.
 r[relying.fallback.lag]
 If the feed connection is lost, or no event or heartbeat arrives for three
 heartbeat intervals, the relying SDK MUST treat its cache as untrusted and
-decide through the check API until it has reconnected and caught up.
+decide through the check API until it has reconnected and caught up. A
+stream resumed from the SDK's cursor replays what the SDK missed, and the
+cache MUST stay untrusted while it does: until the stream says it has
+caught up (`feed.sse.caught-up`). A heartbeat doesn't say so: a stream
+stalled in the middle of its backlog sends them too. A stream opened
+without a cursor starts at the head and has nothing to replay.
+
+r[relying.fallback.signing-keys]
+From a `signing_keys.changed` or `reset` event until a JWKS fetched after
+it arrives, the relying SDK MUST treat its cache as untrusted and decide
+through the check API, since the cached JWKS may hold a revoked key. The
+same MUST hold when a stream is opened without a cursor while a JWKS is
+cached, since key changes before the stream's start are never replayed.
+A JWKS whose fetch the SDK began before the event, for a request that
+presented an unknown key id or in the background, MUST NOT end that state:
+the SDK MUST fetch again once every such fetch has landed or failed.
 
 r[relying.fallback.equivalence]
 The relying SDK MUST report decisions made through the check API in the
@@ -208,7 +242,14 @@ Limits with the same name and windows MUST share their state in the store.
 r[relying.rate-limit.local]
 Every process MUST also apply each event to in-memory state of its own,
 whether or not a store is configured or answers, and MUST keep that state
-for a bounded number of keys, the least recently used going first.
+for a bounded number of keys. When a new key needs room, the key whose
+state would be dropped soonest (`relying.rate-limit.expiry`) MUST go first:
+every key kept then has at least as much use still to count, so sending
+events for many keys forgets no more of one key's use than those events
+count themselves. A key whose events are currently refused MUST NOT be
+dropped to make room: when the key that would go first is refused, the new
+key's event MUST be refused instead, reporting how long until that key is
+admitted again.
 
 r[relying.rate-limit.fallback]
 When the store fails, or doesn't answer within the limit's timeout, the
