@@ -86,8 +86,7 @@ None. Operators use it in a browser.
 The console must reach Konklav on its own origin
 (`r[item.console.same-origin]`):
 
-- `/v1/` goes to the subject-facing surface, keeping its paths, because
-  the refresh cookie is scoped to `/v1/refresh` and `/v1/sign-out`.
+- `/v1/` goes to the subject-facing surface, keeping its paths.
 - `/control/v1/` goes to the control-plane surface's `/v1/`.
 - Everything else serves the built files, with `index.html` as the
   fallback for client-side routes.
@@ -99,6 +98,17 @@ first-party, and Konklav serves no CORS. Konklav still checks the
 header, which the console sends on every request. In development, Trunk
 does the routing (see `Trunk.toml`), and `config/dev.styx` allows
 `http://127.0.0.1:8083`.
+
+### The refresh cookie
+
+The refresh cookie has `Path=/`, which its `__Host-` prefix requires, so
+the browser sends it with every request to the console's origin: not only
+the `/v1/refresh` and `/v1/sign-out` calls that need it, but also the
+`/control/v1/` calls and the static files. The control-plane surface
+never reads it. So the proxy should remove the `Cookie` header from what it forwards
+to the control-plane surface, as the nginx example below does, and must
+not log that header on any route: the cookie is a session's refresh
+token.
 
 ### Response headers
 
@@ -133,6 +143,8 @@ server {
     }
     location /control/v1/ {
         proxy_pass http://konklav.internal:8082/v1/;
+        # The control plane has no use for the refresh cookie.
+        proxy_set_header Cookie "";
     }
 
     # Hashed file names: safe to cache.

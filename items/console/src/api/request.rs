@@ -32,10 +32,10 @@ pub enum Surface {
 impl Surface {
     /// Where the console reaches the surface, relative to its own origin.
     ///
-    /// The subject-facing surface keeps its own `/v1` paths, because the
-    /// refresh cookie is scoped to `/v1/refresh` and `/v1/sign-out`. The
+    /// The subject-facing surface keeps its own `/v1` paths. The
     /// control-plane surface shares those paths, so it moves under
-    /// `/control`.
+    /// `/control`. The refresh cookie has `Path=/`, so the browser sends
+    /// it to both.
     // r[impl item.console.same-origin]
     #[must_use]
     pub const fn prefix(self) -> &'static str {

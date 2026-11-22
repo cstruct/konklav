@@ -24,8 +24,8 @@ no_autoreload = true
 headers = { "Content-Security-Policy" = "frame-ancestors 'none'", "X-Content-Type-Options" = "nosniff", "Cache-Control" = "no-store" }
 
 # The console reaches Konklav on its own origin, so the refresh cookie
-# (SameSite=Strict, scoped to /v1/refresh and /v1/sign-out) is first-party
-# and no CORS is involved. These match `mise run serve` and config/dev.styx.
+# (SameSite=Strict, Path=/) is first-party and no CORS is involved. These
+# match `mise run serve` and config/dev.styx.
 
 # The subject-facing surface keeps its /v1 paths.
 [[proxy]]
