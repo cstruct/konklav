@@ -944,8 +944,8 @@ fn check_password(password: &str) -> Result<(), ApiError> {
 }
 
 /// Replaces a password credential with a new one holding `hash`, which
-/// keeps the old one's restrictions. Call it in a transaction, so the new
-/// credential never exists without them.
+/// keeps the old one's metadata and restrictions. Call it in a transaction,
+/// so the new credential never exists without them.
 // r[impl authn.password.restrictions-kept]
 async fn replace_password(
     conn: &mut Connection,
@@ -962,7 +962,8 @@ async fn replace_password(
             data: CredentialData::Password(PasswordData { hash }),
             mfa_factors_required: old.mfa_factors_required,
             replaces: Some(old.id),
-            metadata: konklav_store::metadata::empty(),
+            // r[impl metadata.write.create]
+            metadata: old.metadata.clone(),
         },
     )
     .await?;

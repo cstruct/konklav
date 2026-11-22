@@ -524,6 +524,61 @@ async fn changing_the_password_keeps_the_current_session() {
     assert_eq!(ended.code(), "SESSION_ENDED");
 }
 
+/// The metadata of the subject's active password credential.
+async fn password_metadata(app: &TestApp, subject: &str) -> Value {
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    let credentials = detail.body["credentials"].as_array().unwrap();
+    let active = credentials.iter().find(|c| c["revoked_at"].is_null());
+    active.expect("an active credential")["metadata"].clone()
+}
+
+// r[verify metadata.write.create]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_password_its_subject_sets_keeps_the_credentials_metadata() {
+    let app = TestApp::new().await;
+    let mailer = mailer(&app).await;
+    let subject = app.human(EMAIL, PASSWORD).await;
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    let credential = detail.body["credentials"][0]["id"].as_str().unwrap();
+    let noted = app
+        .control(
+            Method::PATCH,
+            &format!("/v1/credentials/{credential}/metadata"),
+            Some(json!({"source": "crm"})),
+        )
+        .await;
+    assert_eq!(noted.status, StatusCode::OK, "{:?}", noted.body);
+
+    let session = token(&app.login(EMAIL, PASSWORD).await);
+    let changed = post_bearer(
+        &app,
+        "/v1/password/change",
+        &session,
+        json!({"current": PASSWORD, "new": "another password"}),
+    )
+    .await;
+    assert_eq!(changed.status, StatusCode::OK, "{:?}", changed.body);
+    let kept = password_metadata(&app, &subject).await;
+    assert_eq!(kept, json!({"source": "crm"}), "after a change");
+
+    app.post("/v1/password-reset/start", json!({"identifier": EMAIL}))
+        .await;
+    let link = delivered(&app, &mailer, EMAIL).await["token"].clone();
+    let reset = app
+        .post(
+            "/v1/password-reset/complete",
+            json!({"token": link, "password": "a fresh password"}),
+        )
+        .await;
+    assert_eq!(reset.status, StatusCode::OK, "{:?}", reset.body);
+    let kept = password_metadata(&app, &subject).await;
+    assert_eq!(kept, json!({"source": "crm"}), "after a reset");
+}
+
 // r[verify authn.invite.redeem]
 #[tokio::test(flavor = "multi_thread")]
 async fn invites_create_accounts_with_memberships() {
