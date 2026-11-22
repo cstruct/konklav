@@ -271,7 +271,10 @@ impl Verifier {
     }
 }
 
-/// Step-up state, tagged so it can't be confused with login state.
+/// Step-up state. The wrapper serializes as the bare `webauthn-rs` state,
+/// so it tags nothing: what keeps a step-up ceremony from finishing a
+/// login, or the reverse, is the session its challenge belongs to, which
+/// `passkeys_api::take` checks.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct StepUpState(PasskeyAuthentication);
 
