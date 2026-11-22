@@ -135,7 +135,7 @@ pub(crate) fn invalid_credentials() -> ApiError {
     ApiError::new(ErrorCode::InvalidCredentials, "invalid credentials")
 }
 
-fn session_ended() -> ApiError {
+pub(crate) fn session_ended() -> ApiError {
     ApiError::new(ErrorCode::SessionEnded, "the session has ended")
 }
 

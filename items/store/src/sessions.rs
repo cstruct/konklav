@@ -628,6 +628,11 @@ pub async fn select_tenant(
 /// Records a verified MFA factor. Once `required` distinct factors are
 /// verified, a partial session becomes an identity session and gets
 /// `refresh_hash`. Bumps the version.
+///
+/// # Errors
+///
+/// [`StoreError::NotFound`] for an unknown session and for a revoked one,
+/// which must not be upgraded.
 pub async fn verify_mfa_factor(
     conn: &mut AsyncPgConnection,
     id: SessionId,
@@ -637,14 +642,18 @@ pub async fn verify_mfa_factor(
     refresh_hash: &[u8],
 ) -> StoreResult<(Session, Cursor)> {
     conn.transaction::<_, StoreError, _>(async |conn| {
-        let current = Session::from(
-            session::table
-                .find(id.as_uuid())
-                .select(Row::as_select())
-                .for_update()
-                .first(conn)
-                .await?,
-        );
+        // Locked, so a session that isn't revoked here stays so until the
+        // update below.
+        let current: Session = session::table
+            .find(id.as_uuid())
+            .filter(session::revoked_at.is_null())
+            .select(Row::as_select())
+            .for_update()
+            .first(conn)
+            .await
+            .optional()?
+            .map(Session::from)
+            .ok_or(StoreError::NotFound)?;
         let mut factors = current.mfa_factors.clone();
         if !factors.iter().any(|f| f == factor) {
             factors.push(factor.to_owned());

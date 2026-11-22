@@ -1021,6 +1021,35 @@ async fn a_write_that_waits_for_an_erasure_is_refused() {
     assert_eq!(rows_holding(&mut conn, "late@login.example").await, vec![]);
 }
 
+// Kept here with the other ways a session ends under a caller's feet.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_revoked_session_is_not_upgraded_by_a_verified_mfa_factor() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let id = human(&mut conn).await;
+    let credential = password(&mut conn, id, "ada@login.example").await;
+    let mut new = new_session(id, credential, "ada-key-thumbprint");
+    new.stage = Stage::Partial;
+    let (session, _) = sessions::insert(&mut conn, new).await.unwrap();
+    let filter = SessionFilter {
+        subject: Some(id),
+        ..Default::default()
+    };
+    let revoked = sessions::revoke(&mut conn, &filter, None, "logout")
+        .await
+        .unwrap();
+    assert_eq!(revoked.len(), 1);
+    let before = sessions::get(&mut conn, session.id).await.unwrap();
+
+    let result =
+        sessions::verify_mfa_factor(&mut conn, session.id, "factor", "otp", 1, b"hash").await;
+
+    assert!(matches!(result, Err(StoreError::NotFound)), "{result:?}");
+    let after = sessions::get(&mut conn, session.id).await.unwrap();
+    assert_eq!(after.stage, Stage::Partial);
+    assert_eq!(after.version, before.version);
+}
+
 fn amounts(held: &PersonalData) -> [usize; 7] {
     [
         held.credentials.len(),

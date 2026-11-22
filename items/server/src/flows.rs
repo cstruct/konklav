@@ -22,7 +22,7 @@ use konklav_store::credentials::{
 use konklav_store::mfa::{self, EmailCodeData, Factor, FactorData, FactorKind, TotpData};
 use konklav_store::sessions::{self, ClientKind, NewSession, Session, SessionFilter, Stage};
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
-use konklav_store::{Connection, events, login_attempts, memberships, tenants};
+use konklav_store::{Connection, StoreError, events, login_attempts, memberships, tenants};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
@@ -31,7 +31,7 @@ use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::issue::{self, IssuedToken};
 use crate::subject_api::{
     SessionRequest, authenticate, begin_attempt, check_browser_request, refresh_cookies,
-    refuse_impersonation, require_recent, start_passwordless_session, with_cookies,
+    refuse_impersonation, require_recent, session_ended, start_passwordless_session, with_cookies,
 };
 use crate::{AppState, capabilities, dpop, pacing, passkeys_api};
 
@@ -607,7 +607,8 @@ async fn complete_mfa(
         required,
         &refresh.hash(),
     )
-    .await?;
+    .await
+    .map_err(ended_if_gone)?;
     let token = issue::access_token(&mut conn, &state.auth, &session).await?;
     // Once MFA is done, browsers get the refresh token as a cookie and
     // native clients in the body.
@@ -630,6 +631,16 @@ async fn complete_mfa(
         cursor,
     };
     Ok(with_cookies(Json(body).into_response(), cookies))
+}
+
+/// A session that authenticated the request and is gone, or revoked, by
+/// the time it is changed has ended: answered as such, not as a missing
+/// resource.
+fn ended_if_gone(error: StoreError) -> ApiError {
+    match error {
+        StoreError::NotFound => session_ended(),
+        other => other.into(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -1133,4 +1144,19 @@ async fn impersonate(
         refresh_token: None,
         cursor,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_session_revoked_under_a_request_has_ended() {
+        assert_eq!(
+            ended_if_gone(StoreError::NotFound).code,
+            ErrorCode::SessionEnded
+        );
+        let other = ended_if_gone(StoreError::Conflict("taken".into()));
+        assert_ne!(other.code, ErrorCode::SessionEnded);
+    }
 }
