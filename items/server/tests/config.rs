@@ -432,6 +432,25 @@ p1XNGpwF1zXMHj8NrRZRBsdiy2jZvNVSLlPqzmK3P4YLDAtSoKNCeXst
         "https://auth.example/.well-known/jwks.json"
     );
     assert!(provider.claims_hook.is_none());
+    assert!(
+        !provider.logout_private_addresses,
+        "logout tokens go to public addresses unless configured"
+    );
+    let private = format!(
+        "{CONFIG}oidc_provider {{\n    id_token_key_file \"{}\"\n    login_url \"https://login.example/\"\n    \
+         backchannel_logout_private_addresses true\n}}\n",
+        key.display()
+    );
+    let (_, _, _, tokens, ..) = load(
+        &files.write("private.styx", &private),
+        &files.write("s.styx", SECRETS),
+        &[],
+    )
+    .unwrap();
+    let config = tokens.oidc_provider.unwrap();
+    let provider =
+        konklav_server::oidc::OpenIdProvider::load(&config, &tokens.tokens.issuer).unwrap();
+    assert!(provider.logout_private_addresses);
 
     let hooked = |scopes: &str| {
         format!(

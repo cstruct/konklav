@@ -69,6 +69,7 @@ impl OpenIdProvider {
         };
         provider.dpop_max_age = i64::from(config.dpop_max_age_seconds);
         provider.require_dpop = config.require_dpop;
+        provider.logout_private_addresses = config.backchannel_logout_private_addresses;
         provider.claims_hook = config
             .claims_hook
             .as_ref()

@@ -298,6 +298,13 @@ config_tree! {
                 /// Every client.
                 All,
             },
+            /// Whether back-channel logout tokens may be sent to addresses
+            /// that aren't public (loopback, private, link-local), for
+            /// deployments whose clients are on Konklav's own network.
+            /// Off by default, since a client registration would otherwise
+            /// make Konklav post into that network.
+            #[facet(default)]
+            pub backchannel_logout_private_addresses: bool,
             /// A relying system's endpoint that userinfo asks for profile
             /// claims Konklav doesn't hold, such as `name`.
             pub claims_hook: Option<pub struct ClaimsHook {
