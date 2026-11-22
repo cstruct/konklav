@@ -1535,6 +1535,35 @@ async fn phone_code_guesses_count_toward_the_address_limit() {
     );
 }
 
+// r[verify authn.login.rate-limit]
+#[tokio::test(flavor = "multi_thread")]
+async fn one_ipv6_network_cannot_spread_its_attempts_over_its_addresses() {
+    let app = TestApp::new().await;
+    let login = |peer: String, n: usize| {
+        let peer = peer.parse().unwrap();
+        let app = &app;
+        async move {
+            app.send_from(
+                Some(peer),
+                Method::POST,
+                "/v1/login/password",
+                &[],
+                Some(json!({"identifier": format!("user{n}@example.com"), "password": "x"})),
+            )
+            .await
+        }
+    };
+    for n in 0..100 {
+        // A new address in the same /64 for every attempt.
+        let peer = format!("[2001:db8:0:1::{n:x}]:1000");
+        assert_eq!(login(peer, n).await.code(), "INVALID_CREDENTIALS");
+    }
+    let same = "[2001:db8:0:1:ffff::1]:1000".to_owned();
+    assert_eq!(login(same, 100).await.code(), "RATE_LIMITED");
+    let other = "[2001:db8:0:2::1]:1000".to_owned();
+    assert_eq!(login(other, 100).await.code(), "INVALID_CREDENTIALS");
+}
+
 // r[verify authn.login.staged]
 #[tokio::test(flavor = "multi_thread")]
 async fn partial_sessions_cannot_use_the_relying_surface() {

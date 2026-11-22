@@ -31,7 +31,10 @@ r[platform.server.client-address]
 The server MUST take a client's address from the connection, unless the
 connection comes from a configured trusted proxy. Then it MUST use the last
 address in `X-Forwarded-For` that is not a trusted proxy, so clients can't
-choose their own address by sending the header.
+choose their own address by sending the header. An entry that is not an IP
+address MUST end the search, leaving the last address found, or the
+connection's: entries before it are not skipped to, since a client can
+choose them.
 
 r[platform.server.limits]
 Every listener MUST bound request body size, how long a request may take to
