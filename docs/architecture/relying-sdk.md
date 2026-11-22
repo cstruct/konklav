@@ -28,6 +28,13 @@ been missed ([erasure](erasure.md#through-the-relying-sdk)).
 Host bindings run a loop: they perform the work items, feed the results
 back, and sleep until `next_wakeup` or until a new event arrives.
 
+`feed_connected()` alone doesn't make the caches trusted again. A stream
+resumed from the core's cursor first replays what the core missed, and
+until that is applied the caches are as stale as when the feed was lost, so
+the core keeps answering `NeedsCheck` until the stream says it has caught
+up (`r[relying.fallback.lag]`). Likewise the cached JWKS isn't trusted from
+a key change until it is fetched again (`r[relying.fallback.signing-keys]`).
+
 A DPoP proof is checked before the token, against the token's unverified
 `cnf`, but remembered only once the token has verified. When the check API
 does that, the host reports back (`confirm_presented`,

@@ -72,6 +72,15 @@ connects without a cursor thereby learns where it stands before any later
 event arrives, and by `feed.commit-order` every event at or below that
 cursor has already committed.
 
+r[feed.sse.caught-up]
+A stream MUST tell its consumer once when it has sent everything up to the
+head, so a consumer resuming after an outage knows when what it missed has
+been replayed: by `caught_up` set to `true` in the payload of the stream's
+first event when nothing follows the cursor it starts after, and otherwise
+in a `position` event sent after the last replayed event, carrying the
+cursor reached. Events the consumer may not see or didn't subscribe to
+count as sent.
+
 r[feed.batch]
 Konklav MUST also serve the feed as paged JSON (`after` a cursor, limited
 page size) for consumers that cannot hold a stream open.

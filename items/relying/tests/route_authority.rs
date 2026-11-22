@@ -388,6 +388,9 @@ fn route_authority_goes_with_decisions_handed_to_the_check_api() {
 
     // Once trusted again, the kept route authority decides locally.
     f.core.on_feed_connected(T0);
+    // A stream without a cursor may have skipped a key change.
+    let keys = vec![Jwk::from_verifying_key(&f.signer.verifying_key())];
+    f.core.on_jwks(JwkSet { keys }, T0);
     assert_eq!(f.decide(request, &write, false), Decision::allow());
 
     // A denied route decision from the check API leaves none.

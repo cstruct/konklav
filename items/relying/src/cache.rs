@@ -201,11 +201,26 @@ struct Entry {
 #[derive(Clone, Debug, Default)]
 struct Feed {
     connected: bool,
+    /// Connected, but the stream may still be replaying what this core
+    /// missed, so the caches are as stale as when the feed was lost.
+    catching_up: bool,
     last_seen: u64,
     cursor: Option<Cursor>,
     /// When the last event was applied, for telling the host since when
     /// erasures may have been missed.
     applied_at: Option<u64>,
+}
+
+/// Whether the cached JWKS reflects every key change the core heard of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum JwksTrust {
+    Current,
+    /// The signing keys changed since the JWKS was fetched: a key in it may
+    /// be revoked, so it isn't trusted until the next fetch lands.
+    Changed,
+    /// As `Changed`, and the fetch in flight was asked for before the
+    /// change, so it may not reflect it either.
+    Superseded,
 }
 
 /// The relying core's state. See the crate docs for how hosts drive it.
@@ -216,6 +231,7 @@ pub struct Relying {
     jwks_fetched_at: Option<u64>,
     jwks_wanted: bool,
     jwks_in_flight: bool,
+    jwks_trust: JwksTrust,
     sessions: BTreeMap<SessionId, SessionChanged>,
     /// Sessions Konklav doesn't know: tokens for them are never valid.
     unknown_sessions: BTreeSet<SessionId>,
@@ -239,6 +255,7 @@ impl Relying {
             jwks_fetched_at: None,
             jwks_wanted: true,
             jwks_in_flight: false,
+            jwks_trust: JwksTrust::Current,
             sessions: BTreeMap::new(),
             unknown_sessions: BTreeSet::new(),
             entries: BTreeMap::new(),
@@ -255,13 +272,18 @@ impl Relying {
         &self.config
     }
 
-    /// Whether local decisions can be trusted: the feed is connected and has
-    /// been heard from recently.
+    /// Whether local decisions can be trusted: the feed is connected, has
+    /// caught up and has been heard from recently, and the signing keys
+    /// haven't changed since the cached JWKS was fetched.
     // r[impl relying.fallback.lag]
+    // r[impl relying.fallback.signing-keys]
     #[must_use]
     pub fn is_trusted(&self, now: u64) -> bool {
         let silence = self.config.heartbeat_ms * self.config.missed_heartbeats;
-        self.feed.connected && now.saturating_sub(self.feed.last_seen) < silence
+        self.feed.connected
+            && !self.feed.catching_up
+            && self.jwks_trust == JwksTrust::Current
+            && now.saturating_sub(self.feed.last_seen) < silence
     }
 
     /// The cursor to resume the feed from (`Last-Event-ID`).
@@ -863,11 +885,30 @@ impl Relying {
         Some(set.clone())
     }
 
+    // r[impl relying.fallback.signing-keys]
     pub fn on_jwks(&mut self, jwks: JwkSet, now: u64) {
         self.jwks = Some(jwks);
         self.jwks_fetched_at = Some(now);
-        self.jwks_wanted = false;
         self.jwks_in_flight = false;
+        if self.jwks_trust == JwksTrust::Superseded {
+            // Asked for before the keys changed: fetch again.
+            self.jwks_trust = JwksTrust::Changed;
+            return;
+        }
+        self.jwks_wanted = false;
+        self.jwks_trust = JwksTrust::Current;
+    }
+
+    /// The signing keys may have changed: the cached JWKS isn't trusted
+    /// until it is fetched again.
+    // r[impl relying.fallback.signing-keys]
+    fn distrust_jwks(&mut self) {
+        self.jwks_wanted = true;
+        self.jwks_trust = if self.jwks_in_flight {
+            JwksTrust::Superseded
+        } else {
+            JwksTrust::Changed
+        };
     }
 
     pub fn on_session(&mut self, state: SessionChanged) {
@@ -909,7 +950,12 @@ impl Relying {
     /// A fetch the core asked for failed; it may be asked for again.
     pub fn on_fetch_failed(&mut self, need: &Need) {
         match need {
-            Need::Jwks => self.jwks_in_flight = false,
+            Need::Jwks => {
+                self.jwks_in_flight = false;
+                if self.jwks_trust == JwksTrust::Superseded {
+                    self.jwks_trust = JwksTrust::Changed;
+                }
+            }
             Need::Entitlements { key } => {
                 if let Some(entry) = self.entries.get_mut(key) {
                     entry.in_flight = false;
@@ -928,12 +974,25 @@ impl Relying {
         }
     }
 
+    /// The feed's stream opened. A stream resumed from this core's cursor
+    /// first replays what the core missed, so the caches stay untrusted
+    /// until it has caught up: Konklav says so with a `position` event
+    /// marked `caught_up`, and a heartbeat says the stream had nothing to
+    /// send for a whole interval. A stream opened without a cursor starts
+    /// at the head, with nothing to replay.
+    // r[impl relying.fallback.lag]
     pub fn on_feed_connected(&mut self, now: u64) {
         self.feed.connected = true;
+        self.feed.catching_up = self.feed.cursor.is_some();
         self.feed.last_seen = now;
+        if self.feed.cursor.is_none() {
+            // Key changes before the stream's start are never replayed.
+            self.distrust_jwks();
+        }
     }
 
-    /// Anything arrived on the feed, including heartbeats.
+    /// A heartbeat arrived on the feed: the stream is alive. It may still
+    /// be replaying what this core missed.
     pub fn on_feed_activity(&mut self, now: u64) {
         self.feed.last_seen = now;
     }
@@ -961,7 +1020,8 @@ impl Relying {
             FeedPayload::EntitlementsChanged(changed) => {
                 self.invalidate(&changed, event.cursor, now);
             }
-            FeedPayload::SigningKeysChanged(_) => self.jwks_wanted = true,
+            // r[impl relying.fallback.signing-keys]
+            FeedPayload::SigningKeysChanged(_) => self.distrust_jwks(),
             FeedPayload::ScopeChanged(changed) => {
                 self.invalidate_scopes(&changed, event.cursor, now);
             }
@@ -976,7 +1036,7 @@ impl Relying {
             FeedPayload::Reset => {
                 self.sessions.clear();
                 self.unknown_sessions.clear();
-                self.jwks_wanted = true;
+                self.distrust_jwks();
                 for entry in self.entries.values_mut() {
                     entry.stale.get_or_insert((now, event.cursor));
                 }
@@ -1001,6 +1061,15 @@ impl Relying {
                 }
             }
             FeedPayload::Other => {}
+        }
+        // Only a stream's own `position` and `reset` events say so.
+        // r[impl relying.fallback.lag]
+        if matches!(
+            event.kind.as_str(),
+            konklav_core::feed::POSITION | konklav_core::feed::RESET
+        ) && event.payload.get("caught_up") == Some(&serde_json::Value::Bool(true))
+        {
+            self.feed.catching_up = false;
         }
         self.feed.cursor = Some(event.cursor);
         self.feed.applied_at = Some(now);

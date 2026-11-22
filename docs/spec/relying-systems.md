@@ -185,7 +185,19 @@ it can't know what happened before.
 r[relying.fallback.lag]
 If the feed connection is lost, or no event or heartbeat arrives for three
 heartbeat intervals, the relying SDK MUST treat its cache as untrusted and
-decide through the check API until it has reconnected and caught up.
+decide through the check API until it has reconnected and caught up. A
+stream resumed from the SDK's cursor replays what the SDK missed, and the
+cache MUST stay untrusted while it does: until the stream says it has
+caught up (`feed.sse.caught-up`). A heartbeat doesn't say so: a stream
+stalled in the middle of its backlog sends them too. A stream opened
+without a cursor starts at the head and has nothing to replay.
+
+r[relying.fallback.signing-keys]
+From a `signing_keys.changed` or `reset` event until a JWKS fetched after
+it arrives, the relying SDK MUST treat its cache as untrusted and decide
+through the check API, since the cached JWKS may hold a revoked key. The
+same MUST hold when a stream is opened without a cursor while a JWKS is
+cached, since key changes before the stream's start are never replayed.
 
 r[relying.fallback.equivalence]
 The relying SDK MUST report decisions made through the check API in the

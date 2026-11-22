@@ -31,12 +31,7 @@ impl Fixture {
         let signer = Signer::new(SigningKey::from_bytes(&[9; 32]));
         let mut core = Relying::new(config());
         core.on_feed_connected(T0);
-        core.on_jwks(
-            JwkSet {
-                keys: vec![Jwk::from_verifying_key(&signer.verifying_key())],
-            },
-            T0,
-        );
+        core.on_jwks(jwks(&signer), T0);
         Self {
             core,
             signer,
@@ -134,6 +129,12 @@ impl Fixture {
     }
 }
 
+fn jwks(signer: &Signer) -> JwkSet {
+    JwkSet {
+        keys: vec![Jwk::from_verifying_key(&signer.verifying_key())],
+    }
+}
+
 fn reading() -> Requirements {
     Requirements {
         tenant: BTreeSet::from(["project:read".to_owned()]),
@@ -204,6 +205,101 @@ fn falls_back_to_the_check_api_when_the_feed_lags() {
     assert_eq!(f.decide(1, T0 + 31_000), allowed());
     f.core.on_feed_lost();
     assert_eq!(needs(&f.decide(1, T0 + 31_000)), vec![Need::Check]);
+}
+
+fn revoked(f: &Fixture) -> serde_json::Value {
+    json!({"session": f.session, "subject": f.subject, "version": 1, "revoked": true, "expires_at": T0 / 1000 + 86_400})
+}
+
+// A session revoked while the feed was down must not be accepted from the
+// stale cache while the stream replays what was missed.
+// r[verify relying.fallback.lag]
+#[test]
+fn a_resumed_feed_is_untrusted_until_it_has_caught_up() {
+    let mut f = Fixture::new();
+    f.event(5, "position", json!({}), T0);
+    f.warm(T0);
+    assert_eq!(f.decide(1, T0), allowed());
+
+    f.core.on_feed_lost();
+    f.core.on_feed_connected(T0 + 1_000);
+    assert!(!f.core.is_trusted(T0 + 1_000), "resumed, so replaying");
+    assert_eq!(needs(&f.decide(1, T0 + 1_000)), vec![Need::Check]);
+    // Where a resumed stream starts says nothing about its head.
+    f.event(5, "position", json!({}), T0 + 1_001);
+    assert_eq!(needs(&f.decide(1, T0 + 1_001)), vec![Need::Check]);
+    f.event(
+        6,
+        "entitlements.changed",
+        json!({"subjects": []}),
+        T0 + 1_002,
+    );
+    assert_eq!(needs(&f.decide(1, T0 + 1_002)), vec![Need::Check]);
+    f.event(7, "session.changed", revoked(&f), T0 + 1_003);
+    assert_eq!(needs(&f.decide(1, T0 + 1_003)), vec![Need::Check]);
+
+    f.event(7, "position", json!({"caught_up": true}), T0 + 1_004);
+    assert!(f.core.is_trusted(T0 + 1_004));
+    assert_eq!(f.decide(1, T0 + 1_004), invalid(), "revoked meanwhile");
+}
+
+// A heartbeat only says the stream is alive: one stalled in the middle of
+// its backlog sends them too.
+// r[verify relying.fallback.lag]
+#[test]
+fn a_heartbeat_does_not_say_a_resumed_feed_has_caught_up() {
+    let mut f = Fixture::new();
+    f.event(5, "position", json!({}), T0);
+    f.warm(T0);
+    f.core.on_feed_lost();
+    f.core.on_feed_connected(T0 + 1_000);
+    f.event(5, "position", json!({}), T0 + 1_001);
+    f.core.on_feed_activity(T0 + 11_000);
+    assert_eq!(needs(&f.decide(1, T0 + 11_000)), vec![Need::Check]);
+
+    // A stream with nothing to replay says so in its first event.
+    f.core.on_feed_lost();
+    f.core.on_feed_connected(T0 + 12_000);
+    f.event(5, "position", json!({"caught_up": true}), T0 + 12_001);
+    assert_eq!(f.decide(1, T0 + 12_001), allowed());
+
+    // A stream that starts without a cursor starts at the head.
+    let mut fresh = Fixture::new();
+    fresh.warm(T0);
+    assert!(fresh.core.is_trusted(T0));
+}
+
+// r[verify relying.fallback.signing-keys]
+#[test]
+fn changed_signing_keys_are_untrusted_until_fetched_again() {
+    let mut f = Fixture::new();
+    f.warm(T0);
+    assert_eq!(f.core.poll_work(T0).fetch, vec![]);
+    let changed = json!({"kids": [f.signer.kid()]});
+    f.event(40, "signing_keys.changed", changed.clone(), T0 + 1);
+    assert!(!f.core.is_trusted(T0 + 1));
+    assert_eq!(
+        needs(&f.decide(1, T0 + 1)),
+        vec![Need::Check],
+        "the key may be the revoked one"
+    );
+
+    // While the fetch fails the cached keys stay untrusted.
+    assert_eq!(f.core.poll_work(T0 + 2).fetch, vec![Need::Jwks]);
+    f.core.on_fetch_failed(&Need::Jwks);
+    assert_eq!(needs(&f.decide(1, T0 + 3)), vec![Need::Check]);
+
+    // A fetch asked for before another change may not reflect it.
+    assert_eq!(f.core.poll_work(T0 + 4).fetch, vec![Need::Jwks]);
+    f.event(41, "signing_keys.changed", changed, T0 + 5);
+    f.core.on_jwks(jwks(&f.signer), T0 + 6);
+    assert_eq!(needs(&f.decide(1, T0 + 6)), vec![Need::Check]);
+
+    assert_eq!(f.core.poll_work(T0 + 7).fetch, vec![Need::Jwks]);
+    let rotated = Signer::new(SigningKey::from_bytes(&[4; 32]));
+    f.core.on_jwks(jwks(&rotated), T0 + 8);
+    assert!(f.core.is_trusted(T0 + 8));
+    assert_eq!(f.decide(1, T0 + 9), invalid(), "its key is gone");
 }
 
 // r[verify relying.verify.session]
@@ -316,9 +412,12 @@ fn a_reset_forgets_sessions_and_marks_everything_stale() {
     let mut f = Fixture::new();
     f.warm(T0);
     f.event(30, "reset", json!({}), T0 + 10);
+    // The signing keys may have changed too.
+    assert_eq!(needs(&f.decide(1, T0 + 11)), vec![Need::Check]);
+    assert!(f.core.poll_work(T0 + 11).fetch.contains(&Need::Jwks));
+    f.core.on_jwks(jwks(&f.signer), T0 + 11);
     let outcome = f.decide(1, T0 + 11);
     assert_eq!(needs(&outcome), vec![Need::Session { session: f.session }]);
-    assert!(f.core.poll_work(T0 + 11).fetch.contains(&Need::Jwks));
     assert_eq!(f.core.feed_cursor(), Some(Cursor::new(30)));
 }
 
@@ -756,6 +855,7 @@ fn moves_take_effect_within_the_debounce_window() {
     ));
 
     f.event(3, "reset", json!({}), T0 + 700);
+    f.core.on_jwks(jwks(&f.signer), T0 + 700);
     f.warm_documents_at(3, T0 + 700);
     assert!(
         needs(&f.decide_document("d-1", T0 + 1_200)).contains(&document_need("d-1")),

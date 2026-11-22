@@ -15,7 +15,7 @@ The relying core: a sans-I/O library with everything a relying system needs to d
   - bounded, least recently used first (100 000 by default), with the entitlement TTL
   - scopes Konklav doesn't know are remembered for 5 s, and forgotten as soon as `scope.changed` names them
   - `scope.changed` marks a record stale with the same debounce bound as entitlement sets
-- Following the change feed's state: cursor, heartbeats, `position`, `reset`. When it lags (three missed heartbeats), the core answers `Need::Check`, so hosts ask `/v1/check`.
+- Following the change feed's state: cursor, heartbeats, `position`, `reset`. When it lags (three missed heartbeats), while a resumed stream is still catching up, or after the signing keys changed until the JWKS is fetched again, the core answers `Need::Check`, so hosts ask `/v1/check`.
 - Erasure: on `subject.erased` the core drops the subject's cached sessions and entitlement sets and returns `ErasureNotice::Erased` for the host to pass on. On a `reset`, and when a stream starts without a position of the core's own, it returns `ErasureNotice::Missed` with the time it applied its last event, if any, so the relying system reads the erased subjects from Konklav.
 - Rate limits (`rate_limit`): named limits of several windows per key, enforced with the generic cell rate algorithm (GCRA):
   - local state for a bounded number of keys (100 000 by default, least recently used first), dropped once drained, with an optional local divisor

@@ -134,6 +134,39 @@ async fn streams_start_by_naming_their_position() {
     assert_eq!(event.data["cursor"], head.get());
 }
 
+/// A stream says once when it has sent everything up to the head: at once
+/// with nothing to replay, and otherwise after the backlog, at the cursor
+/// reached, even when the consumer filtered all of it out.
+// r[verify feed.sse.caught-up]
+#[tokio::test(flavor = "multi_thread")]
+async fn streams_say_when_they_have_caught_up() {
+    let app = TestApp::new().await;
+    let running = app.serve().await;
+    let service = app.service_token().await;
+    let url = format!("http://{}/v1/events?kinds=tenant.changed", running.relying);
+    let mut feed = SseReader::open(&url, &service, None).await;
+    let start = feed.next().await;
+    assert_eq!(start.event, "position");
+    assert_eq!(start.data["payload"]["caught_up"], true, "{:?}", start.data);
+    let cursor = start.id.unwrap();
+    drop(feed);
+
+    app.human("ada@example.com", PASSWORD).await;
+    login(&app, "ada@example.com").await; // session.changed, filtered out
+    let head = {
+        let mut conn = app.db.pool().get().await.unwrap();
+        konklav_store::events::head(&mut conn).await.unwrap()
+    };
+    let mut feed = SseReader::open(&url, &service, Some(&cursor)).await;
+    let start = feed.next().await;
+    assert_eq!(start.id, Some(cursor));
+    assert!(start.data["payload"].get("caught_up").is_none());
+    let caught_up = feed.next().await;
+    assert_eq!(caught_up.event, "position");
+    assert_eq!(caught_up.id, Some(head.to_string()));
+    assert_eq!(caught_up.data["payload"]["caught_up"], true);
+}
+
 // r[verify feed.sse.kinds-filter]
 #[tokio::test(flavor = "multi_thread")]
 async fn filters_by_kind() {
