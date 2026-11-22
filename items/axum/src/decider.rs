@@ -57,10 +57,26 @@ impl RequestDecider {
     pub(crate) fn accepted(&self) -> &Accepted {
         &self.inner.accepted
     }
+}
 
-    /// Releases the presentation: it decides nothing more.
-    pub(crate) fn release(&self) {
-        self.inner.host.release_accepted(&self.inner.accepted);
+/// Holds a request's accepted presentation, and releases it when dropped:
+/// once the request is answered, and also when it is refused, its handler
+/// panics or its future is dropped because the client went away. A
+/// presentation left held would take up room in the relying core until it
+/// expired.
+// r[impl item.axum.request-decider]
+pub(crate) struct HeldPresentation(RequestDecider);
+
+impl HeldPresentation {
+    pub(crate) fn new(decider: RequestDecider) -> Self {
+        Self(decider)
+    }
+}
+
+impl Drop for HeldPresentation {
+    fn drop(&mut self) {
+        let held = &self.0.inner;
+        held.host.release_accepted(&held.accepted);
     }
 }
 

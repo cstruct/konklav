@@ -285,6 +285,106 @@ async fn only_a_websocket_upgrade_is_taken_for_one() {
     assert_eq!(presented.request.unwrap().method, "GET");
 }
 
+/// A route whose request can be refused after its presentation was
+/// accepted: by a hook, the route tenant or a scope resolver, each when its
+/// header is sent.
+fn refusable(host: &Arc<FakeHost>, handler: axum::routing::MethodRouter) -> Router {
+    let refusal = |parts: &axum::http::request::Parts, header: &str| {
+        let refuse = parts.headers.contains_key(header);
+        async move {
+            if refuse {
+                Err(StatusCode::PAYMENT_REQUIRED.into_response())
+            } else {
+                Ok(())
+            }
+        }
+    };
+    let konklav = Konklav::builder(host.clone())
+        .on_verified(move |parts, _| refusal(parts, "x-hook"))
+        .route_tenant(|parts, _| {
+            let other = parts.headers.contains_key("x-tenant");
+            async move { Ok(other.then(|| OTHER_TENANT.parse().unwrap())) }
+        })
+        .scope_resolver("project", move |parts, _| {
+            let refused = refusal(parts, "x-scope");
+            async move { refused.await.map(|()| ResolvedScope::new("p-1")) }
+        })
+        .build()
+        .unwrap();
+    let policy = RoutePolicy::new(&Policy::new().scope_actions("project", ["project:read"]));
+    app(
+        &konklav,
+        Router::new().route("/", handler.route_layer(policy.unwrap())),
+    )
+}
+
+// A presentation left held takes room in the relying core until it expires,
+// and when the room is gone every request is refused.
+// r[verify item.axum.request-decider]
+#[tokio::test]
+async fn a_presentation_is_released_however_its_request_ends() {
+    let unreachable = FakeHost::deciding(|_| Err(Error::Exhausted));
+    let unavailable = send(
+        &refusable(&unreachable, get(ok)),
+        request("/", &[("authorization", &bearer("tenant"))]),
+    )
+    .await;
+    assert_eq!(unavailable.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(unreachable.released(), 1, "the decision failed");
+
+    let host = FakeHost::allowing();
+    let app = refusable(&host, get(ok));
+    for (header, status) in [
+        ("x-hook", StatusCode::PAYMENT_REQUIRED),
+        ("x-tenant", StatusCode::FORBIDDEN),
+        ("x-scope", StatusCode::PAYMENT_REQUIRED),
+    ] {
+        let before = host.released();
+        let headers = [("authorization", &*bearer("tenant")), (header, "1")];
+        assert_eq!(send(&app, request("/", &headers)).await.status, status);
+        assert_eq!(host.released(), before + 1, "refused by {header}");
+    }
+    assert_eq!(host.accepted().len(), 3);
+    assert_eq!(host.decided().len(), 0, "all refused before deciding");
+}
+
+// r[verify item.axum.request-decider]
+#[tokio::test]
+async fn a_presentation_is_released_when_its_handler_panics_or_is_dropped() {
+    use tower::ServiceExt;
+
+    let host = FakeHost::allowing();
+    let token = bearer("tenant");
+    let panicking = refusable(
+        &host,
+        get(|headers: axum::http::HeaderMap| async move {
+            // Indexing by a header the request lacks panics.
+            headers["x-absent"].len().to_string()
+        }),
+    );
+    let call = panicking.oneshot(request("/", &[("authorization", &token)]));
+    assert!(tokio::spawn(call).await.unwrap_err().is_panic());
+    assert_eq!(host.released(), 1, "the handler panicked");
+
+    // The client goes away while the handler is still working.
+    let (started, working) = tokio::sync::oneshot::channel::<()>();
+    let started = Arc::new(Mutex::new(Some(started)));
+    let waiting = refusable(
+        &host,
+        get(move || {
+            drop(started.lock().unwrap().take());
+            std::future::pending::<()>()
+        }),
+    );
+    let call = tokio::spawn(waiting.oneshot(request("/", &[("authorization", &token)])));
+    let _ = working.await;
+    assert_eq!(host.released(), 1, "held while the handler works");
+    call.abort();
+    assert!(call.await.unwrap_err().is_cancelled());
+    assert_eq!(host.released(), 2, "the request's future was dropped");
+    assert_eq!(host.accepted().len(), 2);
+}
+
 #[tokio::test]
 async fn proofs_are_checked_against_the_public_url() {
     let host = FakeHost::allowing();

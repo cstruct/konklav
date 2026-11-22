@@ -11,7 +11,7 @@ use konklav_relying::policy::{Policy, ResolvedScope};
 use konklav_relying_client::{Presented, RequestDescriptor, Verified};
 use konklav_token::{AccessClaims, TokenKind};
 
-use crate::decider::RequestDecider;
+use crate::decider::{HeldPresentation, RequestDecider};
 use crate::outcome::{Forbidden, Scheme, Unauthenticated};
 use crate::{Denied, Konklav, RoutePolicyError};
 
@@ -130,6 +130,10 @@ fn own_url(parts: &Parts) -> String {
     format!("http://{host}{path}")
 }
 
+/// An evaluation, with what holds its accepted presentation, if any, until
+/// the request is answered.
+pub(crate) type Evaluated = (Evaluation, Option<HeldPresentation>);
+
 impl Konklav {
     /// The request's token: from `Authorization`, the cookie hook or, for
     /// websockets, the `token` query parameter.
@@ -233,18 +237,20 @@ impl Konklav {
     }
 
     /// Evaluates `policy` for the request: nothing for a public one, else
-    /// one acceptance and one decision.
+    /// one acceptance and one decision. The accepted presentation is
+    /// released when what holds it is dropped, here for a refused request.
     pub(crate) async fn evaluate(
         &self,
         policy: &Policy,
         parts: &mut Parts,
-    ) -> Result<Evaluation, Response> {
+    ) -> Result<Evaluated, Response> {
         // r[impl item.axum.public]
         let Some(admitted) = policy.admitted_token_kinds() else {
-            return Ok(Evaluation::Public {
+            let public = Evaluation::Public {
                 verified: false,
                 token: None,
-            });
+            };
+            return Ok((public, None));
         };
         // Where each scope comes from, checked before reading any token.
         for kind in policy.scope_kinds() {
@@ -280,7 +286,10 @@ impl Konklav {
             }
             Err(_) => return Err(self.respond(Denied::Unavailable)),
         };
-        let token = accepted.claims();
+        // r[impl item.axum.request-decider]
+        let decider = RequestDecider::new(self.inner.host.clone(), accepted);
+        let held = HeldPresentation::new(decider.clone());
+        let token = decider.claims();
         self.run_hooks(parts, token).await?;
 
         // r[impl item.axum.token-tenant]
@@ -307,22 +316,21 @@ impl Konklav {
 
         // r[impl item.axum.single-decision]
         let token = token.clone();
-        let decider = RequestDecider::new(self.inner.host.clone(), accepted);
         let Ok(decision) = self
             .host()
             .decide_accepted(decider.accepted(), &requirements, true)
             .await
         else {
-            decider.release();
             return Err(self.respond(Denied::Unavailable));
         };
         let denied = match decision {
             Decision::Allow { .. } => {
-                return Ok(Evaluation::Allowed {
+                let allowed = Evaluation::Allowed {
                     token,
                     admitted,
                     decider,
-                });
+                };
+                return Ok((allowed, Some(held)));
             }
             Decision::StepUp { requirement } => Denied::StepUpRequired {
                 requirement,
@@ -342,7 +350,6 @@ impl Konklav {
             },
             Decision::Deny { reason } => Denied::Forbidden(Forbidden::Decision(reason)),
         };
-        decider.release();
         Err(self.respond(denied))
     }
 }

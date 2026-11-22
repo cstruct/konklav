@@ -98,7 +98,11 @@ made but without checking the proof again and never as the route decision,
 so with the route's route authority (`relying.verify.route-authority`),
 and that fails closed. Once the
 handler has answered, the layer MUST release the presentation, so the
-request decider decides nothing after its request.
+request decider decides nothing after its request. The layer MUST release
+it however else the request ends too: refused after it was accepted (by a
+hook, the route tenant, a scope resolver, the decision or a rate limit), by
+a handler that panics, or by its future being dropped, as when the client
+goes away.
 
 r[item.axum.scope-resolvers]
 The relying system MUST be able to configure one scope resolver per scope
