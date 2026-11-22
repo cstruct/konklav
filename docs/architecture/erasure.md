@@ -39,14 +39,14 @@ transaction:
 | --- | --- |
 | Sessions | Revoked with reason `subject_erased`, with the sessions started from them. Identity-provider claims and DPoP key thumbprints are cleared. The rows go when session retention allows, as for any ended session. |
 | Credentials, MFA factors | Deleted. This is the only operation that deletes a credential (`r[credential.history]`). |
-| Challenges | Deleted, both those made for the subject and those sent to one of its recipients without naming a subject, such as an invite. |
-| Login attempts | Deleted for the subject's login identifiers. |
+| Challenges | Deleted, both those made for the subject and those sent to one of its own addresses without naming a subject, such as an invite. |
+| Login attempts | Deleted for the subject's own addresses, and for its MFA factors. |
 | Memberships | Ended, and their facts and metadata removed. |
 | Metadata | Removed from the subject and its memberships. The metadata of its credentials and invites goes with them. |
 | Role assignments | Deleted, global ones included. |
 | History | Every row version of the subject's memberships loses its facts and metadata, and every row version of the subject its metadata. |
-| Stored events | `delivery.requested` events for the subject, or to one of its recipients without naming a subject, are deleted. So are earlier `metadata.changed` events about the subject, its credentials, memberships and invites. `invite.redeemed` events for the subject keep their ids and lose the invite's metadata. Gaps in the feed's cursors are normal, so consumers notice nothing. |
-| Remembered batch answers | Deleted where they name the subject or one of its recipients, or were remembered for it as the caller. |
+| Stored events | `delivery.requested` events for the subject, or to one of its own addresses without naming a subject, are deleted. So are earlier `metadata.changed` events about the subject, its credentials, memberships and invites. `invite.redeemed` events for the subject keep their ids and lose the invite's metadata. Gaps in the feed's cursors are normal, so consumers notice nothing. |
+| Remembered batch answers | Deleted where they name the subject or one of its own addresses, or were remembered for it as the caller. |
 | The subject | Becomes `erased`, with the time. |
 
 Then it appends `subject.erased`, after the `session.changed` and
@@ -76,6 +76,41 @@ a subject, so bulk SQL from an import can't get around it.
 
 The login identifiers are free again. If the person returns, they sign up
 as a new subject, and nothing connects the two.
+
+### Which addresses are the subject's own
+
+Most of what erasure removes names the subject by id. Some rows don't:
+login attempts are kept by login identifier, and an invite to someone new,
+its delivery request and a remembered batch answer hold an address only.
+Erasure and the report match those by the subject's own addresses
+(`r[subject.erasure.own-addresses]`):
+
+- the login identifiers of its credentials
+- the email addresses its federated credentials carry
+- the email addresses of the MFA factors it has proven, removed ones
+  included
+
+Two kinds of address are left out on purpose. Anyone signed in can enrol
+any address as an email factor, and a challenge for a subject can be sent
+anywhere, so neither says the address is the subject's. If they counted,
+enrolling someone else's address would put that person's login attempts
+and pending invites in one's own report, and erasing oneself would delete
+them. The factor and the challenge themselves name the subject and go
+with it, whatever address they hold.
+
+An address that another subject holds at the time is left out too: the
+login identifier of a credential of theirs that isn't revoked, or a proven
+factor of theirs that isn't removed. This is what happens to a revoked
+credential's login identifier once someone else has taken it. The login
+identifier of the subject's own credential that isn't revoked always
+counts, since the login attempts under it are attempts to sign in as that
+subject.
+
+The cost is that rows which name no subject can outlive an erasure when
+nothing proves whose they are, for instance an invite to an address two
+subjects have both proven. They hold an address and nothing else about a
+person, and go when challenge retention, feed retention, the rate-limit
+window or the batch answer's lifetime removes them.
 
 ### Why sessions keep no credential
 
@@ -110,8 +145,8 @@ statements that empty the subject's and memberships' metadata emit
 stay, so a relying system that mirrors metadata sees it go.
 
 An invite counts as the subject's when it was made for the subject, was
-sent to one of its addresses without naming a subject, or was redeemed by
-it. Only the `invite.redeemed` event records who redeemed a link-only
+sent to one of its own addresses without naming a subject, or was redeemed
+by it. Only the `invite.redeemed` event records who redeemed a link-only
 invite, so once the feed has dropped that event, an invite still waiting
 for challenge retention is no longer tied to anyone and stays until that
 retention removes it.
@@ -143,6 +178,8 @@ handle themselves:
 
 Address-only login attempts (those not tied to a login identifier) stay
 until the rate-limit window passes, since nothing links them to a subject.
+The same goes for rows that hold only an address the subject never proved
+to be its own (see "Which addresses are the subject's own").
 
 ## Relying systems
 

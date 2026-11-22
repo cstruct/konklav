@@ -342,12 +342,12 @@ pub struct Erasure {
 /// 1. its sessions are revoked and lose identity-provider claims and DPoP
 ///    key thumbprints
 /// 2. the challenges and stored delivery requests made for it, or sent to
-///    one of its recipients without naming a subject
-/// 3. the login attempts for its login identifiers and MFA factors
+///    one of its own addresses ([`recipients`]) without naming a subject
+/// 3. the login attempts for its own addresses and MFA factors
 /// 4. its MFA factors and credentials
 /// 5. its role assignments; its memberships end and lose their facts, in
 ///    their row versions too
-/// 6. the remembered batch answers that name it or one of its recipients
+/// 6. the remembered batch answers that name it or one of its own addresses
 ///
 /// Erasing an erased subject changes nothing.
 ///
@@ -481,8 +481,8 @@ async fn remove_held(
             .to_owned(),
         format!("delete from challenge where {CHALLENGES}"),
         // Delivery requests that name no subject, such as an invite to
-        // someone new, are matched by recipient. Those naming another
-        // subject are that subject's.
+        // someone new, are matched by the subject's own addresses. Those
+        // naming another subject are that subject's.
         "delete from event
          where kind = 'delivery.requested'
            and (payload ->> 'subject' = $1::text
@@ -533,10 +533,11 @@ async fn remove_held(
 }
 
 /// The challenges that are an erased subject's, with the subject as `$1` and
-/// its recipients as `$2`: those made for it, those sent to one of its
-/// recipients without naming a subject, such as an invite to someone new,
-/// and the invites it redeemed, which the feed remembers. Those naming
-/// another subject are that subject's.
+/// its own addresses ([`recipients`]) as `$2`: those made for it, wherever
+/// they were sent, those sent to one of its addresses without naming a
+/// subject, such as an invite to someone new, and the invites it redeemed,
+/// which the feed remembers. Those naming another subject are that
+/// subject's.
 pub(crate) const CHALLENGES: &str = "(
     subject_id = $1
     or credential_id in (select id from credential where subject_id = $1)
@@ -547,10 +548,19 @@ pub(crate) const CHALLENGES: &str = "(
               where kind = 'invite.redeemed' and payload ->> 'subject' = $1::text)
 )";
 
-/// Everything Konklav knows the subject by or reaches it at: its login
-/// identifiers, the email addresses of its federated credentials and MFA
-/// factors, and where its challenges were sent. Never an empty string, which
-/// is the recipient of every challenge that was sent nowhere.
+/// The addresses that are the subject's own, by which rows that don't name
+/// it are matched: the login identifiers of its credentials, the email
+/// addresses its federated credentials carry, and those of the MFA factors
+/// it has proven. An address a factor was enrolled with but never proven,
+/// or one a challenge for the subject was merely sent to, is not: anyone can
+/// name any address there.
+///
+/// An address another subject holds now, as the login identifier of a
+/// credential that isn't revoked or in a proven factor that isn't removed,
+/// is left out, unless it is the login identifier of one of this subject's
+/// own credentials that isn't revoked. Never an empty string, which is the
+/// recipient of every challenge that was sent nowhere.
+// r[impl subject.erasure.own-addresses]
 pub(crate) async fn recipients(
     conn: &mut AsyncPgConnection,
     subject: uuid::Uuid,
@@ -561,12 +571,22 @@ pub(crate) async fn recipients(
         value: String,
     }
     Ok(diesel::sql_query(
-        "select value from (
+        "select identifier as value from credential
+         where subject_id = $1 and revoked_at is null and identifier <> ''
+         union
+         select value from (
              select identifier as value from credential where subject_id = $1
              union select data ->> 'email' from credential where subject_id = $1
-             union select data ->> 'email' from mfa_factor where subject_id = $1
-             union select recipient from challenge where subject_id = $1
-         ) known where value is not null and value <> ''",
+             union select data ->> 'email' from mfa_factor where subject_id = $1 and active
+         ) known
+         where value is not null and value <> ''
+           and not exists (
+               select 1 from credential
+               where identifier = known.value and subject_id <> $1 and revoked_at is null)
+           and not exists (
+               select 1 from mfa_factor
+               where data ->> 'email' = known.value and subject_id <> $1
+                 and active and removed_at is null)",
     )
     .bind::<Uuid, _>(subject)
     .get_results::<Known>(conn)

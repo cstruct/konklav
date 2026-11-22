@@ -727,6 +727,50 @@ async fn held_by_ada(app: &TestApp, tenant: &str) -> Held {
     }
 }
 
+fn attempts_for<'a>(report: &'a Reply, identifier: &str) -> Vec<&'a Value> {
+    report.body["login_attempts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|attempt| attempt["identifier"] == identifier)
+        .collect()
+}
+
+// Enrolling someone else's address as an email factor proves nothing, so it
+// must not bring their login attempts into the report or the erasure.
+// r[verify subject.erasure.own-addresses]
+#[tokio::test(flavor = "multi_thread")]
+async fn enrolling_someone_elses_address_claims_none_of_their_data() {
+    let app = TestApp::new().await;
+    let grace = app.human("grace@example.com", PASSWORD).await;
+    let mallory = app.human("mallory@example.com", PASSWORD).await;
+    let wrong = app.login("grace@example.com", "not the password").await;
+    assert!(!wrong.status.is_success());
+    let held = personal_data(&app, &grace).await;
+    assert_eq!(attempts_for(&held, "grace@example.com").len(), 1);
+
+    let login = app.login("mallory@example.com", PASSWORD).await;
+    let auth = format!("Bearer {}", login.body["access_token"].as_str().unwrap());
+    let enrolled = app
+        .send(
+            Method::POST,
+            "/v1/mfa/email",
+            &[("authorization", &auth)],
+            Some(json!({"email": "grace@example.com"})),
+        )
+        .await;
+    assert_eq!(enrolled.status, StatusCode::CREATED, "{:?}", enrolled.body);
+
+    let report = personal_data(&app, &mallory).await;
+    assert_eq!(report.status, StatusCode::OK, "{:?}", report.body);
+    assert_eq!(report.body["mfa_factors"][0]["email"], "grace@example.com");
+    assert_eq!(attempts_for(&report, "grace@example.com").len(), 0);
+
+    assert_eq!(erase(&app, &mallory).await.status, StatusCode::OK);
+    let held = personal_data(&app, &grace).await;
+    assert_eq!(attempts_for(&held, "grace@example.com").len(), 1);
+}
+
 // r[verify subject.report.contents]
 // r[verify subject.report.no-secrets]
 // r[verify subject.report.erased]

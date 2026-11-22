@@ -156,14 +156,27 @@ MUST:
   as impersonation sessions, and erase the claims an identity provider
   passed and the key thumbprint from each
 - delete its credentials, its MFA factors and the challenges made for it,
-  or sent to one of its recipients without naming a subject
-- delete the login attempts recorded for its login identifiers
+  or sent to one of its own addresses (`subject.erasure.own-addresses`)
+  without naming a subject
+- delete the login attempts recorded for its own addresses
 - end its memberships and remove their facts
 - delete its role assignments, global ones included
 - delete the stored `delivery.requested` events made for it, or sent to
-  one of its recipients without naming a subject
-- delete the remembered batch answers that name it or one of its login
-  identifiers
+  one of its own addresses without naming a subject
+- delete the remembered batch answers that name it or one of its own
+  addresses
+
+r[subject.erasure.own-addresses]
+Where erasure or the personal data report matches data that doesn't name
+the subject, it MUST match by the subject's own addresses only: the login
+identifiers of its credentials, the email addresses its federated
+credentials carry, and the email addresses of the MFA factors it has
+proven. The address of a factor that was never proven, and the recipient
+of a challenge made for the subject, MUST NOT count, since anyone can name
+any address there. An address that another subject holds at the time, as
+the login identifier of a credential that isn't revoked or in a proven MFA
+factor that isn't removed, MUST NOT count either, unless it is the login
+identifier of one of the subject's own credentials that isn't revoked.
 
 r[subject.erasure.metadata]
 Erasure MUST remove the metadata of the subject, of its credentials, of

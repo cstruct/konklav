@@ -85,6 +85,7 @@ pub struct LoginAttempt {
 // r[impl subject.report.contents]
 // r[impl subject.report.erased]
 // r[impl subject.report.complete]
+// r[impl subject.erasure.own-addresses]
 pub async fn of(conn: &mut AsyncPgConnection, id: SubjectId) -> StoreResult<PersonalData> {
     let subject = subjects::get(conn, id)
         .await
@@ -114,7 +115,8 @@ pub async fn of(conn: &mut AsyncPgConnection, id: SubjectId) -> StoreResult<Pers
     };
     let subject_id = uuid::Uuid::from(id);
     let recipients = subjects::recipients(conn, subject_id).await?;
-    // The same rows `subjects::erase` deletes.
+    // The same rows `subjects::erase` deletes, matched by the same
+    // addresses.
     let challenges = diesel::sql_query(format!(
         "select id, purpose, recipient, metadata, created_at, expires_at, consumed_at, revoked_at
          from challenge where {} order by created_at, id",
