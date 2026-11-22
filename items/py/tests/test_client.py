@@ -4,6 +4,7 @@ import uuid
 from typing import Any
 
 import httpx
+import konklav_relying
 import pytest
 
 from konklav_relying import (
@@ -617,5 +618,52 @@ def test_a_fetch_cancelled_with_its_request_is_reported_as_failed() -> None:
         with pytest.raises(asyncio.CancelledError):
             await fetch
         assert due() == [{"need": "jwks"}]
+
+    asyncio.run(scenario())
+
+
+# The core asks for a failed fetch again at once, and for a JWKS until it
+# lands: with Konklav down, background work polled without a pause.
+# r[verify relying.cache.background-backoff]
+def test_background_work_backs_off_while_fetches_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        attempts = 0
+        waits: list[float] = []
+        enough = asyncio.Event()
+
+        async def down(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 100:
+                enough.set()
+            await asyncio.sleep(0)
+            raise httpx.ConnectError("down")
+
+        async def sleep(seconds: float) -> None:
+            waits.append(seconds)
+            if len(waits) == 8:
+                enough.set()
+            await asyncio.sleep(0)
+
+        monkeypatch.setattr(konklav_relying, "_sleep", sleep)
+        client = RelyingClient(
+            relying_url="http://konklav",
+            subject_url="http://konklav",
+            key_id="key",
+            secret="secret",
+            issuer=ISSUER,
+            audience=AUDIENCE,
+            http=httpx.AsyncClient(transport=httpx.MockTransport(down)),
+        )
+        work = asyncio.create_task(client._run_work())
+        await asyncio.wait_for(enough.wait(), timeout=5)
+        work.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await work
+
+        assert attempts == len(waits) == 8, "one wait after each failure"
+        # From 250 ms doubling to 10 s, each drawn from its upper half.
+        for wait, full in zip(waits, [0.25, 0.5, 1, 2, 4, 8, 10, 10], strict=True):
+            assert full / 2 <= wait <= full
 
     asyncio.run(scenario())

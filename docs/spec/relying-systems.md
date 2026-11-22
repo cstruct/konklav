@@ -128,6 +128,14 @@ The relying SDK MUST refresh entries that are invalidated or close to
 expiry in the background, debounced and coalesced per (subject, tenant), so
 that frequently used entries do not expire on the request path.
 
+r[relying.cache.background-backoff]
+When a background fetch fails, the relying SDK MUST wait before it does
+background work again, rather than ask for the failed fetch at once: 250 ms
+after the first failure, doubling with each further failure in a row to at
+most 10 seconds, each wait drawn at random from its upper half so that
+relying systems that lost Konklav together don't return together. Work in
+which no fetch fails MUST start the waits over.
+
 r[relying.cache.debounce-bound]
 After an `entitlements.changed` event, an affected entry MAY be used for at
 most the debounce window (500 ms by default). After that, decisions for it

@@ -85,6 +85,7 @@ import base64
 import contextlib
 import json
 import logging
+import random
 import threading
 import time
 import urllib.parse
@@ -158,6 +159,25 @@ class InvalidDpopProof(Exception):
 
 _REQUEST_TIMEOUT = 10.0
 """Seconds connecting to Konklav may take, and any request but the feed."""
+
+
+_FETCH_BACKOFF_MIN = 0.25
+"""Seconds: the shortest wait after background work in which a fetch failed."""
+_FETCH_BACKOFF_MAX = 10.0
+"""Seconds: the longest."""
+
+_sleep = asyncio.sleep
+
+
+def _fetch_backoff(failures: int) -> float:
+    """
+    How long background work waits after a fetch failed, in seconds: twice
+    as long for each of the `failures` in a row before it, up to the longest
+    wait, and drawn from its upper half so that hosts that lost Konklav
+    together don't all come back at once.
+    """
+    full = min(_FETCH_BACKOFF_MIN * 2 ** min(failures, 16), _FETCH_BACKOFF_MAX)
+    return random.uniform(full / 2, full)
 
 
 def _now() -> int:
@@ -683,15 +703,26 @@ class RelyingClient:
                 with self._lock:
                     self._core.on_registered_scope(text, _now())
 
+    # r[impl relying.cache.background-backoff]
     async def _run_work(self) -> None:
+        failures = 0
         while True:
             with self._lock:
                 work = json.loads(self._core.poll_work(_now()))
+            failed = False
             for need in work["fetch"]:
                 try:
                     await self._fetch(need)
                 except Exception:
                     _log.warning("background fetch failed: %s", need, exc_info=True)
+                    failed = True
+            if failed:
+                # The core asks for a failed fetch again at once: with
+                # Konklav down that would spin.
+                await _sleep(_fetch_backoff(failures))
+                failures += 1
+                continue
+            failures = 0
             if work["fetch"]:
                 continue
             wait = max(work["next_poll_at"] - _now(), 1) / 1000

@@ -159,6 +159,31 @@ impl Drop for Unreported<'_> {
     }
 }
 
+/// The shortest wait after background work in which a fetch failed.
+const FETCH_BACKOFF_MIN: Duration = Duration::from_millis(250);
+/// The longest.
+const FETCH_BACKOFF_MAX: Duration = Duration::from_secs(10);
+
+/// How long background work waits after a fetch failed: twice as long for
+/// each round that failed in a row, up to the longest wait.
+#[derive(Default)]
+struct FetchBackoff {
+    failures: u32,
+}
+
+impl FetchBackoff {
+    /// The next wait, drawn from its upper half so that hosts that lost
+    /// Konklav together don't all come back at once.
+    fn next(&mut self) -> Duration {
+        let doubled = FETCH_BACKOFF_MIN.saturating_mul(1 << self.failures.min(16));
+        let full = doubled.min(FETCH_BACKOFF_MAX);
+        self.failures = self.failures.saturating_add(1);
+        let half = full / 2;
+        let spread = u64::try_from(half.as_micros()).unwrap_or(u64::MAX);
+        half + Duration::from_micros(pacing::below(spread.saturating_add(1)))
+    }
+}
+
 /// Every token kind, for verifying a token through the check API whatever
 /// its kind.
 const EVERY_TOKEN_KIND: [TokenKind; 5] = [
@@ -718,14 +743,25 @@ impl RelyingClient {
         }
     }
 
+    // r[impl relying.cache.background-backoff]
     async fn run_work(&self) {
+        let mut backoff = FetchBackoff::default();
         loop {
             let work = self.core().poll_work(now());
+            let mut failed = false;
             for need in &work.fetch {
                 if let Err(error) = self.fetch(need).await {
                     tracing::warn!(%error, ?need, "background fetch failed");
+                    failed = true;
                 }
             }
+            if failed {
+                // The core asks for a failed fetch again at once: with
+                // Konklav down that would spin.
+                tokio::time::sleep(backoff.next()).await;
+                continue;
+            }
+            backoff = FetchBackoff::default();
             if !work.fetch.is_empty() {
                 continue;
             }
@@ -826,11 +862,74 @@ async fn checked(response: reqwest::Response) -> Result<reqwest::Response, Error
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     use konklav_relying::{Config, Need};
+    use tokio::sync::Notify;
+    use tracing::span;
 
     use super::{ClientConfig, RelyingClient, now, registered_scope_path};
+
+    /// Counts this crate's warnings, and tells when there are a hundred.
+    struct Warnings {
+        count: Arc<AtomicUsize>,
+        many: Arc<Notify>,
+    }
+
+    impl tracing::Subscriber for Warnings {
+        fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+            *metadata.level() == tracing::Level::WARN && metadata.target().starts_with("konklav")
+        }
+
+        fn event(&self, _: &tracing::Event<'_>) {
+            if self.count.fetch_add(1, Ordering::Relaxed) + 1 == 100 {
+                self.many.notify_one();
+            }
+        }
+
+        fn new_span(&self, _: &span::Attributes<'_>) -> span::Id {
+            span::Id::from_u64(1)
+        }
+
+        fn record(&self, _: &span::Id, _: &span::Record<'_>) {}
+
+        fn record_follows_from(&self, _: &span::Id, _: &span::Id) {}
+
+        fn enter(&self, _: &span::Id) {}
+
+        fn exit(&self, _: &span::Id) {}
+    }
+
+    // The core asks for a failed fetch again at once, and for a JWKS until
+    // it lands: with Konklav down, background work polled without a pause.
+    // r[verify relying.cache.background-backoff]
+    #[tokio::test(start_paused = true)]
+    async fn background_work_backs_off_while_fetches_fail() {
+        // Nowhere to send to, so every fetch fails at once.
+        let client = RelyingClient::new(ClientConfig {
+            relying_url: "no url".into(),
+            subject_url: "no url".into(),
+            key_id: "key".into(),
+            secret: "secret".into(),
+            core: Config::default(),
+        });
+        let (count, many) = (Arc::new(AtomicUsize::new(0)), Arc::new(Notify::new()));
+        let _counting = tracing::subscriber::set_default(Warnings {
+            count: count.clone(),
+            many: many.clone(),
+        });
+        let work = tokio::spawn(async move { client.run_work().await });
+
+        let minute = Duration::from_secs(60);
+        let spun = tokio::time::timeout(minute, many.notified()).await;
+        work.abort();
+        assert!(spun.is_err(), "polled again at once after each failure");
+        // Waits from 250 ms doubling to 10 s, each drawn from its upper half.
+        let failed = count.load(Ordering::Relaxed);
+        assert!((10..=18).contains(&failed), "{failed} fetches in a minute");
+    }
 
     // The core asks for no second JWKS while it takes one to be in flight,
     // so a fetch dropped with its request must not stay in flight for ever.
