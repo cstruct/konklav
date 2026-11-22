@@ -837,6 +837,35 @@ async fn bound_clients_get_service_tokens_with_private_key_jwt() {
     assert_eq!(claims.sub.to_string(), principal.to_string());
     assert_eq!(claims.aud, "robot-api");
     assert_eq!(claims.amr, ["sk"]);
+    assert_eq!(tokens.body["token_type"], "Bearer");
+    assert!(claims.cnf.is_none());
+
+    // With a DPoP proof, the token is bound to its key and says so.
+    // r[verify oidc.provider.dpop.token]
+    let proof = DpopKey::new(1).proof("POST", TOKEN_URL, None);
+    let bound = app
+        .send_form(
+            "/v1/oauth2/token",
+            &[("dpop", &proof)],
+            &[
+                ("grant_type", "client_credentials"),
+                (
+                    "client_assertion_type",
+                    "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+                ),
+                ("client_assertion", &assertion("robot", "jti-dpop")),
+            ],
+        )
+        .await;
+    assert_eq!(bound.status, StatusCode::OK, "{:?}", bound.body);
+    assert_eq!(bound.body["token_type"], "DPoP");
+    let access = bound.body["access_token"].as_str().unwrap();
+    assert!(
+        konklav_token::decode_claims_unverified(access)
+            .unwrap()
+            .cnf
+            .is_some()
+    );
 
     let replayed = grant(assertion("robot", "jti-1")).await;
     assert_eq!(

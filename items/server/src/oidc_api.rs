@@ -1428,7 +1428,7 @@ async fn client_credentials_grant(
         [(header::CACHE_CONTROL, "no-store")],
         Json(serde_json::json!({
             "access_token": access.access_token,
-            "token_type": "Bearer",
+            "token_type": token_type(&session),
             "expires_in": access.expires_in,
         })),
     )
