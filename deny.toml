@@ -17,6 +17,10 @@ ignore = [
   # No release fixes it. Only openidconnect pulls rsa in, as a dev-dependency for the
   # tests against Hydra, which only verify signatures with it: no private-key operation.
   { id = "RUSTSEC-2023-0071", reason = "rsa is only in the Hydra tests, through openidconnect" },
+  # A notice that chrono is no longer maintained, not a vulnerability, and no release
+  # fixes it. Timestamps are chrono's throughout, and Diesel's and utoipa's chrono
+  # support is what stores and documents them, so leaving it means moving those too.
+  { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained but not vulnerable; diesel and utoipa types need it" },
 ]
 
 [licenses]
