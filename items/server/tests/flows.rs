@@ -1724,7 +1724,7 @@ async fn one_ipv6_network_cannot_spread_its_attempts_over_its_addresses() {
 async fn resets_without_a_usable_token_hash_nothing() {
     // No hashing slots: a request that reaches hashing never answers.
     let app = TestApp::with_auth(|auth| {
-        auth.hashing_slots = tokio::sync::Semaphore::new(0);
+        auth.hashing_slots = konklav_server::HashingSlots::new(0, 8);
     })
     .await;
     let unknown = format!("{}.secret", uuid::Uuid::now_v7());
@@ -1737,6 +1737,84 @@ async fn resets_without_a_usable_token_hash_nothing() {
             .await
             .expect("the token is refused before the password is hashed");
         assert_eq!(reset.code(), "INVALID_CREDENTIALS", "{junk}");
+    }
+}
+
+/// How many login attempts are recorded.
+async fn login_attempts(app: &TestApp) -> i64 {
+    #[derive(diesel::QueryableByName)]
+    struct Count {
+        #[diesel(sql_type = diesel::sql_types::BigInt)]
+        count: i64,
+    }
+    let mut conn = app.db.pool().get().await.unwrap();
+    let counted: Count = diesel::sql_query("select count(*) as count from login_attempt")
+        .get_result(&mut conn)
+        .await
+        .unwrap();
+    counted.count
+}
+
+// r[verify authn.login.hashing-bound]
+#[tokio::test(flavor = "multi_thread")]
+async fn logins_beyond_the_hashing_queue_are_refused_at_once() {
+    // No hashing slot and nowhere to wait for one.
+    let app = TestApp::with_auth(|auth| {
+        auth.hashing_slots = konklav_server::HashingSlots::new(0, 0);
+    })
+    .await;
+    for (uri, body) in [
+        (
+            "/v1/login/password",
+            json!({"identifier": EMAIL, "password": PASSWORD}),
+        ),
+        (
+            "/v1/login/secret-key",
+            json!({"key_id": "key", "secret": "secret"}),
+        ),
+    ] {
+        let login = tokio::time::timeout(std::time::Duration::from_secs(10), app.post(uri, body))
+            .await
+            .expect("refused without waiting for a slot");
+        assert_eq!(login.status, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+        assert_eq!(login.code(), "OVERLOADED", "{uri}: {:?}", login.body);
+    }
+    assert_eq!(login_attempts(&app).await, 0, "nothing was tried");
+}
+
+// r[verify authn.login.hashing-bound]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_login_waiting_for_a_hashing_slot_holds_no_database_connection() {
+    // No hashing slot, so logins wait in the queue for good.
+    let app = TestApp::with_auth(|auth| {
+        auth.hashing_slots = konklav_server::HashingSlots::new(0, 8);
+    })
+    .await;
+    let password = app.post(
+        "/v1/login/password",
+        json!({"identifier": EMAIL, "password": PASSWORD}),
+    );
+    let secret_key = app.post(
+        "/v1/login/secret-key",
+        json!({"key_id": "key", "secret": "secret"}),
+    );
+    // Both have counted their attempt once they wait for a slot.
+    let idle = async {
+        loop {
+            let attempts = login_attempts(&app).await;
+            let pool = app.state.pool.status();
+            if attempts == 2 && pool.available == pool.size {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    };
+    tokio::select! {
+        _ = password => panic!("no slot is free"),
+        _ = secret_key => panic!("no slot is free"),
+        idle = tokio::time::timeout(std::time::Duration::from_secs(10), idle) => {
+            idle.expect("the waiting logins hand their connections back");
+        }
     }
 }
 

@@ -39,7 +39,12 @@ maps, so one source can't spread its attempts over the addresses it holds.
 
 r[authn.login.hashing-bound]
 Password and secret-key hashing MUST run with bounded concurrency, so a
-burst of login attempts queues instead of exhausting CPU.
+burst of login attempts queues instead of exhausting CPU. The queue MUST
+be bounded too: a request that finds no place in it MUST be refused at
+once with a typed error, before it counts as a login attempt
+(`authn.login.rate-limit`). A request on the subject-facing surface MUST
+NOT hold a database connection while it waits for hashing or hashes, so
+that queued logins can't keep connections from other requests.
 
 r[authn.login.timing]
 Failed and successful first-factor attempts MUST NOT be distinguishable by

@@ -447,14 +447,20 @@ struct PreviewRequest {
 /// The password credential already registered for `email`, if any, after
 /// checking `password` against it: redeeming an invite to an existing
 /// account proves ownership with that account's password.
+///
+/// It checks out its own database connection and holds none while it
+/// hashes; callers must hold none either.
+// r[impl authn.login.hashing-bound]
 async fn existing_account(
     state: &AppState,
-    conn: &mut konklav_store::Connection,
     email: &str,
     password: &str,
 ) -> Result<Option<konklav_store::credentials::Credential>, ApiError> {
-    let Some(existing) = credentials::find_active(conn, CredentialKind::Password, email).await?
-    else {
+    let found = {
+        let mut conn = state.pool.get().await?;
+        credentials::find_active(&mut conn, CredentialKind::Password, email).await?
+    };
+    let Some(existing) = found else {
         return Ok(None);
     };
     let CredentialData::Password(data) = &existing.data else {
@@ -577,7 +583,11 @@ async fn redeem_invite(
                  password of an existing account",
             )
         })?;
-        Some(check_password(&state, &mut conn, identifier, password.clone(), address).await?)
+        // No connection is held while the password is hashed.
+        drop(conn);
+        let credential = check_password(&state, identifier, password.clone(), address).await?;
+        conn = state.pool.get().await?;
+        Some(credential)
     } else if body.identifier.is_some() {
         return Err(ApiError::invalid_request(
             "an invite to an address is redeemed with its password alone",
@@ -600,7 +610,9 @@ async fn redeem_invite(
         )
         .await;
     }
-    let credential = redeem_emailed(&state, &mut conn, &challenge, &password).await?;
+    drop(conn);
+    let credential = redeem_emailed(&state, &challenge, &password).await?;
+    let mut conn = state.pool.get().await?;
     start_passwordless_session(
         &state,
         &mut conn,
@@ -624,15 +636,17 @@ fn usable(challenge: challenges::Challenge) -> Result<challenges::Challenge, Api
 
 /// Redeems an emailed invite with `password`: links a password credential
 /// for the address to a new subject, or proves the existing account's.
+/// The caller holds no database connection: the passwords are hashed
+/// before one is checked out for the redemption.
 async fn redeem_emailed(
     state: &AppState,
-    conn: &mut konklav_store::Connection,
     challenge: &challenges::Challenge,
     password: &str,
 ) -> Result<konklav_store::credentials::Credential, ApiError> {
     let new = password.to_owned();
     let new_hash = state.auth.hashing(move |hasher| hasher.hash(&new)).await?;
-    let existing = existing_account(state, conn, &challenge.recipient, password).await?;
+    let existing = existing_account(state, &challenge.recipient, password).await?;
+    let mut conn = state.pool.get().await?;
     conn.transaction::<_, ApiError, _>(async |conn| {
         let credential = match existing {
             Some(credential) => credential,

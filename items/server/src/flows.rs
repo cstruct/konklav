@@ -674,7 +674,10 @@ async fn step_up(
             vec![verify_factor(&state, &mut conn, &factor, &code).await?]
         }
         (None, None, Some(password), None) => {
-            verify_password_of(&state, &mut conn, session.subject_id, &password, address).await?;
+            // No connection is held while the password is hashed.
+            drop(conn);
+            verify_password_of(&state, session.subject_id, &password, address).await?;
+            conn = state.pool.get().await?;
             vec!["pwd"]
         }
         (None, None, None, Some((ceremony, passkey))) => {
@@ -697,37 +700,47 @@ async fn step_up(
 }
 
 /// The subject's active password credential, if `password` matches it.
+///
+/// It checks out its own database connections and holds none while it
+/// waits for a hashing slot or hashes; callers must hold none either.
+// r[impl authn.login.hashing-bound]
 async fn verify_password_of(
     state: &AppState,
-    conn: &mut Connection,
     subject: SubjectId,
     password: &str,
     address: ClientAddress,
 ) -> Result<Credential, ApiError> {
-    let credential = credentials::list_for_subject(conn, subject)
-        .await?
-        .into_iter()
-        .find(|c| c.is_active() && c.kind() == CredentialKind::Password)
-        .ok_or_else(|| ApiError::new(ErrorCode::InvalidCredentials, "invalid credentials"))?;
+    // Taken first, so a check the queue has no place for counts nothing.
+    let place = state.auth.hashing_place()?;
+    let (attempt, credential) = {
+        let mut conn = state.pool.get().await?;
+        let credential = credentials::list_for_subject(&mut conn, subject)
+            .await?
+            .into_iter()
+            .find(|c| c.is_active() && c.kind() == CredentialKind::Password)
+            .ok_or_else(|| ApiError::new(ErrorCode::InvalidCredentials, "invalid credentials"))?;
+        // Counts toward the login limit, so step-up and password change
+        // can't be used to guess the password instead.
+        let attempt = begin_attempt(
+            &mut conn,
+            CredentialKind::Password,
+            &credential.identifier,
+            address,
+        )
+        .await?;
+        (attempt, credential)
+    };
     let CredentialData::Password(data) = &credential.data else {
         unreachable!("filtered to passwords")
     };
-    // Counts toward the login limit, so step-up and password change can't
-    // be used to guess the password instead.
-    let attempt = begin_attempt(
-        conn,
-        CredentialKind::Password,
-        &credential.identifier,
-        address,
-    )
-    .await?;
     let (password, hash) = (password.to_owned(), data.hash.clone());
-    let check = state
-        .auth
-        .hashing(move |hasher| hasher.verify(&password, &hash))
+    let check = place
+        .run(move |hasher| hasher.verify(&password, &hash))
         .await?;
     let matched = matches!(check, PasswordCheck::Match { .. });
-    attempt.finish(conn, matched).await?;
+    attempt
+        .finish(&mut *state.pool.get().await?, matched)
+        .await?;
     if matched {
         Ok(credential)
     } else {
@@ -987,13 +1000,19 @@ async fn complete_reset(
     ApiJson(body): ApiJson<CompleteReset>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_password(&body.password)?;
-    let mut conn = state.pool.get().await?;
-    check_link(&mut conn, Purpose::ResetPassword, &body.token).await?;
+    check_link(
+        &mut *state.pool.get().await?,
+        Purpose::ResetPassword,
+        &body.token,
+    )
+    .await?;
     let password = body.password.clone();
+    // No connection is held while the password is hashed.
     let hash = state
         .auth
         .hashing(move |hasher| hasher.hash(&password))
         .await?;
+    let mut conn = state.pool.get().await?;
     let cursor = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let challenge = redeem_link(conn, Purpose::ResetPassword, &body.token).await?;
@@ -1028,21 +1047,15 @@ async fn change_password(
     ApiJson(body): ApiJson<ChangePassword>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_password(&body.new)?;
-    let mut conn = state.pool.get().await?;
-    let session = own_session(&state, &mut conn, &headers).await?;
-    let old = verify_password_of(
-        &state,
-        &mut conn,
-        session.subject_id,
-        &body.current,
-        address,
-    )
-    .await?;
+    let session = own_session(&state, &mut *state.pool.get().await?, &headers).await?;
+    // No connection is held while the passwords are hashed.
+    let old = verify_password_of(&state, session.subject_id, &body.current, address).await?;
     let password = body.new.clone();
     let hash = state
         .auth
         .hashing(move |hasher| hasher.hash(&password))
         .await?;
+    let mut conn = state.pool.get().await?;
     let cursor = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let new = replace_password(conn, &old, hash).await?;

@@ -71,7 +71,7 @@ pub struct AuthContext {
     pub session_lifetime: Duration,
     pub hasher: PasswordHasher,
     /// Bounds concurrent password hashing; see [`AuthContext::hashing`].
-    pub hashing_slots: tokio::sync::Semaphore,
+    pub hashing_slots: HashingSlots,
     pub signer: Signer,
     pub browser: Option<BrowserSettings>,
     /// The bootstrap control-plane token, if configured.
@@ -108,38 +108,110 @@ pub struct BrowserSettings {
     pub require_dpop: bool,
 }
 
-impl AuthContext {
-    /// One hashing slot per CPU.
-    #[must_use]
-    pub fn default_hashing_slots() -> tokio::sync::Semaphore {
-        let cpus = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
-        tokio::sync::Semaphore::new(cpus)
-    }
+/// Bounds password hashing: how many jobs run at once, and how many more
+/// may wait for a slot.
+pub struct HashingSlots {
+    running: Arc<tokio::sync::Semaphore>,
+    /// One place per job that runs or waits.
+    places: Arc<tokio::sync::Semaphore>,
+}
 
-    /// Runs password hashing or verification on the blocking pool, at most
-    /// one per CPU at a time. Without a bound, a burst of logins would queue
-    /// unbounded CPU work and starve everything else; with it, the excess
-    /// waits for a slot.
-    // r[impl authn.login.hashing-bound]
-    pub(crate) async fn hashing<T: Send + 'static>(
-        &self,
+impl HashingSlots {
+    /// Jobs that may wait per job that may run. A waiting request holds
+    /// little, so the queue only needs to be short enough to drain well
+    /// within a request's time limit.
+    const WAITING_PER_SLOT: usize = 32;
+
+    /// At most `running` jobs at a time, with at most `waiting` more
+    /// queued for a slot.
+    #[must_use]
+    pub fn new(running: usize, waiting: usize) -> Self {
+        Self {
+            running: Arc::new(tokio::sync::Semaphore::new(running)),
+            places: Arc::new(tokio::sync::Semaphore::new(running.saturating_add(waiting))),
+        }
+    }
+}
+
+/// A place among the requests that run or wait for password hashing; see
+/// [`AuthContext::hashing_place`].
+#[must_use = "run the hashing, or drop the place to give it up"]
+pub(crate) struct HashingPlace<'a> {
+    auth: &'a AuthContext,
+    place: tokio::sync::OwnedSemaphorePermit,
+}
+
+impl HashingPlace<'_> {
+    /// Waits for a slot and runs `work` on the blocking pool. The slot is
+    /// held until the work ends, even if the request is dropped first.
+    pub(crate) async fn run<T: Send + 'static>(
+        self,
         work: impl FnOnce(&PasswordHasher) -> T + Send + 'static,
     ) -> Result<T, error::ApiError> {
         let metrics = &telemetry::metrics::METRICS;
         let waiting = std::time::Instant::now();
-        let _slot = self
+        let slot = self
+            .auth
             .hashing_slots
-            .acquire()
+            .running
+            .clone()
+            .acquire_owned()
             .await
             .map_err(error::ApiError::internal)?;
         metrics
             .hashing_wait
             .record(telemetry::metrics::seconds(waiting.elapsed()), &[]);
-        metrics.hashing_busy.add(1, &[]);
-        let hasher = self.hasher.clone();
-        let done = tokio::task::spawn_blocking(move || work(&hasher)).await;
-        metrics.hashing_busy.add(-1, &[]);
-        done.map_err(error::ApiError::internal)
+        let hasher = self.auth.hasher.clone();
+        let place = self.place;
+        tokio::task::spawn_blocking(move || {
+            metrics.hashing_busy.add(1, &[]);
+            let done = work(&hasher);
+            metrics.hashing_busy.add(-1, &[]);
+            drop((slot, place));
+            done
+        })
+        .await
+        .map_err(error::ApiError::internal)
+    }
+}
+
+impl AuthContext {
+    /// One hashing slot per CPU, and a bounded queue for each.
+    #[must_use]
+    pub fn default_hashing_slots() -> HashingSlots {
+        let cpus = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+        HashingSlots::new(cpus, cpus.saturating_mul(HashingSlots::WAITING_PER_SLOT))
+    }
+
+    /// Takes a place among the requests that run or wait for password
+    /// hashing, or refuses at once when they are all taken: without a bound
+    /// on the queue, a burst of logins would pile up behind the slots until
+    /// each timed out. Take the place before doing anything else for the
+    /// request, so a refused one costs and records nothing.
+    // r[impl authn.login.hashing-bound]
+    pub(crate) fn hashing_place(&self) -> Result<HashingPlace<'_>, error::ApiError> {
+        match self.hashing_slots.places.clone().try_acquire_owned() {
+            Ok(place) => Ok(HashingPlace { auth: self, place }),
+            Err(_) => Err(error::ApiError::new(
+                error::ErrorCode::Overloaded,
+                "too many logins in progress; try again shortly",
+            )),
+        }
+    }
+
+    /// Runs password hashing or verification on the blocking pool, at most
+    /// one per CPU at a time. Without a bound, a burst of logins would queue
+    /// unbounded CPU work and starve everything else; with it, the excess
+    /// waits for a slot, and what the queue has no place for is refused.
+    ///
+    /// Don't hold a database connection across this: requests queued here
+    /// would pin the pool's connections and starve unrelated endpoints.
+    // r[impl authn.login.hashing-bound]
+    pub(crate) async fn hashing<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&PasswordHasher) -> T + Send + 'static,
+    ) -> Result<T, error::ApiError> {
+        self.hashing_place()?.run(work).await
     }
 
     /// Builds the context from configuration and the already-loaded signer,
@@ -207,7 +279,7 @@ mod tests {
             &config::ControlConfig { control: None },
             signer,
         );
-        auth.hashing_slots = tokio::sync::Semaphore::new(slots);
+        auth.hashing_slots = HashingSlots::new(slots, 16);
         auth
     }
 
@@ -234,5 +306,61 @@ mod tests {
             job.unwrap();
         }
         assert_eq!(peak.load(Ordering::SeqCst), 2);
+    }
+
+    // r[verify authn.login.hashing-bound]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn hashing_refuses_what_its_queue_has_no_place_for() {
+        let mut auth = context(1);
+        auth.hashing_slots = HashingSlots::new(1, 1);
+        let auth = Arc::new(auth);
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let running = {
+            let auth = auth.clone();
+            tokio::spawn(async move { auth.hashing(move |_| held.recv().ok()).await })
+        };
+        let waiting = {
+            let auth = auth.clone();
+            tokio::spawn(async move { auth.hashing(|_| ()).await })
+        };
+        // Both places are taken once the two jobs have started.
+        while auth.hashing_slots.places.available_permits() > 0 {
+            tokio::task::yield_now().await;
+        }
+        let refused = auth.hashing(|_| ()).await.unwrap_err();
+        assert_eq!(refused.code, error::ErrorCode::Overloaded);
+
+        release.send(()).unwrap();
+        running.await.unwrap().unwrap();
+        waiting.await.unwrap().unwrap();
+        // The places come back with the work.
+        while auth.hashing_slots.places.available_permits() < 2 {
+            tokio::task::yield_now().await;
+        }
+        auth.hashing(|_| ()).await.unwrap();
+    }
+
+    // r[verify authn.login.hashing-bound]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_dropped_request_keeps_its_slot_until_its_hashing_ends() {
+        let auth = Arc::new(context(1));
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let (started, running) = tokio::sync::oneshot::channel::<()>();
+        let job = {
+            let auth = auth.clone();
+            tokio::spawn(async move {
+                auth.hashing(move |_| {
+                    started.send(()).ok();
+                    held.recv().ok();
+                })
+                .await
+            })
+        };
+        running.await.unwrap();
+        job.abort();
+        assert!(job.await.unwrap_err().is_cancelled());
+        assert_eq!(auth.hashing_slots.running.available_permits(), 0);
+        release.send(()).unwrap();
+        auth.hashing(|_| ()).await.unwrap();
     }
 }

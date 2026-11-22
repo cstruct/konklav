@@ -474,10 +474,12 @@ async fn login_password(
     headers: HeaderMap,
     ApiJson(body): ApiJson<PasswordLogin>,
 ) -> Result<Response, ApiError> {
+    let browser = {
+        let mut conn = state.pool.get().await?;
+        body.session.check(&state, &mut conn, &headers).await?
+    };
+    let credential = check_password(&state, &body.identifier, body.password, address).await?;
     let mut conn = state.pool.get().await?;
-    let browser = body.session.check(&state, &mut conn, &headers).await?;
-    let credential =
-        check_password(&state, &mut conn, &body.identifier, body.password, address).await?;
     start_session(
         &state,
         &mut conn,
@@ -494,20 +496,28 @@ async fn login_password(
 /// Checks a login identifier and password as password login does,
 /// counting the attempt, and returns the active password credential of an
 /// active human subject they prove. Every failure answers alike.
+///
+/// It checks out its own database connections and holds none while it
+/// waits for a hashing slot or hashes; callers must hold none either.
+// r[impl authn.login.hashing-bound]
 pub(crate) async fn check_password(
     state: &AppState,
-    conn: &mut Connection,
     identifier: &str,
     password: String,
     address: ClientAddress,
 ) -> Result<Credential, ApiError> {
     let kind = CredentialKind::Password;
-    let attempt = begin_attempt(conn, kind, identifier, address).await?;
-
-    let credential = credentials::find_active(conn, kind, identifier).await?;
-    let subject = match &credential {
-        Some(credential) => Some(subjects::get(conn, credential.subject_id).await?),
-        None => None,
+    // Taken first, so a login the queue has no place for counts nothing.
+    let place = state.auth.hashing_place()?;
+    let (attempt, credential, subject) = {
+        let mut conn = state.pool.get().await?;
+        let attempt = begin_attempt(&mut conn, kind, identifier, address).await?;
+        let credential = credentials::find_active(&mut conn, kind, identifier).await?;
+        let subject = match &credential {
+            Some(credential) => Some(subjects::get(&mut conn, credential.subject_id).await?),
+            None => None,
+        };
+        (attempt, credential, subject)
     };
     let hash = match &credential {
         Some(Credential {
@@ -517,9 +527,8 @@ pub(crate) async fn check_password(
         _ => None,
     };
     let candidate = password.clone();
-    let check = state
-        .auth
-        .hashing(move |hasher| match hash {
+    let check = place
+        .run(move |hasher| match hash {
             Some(hash) => hasher.verify(&candidate, &hash),
             None => {
                 hasher.verify_dummy(&candidate);
@@ -533,39 +542,49 @@ pub(crate) async fn check_password(
         .as_ref()
         .is_some_and(|s| s.state == SubjectState::Active && s.kind == SubjectKind::Human);
     let succeeded = usable && matches!(check, PasswordCheck::Match { .. });
-    attempt.finish(conn, succeeded).await?;
+    attempt
+        .finish(&mut *state.pool.get().await?, succeeded)
+        .await?;
     // r[impl platform.error.no-enumeration]
     let (Some(credential), true) = (credential, succeeded) else {
         return Err(invalid_credentials());
     };
 
-    if check == (PasswordCheck::Match { needs_rehash: true }) {
-        let hash = state
+    // A rehash the queue has no place for is left to the next login.
+    if check == (PasswordCheck::Match { needs_rehash: true })
+        && let Ok(hash) = state
             .auth
             .hashing(move |hasher| hasher.hash(&password))
-            .await?;
+            .await
+    {
         let data = CredentialData::Password(credentials::PasswordData { hash });
-        credentials::set_data(conn, credential.id, &data).await?;
+        credentials::set_data(&mut *state.pool.get().await?, credential.id, &data).await?;
     }
     Ok(credential)
 }
 
 /// `POST /v1/login/secret-key`: service principals exchange a secret key
 /// for tokens. Native clients only.
+// r[impl authn.login.hashing-bound]
 async fn login_secret_key(
     State(state): State<AppState>,
     dpop::Bound(dpop_jkt): dpop::Bound,
     address: ClientAddress,
     ApiJson(body): ApiJson<SecretKeyLogin>,
 ) -> Result<Response, ApiError> {
-    let mut conn = state.pool.get().await?;
     let kind = CredentialKind::SecretKey;
-    let attempt = begin_attempt(&mut conn, kind, &body.key_id, address).await?;
-
-    let credential = credentials::find_active(&mut conn, kind, &body.key_id).await?;
-    let subject = match &credential {
-        Some(credential) => Some(subjects::get(&mut conn, credential.subject_id).await?),
-        None => None,
+    // As for passwords: a place in the hashing queue before anything is
+    // counted, and no database connection held while waiting or hashing.
+    let place = state.auth.hashing_place()?;
+    let (attempt, credential, subject) = {
+        let mut conn = state.pool.get().await?;
+        let attempt = begin_attempt(&mut conn, kind, &body.key_id, address).await?;
+        let credential = credentials::find_active(&mut conn, kind, &body.key_id).await?;
+        let subject = match &credential {
+            Some(credential) => Some(subjects::get(&mut conn, credential.subject_id).await?),
+            None => None,
+        };
+        (attempt, credential, subject)
     };
     let now = Utc::now();
     let hashes = match &credential {
@@ -582,9 +601,8 @@ async fn login_secret_key(
         _ => Vec::new(),
     };
     let secret = body.secret.clone();
-    let matched = state
-        .auth
-        .hashing(move |hasher| {
+    let matched = place
+        .run(move |hasher| {
             if hashes.is_empty() {
                 hasher.verify_dummy(&secret);
                 return false;
@@ -602,6 +620,7 @@ async fn login_secret_key(
         .as_ref()
         .is_some_and(|s| s.state == SubjectState::Active && s.kind == SubjectKind::Service);
     let succeeded = usable && matched;
+    let mut conn = state.pool.get().await?;
     attempt.finish(&mut conn, succeeded).await?;
     let (Some(credential), true) = (credential, succeeded) else {
         return Err(invalid_credentials());
