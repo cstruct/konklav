@@ -1403,6 +1403,68 @@ async fn passwordless_and_invite_logins_stay_native_by_default() {
     }
 }
 
+// r[verify authn.impersonation.flags]
+// r[verify session.flags.confine.tenant]
+#[tokio::test(flavor = "multi_thread")]
+async fn impersonation_keeps_the_impersonators_flags() {
+    let app = TestApp::new().await;
+    let tenant = confining_world(&app).await;
+    let support = app.human("support@example.com", PASSWORD).await;
+    let target = app.human(EMAIL, PASSWORD).await;
+    app.control(
+        Method::PUT,
+        "/v1/tenants/root/roles/SUPPORT",
+        Some(json!({"policies": [{"action": "konklav:subject:impersonate", "effect": "allow"}]})),
+    )
+    .await;
+    let assigned = app
+        .control(
+            Method::POST,
+            &format!("/v1/subjects/{support}/global-assignments"),
+            Some(json!({"role": "SUPPORT"})),
+        )
+        .await;
+    assert_eq!(assigned.status, StatusCode::CREATED, "{:?}", assigned.body);
+    let joined = app
+        .control(
+            Method::PUT,
+            &format!("/v1/memberships/{}", uuid::Uuid::now_v7()),
+            Some(json!({"subject": target, "tenant": tenant})),
+        )
+        .await;
+    assert_eq!(joined.status, StatusCode::CREATED, "{:?}", joined.body);
+
+    let restricted = app
+        .post(
+            "/v1/login/password",
+            json!({"identifier": "support@example.com", "password": PASSWORD,
+                   "flags": ["personal_only"]}),
+        )
+        .await;
+    assert_eq!(restricted.status, StatusCode::OK, "{:?}", restricted.body);
+    let restricted = token(&restricted);
+    let body = json!({"subject": target});
+    let impersonating = post_bearer(&app, "/v1/impersonate", &restricted, body).await;
+    assert_eq!(
+        impersonating.status,
+        StatusCode::OK,
+        "{:?}",
+        impersonating.body
+    );
+    let claims = app.verify(&token(&impersonating)).await;
+    assert_eq!(claims.sfl, ["personal_only"]);
+
+    // Nor does it start in a tenant outside the flag's confinement.
+    let body = json!({"subject": target, "tenant": tenant});
+    let outside = post_bearer(&app, "/v1/impersonate", &restricted, body).await;
+    assert_eq!(outside.code(), "FORBIDDEN", "{:?}", outside.body);
+    let sessions = app
+        .control(Method::GET, &format!("/v1/sessions?subject={target}"), None)
+        .await;
+    let sessions = sessions.body["sessions"].as_array().unwrap().len();
+    assert_eq!(sessions, 1, "the refused impersonation starts no session");
+}
+
 /// How many `break_glass.used` events there are.
 async fn break_glass_uses(app: &TestApp, reader: &str) -> usize {
     let events = app

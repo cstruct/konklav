@@ -42,9 +42,10 @@ impersonator?, expires_at, revoked_at?, revoked_reason? }`
   version.
 - Impersonation (`POST /v1/impersonate`) needs the
   `konklav:subject:impersonate` capability. It creates a child session for
-  the target with `act` naming the impersonator. The child lasts at most an
-  hour and never outlives its parent: revoking a session revokes its
-  children.
+  the target with `act` naming the impersonator. The child carries its
+  parent's session flags, so the impersonator's restrictions hold for it
+  too. It lasts at most an hour and never outlives its parent: revoking a
+  session revokes its children.
 
 ## Challenges and delivery
 

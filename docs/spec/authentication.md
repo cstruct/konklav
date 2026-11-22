@@ -454,6 +454,12 @@ Impersonation MUST require an explicit grant (a control-plane capability or
 an assumption grant). It MUST create a session for the target subject whose
 tokens carry the impersonating subject in the actor chain.
 
+r[authn.impersonation.flags]
+An impersonation session MUST carry the session flags of the session that
+started it, so the impersonating subject's restrictions, and their
+confinements (`session.flags.confine.tenant`), hold for what it does as
+the target.
+
 r[authn.impersonation.time-bounded]
 Impersonation and assumption sessions MUST be time-bounded and auditable,
 and MUST be revoked when the impersonating subject's session is revoked.

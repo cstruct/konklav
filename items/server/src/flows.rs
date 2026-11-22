@@ -1093,13 +1093,19 @@ async fn impersonate(
         Some(reference) => {
             let tenant = tenants::parse_reference(reference)
                 .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
-            Some(
-                memberships::find_active(&mut conn, target.id, tenant)
-                    .await?
-                    .ok_or_else(|| {
-                        ApiError::new(ErrorCode::Forbidden, "no active membership in that tenant")
-                    })?,
-            )
+            let membership = memberships::find_active(&mut conn, target.id, tenant)
+                .await?
+                .ok_or_else(|| {
+                    ApiError::new(ErrorCode::Forbidden, "no active membership in that tenant")
+                })?;
+            // The session keeps the caller's flags, and so their
+            // confinements.
+            // r[impl session.flags.confine.tenant]
+            if !parent.flags.is_empty() {
+                let tenant = tenants::get(&mut conn, tenant).await?;
+                issue::check_confinement(&mut conn, &parent.flags, &tenant).await?;
+            }
+            Some(membership)
         }
         None => None,
     };
@@ -1120,7 +1126,10 @@ async fn impersonate(
             client_kind: parent.client_kind,
             amr: parent.amr.clone(),
             auth_time: parent.auth_time,
-            flags: Vec::new(),
+            // The caller's restrictions hold for what it does as the
+            // target too.
+            // r[impl authn.impersonation.flags]
+            flags: parent.flags.clone(),
             impersonator_subject_id: Some(parent.subject_id),
             parent_session_id: Some(parent.id),
             refresh_hash: RefreshToken::generate(id).hash(),
