@@ -41,9 +41,9 @@ use reqwest::Url;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
+use uuid::Uuid;
 
 const CLIENT_ID: &str = "admin";
-const MANAGED_ROLES: [&str; 3] = ["member", "editor", "admin"];
 // Cookies on localhost are shared by every port, so the names are specific.
 const SESSION_COOKIE: &str = "example_admin_session";
 const LOGIN_COOKIE: &str = "example_admin_login";
@@ -212,16 +212,30 @@ impl ControlPlane {
         Ok(value)
     }
 
+    /// Calls the endpoint at `segments` under `/v1`. Each segment is
+    /// percent-encoded, so a value put in the path stays one segment and
+    /// can't lead to another endpoint.
     async fn call(
         &self,
         method: Method,
-        path: &str,
+        segments: &[&str],
         body: Option<Value>,
     ) -> Result<Value, Refused> {
-        let mut request = self
-            .http
-            .request(method, format!("{}/v1{path}", self.url))
-            .bearer_auth(self.token().await?);
+        let url = endpoint(&self.url, segments).ok_or_else(|| {
+            refused(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "KONKLAV_CONTROL_URL is not a base URL",
+            )
+        })?;
+        self.send(self.http.request(method, url), body).await
+    }
+
+    async fn send(
+        &self,
+        request: reqwest::RequestBuilder,
+        body: Option<Value>,
+    ) -> Result<Value, Refused> {
+        let mut request = request.bearer_auth(self.token().await?);
         if let Some(body) = body {
             request = request.json(&body);
         }
@@ -238,12 +252,27 @@ impl ControlPlane {
         Err(refused(status, message))
     }
 
-    async fn get(&self, path: &str) -> Result<Value, Refused> {
-        self.call(Method::GET, path, None).await
+    async fn get(&self, segments: &[&str]) -> Result<Value, Refused> {
+        self.call(Method::GET, segments, None).await
+    }
+
+    /// A page of the people, older than `before` when it is given.
+    async fn subjects_page(&self, before: Option<&str>) -> Result<Value, Refused> {
+        let mut url = endpoint(&self.url, &["subjects"]).ok_or_else(|| {
+            refused(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "KONKLAV_CONTROL_URL is not a base URL",
+            )
+        })?;
+        url.query_pairs_mut().append_pair("kind", "human");
+        if let Some(before) = before {
+            url.query_pairs_mut().append_pair("before", before);
+        }
+        self.send(self.http.get(url), None).await
     }
 
     async fn role_keys(&self) -> Result<HashMap<String, String>, Refused> {
-        let roles = self.get("/tenants/root/roles").await?;
+        let roles = self.get(&["tenants", "root", "roles"]).await?;
         Ok(roles
             .as_array()
             .into_iter()
@@ -256,6 +285,53 @@ impl ControlPlane {
             })
             .collect())
     }
+}
+
+/// `base` with `/v1` and then `segments` added to its path, each segment
+/// percent-encoded (`/`, `?`, `#` and `%` included) and `.` and `..` left
+/// out.
+fn endpoint(base: &str, segments: &[&str]) -> Option<Url> {
+    let mut url = Url::parse(base).ok()?;
+    url.path_segments_mut()
+        .ok()?
+        .pop_if_empty()
+        .push("v1")
+        .extend(segments);
+    Some(url)
+}
+
+/// A role this page assigns and takes away. A request naming any other
+/// role doesn't reach its handler.
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ManagedRole {
+    Member,
+    Editor,
+    Admin,
+}
+
+impl ManagedRole {
+    const ALL: [Self; 3] = [Self::Member, Self::Editor, Self::Admin];
+
+    /// The role's key in Konklav.
+    const fn key(self) -> &'static str {
+        match self {
+            Self::Member => "member",
+            Self::Editor => "editor",
+            Self::Admin => "admin",
+        }
+    }
+}
+
+/// What an admin does to a person besides changing roles.
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum UserAction {
+    /// Ends every session.
+    SignOut,
+    Disable,
+    Enable,
+    Erase,
 }
 
 /// Waits until the relying client has seen a write, so the next decision
@@ -642,20 +718,14 @@ async fn list_users(State(admin): State<Arc<Admin>>, request: Asked) -> Answer {
     let mut users = Vec::new();
     let mut before: Option<String> = None;
     loop {
-        let page_path = match &before {
-            Some(id) => format!("/subjects?kind=human&before={id}"),
-            None => "/subjects?kind=human".into(),
-        };
-        let page = control.get(&page_path).await?;
+        let page = control.subjects_page(before.as_deref()).await?;
         for subject in page["subjects"].as_array().into_iter().flatten() {
             let id = subject["id"].as_str().unwrap_or_default();
             if subject["state"] == "erased" {
                 continue;
             }
-            let (detail_path, assignments_path) = (
-                format!("/subjects/{id}"),
-                format!("/subjects/{id}/global-assignments"),
-            );
+            let (detail_path, assignments_path) =
+                (["subjects", id], ["subjects", id, "global-assignments"]);
             let (detail, assignments) =
                 tokio::try_join!(control.get(&detail_path), control.get(&assignments_path))?;
             let emails: Vec<&str> = detail["credentials"]
@@ -687,7 +757,10 @@ async fn list_users(State(admin): State<Arc<Admin>>, request: Asked) -> Answer {
         }
     }
     users.sort_by_key(|user| user["emails"][0].as_str().unwrap_or_default().to_owned());
-    Ok(Json(json!({"users": users, "roles": MANAGED_ROLES})).into_response())
+    Ok(
+        Json(json!({"users": users, "roles": ManagedRole::ALL.map(ManagedRole::key)}))
+            .into_response(),
+    )
 }
 
 async fn create_user(
@@ -705,57 +778,56 @@ async fn create_user(
         ));
     }
     let control = &admin.control;
-    let subject = uuid::Uuid::new_v4().to_string();
+    let subject = Uuid::new_v4().to_string();
     control
         .call(
             Method::PUT,
-            &format!("/subjects/{subject}"),
+            &["subjects", &subject],
             Some(json!({"kind": "human"})),
         )
         .await?;
     control
         .call(
             Method::POST,
-            &format!("/subjects/{subject}/credentials"),
+            &["subjects", &subject, "credentials"],
             Some(json!({"kind": "password", "identifier": email, "password": password})),
         )
         .await?;
     let written = control
         .call(
             Method::POST,
-            &format!("/subjects/{subject}/global-assignments"),
-            Some(json!({"role": "member"})),
+            &["subjects", &subject, "global-assignments"],
+            Some(json!({"role": ManagedRole::Member.key()})),
         )
         .await?;
     settled(&admin, &written).await;
     Ok((StatusCode::CREATED, Json(json!({"id": subject}))).into_response())
 }
 
+/// The subject is a UUID and the role one this page manages: the path
+/// types refuse anything else before the handler runs, so what goes into
+/// a control-plane path or is compared with the admin's own subject is
+/// never free text.
 async fn set_role(
     State(admin): State<Arc<Admin>>,
-    Path((subject, role)): Path<(String, String)>,
+    Path((subject, role)): Path<(Uuid, ManagedRole)>,
     request: Asked,
 ) -> Answer {
     let (session, _) = authorize(&admin, &request, true).await?;
-    if !MANAGED_ROLES.contains(&role.as_str()) {
-        return Err(refused(
-            StatusCode::BAD_REQUEST,
-            format!("this page manages only {}", MANAGED_ROLES.join(", ")),
-        ));
-    }
+    let (subject, role) = (subject.to_string(), role.key());
     let control = &admin.control;
     if request.method == Method::PUT {
         let written = control
             .call(
                 Method::POST,
-                &format!("/subjects/{subject}/global-assignments"),
+                &["subjects", &subject, "global-assignments"],
                 Some(json!({"role": role})),
             )
             .await?;
         settled(&admin, &written).await;
         return Ok(Json(json!({"ok": true})).into_response());
     }
-    if subject == session.sub && role == "admin" {
+    if subject == session.sub && role == ManagedRole::Admin.key() {
         return Err(refused(
             StatusCode::BAD_REQUEST,
             "you can't take away your own admin role",
@@ -763,14 +835,15 @@ async fn set_role(
     }
     let keys = control.role_keys().await?;
     let assignments = control
-        .get(&format!("/subjects/{subject}/global-assignments"))
+        .get(&["subjects", &subject, "global-assignments"])
         .await?;
     for assignment in assignments.as_array().into_iter().flatten() {
-        if assignment["role_id"].as_str().and_then(|id| keys.get(id)) == Some(&role)
+        let key = assignment["role_id"].as_str().and_then(|id| keys.get(id));
+        if key.map(String::as_str) == Some(role)
             && let Some(id) = assignment["id"].as_str()
         {
             let written = control
-                .call(Method::DELETE, &format!("/assignments/{id}"), None)
+                .call(Method::DELETE, &["assignments", id], None)
                 .await?;
             settled(&admin, &written).await;
         }
@@ -778,25 +851,27 @@ async fn set_role(
     Ok(Json(json!({"ok": true})).into_response())
 }
 
-/// `sign-out` (every session), `disable`, `enable` or `erase`.
+/// Like [`set_role`], takes only a UUID and an action this page offers.
 async fn act_on_user(
     State(admin): State<Arc<Admin>>,
-    Path((subject, action)): Path<(String, String)>,
+    Path((subject, action)): Path<(Uuid, UserAction)>,
     request: Asked,
 ) -> Answer {
     let (session, _) = authorize(&admin, &request, true).await?;
+    let subject = subject.to_string();
+    let own = subject == session.sub;
     let control = &admin.control;
-    let written = match action.as_str() {
-        "sign-out" => {
+    let written = match action {
+        UserAction::SignOut => {
             control
                 .call(
                     Method::POST,
-                    "/sessions/revoke",
+                    &["sessions", "revoke"],
                     Some(json!({"subject": subject, "reason": "signed out by an admin"})),
                 )
                 .await?
         }
-        "disable" if subject == session.sub => {
+        UserAction::Disable if own => {
             return Err(refused(
                 StatusCode::BAD_REQUEST,
                 "you can't disable yourself",
@@ -804,21 +879,30 @@ async fn act_on_user(
         }
         // Konklav refuses a caller erasing itself; this caller is the page's
         // service principal, so the page checks for the admin.
-        "erase" if subject == session.sub => {
+        UserAction::Erase if own => {
             return Err(refused(StatusCode::BAD_REQUEST, "you can't erase yourself"));
         }
-        // `erase` removes what Konklav holds about the person and says so
-        // on the change feed, where the app backend hears it and deletes
-        // their notes.
-        "disable" | "enable" | "erase" => {
+        UserAction::Disable => {
             control
-                .call(Method::POST, &format!("/subjects/{subject}/{action}"), None)
+                .call(Method::POST, &["subjects", &subject, "disable"], None)
                 .await?
         }
-        _ => return Err(refused(StatusCode::NOT_FOUND, "not found")),
+        UserAction::Enable => {
+            control
+                .call(Method::POST, &["subjects", &subject, "enable"], None)
+                .await?
+        }
+        // Removes what Konklav holds about the person and says so on the
+        // change feed, where the app backend hears it and deletes their
+        // notes.
+        UserAction::Erase => {
+            control
+                .call(Method::POST, &["subjects", &subject, "erase"], None)
+                .await?
+        }
     };
     settled(&admin, &written).await;
-    Ok(Json(json!({"ok": true, "you": subject == session.sub})).into_response())
+    Ok(Json(json!({"ok": true, "you": own})).into_response())
 }
 
 // --- Serving -----------------------------------------------------------------
@@ -905,4 +989,81 @@ async fn main() {
         .route("/api/users/{subject}/{action}", post(act_on_user))
         .with_state(admin);
     serve(router, 4000).await;
+}
+
+// --- Tests -------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_path_value_stays_one_segment() {
+        let url = |segments: &[&str]| endpoint("http://konklav:8082", segments).unwrap();
+        assert_eq!(
+            url(&["subjects", "a", "disable"]).as_str(),
+            "http://konklav:8082/v1/subjects/a/disable"
+        );
+        // What axum would hand over for `x%2F..%2F..%2Fkeys%3Fa%23b`.
+        assert_eq!(
+            url(&["subjects", "x/../../keys?a#b", "disable"]).as_str(),
+            "http://konklav:8082/v1/subjects/x%2F..%2F..%2Fkeys%3Fa%23b/disable"
+        );
+        assert_eq!(
+            url(&["subjects", "..", "%2e%2e", "erase"]).as_str(),
+            "http://konklav:8082/v1/subjects/%252e%252e/erase"
+        );
+        // A base URL with a trailing slash gives the same paths.
+        let slash = endpoint("http://konklav:8082/", &["subjects"]).unwrap();
+        assert_eq!(slash.as_str(), "http://konklav:8082/v1/subjects");
+    }
+
+    /// The status a request for `path` gets from the user routes' path
+    /// types alone.
+    async fn status_of(path: &str) -> StatusCode {
+        let router = Router::new()
+            .route(
+                "/api/users/{subject}/roles/{role}",
+                put(|_: Path<(Uuid, ManagedRole)>| async {}),
+            )
+            .route(
+                "/api/users/{subject}/{action}",
+                post(|_: Path<(Uuid, UserAction)>| async {}),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router).await });
+        let method = if path.contains("/roles/") {
+            Method::PUT
+        } else {
+            Method::POST
+        };
+        reqwest::Client::new()
+            .request(method, format!("http://{address}{path}"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+    }
+
+    #[tokio::test]
+    async fn the_user_routes_take_only_uuids_and_known_names() {
+        let id = "018f2b6e-7c1a-7000-8000-000000000001";
+        for good in ["sign-out", "disable", "enable", "erase", "roles/admin"] {
+            let path = format!("/api/users/{id}/{good}");
+            assert_eq!(status_of(&path).await, StatusCode::OK, "{path}");
+        }
+        for bad in [
+            // Another control-plane path, and the admin's own subject
+            // dressed up so it doesn't compare equal.
+            "/api/users/x%2F..%2F..%2Fkeys%3F/disable".to_owned(),
+            format!("/api/users/{id}%2F/erase"),
+            format!("/api/users/{id}%3Fx/disable"),
+            format!("/api/users/{id}/credentials"),
+            format!("/api/users/{id}/roles/konklav.operator"),
+            format!("/api/users/{id}%23/roles/admin"),
+        ] {
+            assert_eq!(status_of(&bad).await, StatusCode::BAD_REQUEST, "{bad}");
+        }
+    }
 }
