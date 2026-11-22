@@ -500,6 +500,13 @@ r[import.credentials]
 Imported password and secret-key credentials MUST be accepted as Argon2
 hashes and stored as given, so existing secrets keep working.
 
+r[import.credentials.cost-limit]
+An imported hash MUST be rejected as an invalid request unless it parses as
+Argon2 with valid parameters of at most 256 MiB of memory, 16 iterations
+and a parallelism of 16. Konklav MUST NOT hash a presented secret against a
+stored hash that asks for more, however it was stored: such a hash never
+matches.
+
 r[import.credentials.secret-key-rotation]
 Re-importing an active secret-key credential with different slots MUST
 replace its slots, so a source system that still rotates keys before

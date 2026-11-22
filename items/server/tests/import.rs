@@ -62,11 +62,43 @@ async fn imported_password_hashes_keep_working_and_imports_rerun() {
             Some(json!({"credentials": [{"id": uuid::Uuid::now_v7(), "subject": subject, "identifier": "x@y", "kind": "password", "password_hash": "plaintext"}]})),
         )
         .await;
-    assert_eq!(
-        bad.code(),
-        "CONFLICT",
-        "the database refuses non-Argon2 hashes"
-    );
+    assert_eq!(bad.code(), "INVALID_REQUEST", "{:?}", bad.body);
+}
+
+// r[verify import.credentials.cost-limit]
+#[tokio::test(flavor = "multi_thread")]
+async fn hashes_that_cost_too_much_are_not_imported() {
+    let app = TestApp::new().await;
+    let (human, service) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+    app.control(
+        Method::POST,
+        "/v1/import/subjects",
+        Some(json!({"subjects": [
+            {"id": human, "kind": "human"}, {"id": service, "kind": "service"},
+        ]})),
+    )
+    .await;
+    // 4 GiB of memory for every login attempt.
+    let costly = HUNTER2.replace("m=65536", "m=4194304");
+    let slot = |hash: &str| json!({"hash": hash, "created_at": "2026-01-01T00:00:00Z"});
+    let key = uuid::Uuid::now_v7();
+    for credential in [
+        json!({"id": uuid::Uuid::now_v7(), "subject": human, "identifier": "costly@example.com",
+            "kind": "password", "password_hash": costly}),
+        json!({"id": key, "subject": service, "identifier": key,
+            "kind": "secret_key", "a": slot(HUNTER2), "b": slot(&costly)}),
+    ] {
+        let reply = app
+            .control(
+                Method::POST,
+                "/v1/import/credentials",
+                Some(json!({"credentials": [credential]})),
+            )
+            .await;
+        assert_eq!(reply.code(), "INVALID_REQUEST", "{:?}", reply.body);
+    }
+    let login = app.login("costly@example.com", "hunter2").await;
+    assert_eq!(login.code(), "INVALID_CREDENTIALS", "{:?}", login.body);
 }
 
 #[tokio::test(flavor = "multi_thread")]

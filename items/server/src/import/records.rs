@@ -2,7 +2,7 @@
 //! credentials, MFA seeds and sessions, keyed by their existing ids.
 
 use chrono::{DateTime, Utc};
-use konklav_authn::SecretBox;
+use konklav_authn::{PasswordHasher, SecretBox};
 use konklav_core::{CredentialId, MembershipId, SessionId, SubjectId, TenantId};
 use konklav_store::Connection;
 use konklav_store::credentials::{
@@ -105,12 +105,28 @@ pub(crate) struct CredentialRecord {
     pub(crate) material: CredentialMaterial,
 }
 
-fn slot(record: SlotRecord) -> SecretSlotData {
-    SecretSlotData {
-        hash: record.hash,
+/// Refuses a hash that isn't Argon2, or that asks for more memory or time
+/// than Konklav spends on a login attempt.
+// r[impl import.credentials.cost-limit]
+fn checked_hash(id: CredentialId, hash: String) -> Result<String, ApiError> {
+    if PasswordHasher::is_argon2(&hash) {
+        Ok(hash)
+    } else {
+        Err(ApiError::invalid_request(format!(
+            "credential {id}: hashes must be Argon2 PHC strings with at most m={}, t={}, p={}",
+            PasswordHasher::MAX_MEMORY_KIB,
+            PasswordHasher::MAX_ITERATIONS,
+            PasswordHasher::MAX_PARALLELISM
+        )))
+    }
+}
+
+fn slot(id: CredentialId, record: SlotRecord) -> Result<SecretSlotData, ApiError> {
+    Ok(SecretSlotData {
+        hash: checked_hash(id, record.hash)?,
         created_at: record.created_at,
         expires_at: record.expires_at,
-    }
+    })
 }
 
 /// Stores a credential with its hashes as given (Argon2 PHC), so imported
@@ -123,11 +139,11 @@ pub(crate) async fn credential(
 ) -> Result<Outcome, ApiError> {
     let data = match record.material {
         CredentialMaterial::Password { password_hash } => CredentialData::Password(PasswordData {
-            hash: password_hash,
+            hash: checked_hash(record.id, password_hash)?,
         }),
         CredentialMaterial::SecretKey { a, b } => CredentialData::SecretKey(SecretKeyData {
-            a: slot(a),
-            b: slot(b),
+            a: slot(record.id, a)?,
+            b: slot(record.id, b)?,
         }),
         CredentialMaterial::EmailLink => CredentialData::EmailLink,
         CredentialMaterial::PhoneOtp => CredentialData::PhoneOtp,
