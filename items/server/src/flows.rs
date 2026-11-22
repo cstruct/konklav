@@ -916,14 +916,17 @@ fn check_password(password: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Replaces a password credential with a new one holding `hash`.
+/// Replaces a password credential with a new one holding `hash`, which
+/// keeps the old one's restrictions. Call it in a transaction, so the new
+/// credential never exists without them.
+// r[impl authn.password.restrictions-kept]
 async fn replace_password(
     conn: &mut Connection,
     old: &Credential,
     hash: String,
 ) -> Result<Credential, ApiError> {
     credentials::revoke(conn, old.id, "replaced").await?;
-    Ok(credentials::insert(
+    let new = credentials::insert(
         conn,
         NewCredential {
             id: CredentialId::new_v7(),
@@ -935,7 +938,8 @@ async fn replace_password(
             metadata: konklav_store::metadata::empty(),
         },
     )
-    .await?)
+    .await?;
+    Ok(credentials::inherit_restrictions(conn, new.id, old).await?)
 }
 
 #[derive(Deserialize)]

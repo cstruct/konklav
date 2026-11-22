@@ -418,6 +418,13 @@ r[authn.reset-password]
 Password reset MUST go through a challenge, and completing it MUST revoke
 the subject's other sessions.
 
+r[authn.password.restrictions-kept]
+A password that replaces another, set by its subject through password reset
+or password change or by an operator through the control plane, MUST keep
+the restrictions of the credential it replaces: its session
+flags (`session.flags.credential`), its MFA requirement and whether it is
+a break-glass credential (`federation.break-glass`).
+
 r[authn.impersonation.actor-chain]
 Impersonation MUST require an explicit grant (a control-plane capability or
 an assumption grant). It MUST create a session for the target subject whose

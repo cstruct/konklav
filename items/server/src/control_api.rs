@@ -943,6 +943,8 @@ async fn replace_password(
                 },
             )
             .await?;
+            // r[impl authn.password.restrictions-kept]
+            let credential = credentials::inherit_restrictions(conn, credential.id, &old).await?;
             let filter = SessionFilter {
                 credential: Some(old_id),
                 ..Default::default()

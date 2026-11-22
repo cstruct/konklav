@@ -1402,3 +1402,104 @@ async fn passwordless_and_invite_logins_stay_native_by_default() {
         assert_eq!(app.verify(&token(&login)).await.sfl, vec!["personal_only"]);
     }
 }
+
+/// How many `break_glass.used` events there are.
+async fn break_glass_uses(app: &TestApp, reader: &str) -> usize {
+    let events = app
+        .with_bearer(
+            Method::GET,
+            "/v1/events/batch?after=0&kinds=break_glass.used",
+            reader,
+        )
+        .await;
+    events.body["events"].as_array().unwrap().len()
+}
+
+// r[verify authn.password.restrictions-kept]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_password_an_operator_sets_keeps_the_credentials_restrictions() {
+    let app = TestApp::new().await;
+    confining_world(&app).await;
+    let subject = app.human(EMAIL, PASSWORD).await;
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    let credential = detail.body["credentials"][0]["id"].as_str().unwrap();
+    for (setting, body) in [
+        ("session-flags", json!({"session_flags": ["personal_only"]})),
+        ("break-glass", json!({"break_glass": true})),
+    ] {
+        let path = format!("/v1/credentials/{credential}/{setting}");
+        let set = app.control(Method::PUT, &path, Some(body)).await;
+        assert_eq!(set.status, StatusCode::OK, "{:?}", set.body);
+    }
+    let replaced = app
+        .control(
+            Method::POST,
+            &format!("/v1/credentials/{credential}/replace"),
+            Some(json!({"password": "set by an operator"})),
+        )
+        .await;
+    assert_eq!(replaced.status, StatusCode::CREATED, "{:?}", replaced.body);
+    assert_eq!(replaced.body["session_flags"], json!(["personal_only"]));
+    assert_eq!(replaced.body["break_glass"], true, "{:?}", replaced.body);
+    let login = app.login(EMAIL, "set by an operator").await;
+    assert_eq!(login.status, StatusCode::OK, "{:?}", login.body);
+    assert_eq!(app.verify(&token(&login)).await.sfl, ["personal_only"]);
+}
+
+// r[verify authn.password.restrictions-kept]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_password_its_subject_sets_keeps_the_credentials_restrictions() {
+    let app = TestApp::new().await;
+    let mailer = mailer(&app).await;
+    confining_world(&app).await;
+    let subject = app.human(EMAIL, PASSWORD).await;
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    let credential = detail.body["credentials"][0]["id"].as_str().unwrap();
+    for (setting, body) in [
+        ("session-flags", json!({"session_flags": ["personal_only"]})),
+        ("break-glass", json!({"break_glass": true})),
+    ] {
+        let path = format!("/v1/credentials/{credential}/{setting}");
+        let set = app.control(Method::PUT, &path, Some(body)).await;
+        assert_eq!(set.status, StatusCode::OK, "{:?}", set.body);
+    }
+    // Each login must be flagged and recorded, whichever password it uses.
+    let mut uses = 0;
+    let mut restricted_login = async |password: &str| {
+        let login = app.login(EMAIL, password).await;
+        assert_eq!(login.status, StatusCode::OK, "{:?}", login.body);
+        let flags = app.verify(&token(&login)).await.sfl;
+        assert_eq!(flags, ["personal_only"], "after setting {password}");
+        uses += 1;
+        assert_eq!(break_glass_uses(&app, &mailer).await, uses, "{password}");
+        login
+    };
+    let session = restricted_login(PASSWORD).await;
+
+    let changed = post_bearer(
+        &app,
+        "/v1/password/change",
+        &token(&session),
+        json!({"current": PASSWORD, "new": "another password"}),
+    )
+    .await;
+    assert_eq!(changed.status, StatusCode::OK, "{:?}", changed.body);
+    restricted_login("another password").await;
+
+    app.post("/v1/password-reset/start", json!({"identifier": EMAIL}))
+        .await;
+    let link = delivered(&app, &mailer, EMAIL).await["token"].clone();
+    let reset = app
+        .post(
+            "/v1/password-reset/complete",
+            json!({"token": link, "password": "a fresh password"}),
+        )
+        .await;
+    assert_eq!(reset.status, StatusCode::OK, "{:?}", reset.body);
+    restricted_login("a fresh password").await;
+}
+
