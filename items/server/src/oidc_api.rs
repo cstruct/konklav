@@ -24,13 +24,13 @@ use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
 use diesel_async::AsyncConnection;
 use konklav_authn::{RefreshToken, generate_secret, hash_challenge_secret};
-use konklav_core::{SessionId, TenantId};
+use konklav_core::{MembershipId, SessionId, TenantId};
 use konklav_store::challenges::{self, Challenge, NewChallenge, Purpose};
 use konklav_store::oidc_clients::{self, ClientKind, OidcClient};
 use konklav_store::sessions::{
     self, ClientKind as SessionClient, NewSession, RequestedClaims, Session, Stage,
 };
-use konklav_store::{Connection, credentials};
+use konklav_store::{Connection, StoreError, credentials, memberships, tenants};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -242,6 +242,10 @@ struct RequestDetails {
     /// The DPoP key thumbprint the code is bound to (`dpop_jkt`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     dpop_jkt: Option<String>,
+    /// The tenant the accepting session was in when it accepted, which the
+    /// client's session gets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    accepted_tenant: Option<TenantId>,
 }
 
 impl RequestDetails {
@@ -269,6 +273,9 @@ struct CodeDetails {
     /// The DPoP key thumbprint the authorization request bound the code to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     dpop_jkt: Option<String>,
+    /// The tenant the sign-in was in when the login request was accepted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tenant: Option<TenantId>,
 }
 
 fn redirect_to(url: &str, params: &[(&str, &str)]) -> Response {
@@ -443,6 +450,7 @@ async fn authorize(state: &AppState, query: AuthorizeQuery) -> Result<Response, 
         refusal: None,
         claims,
         dpop_jkt: query.dpop_jkt.clone(),
+        accepted_tenant: None,
     };
     challenges::create(
         &mut conn,
@@ -672,6 +680,9 @@ async fn accept(
     if details.tenant.is_some() && session.tenant_id != details.tenant {
         return Err(unmet("select the requested tenant first"));
     }
+    // The client gets this tenant, even if the session moves on before the
+    // code is exchanged.
+    details.accepted_tenant = session.tenant_id;
     // The secret goes only to the accepting browser, which must present it
     // together with the starting browser's cookie, so a request started in
     // one browser can't be completed with a session from another.
@@ -839,6 +850,7 @@ async fn resume(
                 claims: details.claims.clone(),
                 issued_session: None,
                 dpop_jkt: details.dpop_jkt.clone(),
+                tenant: details.accepted_tenant,
             })
             .map_err(ApiError::internal)?,
             expires_at: Utc::now() + Duration::seconds(CODE_SECONDS),
@@ -1191,9 +1203,15 @@ async fn code_grant(
             if !parent.is_active_at(Utc::now()) || !subject_api::still_valid(conn, &parent).await? {
                 return Ok(Err("the sign-in has ended"));
             }
+            let tenant = match details.tenant {
+                Some(tenant) => match accepted_membership(conn, &parent, tenant).await? {
+                    Some(membership) => Some((tenant, membership)),
+                    None => return Ok(Err("the sign-in's tenant is no longer available")),
+                },
+                None => None,
+            };
             let (session, refresh) =
-                start_client_session(conn, &parent, client, &details.scopes, &details.claims, jkt)
-                    .await?;
+                start_client_session(conn, &parent, client, tenant, &details, jkt).await?;
             let issued = CodeDetails {
                 issued_session: Some(session.id),
                 ..details.clone()
@@ -1240,14 +1258,41 @@ async fn revoke_if_reused(conn: &mut Connection, id: uuid::Uuid) -> Result<(), A
     Ok(())
 }
 
+/// The subject's membership in `tenant`, where its sign-in was when the
+/// login request was accepted, if the sign-in may still be there: the
+/// tenant is active, the membership too, and the session's flags don't
+/// confine it elsewhere.
+// r[impl oidc.provider.tenant]
+async fn accepted_membership(
+    conn: &mut Connection,
+    parent: &Session,
+    tenant: TenantId,
+) -> Result<Option<MembershipId>, ApiError> {
+    let found = match tenants::get(conn, tenant).await {
+        Ok(found) if found.state == tenants::TenantState::Active => found,
+        Ok(_) | Err(StoreError::NotFound) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let Some(membership) = memberships::find_active(conn, parent.subject_id, tenant).await? else {
+        return Ok(None);
+    };
+    match issue::check_confinement(conn, &parent.flags, &found).await {
+        Ok(()) => Ok(Some(membership.id)),
+        Err(error) if error.code == ErrorCode::Forbidden => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 /// A session for the client, a child of the login application's: same
-/// subject, credential, tenant and authentication, ending with it.
+/// subject, credential and authentication, ending with it, in the tenant
+/// the code carries rather than the parent's current one.
+// r[impl oidc.provider.tenant]
 async fn start_client_session(
     conn: &mut Connection,
     parent: &Session,
     client: &OidcClient,
-    scopes: &[String],
-    claims: &RequestedClaims,
+    tenant: Option<(TenantId, MembershipId)>,
+    code: &CodeDetails,
     dpop_jkt: Option<&str>,
 ) -> Result<(Session, RefreshToken), ApiError> {
     let id = SessionId::new_v7();
@@ -1273,11 +1318,12 @@ async fn start_client_session(
                 },
             )
             .await?;
-            if let (Some(tenant), Some(membership)) = (parent.tenant_id, parent.membership_id) {
+            if let Some((tenant, membership)) = tenant {
                 sessions::select_tenant(conn, session.id, tenant, membership).await?;
             }
             let session =
-                sessions::bind_client(conn, session.id, &client.id, scopes, claims).await?;
+                sessions::bind_client(conn, session.id, &client.id, &code.scopes, &code.claims)
+                    .await?;
             // Claims passed from an identity provider last as long as the
             // sign-in they came with.
             Ok(match &parent.identity_claims {

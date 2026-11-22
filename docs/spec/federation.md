@@ -152,8 +152,8 @@ The authorization endpoint MUST accept requests by `GET` and by form
 confidential client is registered without it. A token request MUST present
 a `code_verifier` exactly when the authorization request sent a
 `code_challenge`. Authorization codes MUST be single-use, short-lived, and
-bound to the client, the redirect URI, the code challenge, the nonce and
-the session. A missing `response_type` MUST be refused as
+bound to the client, the redirect URI, the code challenge, the nonce, the
+session and the tenant the session was in when the request was accepted. A missing `response_type` MUST be refused as
 `invalid_request`, and any other than `code` as
 `unsupported_response_type`.
 
@@ -231,7 +231,11 @@ reuse detection.
 r[oidc.provider.tenant]
 A client MUST be able to target a tenant, either with a `tenant:<id>` scope
 or through tenant selection in the login application. Tokens then carry the
-tenant and membership as they do for direct logins.
+tenant and membership as they do for direct logins. The client's session
+MUST get the tenant the accepting session was in when it accepted the login
+request, even if that session has moved to another tenant by the time the
+code is exchanged, and the code MUST be refused if the subject may no longer
+act in that tenant.
 
 r[oidc.provider.claims]
 `userinfo` and ID tokens MUST only contain claims Konklav holds (the

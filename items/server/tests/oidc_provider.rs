@@ -703,6 +703,82 @@ async fn requests_are_only_accepted_by_sessions_that_satisfy_them() {
     );
 }
 
+/// Makes a tenant and the subject's membership in it, returning both ids.
+async fn join_tenant(world: &World) -> (String, String) {
+    let tenant = uuid::Uuid::now_v7().to_string();
+    let membership = uuid::Uuid::now_v7().to_string();
+    for (path, body) in [
+        (format!("/v1/tenants/{tenant}"), json!({})),
+        (
+            format!("/v1/memberships/{membership}"),
+            json!({"subject": world.subject, "tenant": tenant}),
+        ),
+    ] {
+        let reply = world.app.control(Method::PUT, &path, Some(body)).await;
+        assert_eq!(reply.status, StatusCode::CREATED, "{:?}", reply.body);
+    }
+    (tenant, membership)
+}
+
+/// Moves the login application's session into `tenant`.
+async fn select_tenant(world: &mut World, tenant: &str) {
+    let auth = format!("Bearer {}", world.login_token);
+    let selected = world
+        .app
+        .send(
+            Method::POST,
+            "/v1/login/tenant",
+            &[("authorization", &auth)],
+            Some(json!({"tenant": tenant})),
+        )
+        .await;
+    assert_eq!(selected.status, StatusCode::OK, "{:?}", selected.body);
+    let token = selected.body["access_token"].as_str().unwrap();
+    token.clone_into(&mut world.login_token);
+}
+
+// r[verify oidc.provider.tenant]
+#[tokio::test(flavor = "multi_thread")]
+async fn clients_get_the_tenant_the_request_was_accepted_in() {
+    let mut world = world().await;
+    let (first, membership) = join_tenant(&world).await;
+    let (second, _) = join_tenant(&world).await;
+    let scope = format!("openid tenant:{first}");
+
+    // The sign-in moves to another tenant between accepting the request
+    // and the client exchanging its code.
+    select_tenant(&mut world, &first).await;
+    let code = authorize(&world, &[("scope", &scope)]).await;
+    select_tenant(&mut world, &second).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    assert_eq!(tokens.status, StatusCode::OK, "{:?}", tokens.body);
+    assert_eq!(tokens.body["scope"], scope);
+    let access = tokens.body["access_token"].as_str().unwrap();
+    let claims = konklav_token::decode_claims_unverified(access).unwrap();
+    assert_eq!(claims.tid.unwrap().to_string(), first);
+    assert_eq!(claims.mid.unwrap().to_string(), membership);
+
+    // A code for a tenant the subject has since left is refused.
+    select_tenant(&mut world, &first).await;
+    let code = authorize(&world, &[("scope", &scope)]).await;
+    select_tenant(&mut world, &second).await;
+    let ended = world
+        .app
+        .control(
+            Method::POST,
+            &format!("/v1/memberships/{membership}/end"),
+            None,
+        )
+        .await;
+    assert!(ended.status.is_success(), "{:?}", ended.body);
+    let refused = exchange(&world, &code, VERIFIER).await;
+    assert_eq!(refused.body["error"], "invalid_grant", "{:?}", refused.body);
+    assert_eq!(
+        refused.body["error_description"],
+        "the sign-in's tenant is no longer available"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn public_clients_use_pkce_alone_and_can_get_eddsa_id_tokens() {
     let world = world().await;
