@@ -498,6 +498,7 @@ async fn importing_a_subject_as_disabled_ends_its_sessions() {
     assert!(revoked(&carried.to_string()).await);
 }
 
+// r[verify credential.mfa-seed.bound]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_bound_totp_seed_moved_to_another_factor_does_not_decrypt() {
     use konklav_authn::{EncryptedSecret, EncryptionError};

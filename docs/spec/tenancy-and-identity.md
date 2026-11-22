@@ -107,6 +107,13 @@ r[credential.mfa-requirement]
 A credential MUST be able to declare how many MFA factors it requires
 before login completes.
 
+r[credential.mfa-seed.bound]
+An encrypted TOTP seed that is bound to its MFA factor and that factor's
+subject, as authenticated data of its encryption, MUST say so in its stored
+ciphertext, and MUST NOT decrypt on another factor, for another subject or
+without its binding. A seed stored before seeds were bound MUST keep
+decrypting.
+
 r[credential.revocation-ends-sessions]
 Revoking or replacing a credential MUST revoke the sessions established with
 it, except where the operation explicitly keeps the caller's current

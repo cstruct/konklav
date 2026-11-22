@@ -83,6 +83,7 @@ pub struct Factor {
 /// What a TOTP seed is bound to when it is encrypted: its factor and the
 /// factor's subject. A seed copied to another factor, or a factor moved to
 /// another subject, then no longer decrypts.
+// r[impl credential.mfa-seed.bound]
 #[must_use]
 pub fn totp_binding(id: uuid::Uuid, subject: SubjectId) -> Vec<u8> {
     [

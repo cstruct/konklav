@@ -91,7 +91,7 @@ impl SecretBox {
     /// # Panics
     ///
     /// Panics if the operating system cannot provide randomness.
-    // r[impl authn.mfa.secrets-bound]
+    // r[impl credential.mfa-seed.bound]
     pub fn encrypt_bound(
         &self,
         binding: &[u8],
@@ -137,7 +137,7 @@ impl SecretBox {
     /// secret decrypts only for the owner it was encrypted for, and is
     /// never tried without its binding. A secret that isn't bound, from
     /// before secrets were, decrypts for any owner.
-    // r[impl authn.mfa.secrets-bound]
+    // r[impl credential.mfa-seed.bound]
     pub fn decrypt_bound(
         &self,
         binding: &[u8],
@@ -221,7 +221,7 @@ mod tests {
         );
     }
 
-    // r[verify authn.mfa.secrets-bound]
+    // r[verify credential.mfa-seed.bound]
     #[test]
     fn a_bound_secret_decrypts_only_for_its_owner() {
         let secrets = SecretBox::new([("k1", K1)]).unwrap();
