@@ -86,7 +86,8 @@ Where proofs are checked:
 
 - **One implementation.** `konklav-token` verifies proofs and computes
   thumbprints (`r[item.token.dpop-proof]`). It already builds for `wasm32`
-  and the relying core uses it. ES256 uses the `p256` crate, which is
+  and the relying core uses it. It refuses a `jti` longer than 128 bytes,
+  so what a verifier remembers per proof is bounded. ES256 uses the `p256` crate, which is
   already a workspace dependency. EdDSA reuses `ed25519-dalek`.
 - **Konklav** (token and UserInfo endpoints) compares `htu` with the URLs
   in its discovery document, not the `Host` header

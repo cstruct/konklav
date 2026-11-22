@@ -5,6 +5,7 @@ mod common;
 
 use axum::http::{Method, StatusCode, header};
 use common::{ISSUER, ORIGIN, TestApp};
+use diesel_async::RunQueryDsl;
 use konklav_test_support::DpopKey;
 use serde_json::json;
 
@@ -98,6 +99,53 @@ async fn a_login_with_a_proof_binds_the_session_to_its_key() {
             .status,
         StatusCode::OK
     );
+}
+
+/// A login whose binding proof carries a `jti` of `length` bytes.
+async fn login_with_jti(app: &TestApp, key: &DpopKey, length: usize) -> common::Reply {
+    let proof = key.sign(&json!({
+        "jti": "j".repeat(length),
+        "htm": "POST",
+        "htu": url("/v1/login/password"),
+        "iat": chrono::Utc::now().timestamp(),
+    }));
+    app.send(
+        Method::POST,
+        "/v1/login/password",
+        &[("dpop", &proof)],
+        Some(json!({"identifier": EMAIL, "password": PASSWORD})),
+    )
+    .await
+}
+
+// r[verify token.dpop.proof]
+// r[verify token.dpop.replay]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proof_with_an_overlong_jti_is_refused_and_not_remembered() {
+    #[derive(diesel::QueryableByName)]
+    struct Count {
+        #[diesel(sql_type = diesel::sql_types::BigInt)]
+        count: i64,
+    }
+    let app = TestApp::new().await;
+    app.human(EMAIL, PASSWORD).await;
+    let key = DpopKey::new(1);
+    let refused = login_with_jti(&app, &key, 129).await;
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+    assert!(challenge(&refused).starts_with("DPoP error=\"invalid_dpop_proof\""));
+    let remembered = async || {
+        let mut conn = app.db.pool().get().await.unwrap();
+        let rows: Count = diesel::sql_query("select count(*) as count from dpop_proof")
+            .get_result(&mut conn)
+            .await
+            .unwrap();
+        rows.count
+    };
+    assert_eq!(remembered().await, 0);
+
+    let accepted = login_with_jti(&app, &key, 128).await;
+    assert_eq!(accepted.status, StatusCode::OK, "{:?}", accepted.body);
+    assert_eq!(remembered().await, 1);
 }
 
 // r[verify session.dpop.surfaces]
