@@ -64,6 +64,19 @@ server MUST refuse to start. Its use MUST be logged, the server MUST warn
 at startup while one is configured, and it MUST stop being accepted after
 its configured expiry.
 
+r[platform.config.published-secrets]
+The server MUST refuse to start with a bootstrap token or TOTP encryption
+key that Konklav's repository has published in its development or example
+configuration, naming the setting and asking for a new secret,
+unless the configuration is a development one: browser cookies are not
+marked `Secure`, or the issuer is a plain-HTTP URL on a loopback host.
+
+r[platform.config.https]
+The server MUST refuse to start unless the issuer, and the claims hook's URL
+if one is configured, are `https` URLs, or plain-HTTP URLs on a loopback
+host. A development configuration (`r[platform.config.published-secrets]`)
+is exempt.
+
 r[platform.config.report-all-errors]
 Configuration loading MUST report every problem it finds (unknown keys,
 misplaced secrets, decode errors) together, not just the first one.
