@@ -136,7 +136,10 @@ fn flooding_a_limit_with_keys_resets_no_key() {
         assert_eq!(add(&mut limiter, "used", 0), Ok(()));
     }
     for filler in 0..1000 {
-        assert_eq!(add(&mut limiter, &format!("filler-{filler}"), filler), Ok(()));
+        assert_eq!(
+            add(&mut limiter, &format!("filler-{filler}"), filler),
+            Ok(())
+        );
         assert!(limiter.local_keys() <= 100);
     }
     assert_eq!(add(&mut limiter, "refused", 1000), refused(11_000));
