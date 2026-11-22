@@ -442,6 +442,11 @@ answered exactly as it would be on its own, against the capabilities of
 the batch's caller. A batch MUST NOT add an operation that doesn't exist
 on its own.
 
+r[platform.batch.caller]
+A batch MUST be refused, before any of its operations is tried, unless its
+caller holds at least one control-plane capability or uses the bootstrap
+token.
+
 r[platform.batch.limits]
 A batch MUST hold at most a configured number of operations, 100 by
 default, and MUST count as one request against `platform.server.limits`.

@@ -3,8 +3,8 @@
 //!
 //! Every route needs an operator: the bootstrap token, when configured, or
 //! an access token whose subject holds the route group's capability
-//! (`konklav:control:all` holds them all). The batch route needs only an
-//! operator, since each of its operations is guarded on its own.
+//! (`konklav:control:all` holds them all). The batch route needs only some
+//! capability, since each of its operations is guarded on its own.
 
 use axum::extract::{Extension, Path, Query, Request, State};
 use axum::http::{StatusCode, header};
@@ -131,7 +131,8 @@ pub fn routes(state: &AppState) -> Router<AppState> {
 
 /// Guards control-plane routes: the bootstrap token (when configured), or an
 /// operator's access token whose subject holds `capability` or
-/// `konklav:control:all`. Without a capability, any operator passes.
+/// `konklav:control:all`. Without a capability, a subject holding any
+/// capability passes.
 pub(crate) fn guard(state: &AppState, capability: Option<&'static str>) -> GuardLayer {
     middleware::from_fn_with_state(
         (state.clone(), capability),
@@ -215,7 +216,19 @@ async fn authorize_operator(
         subject: Some(session.subject_id),
     };
     let Some(capability) = capability else {
-        return Ok(operator);
+        // r[impl platform.batch.caller]
+        return if all
+            || !capabilities::held(&mut conn, session.subject_id)
+                .await?
+                .is_empty()
+        {
+            Ok(operator)
+        } else {
+            Err(ApiError::new(
+                ErrorCode::Forbidden,
+                "missing any control-plane capability",
+            ))
+        };
     };
     if all || capabilities::holds(&mut conn, session.subject_id, capability).await? {
         Ok(operator)
