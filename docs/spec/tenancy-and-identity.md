@@ -208,6 +208,8 @@ Every later operation that would give an erased subject a credential, MFA
 factor, membership, role assignment, challenge or session MUST fail with `SUBJECT_ERASED`, whichever way it arrives: the control
 plane, a batch, an import, a bootstrap set or an identity provider's claim
 mapping.
+A write that is under way while the erasure commits MUST either be erased
+with the rest or fail the same way.
 
 r[subject.erasure.identifier-released]
 After erasure, each of the subject's login identifiers MUST be free for

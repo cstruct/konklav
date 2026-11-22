@@ -363,9 +363,10 @@ pub struct Erasure {
 // r[impl subject.report.complete]
 pub async fn erase(conn: &mut AsyncPgConnection, id: SubjectId) -> StoreResult<Erasure> {
     conn.transaction::<_, StoreError, _>(async |conn| {
-        // Writers that attach something to the subject lock its row too
-        // (the foreign-key check and `subject_not_erased`), so they either
-        // committed before this and are erased below, or wait and fail.
+        // Writers that attach something to the subject lock its row first
+        // and look at its state after (`subject_not_erased`), so they
+        // either committed before this and are erased below, or wait for
+        // this to commit and fail.
         let found: Subject = subject::table
             .find(id.as_uuid())
             .for_update()

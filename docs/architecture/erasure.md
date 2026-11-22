@@ -72,7 +72,10 @@ the erased subject. That has three uses:
 - Relying systems can ask which subjects were erased, at any later time.
 
 The database enforces this itself, with triggers on the tables that name
-a subject, so bulk SQL from an import can't get around it.
+a subject, so bulk SQL from an import can't get around it. A trigger
+locks the subject's row before it looks at the state. A write that starts
+while an erasure is under way therefore waits for it and is refused,
+rather than committing behind the erasure's deletes.
 
 The login identifiers are free again. If the person returns, they sign up
 as a new subject, and nothing connects the two.

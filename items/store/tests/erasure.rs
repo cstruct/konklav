@@ -949,6 +949,78 @@ async fn a_login_identifier_someone_else_took_is_theirs() {
     assert_eq!(rows_holding(&mut conn, address).await, vec![]);
 }
 
+/// Waits until some statement in this database waits for a lock.
+async fn until_a_statement_waits(conn: &mut Connection) {
+    #[derive(diesel::QueryableByName)]
+    struct Count {
+        #[diesel(sql_type = BigInt)]
+        waiting: i64,
+    }
+    for _ in 0..200 {
+        let count = diesel::sql_query(
+            "select count(*) as waiting from pg_stat_activity
+             where datname = current_database() and wait_event_type = 'Lock'",
+        )
+        .get_result::<Count>(conn)
+        .await
+        .unwrap();
+        if count.waiting > 0 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("no statement waited for a lock");
+}
+
+// A write that starts while an erasure is under way waits for it, and
+// must then see the erased subject rather than commit behind its deletes.
+// r[verify subject.erasure.blocks-writes]
+// r[verify subject.erasure.removes]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_write_that_waits_for_an_erasure_is_refused() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let id = human(&mut conn).await;
+    password(&mut conn, id, "ada@login.example").await;
+
+    let (erased, until_erased) = tokio::sync::oneshot::channel::<()>();
+    let (commit, until_commit) = tokio::sync::oneshot::channel::<()>();
+    let pool = db.pool().clone();
+    let eraser = tokio::spawn(async move {
+        let mut conn = pool.get().await.unwrap();
+        conn.transaction::<(), StoreError, _>(async move |conn| {
+            subjects::erase(conn, id).await?;
+            erased.send(()).unwrap();
+            until_commit.await.unwrap();
+            Ok(())
+        })
+        .await
+        .unwrap();
+    });
+    until_erased.await.unwrap();
+
+    let pool = db.pool().clone();
+    let writer = tokio::spawn(async move {
+        let mut conn = pool.get().await.unwrap();
+        let new = NewCredential {
+            id: CredentialId::new_v7(),
+            subject_id: id,
+            identifier: "late@login.example".into(),
+            data: CredentialData::Password(PasswordData { hash: HASH.into() }),
+            mfa_factors_required: 0,
+            replaces: None,
+            metadata: metadata::empty(),
+        };
+        credentials::insert(&mut conn, new).await
+    });
+    until_a_statement_waits(&mut conn).await;
+    commit.send(()).unwrap();
+    eraser.await.unwrap();
+
+    refused_as_erased("a credential", &writer.await.unwrap());
+    assert_eq!(rows_holding(&mut conn, "late@login.example").await, vec![]);
+}
+
 fn amounts(held: &PersonalData) -> [usize; 7] {
     [
         held.credentials.len(),
