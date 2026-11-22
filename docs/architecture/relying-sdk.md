@@ -28,6 +28,12 @@ been missed ([erasure](erasure.md#through-the-relying-sdk)).
 Host bindings run a loop: they perform the work items, feed the results
 back, and sleep until `next_wakeup` or until a new event arrives.
 
+A DPoP proof is checked before the token, against the token's unverified
+`cnf`, but remembered only once the token has verified. When the check API
+does that, the host reports back (`confirm_presented`,
+`on_check_presented`), and the core remembers the proof then, refusing it
+if another request used it meanwhile (`r[relying.verify.dpop-replay]`).
+
 ## Why sans-I/O
 
 - One implementation of every rule that matters for security: signature

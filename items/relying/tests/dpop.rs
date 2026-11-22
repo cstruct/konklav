@@ -59,8 +59,12 @@ impl Fixture {
     }
 
     fn token(&self, jkt: Option<String>) -> String {
+        self.token_signed(&self.signer, jkt)
+    }
+
+    fn token_signed(&self, signer: &Signer, jkt: Option<String>) -> String {
         let now = seconds(T0);
-        self.signer.sign(&AccessClaims {
+        signer.sign(&AccessClaims {
             iss: "https://auth.example".into(),
             aud: "api".into(),
             sub: self.subject,
@@ -259,9 +263,131 @@ fn a_full_replay_set_refuses_new_proofs_until_old_ones_expire() {
     assert_eq!(f.decide(&dpop(&token, Some(fresh)), later), allowed());
 }
 
+/// A token of the fixture's subject signed by a key Konklav doesn't have,
+/// bound to the fixture's DPoP key: what anyone can make.
+fn forged(f: &Fixture) -> String {
+    let stranger = Signer::new(SigningKey::from_bytes(&[3; 32]));
+    f.token_signed(&stranger, Some(f.key.jkt()))
+}
+
+// Anyone can sign a proof for a token that doesn't verify. Remembering
+// those would let them fill the replay set and lock every DPoP client out.
+// r[verify relying.verify.dpop-replay]
+#[test]
+fn proofs_for_tokens_that_do_not_verify_take_no_room() {
+    let mut f = Fixture::new(Config {
+        dpop_replay_capacity: 1,
+        jwks_min_refresh_ms: 1_000_000,
+        ..config()
+    });
+    f.warm();
+    let garbage = forged(&f);
+    for jti in ["a", "b"] {
+        let presented = dpop(&garbage, Some(f.proof(&garbage, jti)));
+        assert_eq!(f.decide(&presented, T0), denied(DenyReason::InvalidToken));
+        assert_eq!(
+            f.core.verify_presented(&presented, T0),
+            Verification::Invalid
+        );
+        assert_eq!(f.core.accept_presented(&presented, T0), Acceptance::Invalid);
+    }
+    // Nor through the check API, which finds the token invalid.
+    let presented = dpop(&garbage, Some(f.proof(&garbage, "c")));
+    let invalid = Decision::Deny {
+        reason: DenyReason::InvalidToken,
+    };
+    assert_eq!(
+        f.core.on_check_presented(&presented, invalid, T0),
+        denied(DenyReason::InvalidToken)
+    );
+
+    let token = f.bound();
+    assert_eq!(
+        f.decide(&dpop(&token, Some(f.proof(&token, "d"))), T0),
+        allowed(),
+        "the one slot is still free"
+    );
+}
+
+// r[verify relying.verify.dpop-replay]
+#[test]
+fn a_proof_with_an_overlong_jti_is_refused() {
+    let mut f = Fixture::new(config());
+    f.warm();
+    let token = f.bound();
+    let longest = "j".repeat(128);
+    assert_eq!(
+        f.decide(&dpop(&token, Some(f.proof(&token, &longest))), T0),
+        allowed()
+    );
+    let overlong = "j".repeat(129);
+    assert_eq!(
+        f.decide(&dpop(&token, Some(f.proof(&token, &overlong))), T0),
+        denied(DenyReason::InvalidDpopProof)
+    );
+}
+
+// r[verify relying.verify.dpop-before-check]
+// r[verify relying.verify.dpop-replay]
+#[test]
+fn a_proof_decided_by_the_check_api_is_used_once_the_token_is_vouched_for() {
+    let mut f = Fixture::new(config());
+    f.core.on_feed_lost();
+    let token = f.bound();
+    let presented = dpop(&token, Some(f.proof(&token, "a")));
+    // Two requests with one proof both reach the check API.
+    for _ in 0..2 {
+        assert_eq!(
+            f.decide(&presented, T0),
+            Outcome::Need {
+                needs: vec![Need::Check]
+            }
+        );
+    }
+    // Whatever it decides for a valid token, only the first uses the proof.
+    let forbidden = Decision::Deny {
+        reason: DenyReason::TokenKind,
+    };
+    assert_eq!(
+        f.core.on_check_presented(&presented, forbidden, T0),
+        denied(DenyReason::TokenKind)
+    );
+    assert_eq!(
+        f.core.on_check_presented(&presented, Decision::allow(), T0),
+        denied(DenyReason::InvalidDpopProof)
+    );
+    assert_eq!(
+        f.decide(&presented, T0),
+        denied(DenyReason::InvalidDpopProof)
+    );
+
+    // Verifying and accepting confirm the same way.
+    let presented = dpop(&token, Some(f.proof(&token, "b")));
+    assert_eq!(
+        f.core.verify_presented(&presented, T0),
+        Verification::Need {
+            needs: vec![Need::Check]
+        }
+    );
+    assert!(matches!(
+        f.core.accept_presented(&presented, T0),
+        Acceptance::Check { .. }
+    ));
+    assert!(f.core.confirm_presented(&presented, T0));
+    assert!(!f.core.confirm_presented(&presented, T0));
+    assert_eq!(
+        f.core.accept_presented(&presented, T0),
+        Acceptance::InvalidProof
+    );
+    assert!(
+        f.core
+            .confirm_presented(&Presented::bearer(&f.token(None)), T0)
+    );
+}
+
 // r[verify relying.verify.dpop-before-check]
 #[test]
-fn proofs_are_checked_before_the_check_api_and_count_as_answered() {
+fn proofs_are_checked_before_the_check_api() {
     let mut f = Fixture::new(config());
     f.core.on_feed_lost();
     let token = f.bound();
@@ -276,9 +402,14 @@ fn proofs_are_checked_before_the_check_api_and_count_as_answered() {
             needs: vec![Need::Check]
         }
     );
-    // The host decided through the check API with this proof, so it's used.
+    // A proof for another request never gets that far.
+    let mut elsewhere = presented.clone();
+    elsewhere.request = Some(RequestDescriptor {
+        method: "POST".into(),
+        url: URL.into(),
+    });
     assert_eq!(
-        f.decide(&presented, T0),
+        f.decide(&elsewhere, T0),
         denied(DenyReason::InvalidDpopProof)
     );
 }

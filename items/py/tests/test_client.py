@@ -13,6 +13,7 @@ from konklav_relying import (
     ErasureNotice,
     ErasuresMissed,
     InvalidDpopProof,
+    KonklavError,
     Policy,
     RelyingClient,
 )
@@ -249,6 +250,94 @@ def test_accepted_requests_are_decided_once_with_their_one_proof() -> None:
             assert await client.accept_request(authorization=f"Bearer {stranger}", dpop=None, method="GET", url=url) is None
         finally:
             await client.stop()
+
+    asyncio.run(scenario())
+
+
+def unstarted(fake: FakeKonklav, handle: Any = None) -> RelyingClient:
+    """A client with room for one proof and one presentation, deciding through the check API."""
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handle or fake.handle))
+    return RelyingClient(
+        relying_url="http://konklav",
+        subject_url="http://konklav",
+        key_id="key",
+        secret="secret",
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        http=http,
+        dpop_replay_capacity=1,
+    )
+
+
+# With room for one presentation, one that stayed held would refuse the
+# next request.
+# r[verify item.py.accepted-request]
+# r[verify relying.verify.accepted-presentation]
+def test_presentations_the_check_api_refuses_or_fails_are_released() -> None:
+    async def scenario() -> None:
+        keys = Keys()
+        key = DpopKey()
+        subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
+        fake = FakeKonklav(keys, subject, tenant, session)
+        failing = False
+
+        async def handle(request: httpx.Request) -> httpx.Response:
+            if failing and request.url.path == "/v1/check":
+                return httpx.Response(500)
+            return await fake.handle(request)
+
+        client = unstarted(fake, handle)
+        url = "https://api.example/projects/1"
+
+        def headers(token: str) -> dict[str, str]:
+            return {"authorization": f"DPoP {token}", "dpop": key.proof("GET", url, token), "method": "GET", "url": url}
+
+        # The fake check API refuses tokens for another audience.
+        other = keys.token(subject=subject, session=session, tenant=tenant, jkt=key.jkt(), audience="other")
+        assert await client.accept_request(**headers(other)) is None
+        token = keys.token(subject=subject, session=session, tenant=tenant, jkt=key.jkt())
+        failing = True
+        with pytest.raises(KonklavError):
+            await client.accept_request(**headers(token))
+        failing = False
+        accepted = await client.accept_request(**headers(token))
+        assert accepted is not None, "the earlier presentations are still held"
+        # The accepted one is held until it is released.
+        with pytest.raises(InvalidDpopProof):
+            await client.accept_request(**headers(token))
+
+    asyncio.run(scenario())
+
+
+# r[verify relying.verify.dpop-replay]
+# r[verify relying.verify.dpop-before-check]
+def test_a_proof_the_check_api_decided_with_is_refused_again() -> None:
+    async def scenario() -> None:
+        keys = Keys()
+        key = DpopKey()
+        subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
+        fake = FakeKonklav(keys, subject, tenant, session)
+        client = unstarted(fake)
+        url = "https://api.example/projects/1"
+
+        def headers(token: str) -> dict[str, str]:
+            return {"authorization": f"DPoP {token}", "dpop": key.proof("GET", url, token), "method": "GET", "url": url}
+
+        # A proof for a token the check API refuses takes none of the room.
+        other = keys.token(subject=subject, session=session, tenant=tenant, jkt=key.jkt(), audience="other")
+        refused = await client.decide_request(**headers(other), requirements={})
+        assert refused == {"decision": "deny", "reason": "invalid_token"}
+        assert await client.verify_request(**headers(other)) is None
+
+        token = keys.token(subject=subject, session=session, tenant=tenant, jkt=key.jkt())
+        once = headers(token)
+        assert await client.decide_request(**once, requirements={}) == {"decision": "allow"}
+        replayed = await client.decide_request(**once, requirements={})
+        assert replayed == {"decision": "deny", "reason": "invalid_dpop_proof"}
+        with pytest.raises(InvalidDpopProof):
+            await client.verify_request(**once)
+        with pytest.raises(InvalidDpopProof):
+            await client.accept_request(**once)
 
     asyncio.run(scenario())
 

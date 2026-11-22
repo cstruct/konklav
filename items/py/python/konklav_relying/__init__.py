@@ -301,10 +301,15 @@ class RelyingClient:
             _token_of(authorization),
             requirements,
             lambda: self._core.decide_presented(presented, encoded, _now()),
+            presented,
         )
 
     async def _decide(
-        self, token: str, requirements: Mapping[str, Any], ask: Callable[[], str]
+        self,
+        token: str,
+        requirements: Mapping[str, Any],
+        ask: Callable[[], str],
+        presented: str | None = None,
     ) -> _DecisionJson:
         for _ in range(4):
             with self._lock:
@@ -315,7 +320,13 @@ class RelyingClient:
             if any(need["need"] == "check" for need in needs):
                 # The core has checked any DPoP proof; the check API takes
                 # the token alone.
-                return await self._check(token, requirements)
+                decision = await self._check(token, requirements)
+                if presented is None:
+                    return decision
+                # The proof is used once the check API vouches for the token.
+                with self._lock:
+                    checked = json.loads(self._core.on_check_presented(presented, json.dumps(decision), _now()))
+                return checked["decision"]
             await asyncio.gather(*(self._fetch(need) for need in needs))
         raise KonklavError("could not reach a decision")
 
@@ -376,9 +387,22 @@ class RelyingClient:
                 case "accepted":
                     claims = outcome["claims"]
                 case "check":
-                    claims = await self._verify_centrally(token)
-                    if claims is None:
-                        return None
+                    # Held until this request is answered: released unless
+                    # the check API vouches for the token and the proof is
+                    # still unused.
+                    confirmed = False
+                    try:
+                        claims = await self._verify_centrally(token)
+                        if claims is None:
+                            return None
+                        with self._lock:
+                            confirmed = self._core.confirm_presented(presented, _now())
+                        if not confirmed:
+                            raise InvalidDpopProof("the DPoP proof or scheme is invalid")
+                    finally:
+                        if not confirmed:
+                            with self._lock:
+                                self._core.release_accepted(json.dumps(outcome["presentation"]))
                 case "invalid":
                     return None
                 case "invalid_proof":
@@ -463,9 +487,12 @@ class RelyingClient:
         return await self._verify(
             _token_of(authorization),
             lambda: self._core.verify_presented(presented, _now()),
+            presented,
         )
 
-    async def _verify(self, token: str, ask: Callable[[], str]) -> dict[str, Any] | None:
+    async def _verify(
+        self, token: str, ask: Callable[[], str], presented: str | None = None
+    ) -> dict[str, Any] | None:
         for _ in range(4):
             with self._lock:
                 outcome = json.loads(ask())
@@ -476,7 +503,14 @@ class RelyingClient:
             if outcome["outcome"] == "invalid_proof":
                 raise InvalidDpopProof("the DPoP proof or scheme is invalid")
             if any(need["need"] == "check" for need in outcome["needs"]):
-                return await self._verify_centrally(token)
+                claims = await self._verify_centrally(token)
+                if claims is not None and presented is not None:
+                    # The proof is used once the check API vouches for the token.
+                    with self._lock:
+                        confirmed = self._core.confirm_presented(presented, _now())
+                    if not confirmed:
+                        raise InvalidDpopProof("the DPoP proof or scheme is invalid")
+                return claims
             await asyncio.gather(*(self._fetch(need) for need in outcome["needs"]))
         raise KonklavError("could not verify the token")
 

@@ -45,7 +45,12 @@ r[relying.verify.dpop-replay]
 One relying core MUST remember the `jti`s of the DPoP proofs it accepted
 for as long as they could pass the freshness check, so it can refuse a
 replay (`r[token.dpop.replay]`). It need not detect replays across separate
-relying cores.
+relying cores. A proof MUST be remembered only once its access token has
+verified, locally or by the check API, and never for a token that doesn't,
+so that proofs anyone can sign take no room. A proof MUST NOT be accepted
+twice for a token that verifies, also when requests carrying it are decided
+at the same time or through the check API. A proof whose `jti` is longer
+than 128 bytes MUST be refused.
 
 r[relying.verify.dpop-challenge]
 When the relying SDK refuses an access token for its DPoP proof or scheme,
@@ -74,7 +79,8 @@ decision does, so a session that ended in between is denied. A handle:
 The relying SDK MUST let the relying system release a handle, and the
 relying system SHOULD release it once its request is answered. A decision
 with a handle that is unknown, released or expired MUST deny with
-`invalid_token`.
+`invalid_token`. The relying SDK MUST itself release a handle it doesn't
+return: when the check API finds the token invalid, or can't be reached.
 
 r[relying.verify.route-authority]
 When the relying system decides with a handle, it MUST be able to mark the

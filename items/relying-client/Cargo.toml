@@ -37,6 +37,7 @@ konklav-server.workspace = true
 konklav-store.workspace = true
 konklav-test-support.workspace = true
 ed25519-dalek.workspace = true
+tokio = { workspace = true, features = ["io-util", "test-util"] }
 uuid = { workspace = true, features = ["v7"] }
 
 [lints]

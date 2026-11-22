@@ -65,6 +65,10 @@ pub(crate) struct Accepted {
     until: u64,
 }
 
+/// The longest `jti` a proof may carry, in bytes, which bounds what the
+/// replay set keeps per proof.
+pub(crate) const MAX_JTI_BYTES: usize = 128;
+
 /// What a DPoP check is made with.
 pub(crate) struct ProofSettings {
     pub max_age_seconds: i64,
@@ -74,7 +78,8 @@ pub(crate) struct ProofSettings {
 /// Finds the access token in `presented` and checks the scheme and any
 /// DPoP proof against the token's (unverified) `cnf`. The token's signature
 /// is checked afterwards, locally or by the check API, so a forged `cnf`
-/// still fails (`r[relying.verify.dpop-before-check]`).
+/// still fails (`r[relying.verify.dpop-before-check]`), and only then is
+/// the proof remembered.
 // r[impl relying.verify.dpop]
 // r[impl token.dpop.scheme]
 // r[impl item.relying.raw-headers]
@@ -120,6 +125,9 @@ pub(crate) fn token<'a>(
         leeway: settings.leeway_seconds,
     };
     let proof = konklav_token::verify_proof(proof, &checked).map_err(|_| Refused::Proof)?;
+    if proof.jti.len() > MAX_JTI_BYTES {
+        return Err(Refused::Proof);
+    }
     let accepted = Accepted::of(&proof, settings);
     if replays.seen(&accepted) {
         return Err(Refused::Proof);
@@ -144,9 +152,9 @@ impl Accepted {
     }
 }
 
-/// The `(jkt, jti)` of proofs this core accepted, until they could no
-/// longer pass the freshness check. Bounded: when full of live entries it
-/// refuses new proofs rather than forgetting old ones.
+/// The `(jkt, jti)` of proofs this core accepted for tokens that verified,
+/// until they could no longer pass the freshness check. Bounded: when full
+/// of live entries it refuses new proofs rather than forgetting old ones.
 // r[impl relying.verify.dpop-replay]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Replays {
@@ -158,8 +166,12 @@ impl Replays {
         self.seen.contains_key(&accepted.key)
     }
 
-    /// Remembers `accepted`. Returns false if there is no room for it.
+    /// Remembers `accepted`. Returns false if it is remembered already, or
+    /// there is no room for it.
     pub(crate) fn remember(&mut self, accepted: Accepted, capacity: usize, now: u64) -> bool {
+        if self.seen(&accepted) {
+            return false;
+        }
         if self.seen.len() >= capacity {
             self.seen.retain(|_, until| *until > now);
         }

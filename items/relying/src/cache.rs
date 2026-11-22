@@ -294,11 +294,7 @@ impl Relying {
             Ok((_, needs)) | Err(Outcome::Need { needs }) => Verification::Need { needs },
             Err(Outcome::Decided { .. }) => Verification::Invalid,
         };
-        let answered = match &verification {
-            Verification::Need { needs } => needs.contains(&Need::Check),
-            _ => true,
-        };
-        if answered && !self.remember(accepted, now) {
+        if matches!(verification, Verification::Verified { .. }) && !self.remember(accepted, now) {
             return Verification::InvalidProof;
         }
         verification
@@ -307,7 +303,10 @@ impl Relying {
     /// [`Relying::verify_presented`] for a host that decides afterwards:
     /// accepts the presentation once, remembering its proof, and holds it
     /// for [`Relying::decide_accepted`], which doesn't check the proof again,
-    /// until it expires or is released.
+    /// until it expires or is released. After [`Acceptance::Check`] the
+    /// proof isn't remembered yet: the host verifies the token with the
+    /// check API, then calls [`Relying::confirm_presented`], and releases
+    /// the presentation if either refuses or fails.
     // r[impl relying.verify.accepted-presentation]
     pub fn accept_presented(&mut self, presented: &Presented, now: u64) -> Acceptance {
         let (token, accepted) =
@@ -334,16 +333,9 @@ impl Relying {
                 }
                 None
             }
-            Err(Outcome::Decided { .. }) => {
-                // Answered, so the proof is used.
-                return if self.remember(accepted, now) {
-                    Acceptance::Invalid
-                } else {
-                    Acceptance::InvalidProof
-                };
-            }
+            Err(Outcome::Decided { .. }) => return Acceptance::Invalid,
         };
-        if !self.remember(accepted, now) {
+        if verified.is_some() && !self.remember(accepted, now) {
             return Acceptance::InvalidProof;
         }
         let capacity = self.config.dpop_replay_capacity;
@@ -461,10 +453,53 @@ impl Relying {
         }
     }
 
-    /// Remembers an accepted proof once the core has answered with it: a
-    /// decision, or a hand-off to the check API. Not while it still waits
-    /// for a fetch, since the host then asks again with the same proof.
-    /// Returns false if the replay set is full.
+    /// The check API vouched for the token `presented` carries, after
+    /// [`Need::Check`] or [`Acceptance::Check`]: remembers its DPoP proof,
+    /// as a local answer would have. Returns false if the proof can't be
+    /// accepted any more, because it was used meanwhile, is no longer
+    /// fresh, or the replay set is full: refuse the request as
+    /// [`Verification::InvalidProof`]. True for a bearer token.
+    // r[impl relying.verify.dpop-replay]
+    pub fn confirm_presented(&mut self, presented: &Presented, now: u64) -> bool {
+        match presented::token(presented, &self.replays, &self.proof_settings(), now) {
+            Ok((_, accepted)) => self.remember(accepted, now),
+            Err(_) => false,
+        }
+    }
+
+    /// [`Relying::from_check`] for a decision [`Relying::decide_presented`]
+    /// handed off: unless the check API found the token invalid, the proof
+    /// is remembered ([`Relying::confirm_presented`]), and a proof that
+    /// can't be is denied as `invalid_dpop_proof`.
+    // r[impl relying.fallback.equivalence]
+    // r[impl relying.verify.dpop-replay]
+    pub fn on_check_presented(
+        &mut self,
+        presented: &Presented,
+        decision: Decision,
+        now: u64,
+    ) -> Outcome {
+        let invalid = matches!(
+            decision,
+            Decision::Deny {
+                reason: DenyReason::InvalidToken | DenyReason::InvalidDpopProof
+            }
+        );
+        if invalid || self.confirm_presented(presented, now) {
+            return Outcome::Decided { decision };
+        }
+        Outcome::Decided {
+            decision: Decision::Deny {
+                reason: DenyReason::InvalidDpopProof,
+            },
+        }
+    }
+
+    /// Remembers an accepted proof once its token has verified, here or by
+    /// the check API. Not for a token that doesn't verify, or anyone could
+    /// fill the replay set, and not while the core still waits for a fetch,
+    /// since the host then asks again with the same proof. Returns false if
+    /// the proof was remembered already or the replay set is full.
     fn remember(&mut self, accepted: Option<presented::Accepted>, now: u64) -> bool {
         accepted.is_none_or(|accepted| {
             self.replays
@@ -591,12 +626,9 @@ impl Relying {
                 Err(Refused::Token) => return deny(DenyReason::InvalidToken),
                 Err(Refused::Proof) => return deny(DenyReason::InvalidDpopProof),
             };
-        let outcome = self.decide_token(token, requirements, None, now);
-        let answered = match &outcome {
-            Outcome::Need { needs } => needs.contains(&Need::Check),
-            Outcome::Decided { .. } => true,
-        };
-        if answered && !self.remember(accepted, now) {
+        let (outcome, verified) = self.decide_verified(token, requirements, None, now);
+        let decided = matches!(outcome, Outcome::Decided { .. });
+        if verified && decided && !self.remember(accepted, now) {
             return deny(DenyReason::InvalidDpopProof);
         }
         outcome
@@ -611,9 +643,21 @@ impl Relying {
         route_authority: Option<&RouteAuthority>,
         now: u64,
     ) -> Outcome {
+        self.decide_verified(token, requirements, route_authority, now)
+            .0
+    }
+
+    /// [`Relying::decide_token`], and whether the token itself verified.
+    fn decide_verified(
+        &mut self,
+        token: &str,
+        requirements: &Requirements,
+        route_authority: Option<&RouteAuthority>,
+        now: u64,
+    ) -> (Outcome, bool) {
         let (claims, mut needs) = match self.check_token(token, now) {
             Ok(checked) => checked,
-            Err(outcome) => return outcome,
+            Err(outcome) => return (outcome, false),
         };
         let now_seconds = i64::try_from(now / 1000).unwrap_or(i64::MAX);
 
@@ -627,13 +671,13 @@ impl Relying {
         }
         let Some(set) = usable else {
             needs.push(Need::Entitlements { key });
-            return Outcome::Need { needs };
+            return (Outcome::Need { needs }, true);
         };
         let registered = self.registered_for(&set, requirements, now, &mut needs);
         if !needs.is_empty() {
-            return Outcome::Need { needs };
+            return (Outcome::Need { needs }, true);
         }
-        Outcome::Decided {
+        let outcome = Outcome::Decided {
             decision: evaluate_with_route_authority(
                 requirements,
                 route_authority,
@@ -644,7 +688,8 @@ impl Relying {
                 &registered,
                 now_seconds,
             ),
-        }
+        };
+        (outcome, true)
     }
 
     /// The records of the registered scopes `requirements` name, adding a

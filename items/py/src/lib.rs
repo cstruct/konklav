@@ -73,10 +73,34 @@ impl Core {
         dump(&self.inner.verify_presented(&presented, now))
     }
 
+    /// The check API vouched for the token `presented` carries, after a
+    /// `check` need or outcome: remembers its DPoP proof. False if the
+    /// proof can't be accepted any more: refuse it as an invalid proof.
+    fn confirm_presented(&mut self, presented: &str, now: u64) -> PyResult<bool> {
+        let presented: Presented = parse(presented, "presented token")?;
+        Ok(self.inner.confirm_presented(&presented, now))
+    }
+
+    /// Records a check-API decision (its JSON) made for a decision
+    /// [`Core::decide_presented`] handed off, remembering the DPoP proof
+    /// unless the token is invalid: an outcome as [`Core::decide`] returns.
+    fn on_check_presented(
+        &mut self,
+        presented: &str,
+        decision: &str,
+        now: u64,
+    ) -> PyResult<String> {
+        let presented: Presented = parse(presented, "presented token")?;
+        let decision: Decision = parse(decision, "decision")?;
+        dump(&self.inner.on_check_presented(&presented, decision, now))
+    }
+
     /// Accepts a request's presentation once, for the decisions of its
     /// request with [`Core::decide_accepted`]: `{"outcome": "accepted", "claims": ...,
     /// "presentation": ...}`, `{"outcome": "check", "presentation": ...}`, `{"outcome": "invalid"}`, `{"outcome": "invalid_proof"}` or
-    /// `{"outcome": "need", "needs": [...]}`.
+    /// `{"outcome": "need", "needs": [...]}`. After `check`, verify the token
+    /// with the check API, then call [`Core::confirm_presented`], and
+    /// release the presentation if either refuses or fails.
     fn accept_presented(&mut self, presented: &str, now: u64) -> PyResult<String> {
         let presented: Presented = parse(presented, "presented token")?;
         dump(&self.inner.accept_presented(&presented, now))

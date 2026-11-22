@@ -102,6 +102,31 @@ impl AcceptedRequest {
     }
 }
 
+/// A presentation the core holds while the check API verifies its token:
+/// released when dropped, so a token the check API refuses, an error or a
+/// cancelled request leaves nothing held, unless it is kept.
+struct Held<'a> {
+    client: &'a RelyingClient,
+    presentation: Option<PresentationId>,
+}
+
+impl Held<'_> {
+    /// The check API vouched for the token: the presentation stays held.
+    fn keep(mut self) -> PresentationId {
+        self.presentation
+            .take()
+            .expect("a presentation is held until it is kept")
+    }
+}
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        if let Some(presentation) = self.presentation.take() {
+            self.client.core().release_accepted(presentation);
+        }
+    }
+}
+
 /// Every token kind, for verifying a token through the check API whatever
 /// its kind.
 const EVERY_TOKEN_KIND: [TokenKind; 5] = [
@@ -327,17 +352,30 @@ impl RelyingClient {
         // The core checks any DPoP proof; the check API takes the token
         // alone.
         let token = presented.access_token().unwrap_or_default();
-        self.decide_with(token, requirements, |core| {
-            core.decide_presented(presented, requirements, now())
-        })
-        .await
+        for _ in 0..4 {
+            let outcome = self.core().decide_presented(presented, requirements, now());
+            let needs = match outcome {
+                Outcome::Decided { decision } => return Ok(decision),
+                Outcome::Need { needs } => needs,
+            };
+            if needs.contains(&Need::Check) {
+                let decision = self.check(token, requirements, None).await?;
+                // The proof is used once the check API vouches for the token.
+                return match self.core().on_check_presented(presented, decision, now()) {
+                    Outcome::Decided { decision } => Ok(decision),
+                    Outcome::Need { .. } => Err(Error::Exhausted),
+                };
+            }
+            self.fetch_all(&needs).await?;
+        }
+        Err(Error::Exhausted)
     }
 
     /// Accepts a request's presentation: verifies the token, its session
     /// and any DPoP proof, once, and returns the verified claims with the
     /// presentation to decide for with [`RelyingClient::decide_accepted`],
     /// which doesn't check the proof again. Fails closed: an error means
-    /// deny.
+    /// deny. Only an accepted request leaves a presentation held.
     // r[impl relying.verify.accepted-presentation]
     pub async fn accept_request(
         &self,
@@ -351,10 +389,20 @@ impl RelyingClient {
                     claims,
                     presentation,
                 } => (*claims, presentation),
-                Acceptance::Check { presentation } => match self.verify_centrally(token).await? {
-                    Some(claims) => (claims, presentation),
-                    None => return Ok(Verified::Invalid),
-                },
+                Acceptance::Check { presentation } => {
+                    // Held until this request is answered, or dropped.
+                    let held = Held {
+                        client: self,
+                        presentation: Some(presentation),
+                    };
+                    let Some(claims) = self.verify_centrally(token).await? else {
+                        return Ok(Verified::Invalid);
+                    };
+                    if !self.core().confirm_presented(presented, now()) {
+                        return Ok(Verified::InvalidProof);
+                    }
+                    (claims, held.keep())
+                }
                 Acceptance::Invalid => return Ok(Verified::Invalid),
                 Acceptance::InvalidProof => return Ok(Verified::InvalidProof),
                 Acceptance::Need { needs } => {
@@ -437,35 +485,19 @@ impl RelyingClient {
                 Verification::InvalidProof => return Ok(Verified::InvalidProof),
                 Verification::Need { needs } if needs.contains(&Need::Check) => {
                     let token = presented.access_token().unwrap_or_default();
-                    return Ok(match self.verify_centrally(token).await? {
-                        Some(claims) => Verified::Valid(claims),
-                        None => Verified::Invalid,
+                    let Some(claims) = self.verify_centrally(token).await? else {
+                        return Ok(Verified::Invalid);
+                    };
+                    // The proof is used once the check API vouches for the
+                    // token.
+                    return Ok(if self.core().confirm_presented(presented, now()) {
+                        Verified::Valid(claims)
+                    } else {
+                        Verified::InvalidProof
                     });
                 }
                 Verification::Need { needs } => self.fetch_all(&needs).await?,
             }
-        }
-        Err(Error::Exhausted)
-    }
-
-    /// Asks the core with `ask` until it decides, fetching what it needs,
-    /// or asks the check API for `token` when the core can't decide.
-    async fn decide_with(
-        &self,
-        token: &str,
-        requirements: &Requirements,
-        mut ask: impl FnMut(&mut Relying) -> Outcome,
-    ) -> Result<Decision, Error> {
-        for _ in 0..4 {
-            let outcome = ask(&mut self.core());
-            let needs = match outcome {
-                Outcome::Decided { decision } => return Ok(decision),
-                Outcome::Need { needs } => needs,
-            };
-            if needs.contains(&Need::Check) {
-                return self.check(token, requirements, None).await;
-            }
-            self.fetch_all(&needs).await?;
         }
         Err(Error::Exhausted)
     }
