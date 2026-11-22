@@ -11,6 +11,20 @@ serves the console (the development server, or a reverse proxy in a
 deployment) routes those prefixes, so the browser's refresh cookie stays
 first-party and Konklav needs no CORS.
 
+r[item.console.content-security-policy]
+The console's page MUST declare a Content-Security-Policy that lets scripts,
+styles, images and connections come from its own origin only, with no
+inline script or style and no `eval` beyond compiling WebAssembly, and that
+forbids a `<base>` and form submission. The built console MUST work under
+that policy.
+
+r[item.console.response-headers]
+Whatever serves the console MUST send what a page cannot declare for
+itself: `Content-Security-Policy: frame-ancestors 'none'`, so no other page
+can frame the console, and `X-Content-Type-Options: nosniff`. It MUST serve
+`index.html` with `Cache-Control: no-store`, so a browser always gets the
+current policy and bundle names.
+
 r[item.console.token-in-memory]
 The console MUST keep the operator's access token, and the bootstrap token
 when one is used, in memory only, never in browser storage. A reload MUST
