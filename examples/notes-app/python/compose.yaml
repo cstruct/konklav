@@ -5,6 +5,8 @@
 #   docker compose -f examples/notes-app/python/compose.yaml up --build
 #
 # Then open http://localhost:3000 (the app) or http://localhost:4000 (admin).
+# Ports are published on 127.0.0.1 only: every password and key here is a
+# well-known example value.
 name: konklav-notes-app
 
 x-python: &python
@@ -108,7 +110,7 @@ services:
     command: ["python", "/app/sso/app.py"]
     environment:
       KONKLAV_SUBJECT_URL: http://konklav:8080
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
     healthcheck:
       <<: *healthcheck
       # Through the proxy, so Konklav answers too.
@@ -124,7 +126,7 @@ services:
       ISSUER: http://localhost:8000
       CLIENT_ID: app
       API_URL: http://localhost:3001
-    ports: ["3000:3000"]
+    ports: ["127.0.0.1:3000:3000"]
     healthcheck:
       <<: *healthcheck
       test: ["CMD", "python", "/app/shared/healthcheck.py", "http://127.0.0.1:3000/config.json"]
@@ -168,7 +170,7 @@ services:
     command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-    ports: ["3001:3001"]
+    ports: ["127.0.0.1:3001:3001"]
     restart: on-failure
     depends_on:
       app-backend: {condition: service_healthy}
@@ -188,7 +190,7 @@ services:
       REDIS_URL: redis://valkey:6379
     volumes:
       - shared:/shared:ro
-    ports: ["4000:4000"]
+    ports: ["127.0.0.1:4000:4000"]
     healthcheck:
       <<: *healthcheck
       test: ["CMD", "python", "/app/shared/healthcheck.py", "http://127.0.0.1:4000/"]
