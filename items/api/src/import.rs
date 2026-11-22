@@ -21,6 +21,7 @@ pub struct Imported {
 }
 
 /// A subject; an existing one keeps its kind but takes the record's state.
+/// Its sessions end if that state is `disabled`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ImportedSubject {
     pub id: SubjectId,

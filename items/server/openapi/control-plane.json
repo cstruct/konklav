@@ -6028,7 +6028,7 @@
       },
       "ImportedSubject": {
         "type": "object",
-        "description": "A subject; an existing one keeps its kind but takes the record's state.",
+        "description": "A subject; an existing one keeps its kind but takes the record's state.\nIts sessions end if that state is `disabled`.",
         "required": [
           "id",
           "kind"

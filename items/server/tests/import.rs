@@ -445,6 +445,59 @@ async fn imported_sessions_must_fit_their_subject() {
     }
 }
 
+// r[verify import.subjects.disabled]
+// r[verify subject.state]
+#[tokio::test(flavor = "multi_thread")]
+async fn importing_a_subject_as_disabled_ends_its_sessions() {
+    let app = TestApp::new().await;
+    let (ada, credential) = person(&app, "ada@example.com").await;
+    let login = app.login("ada@example.com", "correct horse battery").await;
+    let refresh = login.body["refresh_token"].as_str().unwrap().to_owned();
+    let session = app
+        .verify(login.body["access_token"].as_str().unwrap())
+        .await
+        .sid;
+    let revoked = async |session: &str| {
+        let reply = app
+            .control(Method::GET, &format!("/v1/sessions/{session}"), None)
+            .await;
+        assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+        !reply.body["revoked_at"].is_null()
+    };
+    assert!(!revoked(&session.to_string()).await);
+
+    let reply = app
+        .control(
+            Method::POST,
+            "/v1/import/subjects",
+            Some(json!({"subjects": [{"id": ada, "kind": "human", "state": "disabled"}]})),
+        )
+        .await;
+    assert_eq!(reply.body["skipped"], 1, "{:?}", reply.body);
+    assert!(revoked(&session.to_string()).await);
+    let refreshed = app
+        .post("/v1/refresh", json!({"refresh_token": refresh}))
+        .await;
+    assert_ne!(refreshed.status, StatusCode::OK, "{:?}", refreshed.body);
+
+    // A session carried over for the disabled subject arrives revoked.
+    let carried = uuid::Uuid::now_v7();
+    let reply = app
+        .control(
+            Method::POST,
+            "/v1/import/sessions",
+            Some(json!({"sessions": [{
+                "id": carried, "subject": ada, "credential": credential, "stage": "identity",
+                "amr": ["pwd"], "auth_time": "2026-10-01T00:00:00Z", "version": 1,
+                "refresh_hash": hex(&Sha256::digest(b"refresh")),
+                "expires_at": (chrono::Utc::now() + chrono::Duration::days(5)).to_rfc3339(),
+            }]})),
+        )
+        .await;
+    assert_eq!(reply.body["imported"], 1, "{:?}", reply.body);
+    assert!(revoked(&carried.to_string()).await);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn importing_needs_the_capability() {
     let app = TestApp::new().await;

@@ -9,7 +9,9 @@ use konklav_store::credentials::{
     self, CredentialData, NewCredential, PasswordData, SecretKeyData, SecretSlotData,
 };
 use konklav_store::mfa::{self, EmailCodeData, FactorData, TotpData};
-use konklav_store::sessions::{self, ClientKind, ImportedSession, NewSession, Stage};
+use konklav_store::sessions::{
+    self, ClientKind, ImportedSession, NewSession, SessionFilter, Stage,
+};
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
 use konklav_store::{StoreError, catalog, memberships};
 use serde::Deserialize;
@@ -33,9 +35,11 @@ fn active() -> SubjectState {
 }
 
 /// Creates a subject unless one with its id exists, then applies its state.
-/// An existing subject keeps its metadata.
+/// An existing subject keeps its metadata; one that is disabled loses its
+/// sessions, as when the control plane disables it.
 // r[impl import.idempotent]
 // r[impl import.metadata]
+// r[impl import.subjects.disabled]
 pub(crate) async fn subject(
     conn: &mut Connection,
     record: &SubjectRecord,
@@ -63,6 +67,13 @@ pub(crate) async fn subject(
     };
     if record.state != SubjectState::Active {
         subjects::set_state(conn, record.id, record.state).await?;
+    }
+    if record.state == SubjectState::Disabled && !created {
+        let filter = SessionFilter {
+            subject: Some(record.id),
+            ..Default::default()
+        };
+        sessions::revoke(conn, &filter, None, "subject_disabled").await?;
     }
     Ok(Outcome::created_if(created))
 }
@@ -375,6 +386,10 @@ pub(crate) async fn session(
         Err(error) => return Err(error.into()),
     }
     check_session(conn, &record).await?;
+    // A disabled subject has no sessions, so one carried over for it ends.
+    // r[impl import.subjects.disabled]
+    let disabled = subjects::get(conn, record.subject).await?.state == SubjectState::Disabled;
+    let revoked_at = record.revoked_at.or_else(|| disabled.then(Utc::now));
     let inserted = sessions::import(
         conn,
         ImportedSession {
@@ -396,7 +411,7 @@ pub(crate) async fn session(
             tenant_id: record.tenant,
             membership_id: record.membership,
             version: record.version,
-            revoked_at: record.revoked_at,
+            revoked_at,
         },
     )
     .await?;

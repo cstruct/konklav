@@ -539,6 +539,11 @@ Imported sessions MUST keep their identifiers, versions and expiry, with a
 refresh-token hash supplied by the importer, so that people stay signed in
 across a migration.
 
+r[import.subjects.disabled]
+Importing a subject as `disabled` MUST revoke the sessions of a subject that
+exists, as disabling it does (`r[subject.state]`), and a session imported
+for a disabled subject MUST be stored as revoked.
+
 r[import.sessions.consistent]
 An imported session MUST be refused as invalid, naming the session, unless
 its credential belongs to its subject (or to the impersonator, for an
