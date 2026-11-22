@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
-use konklav_authn::PasswordCheck;
+use konklav_authn::{PasswordCheck, PasswordHasher};
 use konklav_authz::Scope;
 use konklav_bootstrap::Location;
 use konklav_bootstrap::{
@@ -302,6 +302,23 @@ pub(super) async fn subject(
     .await
 }
 
+/// Refuses a hash that isn't Argon2, or that asks for more memory or time
+/// than Konklav spends on a login attempt: it would be stored and never
+/// match.
+// r[impl import.credentials.cost-limit]
+fn checked_hash(hash: &str) -> Result<String, ApiError> {
+    if PasswordHasher::is_argon2(hash) {
+        Ok(hash.to_owned())
+    } else {
+        Err(invalid(format!(
+            "hashes must be Argon2 PHC strings with at most m={}, t={}, p={}",
+            PasswordHasher::MAX_MEMORY_KIB,
+            PasswordHasher::MAX_ITERATIONS,
+            PasswordHasher::MAX_PARALLELISM
+        )))
+    }
+}
+
 fn slot(slot: &konklav_bootstrap::SecretSlot) -> Result<SecretSlotData, ApiError> {
     let time = |text: &str| {
         DateTime::parse_from_rfc3339(text)
@@ -309,7 +326,7 @@ fn slot(slot: &konklav_bootstrap::SecretSlot) -> Result<SecretSlotData, ApiError
             .map_err(|_| invalid(format!("`{text}` is not an RFC 3339 time")))
     };
     Ok(SecretSlotData {
-        hash: slot.hash.clone(),
+        hash: checked_hash(&slot.hash)?,
         created_at: time(&slot.created_at)?,
         expires_at: slot.expires_at.as_deref().map(time).transpose()?,
     })
@@ -329,15 +346,12 @@ fn material(
             .ok_or_else(|| invalid("the credential has no identifier"))
     };
     Ok(match &credential.material {
-        CredentialMaterial::PasswordHash(hash) => {
-            if !hash.starts_with("$argon2") {
-                return Err(invalid("password hashes must be Argon2 PHC strings"));
-            }
-            (
-                identifier()?,
-                CredentialData::Password(PasswordData { hash: hash.clone() }),
-            )
-        }
+        CredentialMaterial::PasswordHash(hash) => (
+            identifier()?,
+            CredentialData::Password(PasswordData {
+                hash: checked_hash(hash)?,
+            }),
+        ),
         CredentialMaterial::Password(password) => {
             if !context.options.allow_plaintext_passwords {
                 return Err(invalid(

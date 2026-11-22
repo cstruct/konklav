@@ -688,7 +688,8 @@ conflict.
 
 r[bootstrap.secrets]
 Passwords and secret keys MUST arrive as Argon2 hashes, as
-`import.credentials` describes. Plaintext passwords MUST be refused unless
+`import.credentials` describes, and a hash over the limits of
+`import.credentials.cost-limit` MUST be reported as a problem. Plaintext passwords MUST be refused unless
 the run explicitly allows them, and are then hashed before they are
 stored. TOTP seeds MUST be encrypted on arrival, as `import.mfa` describes.
 

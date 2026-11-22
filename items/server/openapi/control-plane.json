@@ -5769,7 +5769,7 @@
               },
               "password_hash": {
                 "type": "string",
-                "description": "The password's hash, an Argon2 PHC string; never the password."
+                "description": "The password's hash, never the password: an Argon2 PHC string\nasking for at most 256 MiB of memory, 16 iterations and a\nparallelism of 16."
               }
             }
           },
@@ -5921,7 +5921,7 @@
           },
           "hash": {
             "type": "string",
-            "description": "The slot secret's hash, an Argon2 PHC string."
+            "description": "The slot secret's hash, an Argon2 PHC string asking for at most\n256 MiB of memory, 16 iterations and a parallelism of 16."
           }
         }
       },

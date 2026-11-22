@@ -47,7 +47,8 @@ pub struct ImportSubjects {
 /// One slot of an imported secret key.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ImportedSecretSlot {
-    /// The slot secret's hash, an Argon2 PHC string.
+    /// The slot secret's hash, an Argon2 PHC string asking for at most
+    /// 256 MiB of memory, 16 iterations and a parallelism of 16.
     pub hash: String,
     pub created_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
@@ -59,7 +60,9 @@ pub struct ImportedSecretSlot {
 pub enum ImportedCredentialMaterial {
     #[schema(title = "ImportedCredentialMaterialPassword")]
     Password {
-        /// The password's hash, an Argon2 PHC string; never the password.
+        /// The password's hash, never the password: an Argon2 PHC string
+        /// asking for at most 256 MiB of memory, 16 iterations and a
+        /// parallelism of 16.
         password_hash: String,
     },
     /// Replaces the slots of an existing active secret key with the same

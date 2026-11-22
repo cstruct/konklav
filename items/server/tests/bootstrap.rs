@@ -630,6 +630,51 @@ async fn an_exported_set_bootstraps_an_empty_database_unchanged() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+// r[verify bootstrap.secrets]
+// r[verify import.credentials.cost-limit]
+#[tokio::test(flavor = "multi_thread")]
+async fn hashes_that_cost_too_much_are_problems() {
+    const HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$8+FttqUgBxV0WJVJEoSFig$sTbjdRtZ6f7ZyvBNPA+oh9ju0QJs7jIKIFEyit//6T0";
+    let app = TestApp::new().await;
+    // 4 GiB of memory for every login attempt.
+    let costly = HASH.replace("m=65536", "m=4194304");
+    let set = |password: &str, slot_b: &str| {
+        scratch(
+            "costly",
+            &[
+                ("set.styx", format!("id_namespace {NAMESPACE}\n")),
+                ("subjects.csv", "id,kind\nada,human\nsvc,service\n".into()),
+                (
+                    "credentials.csv",
+                    format!(
+                        "id,subject,kind,identifier,password_hash,a_hash,a_created_at,b_hash,b_created_at\n\
+                         c-ada,ada,password,ada@example.com,\"{password}\",,,,\n\
+                         c-svc,svc,secret_key,svc,,\"{HASH}\",2026-01-01T00:00:00Z,\"{slot_b}\",2026-01-01T00:00:00Z\n"
+                    ),
+                ),
+            ],
+        )
+    };
+    let dir = set(&costly, &costly);
+    let refused = apply(&app, std::slice::from_ref(&dir), Options::default()).await;
+    assert!(!refused.committed, "{refused}");
+    let limits: Vec<_> = refused
+        .problems
+        .iter()
+        .filter(|p| p.message.contains("at most m=262144, t=16, p=16"))
+        .collect();
+    assert_eq!(limits.len(), 2, "{refused}");
+    std::fs::remove_dir_all(dir).unwrap();
+
+    let dir = set(HASH, HASH);
+    let applied = apply(&app, std::slice::from_ref(&dir), Options::default()).await;
+    assert!(
+        applied.committed && applied.problems.is_empty(),
+        "{applied}"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// A scratch directory with `files` in it.
 fn scratch(name: &str, files: &[(&str, String)]) -> PathBuf {
     let dir =
