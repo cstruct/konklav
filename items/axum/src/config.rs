@@ -170,6 +170,14 @@ impl KonklavBuilder {
 
     /// Reads the token from a cookie, for requests without an
     /// `Authorization` header.
+    ///
+    /// A browser attaches cookies to requests other sites make it send, and
+    /// this crate checks neither `Origin` nor a CSRF token: a token from the
+    /// cookie is accepted on every method and on websocket upgrades. An
+    /// application that sets this hook must protect itself against
+    /// cross-site request forgery: a `SameSite` cookie, and an `Origin`
+    /// check or a required custom header on requests that change state and
+    /// on websocket upgrades.
     #[must_use]
     pub fn cookie(
         mut self,

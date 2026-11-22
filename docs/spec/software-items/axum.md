@@ -65,6 +65,11 @@ the `token` query parameter. A token from the cookie hook or the query
 parameter MUST be presented with the `DPoP` scheme when a `DPoP` header is
 present and as a bearer token otherwise.
 
+A token from the cookie hook is taken on every method and on websocket
+upgrade requests, whatever the request's `Origin`: protecting against
+cross-site request forgery is the relying system's part, as the README
+says where it describes the hook.
+
 r[item.axum.websocket-requests]
 A request MUST be taken for a websocket upgrade request only when it is a
 `GET` whose `Connection` header lists `upgrade` and whose `Upgrade` header

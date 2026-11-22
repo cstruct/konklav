@@ -332,7 +332,17 @@ class KonklavRoutes:
     on_verified: Sequence[TokenHook] = ()
     """Run in order on every verified token."""
     cookie: Callable[[HTTPConnection], str | None] | None = None
-    """Reads the token from a cookie, for requests without an `Authorization` header."""
+    """
+    Reads the token from a cookie, for requests without an `Authorization`
+    header.
+
+    A browser attaches cookies to requests other sites make it send, and
+    this package checks neither `Origin` nor a CSRF token: a token from the
+    cookie is accepted on every method and on websockets. An application
+    that sets this hook must protect itself against cross-site request
+    forgery: a `SameSite` cookie, and an `Origin` check or a required custom
+    header on requests that change state and on websockets.
+    """
     public_origin: str | Sequence[str] | None = None
     """
     The origin clients address this application at, such as

@@ -231,6 +231,34 @@ Without `public_origin` or `public_url`, every DPoP proof is refused
 `http://` and its `Host` header: use it only in tests, or behind a proxy
 that refuses every `Host` but the application's own.
 
+### Cookie tokens
+
+The `cookie` hook lets a browser application keep its token in a cookie:
+a request without an `Authorization` header is evaluated with the token
+the hook reads. A browser attaches cookies to requests other sites make it
+send, so **an application that sets the cookie hook must protect itself
+against cross-site request forgery; this crate does not.** A token from the
+cookie is accepted on every method and on websocket upgrades, whatever the
+request's `Origin`, and no CSRF token or custom header is asked for.
+
+What the application has to do, before the route's policy or in an
+`on_verified` hook:
+
+- Set the cookie `SameSite=Lax` or `Strict` (and `Secure`, `HttpOnly`), and
+  change no state on `GET`.
+- On every request that changes state, check that `Origin` is one of the
+  origins the application's pages are served from, or require a header a
+  cross-site form can't set, such as `X-Requested-With`, and refuse
+  cross-origin requests in CORS.
+- On websocket upgrades always check `Origin`: browsers send cookies with
+  them to any site, with no preflight and no same-origin policy.
+
+The origins set with `public_origin` are where this application is
+addressed, for DPoP proofs. They aren't the origins its pages may call it
+from, so nothing is checked against them here. A token presented in
+`Authorization` needs none of this: another site can't make a browser send
+that header.
+
 ### Answers
 
 `Denied` answers as `konklav-fastapi` does: `{"error": {"code": ...}}` with

@@ -81,6 +81,11 @@ parameter MUST be presented with the `DPoP` scheme when a `DPoP` header is
 present, and as a bearer token otherwise. The query parameter MUST NOT be
 read for HTTP requests.
 
+A token from the cookie hook is taken on every method and on websockets,
+whatever the request's `Origin`: protecting against cross-site request
+forgery is the relying system's part, as the README says where it
+describes the hook.
+
 r[item.py-fastapi.verify-then-decide]
 A route that isn't public MUST verify the request's token, its session and
 any DPoP proof before anything else reads it, by accepting the presentation
