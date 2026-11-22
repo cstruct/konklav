@@ -1,16 +1,17 @@
 //! Registering OIDC clients on the control plane.
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use diesel_async::AsyncConnection;
 use konklav_api::{self as api, MetadataQuery, OidcClientDefinition, OidcClientSecret};
 use konklav_store::credentials::{self, CredentialData, CredentialKind};
 use konklav_store::oidc_clients::{self, ClientKind, IdTokenAlgorithm, OidcClient};
-use konklav_store::{sessions, subjects};
+use konklav_store::{StoreError, sessions, subjects};
 use sha2::{Digest, Sha256};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use crate::capabilities::Operator;
 use crate::db::Db;
 use crate::error::{ApiError, ApiJson};
 use crate::{AppState, metadata, transport};
@@ -55,9 +56,31 @@ async fn get_client(db: Db, Path(id): Path<String>) -> Result<Json<api::OidcClie
         .map_err(|_| ApiError::not_found("OIDC client"))
 }
 
+/// A client bound to a service principal authenticates as it, so writing
+/// or disabling the client, or issuing its secret, changes the principal's
+/// credentials: refused if the principal is assigned capabilities and the
+/// caller lacks `konklav:control:all`.
+// r[impl authz.control-plane.escalation]
+async fn may_change_bound(
+    conn: &mut konklav_store::Connection,
+    operator: Operator,
+    id: &str,
+) -> Result<(), ApiError> {
+    match oidc_clients::get(conn, id).await {
+        Ok(client) => match client.service_subject {
+            Some(subject) => operator.may_change(conn, subject).await,
+            None => Ok(()),
+        },
+        Err(StoreError::NotFound) => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// Registers or replaces an OIDC client.
 ///
-/// A disabled client is enabled again.
+/// A disabled client is enabled again. Binding the client to a service
+/// principal that holds control-plane capabilities, or replacing a client
+/// bound to one, needs `konklav:control:all`.
 #[utoipa::path(put, path = "/oidc/clients/{id}", operation_id = "put_oidc_client", tag = "oidc-clients",
     params(("id" = String, Path, description = "The client id, chosen by the caller")),
     request_body = OidcClientDefinition,
@@ -65,6 +88,7 @@ async fn get_client(db: Db, Path(id): Path<String>) -> Result<Json<api::OidcClie
 async fn put_client(
     State(state): State<AppState>,
     db: Db,
+    Extension(operator): Extension<Operator>,
     limit: metadata::Limit,
     Path(id): Path<String>,
     ApiJson(definition): ApiJson<OidcClientDefinition>,
@@ -121,6 +145,11 @@ async fn put_client(
     }
     let mut conn = db.get().await?;
     conn.transaction::<_, ApiError, _>(async |conn| {
+        // The principal the client was bound to, and the one it will be.
+        may_change_bound(conn, operator, &id).await?;
+        if let Some(subject) = definition.service_subject {
+            operator.may_change(conn, subject).await?;
+        }
         let client = oidc_clients::put(conn, &id, &definition).await?;
         bind_service_subject(conn, &client).await?;
         Ok(Json(transport::oidc_client(client)))
@@ -183,12 +212,17 @@ async fn bind_service_subject(
 #[utoipa::path(delete, path = "/oidc/clients/{id}", operation_id = "disable_oidc_client", tag = "oidc-clients",
     params(("id" = String, Path, description = "The client id")),
     responses((status = 200, description = "Disabled; the registration stays", body = api::OidcClient)))]
-async fn disable_client(db: Db, Path(id): Path<String>) -> Result<Json<api::OidcClient>, ApiError> {
+async fn disable_client(
+    db: Db,
+    Extension(operator): Extension<Operator>,
+    Path(id): Path<String>,
+) -> Result<Json<api::OidcClient>, ApiError> {
     let mut conn = db.get().await?;
     conn.transaction::<_, ApiError, _>(async |conn| {
         oidc_clients::get(conn, &id)
             .await
             .map_err(|_| ApiError::not_found("OIDC client"))?;
+        may_change_bound(conn, operator, &id).await?;
         oidc_clients::disable(conn, &id).await?;
         sessions::revoke_for_client(conn, &id, "client_disabled").await?;
         Ok(Json(transport::oidc_client(
@@ -201,15 +235,21 @@ async fn disable_client(db: Db, Path(id): Path<String>) -> Result<Json<api::Oidc
 /// Issues a new OIDC client secret.
 ///
 /// Only for confidential clients. The secret is shown only once, and the
-/// previous one stops working.
+/// previous one stops working. For a client bound to a service principal
+/// that holds control-plane capabilities, it needs `konklav:control:all`.
 #[utoipa::path(post, path = "/oidc/clients/{id}/secret", operation_id = "new_oidc_client_secret", tag = "oidc-clients",
     params(("id" = String, Path, description = "The client id")),
     responses((status = 200, description = "The new secret, shown only once", body = OidcClientSecret)))]
-async fn new_secret(db: Db, Path(id): Path<String>) -> Result<Json<OidcClientSecret>, ApiError> {
+async fn new_secret(
+    db: Db,
+    Extension(operator): Extension<Operator>,
+    Path(id): Path<String>,
+) -> Result<Json<OidcClientSecret>, ApiError> {
     let mut conn = db.get().await?;
     let client = oidc_clients::get(&mut conn, &id)
         .await
         .map_err(|_| ApiError::not_found("OIDC client"))?;
+    may_change_bound(&mut conn, operator, &id).await?;
     if client.kind != ClientKind::Confidential {
         return Err(ApiError::invalid_request("public clients have no secret"));
     }

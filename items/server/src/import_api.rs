@@ -3,16 +3,24 @@
 //! ids so imports can be re-run. The records and how they are written live
 //! in [`crate::import`].
 //!
+//! Importing needs its own capability, which must not lead to others: a
+//! record that would change how an operator authenticates, or its state,
+//! needs `konklav:control:all` like the ordinary endpoints for it do.
+//!
 //! Tenants, memberships, the catalog, templates, roles and assignments are
 //! imported through the ordinary (idempotent) control-plane endpoints.
 
-use axum::Json;
 use axum::extract::State;
+use axum::{Extension, Json};
 use diesel_async::AsyncConnection;
 use konklav_api::{ImportCredentials, ImportFactors, ImportSessions, ImportSubjects, Imported};
+use konklav_core::SubjectId;
+use konklav_store::Connection;
+use konklav_store::subjects::{self, SubjectState};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use crate::capabilities::Operator;
 use crate::db::Db;
 use crate::error::{ApiError, ApiJson};
 use crate::import::{self, Outcome};
@@ -36,6 +44,23 @@ fn count(result: &mut Imported, outcome: Outcome) {
     }
 }
 
+/// Refuses a record that gave `subject` a credential, MFA factor or session,
+/// or changed one, if the subject is an operator and the caller lacks
+/// `konklav:control:all`. Records that were skipped pass, so an import can
+/// be re-run once its subjects hold capabilities. The refusal rolls back the
+/// import's transaction, and the write with it.
+async fn written(
+    conn: &mut Connection,
+    operator: Operator,
+    subject: SubjectId,
+    outcome: Outcome,
+) -> Result<(), ApiError> {
+    match outcome {
+        Outcome::Skipped => Ok(()),
+        Outcome::Created | Outcome::Updated => operator.may_change(conn, subject).await,
+    }
+}
+
 /// Imports subjects.
 ///
 /// Imports subjects from another system, all or nothing.
@@ -44,6 +69,7 @@ fn count(result: &mut Imported, outcome: Outcome) {
     responses((status = 200, body = Imported)))]
 async fn import_subjects(
     db: Db,
+    Extension(operator): Extension<Operator>,
     limit: metadata::Limit,
     ApiJson(body): ApiJson<ImportSubjects>,
 ) -> Result<Json<Imported>, ApiError> {
@@ -60,6 +86,16 @@ async fn import_subjects(
         .transaction::<_, ApiError, _>(async |conn| {
             let mut result = Imported::default();
             for record in &records {
+                // Such a record sets the state of an existing subject too,
+                // though it counts as skipped. One already in that state
+                // is left alone, so a re-run passes.
+                if record.state != SubjectState::Active
+                    && subjects::get(conn, record.id)
+                        .await
+                        .is_ok_and(|existing| existing.state != record.state)
+                {
+                    operator.may_change(conn, record.id).await?;
+                }
                 count(&mut result, import::subject(conn, record).await?);
             }
             Ok(result)
@@ -77,6 +113,7 @@ async fn import_subjects(
     responses((status = 200, body = Imported)))]
 async fn import_credentials(
     db: Db,
+    Extension(operator): Extension<Operator>,
     limit: metadata::Limit,
     ApiJson(body): ApiJson<ImportCredentials>,
 ) -> Result<Json<Imported>, ApiError> {
@@ -92,7 +129,10 @@ async fn import_credentials(
         .transaction::<_, ApiError, _>(async |conn| {
             let mut result = Imported::default();
             for record in records {
-                count(&mut result, import::credential(conn, record).await?);
+                let subject = record.subject;
+                let outcome = import::credential(conn, record).await?;
+                written(conn, operator, subject, outcome).await?;
+                count(&mut result, outcome);
             }
             Ok(result)
         })
@@ -110,6 +150,7 @@ async fn import_credentials(
 async fn import_factors(
     State(state): State<AppState>,
     db: Db,
+    Extension(operator): Extension<Operator>,
     ApiJson(body): ApiJson<ImportFactors>,
 ) -> Result<Json<Imported>, ApiError> {
     let mut prepared = Vec::with_capacity(body.factors.len());
@@ -122,10 +163,9 @@ async fn import_factors(
         .transaction::<_, ApiError, _>(async |conn| {
             let mut result = Imported::default();
             for (id, subject, data, active) in &prepared {
-                count(
-                    &mut result,
-                    import::factor(conn, *id, *subject, data, *active).await?,
-                );
+                let outcome = import::factor(conn, *id, *subject, data, *active).await?;
+                written(conn, operator, *subject, outcome).await?;
+                count(&mut result, outcome);
             }
             Ok(result)
         })
@@ -141,6 +181,7 @@ async fn import_factors(
     responses((status = 200, body = Imported)))]
 async fn import_sessions(
     db: Db,
+    Extension(operator): Extension<Operator>,
     ApiJson(body): ApiJson<ImportSessions>,
 ) -> Result<Json<Imported>, ApiError> {
     let mut conn = db.get().await?;
@@ -149,7 +190,10 @@ async fn import_sessions(
         .transaction::<_, ApiError, _>(async |conn| {
             let mut result = Imported::default();
             for record in records {
-                count(&mut result, import::session(conn, record).await?);
+                let subject = record.subject;
+                let outcome = import::session(conn, record).await?;
+                written(conn, operator, subject, outcome).await?;
+                count(&mut result, outcome);
             }
             Ok(result)
         })

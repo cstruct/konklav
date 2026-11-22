@@ -175,6 +175,18 @@ pub async fn of_assignment(
     load(conn, query).await?.pop().ok_or(StoreError::NotFound)
 }
 
+/// The global roles assigned to `subject`, whatever its state.
+pub async fn globally_assigned_to(
+    conn: &mut AsyncPgConnection,
+    subject: SubjectId,
+) -> StoreResult<Vec<Role>> {
+    let roles = role_assignment::table
+        .filter(role_assignment::subject_id.eq(subject.as_uuid()))
+        .select(role_assignment::role_id);
+    let query = role::table.filter(role::id.eq_any(roles)).into_boxed();
+    load(conn, query).await
+}
+
 pub async fn list(conn: &mut AsyncPgConnection, tenant: TenantId) -> StoreResult<Vec<Role>> {
     let query = role::table
         .filter(role::tenant_id.eq(uuid::Uuid::from(tenant)))

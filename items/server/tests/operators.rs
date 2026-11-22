@@ -579,6 +579,455 @@ async fn narrower_capabilities_cannot_lead_to_more() {
     assert_eq!(disabled.status, StatusCode::OK, "{:?}", disabled.body);
 }
 
+/// A human holding the built-in admin role, and their password credential.
+async fn admin(app: &TestApp, email: &str) -> (String, String) {
+    let subject = app.human(email, PASSWORD).await;
+    let assigned = app
+        .control(
+            Method::POST,
+            &format!("/v1/subjects/{subject}/global-assignments"),
+            Some(json!({"role": "konklav.admin"})),
+        )
+        .await;
+    assert_eq!(assigned.status, StatusCode::CREATED, "{:?}", assigned.body);
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    let credential = detail.body["credentials"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    (subject, credential)
+}
+
+/// A service principal with a secret key: its id and the key's.
+async fn service(app: &TestApp) -> (String, String) {
+    let id = uuid::Uuid::now_v7().to_string();
+    app.control(
+        Method::PUT,
+        &format!("/v1/subjects/{id}"),
+        Some(json!({"kind": "service"})),
+    )
+    .await;
+    let created = app
+        .control(
+            Method::POST,
+            &format!("/v1/subjects/{id}/credentials"),
+            Some(json!({"kind": "secret_key"})),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+    let key = created.body["secret_keys"]["a"]
+        .as_str()
+        .unwrap()
+        .split_once('.')
+        .unwrap()
+        .0
+        .to_owned();
+    (id, key)
+}
+
+// r[verify authz.control-plane.escalation]
+#[tokio::test(flavor = "multi_thread")]
+async fn rotating_an_operators_secret_key_needs_every_capability() {
+    let app = TestApp::new().await;
+    let people = operator(&app, "people@example.com", &["konklav:subjects:manage"]).await;
+    let (robot, robot_key) = service(&app).await;
+    app.control(
+        Method::POST,
+        &format!("/v1/subjects/{robot}/global-assignments"),
+        Some(json!({"role": "konklav.admin"})),
+    )
+    .await;
+    let (_, plain_key) = service(&app).await;
+
+    let rotated = as_operator(
+        &app,
+        &people,
+        Method::POST,
+        &format!("/v1/credentials/{robot_key}/slots/a/rotate"),
+        None,
+    )
+    .await;
+    assert_eq!(rotated.code(), "FORBIDDEN", "{:?}", rotated.body);
+    let rotated = as_operator(
+        &app,
+        &people,
+        Method::POST,
+        &format!("/v1/credentials/{plain_key}/slots/a/rotate"),
+        None,
+    )
+    .await;
+    assert_eq!(rotated.status, StatusCode::OK, "{:?}", rotated.body);
+    let rotated = app
+        .control(
+            Method::POST,
+            &format!("/v1/credentials/{robot_key}/slots/a/rotate"),
+            None,
+        )
+        .await;
+    assert_eq!(rotated.status, StatusCode::OK, "{:?}", rotated.body);
+}
+
+/// Produced by Python's argon2-cffi for "swordfish".
+const SWORDFISH: &str = "$argon2id$v=19$m=65536,t=3,p=4$AIuJ/bg0xA1dNFOl/Y8xkw$gKt+ObjIzIEnOSKX6cVpsSdoPA5zgkfSkXwBXGlf/88";
+
+// r[verify authz.control-plane.escalation]
+#[tokio::test(flavor = "multi_thread")]
+async fn importing_cannot_lead_to_more_capabilities() {
+    let app = TestApp::new().await;
+    let importer = operator(&app, "import@example.com", &["konklav:import"]).await;
+    let (boss, boss_password) = admin(&app, "boss@example.com").await;
+    let plain = app.human("plain@example.com", PASSWORD).await;
+
+    // A second password for the admin, which the importer knows.
+    let planted = as_operator(
+        &app,
+        &importer,
+        Method::POST,
+        "/v1/import/credentials",
+        Some(password_record(
+            &boss,
+            uuid::Uuid::now_v7(),
+            "backdoor@example.com",
+        )),
+    )
+    .await;
+    assert_eq!(planted.code(), "FORBIDDEN", "{:?}", planted.body);
+    let login = app.login("backdoor@example.com", "swordfish").await;
+    assert_eq!(login.code(), "INVALID_CREDENTIALS", "{:?}", login.body);
+
+    // A session for the admin, whose refresh token the importer knows.
+    let session = |subject: &str, credential: &str| {
+        json!({"sessions": [{
+            "id": uuid::Uuid::now_v7(), "subject": subject, "credential": credential,
+            "stage": "identity", "amr": ["pwd"], "auth_time": "2026-10-01T00:00:00Z",
+            "version": 1, "refresh_hash": "00".repeat(32),
+            "expires_at": (chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339(),
+        }]})
+    };
+    let carried = as_operator(
+        &app,
+        &importer,
+        Method::POST,
+        "/v1/import/sessions",
+        Some(session(&boss, &boss_password)),
+    )
+    .await;
+    assert_eq!(carried.code(), "FORBIDDEN", "{:?}", carried.body);
+
+    // An MFA factor for the admin, whose seed the importer knows.
+    let factor = |subject: &str| {
+        json!({"factors": [{
+            "id": uuid::Uuid::now_v7(), "subject": subject, "kind": "totp",
+            "seed_base32": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        }]})
+    };
+    let enrolled = as_operator(
+        &app,
+        &importer,
+        Method::POST,
+        "/v1/import/mfa-factors",
+        Some(factor(&boss)),
+    )
+    .await;
+    assert_eq!(enrolled.code(), "FORBIDDEN", "{:?}", enrolled.body);
+
+    // Disabling the admin.
+    let disabled = as_operator(
+        &app,
+        &importer,
+        Method::POST,
+        "/v1/import/subjects",
+        Some(json!({"subjects": [{"id": boss, "kind": "human", "state": "disabled"}]})),
+    )
+    .await;
+    assert_eq!(disabled.code(), "FORBIDDEN", "{:?}", disabled.body);
+    let login = app.login("boss@example.com", PASSWORD).await;
+    assert_eq!(login.status, StatusCode::OK, "{:?}", login.body);
+
+    // A subject without capabilities takes the same kind of record.
+    let enrolled = as_operator(
+        &app,
+        &importer,
+        Method::POST,
+        "/v1/import/mfa-factors",
+        Some(factor(&plain)),
+    )
+    .await;
+    assert_eq!(enrolled.status, StatusCode::OK, "{:?}", enrolled.body);
+}
+
+/// An import record giving `subject` a password the importer knows.
+fn password_record(subject: &str, id: uuid::Uuid, identifier: &str) -> serde_json::Value {
+    json!({"credentials": [{
+        "id": id, "subject": subject, "identifier": identifier,
+        "kind": "password", "password_hash": SWORDFISH,
+    }]})
+}
+
+// r[verify authz.control-plane.escalation]
+// r[verify import.idempotent]
+#[tokio::test(flavor = "multi_thread")]
+async fn an_import_can_be_rerun_once_its_subjects_are_operators() {
+    let app = TestApp::new().await;
+    let importer = operator(&app, "import@example.com", &["konklav:import"]).await;
+    let plain = app.human("plain@example.com", PASSWORD).await;
+    let later = uuid::Uuid::now_v7();
+    let record = password_record(&plain, later, "later@example.com");
+    let imported = as_operator(
+        &app,
+        &importer,
+        Method::POST,
+        "/v1/import/credentials",
+        Some(record.clone()),
+    )
+    .await;
+    assert_eq!(imported.body["imported"], 1, "{:?}", imported.body);
+
+    // Once the subject is an operator, re-running the import skips its
+    // credential and so passes, but a new one is refused.
+    app.control(
+        Method::POST,
+        &format!("/v1/subjects/{plain}/global-assignments"),
+        Some(json!({"role": "konklav.admin"})),
+    )
+    .await;
+    let rerun = as_operator(
+        &app,
+        &importer,
+        Method::POST,
+        "/v1/import/credentials",
+        Some(record),
+    )
+    .await;
+    assert_eq!(rerun.body["skipped"], 1, "{:?}", rerun.body);
+    let another = as_operator(
+        &app,
+        &importer,
+        Method::POST,
+        "/v1/import/credentials",
+        Some(password_record(
+            &plain,
+            uuid::Uuid::now_v7(),
+            "another@example.com",
+        )),
+    )
+    .await;
+    assert_eq!(another.code(), "FORBIDDEN", "{:?}", another.body);
+}
+
+// r[verify authz.control-plane.escalation]
+#[tokio::test(flavor = "multi_thread")]
+async fn denying_capabilities_needs_every_capability() {
+    let app = TestApp::new().await;
+    let authz = operator(&app, "authz@example.com", &["konklav:authz:manage"]).await;
+    let (boss, _) = admin(&app, "boss@example.com").await;
+    let deny = json!({"policies": [{"action": "konklav:control:all", "effect": "deny"}]});
+
+    let role = as_operator(
+        &app,
+        &authz,
+        Method::PUT,
+        "/v1/tenants/root/roles/muzzle",
+        Some(deny.clone()),
+    )
+    .await;
+    assert_eq!(role.code(), "FORBIDDEN", "{:?}", role.body);
+    let template = as_operator(
+        &app,
+        &authz,
+        Method::PUT,
+        "/v1/templates/muzzle",
+        Some(deny.clone()),
+    )
+    .await;
+    assert_eq!(template.code(), "FORBIDDEN", "{:?}", template.body);
+
+    // Nor may a role someone else wrote be assigned, unassigned, rewritten
+    // or deleted.
+    let written = app
+        .control(Method::PUT, "/v1/tenants/root/roles/muzzle", Some(deny))
+        .await;
+    assert_eq!(written.status, StatusCode::OK, "{:?}", written.body);
+    let assign = json!({"role": "muzzle"});
+    let assigned = as_operator(
+        &app,
+        &authz,
+        Method::POST,
+        &format!("/v1/subjects/{boss}/global-assignments"),
+        Some(assign.clone()),
+    )
+    .await;
+    assert_eq!(assigned.code(), "FORBIDDEN", "{:?}", assigned.body);
+    let login = app.login("boss@example.com", PASSWORD).await;
+    let boss_token = login.body["access_token"].as_str().unwrap();
+    let still = as_operator(&app, boss_token, Method::GET, "/v1/sessions", None).await;
+    assert_eq!(still.status, StatusCode::OK, "{:?}", still.body);
+
+    let assigned = app
+        .control(
+            Method::POST,
+            &format!("/v1/subjects/{boss}/global-assignments"),
+            Some(assign),
+        )
+        .await;
+    assert_eq!(assigned.status, StatusCode::CREATED, "{:?}", assigned.body);
+    let assignment = assigned.body["id"].as_str().unwrap();
+    let unassigned = as_operator(
+        &app,
+        &authz,
+        Method::DELETE,
+        &format!("/v1/assignments/{assignment}"),
+        None,
+    )
+    .await;
+    assert_eq!(unassigned.code(), "FORBIDDEN", "{:?}", unassigned.body);
+    let emptied = as_operator(
+        &app,
+        &authz,
+        Method::PUT,
+        "/v1/tenants/root/roles/muzzle",
+        Some(json!({"policies": []})),
+    )
+    .await;
+    assert_eq!(emptied.code(), "FORBIDDEN", "{:?}", emptied.body);
+    let deleted = as_operator(
+        &app,
+        &authz,
+        Method::DELETE,
+        "/v1/tenants/root/roles/muzzle",
+        None,
+    )
+    .await;
+    assert_eq!(deleted.code(), "FORBIDDEN", "{:?}", deleted.body);
+}
+
+/// Whether `people` may enable `subject`, replace its password `credential`
+/// and give it another: all three, or none.
+async fn may_take_over(app: &TestApp, people: &str, subject: &str, credential: &str) -> bool {
+    let added = as_operator(
+        app,
+        people,
+        Method::POST,
+        &format!("/v1/subjects/{subject}/credentials"),
+        Some(json!({
+            "kind": "password", "password": "taken over now",
+            "identifier": format!("{subject}@example.com"),
+        })),
+    )
+    .await;
+    let replaced = as_operator(
+        app,
+        people,
+        Method::POST,
+        &format!("/v1/credentials/{credential}/replace"),
+        Some(json!({"password": "taken over now"})),
+    )
+    .await;
+    let enabled = as_operator(
+        app,
+        people,
+        Method::POST,
+        &format!("/v1/subjects/{subject}/enable"),
+        None,
+    )
+    .await;
+    let replies = [added, replaced, enabled];
+    if replies.iter().all(|reply| reply.status.is_success()) {
+        return true;
+    }
+    for reply in replies {
+        assert_eq!(reply.code(), "FORBIDDEN", "{:?}", reply.body);
+    }
+    false
+}
+
+// r[verify authz.control-plane.escalation]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_disabled_operator_is_still_protected() {
+    let app = TestApp::new().await;
+    let people = operator(&app, "people@example.com", &["konklav:subjects:manage"]).await;
+    let (boss, boss_password) = admin(&app, "boss@example.com").await;
+    let plain = app.human("plain@example.com", PASSWORD).await;
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{plain}"), None)
+        .await;
+    let plain_password = detail.body["credentials"][0]["id"].as_str().unwrap();
+    for subject in [&boss, &plain] {
+        let disabled = app
+            .control(
+                Method::POST,
+                &format!("/v1/subjects/{subject}/disable"),
+                None,
+            )
+            .await;
+        assert_eq!(disabled.status, StatusCode::OK, "{:?}", disabled.body);
+    }
+
+    assert!(!may_take_over(&app, &people, &boss, &boss_password).await);
+    let login = app.login("boss@example.com", "taken over now").await;
+    assert_eq!(login.code(), "INVALID_CREDENTIALS", "{:?}", login.body);
+    assert!(may_take_over(&app, &people, &plain, plain_password).await);
+}
+
+/// A confidential OIDC client definition, bound to `service_subject`.
+fn client(service_subject: Option<&str>) -> serde_json::Value {
+    json!({
+        "kind": "confidential", "audience": "reports",
+        "redirect_uris": ["https://reports.example/callback"],
+        "service_subject": service_subject,
+    })
+}
+
+// r[verify authz.control-plane.escalation]
+#[tokio::test(flavor = "multi_thread")]
+async fn binding_a_client_to_an_operator_needs_every_capability() {
+    let app = TestApp::new().await;
+    let clients = operator(&app, "clients@example.com", &["konklav:clients:manage"]).await;
+    let (robot, _) = service(&app).await;
+    app.control(
+        Method::POST,
+        &format!("/v1/subjects/{robot}/global-assignments"),
+        Some(json!({"role": "konklav.admin"})),
+    )
+    .await;
+    let (plain, _) = service(&app).await;
+    let put = |uri: &'static str, subject: Option<&str>| {
+        as_operator(&app, &clients, Method::PUT, uri, Some(client(subject)))
+    };
+
+    // Neither a new client nor one of its own may be bound to the operator.
+    let bound = put("/v1/oidc/clients/mine", Some(&robot)).await;
+    assert_eq!(bound.code(), "FORBIDDEN", "{:?}", bound.body);
+    let bound = put("/v1/oidc/clients/mine", Some(&plain)).await;
+    assert_eq!(bound.status, StatusCode::OK, "{:?}", bound.body);
+    let rebound = put("/v1/oidc/clients/mine", Some(&robot)).await;
+    assert_eq!(rebound.code(), "FORBIDDEN", "{:?}", rebound.body);
+    let secret = "/v1/oidc/clients/mine/secret";
+    let issued = as_operator(&app, &clients, Method::POST, secret, None).await;
+    assert_eq!(issued.status, StatusCode::OK, "{:?}", issued.body);
+
+    // A client someone else bound to the operator can't be given a new
+    // secret, moved, rewritten or disabled.
+    let theirs = "/v1/oidc/clients/theirs";
+    let bound = app
+        .control(Method::PUT, theirs, Some(client(Some(&robot))))
+        .await;
+    assert_eq!(bound.status, StatusCode::OK, "{:?}", bound.body);
+    let secret = "/v1/oidc/clients/theirs/secret";
+    let issued = as_operator(&app, &clients, Method::POST, secret, None).await;
+    assert_eq!(issued.code(), "FORBIDDEN", "{:?}", issued.body);
+    for subject in [Some(plain.as_str()), Some(robot.as_str()), None] {
+        let moved = put(theirs, subject).await;
+        assert_eq!(moved.code(), "FORBIDDEN", "{:?}", moved.body);
+    }
+    let disabled = as_operator(&app, &clients, Method::DELETE, theirs, None).await;
+    assert_eq!(disabled.code(), "FORBIDDEN", "{:?}", disabled.body);
+    let issued = app.control(Method::POST, secret, None).await;
+    assert_eq!(issued.status, StatusCode::OK, "{:?}", issued.body);
+}
+
 // r[verify platform.config.bootstrap-token]
 #[tokio::test(flavor = "multi_thread")]
 async fn an_expired_bootstrap_token_is_refused() {

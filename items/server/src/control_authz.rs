@@ -404,11 +404,11 @@ async fn put_template(
     let (template, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let granted = match templates::get(conn, &key).await {
-                Ok(old) => capabilities::granted_by(&old.policies),
+                Ok(old) => capabilities::named_by(&old.policies),
                 Err(StoreError::NotFound) => false,
                 Err(error) => return Err(error.into()),
             };
-            if granted || capabilities::granted_by(&body.policies) {
+            if granted || capabilities::named_by(&body.policies) {
                 operator.require_all("a template with control-plane capabilities")?;
             }
             let template = import::put_template(
@@ -491,19 +491,19 @@ async fn put_role(
                 .await
                 .map_err(not_found_as("tenant"))?;
             let granted = match roles::get(conn, tenant, &key).await {
-                Ok(old) => capabilities::granted_by_role(conn, &old).await?,
+                Ok(old) => capabilities::named_by_role(conn, &old).await?,
                 Err(StoreError::NotFound) => false,
                 Err(error) => return Err(error.into()),
             };
             let template_grants = match &definition.template {
                 Some(template) => match templates::get(conn, template).await {
-                    Ok(template) => capabilities::granted_by(&template.policies),
+                    Ok(template) => capabilities::named_by(&template.policies),
                     Err(StoreError::NotFound) => false,
                     Err(error) => return Err(error.into()),
                 },
                 None => false,
             };
-            if granted || template_grants || capabilities::granted_by(&definition.policies) {
+            if granted || template_grants || capabilities::named_by(&definition.policies) {
                 operator.require_all("a role with control-plane capabilities")?;
             }
             let role = roles::put(conn, tenant, &key, &definition).await?;
@@ -530,7 +530,7 @@ async fn delete_role(
     let (deleted, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             if let Ok(old) = roles::get(conn, tenant, &key).await
-                && capabilities::granted_by_role(conn, &old).await?
+                && capabilities::named_by_role(conn, &old).await?
             {
                 operator.require_all("a role with control-plane capabilities")?;
             }
@@ -609,7 +609,7 @@ async fn assign_global_role(
             let role = roles::get(conn, tenants::ROOT, &body.role)
                 .await
                 .map_err(not_found_as("global role"))?;
-            if capabilities::granted_by_role(conn, &role).await? {
+            if capabilities::named_by_role(conn, &role).await? {
                 operator.require_all("granting control-plane capabilities")?;
             }
             let (assignment, created) =
@@ -663,7 +663,7 @@ async fn unassign(
     let (deleted, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             if let Ok(role) = roles::of_assignment(conn, id).await
-                && capabilities::granted_by_role(conn, &role).await?
+                && capabilities::named_by_role(conn, &role).await?
             {
                 operator.require_all("withdrawing control-plane capabilities")?;
             }

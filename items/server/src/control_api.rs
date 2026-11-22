@@ -869,7 +869,6 @@ async fn replace_password(
         )));
     }
     let mut conn = db.get().await?;
-    // Outside the transaction: entitlement compilation opens its own.
     if let Ok(old) = credentials::get(&mut conn, old_id).await {
         operator.may_change(&mut conn, old.subject_id).await?;
     }
@@ -959,6 +958,7 @@ async fn replace_password(
 async fn rotate_secret_slot(
     State(state): State<AppState>,
     db: Db,
+    Extension(operator): Extension<Operator>,
     Path((id, slot)): Path<(String, String)>,
     body: Option<ApiJson<RotateSlot>>,
 ) -> Result<Json<RotatedSlot>, ApiError> {
@@ -972,6 +972,7 @@ async fn rotate_secret_slot(
             let credential = credentials::get_for_update(conn, id)
                 .await
                 .map_err(|_| ApiError::not_found("credential"))?;
+            operator.may_change(conn, credential.subject_id).await?;
             let CredentialData::SecretKey(mut data) = credential.data.clone() else {
                 return Err(ApiError::invalid_request("only secret keys have slots"));
             };

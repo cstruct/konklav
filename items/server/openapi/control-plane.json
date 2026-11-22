@@ -1480,7 +1480,7 @@
           "oidc-clients"
         ],
         "summary": "Registers or replaces an OIDC client.",
-        "description": "A disabled client is enabled again.",
+        "description": "A disabled client is enabled again. Binding the client to a service\nprincipal that holds control-plane capabilities, or replacing a client\nbound to one, needs `konklav:control:all`.",
         "operationId": "put_oidc_client",
         "parameters": [
           {
@@ -1651,7 +1651,7 @@
           "oidc-clients"
         ],
         "summary": "Issues a new OIDC client secret.",
-        "description": "Only for confidential clients. The secret is shown only once, and the\nprevious one stops working.",
+        "description": "Only for confidential clients. The secret is shown only once, and the\nprevious one stops working. For a client bound to a service principal\nthat holds control-plane capabilities, it needs `konklav:control:all`.",
         "operationId": "new_oidc_client_secret",
         "parameters": [
           {

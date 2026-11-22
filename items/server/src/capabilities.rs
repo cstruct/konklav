@@ -4,10 +4,10 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::routing::get;
 use axum::{Json, Router};
-use konklav_authz::{Effect, Policy, compile};
+use konklav_authz::{Policy, compile};
 use konklav_core::SubjectId;
 use konklav_store::catalog::CAPABILITY_PREFIX;
-use konklav_store::roles::Role;
+use konklav_store::roles::{self, Role};
 use konklav_store::sessions::Stage;
 use konklav_store::{Connection, compile_input, templates};
 use serde::Serialize;
@@ -57,36 +57,39 @@ pub async fn held(
         .collect())
 }
 
-/// Whether `policies` allow any control-plane capability. Capabilities
-/// are only granted by name, never through groups.
+/// Whether `policies` name any control-plane capability, to allow or to
+/// deny it: a deny withdraws a capability as surely as unassigning the role
+/// that allows it. Capabilities are only named directly, never through
+/// groups.
 #[must_use]
-pub fn granted_by(policies: &[Policy]) -> bool {
-    policies.iter().any(|policy| {
-        policy.effect == Effect::Allow && policy.action.starts_with(CAPABILITY_PREFIX)
-    })
+pub fn named_by(policies: &[Policy]) -> bool {
+    policies
+        .iter()
+        .any(|policy| policy.action.starts_with(CAPABILITY_PREFIX))
 }
 
-/// Whether `role` allows any control-plane capability, through its own
+/// Whether `role` names any control-plane capability, through its own
 /// policies or its template's.
-pub async fn granted_by_role(conn: &mut Connection, role: &Role) -> Result<bool, ApiError> {
-    if granted_by(&role.policies) {
+pub async fn named_by_role(conn: &mut Connection, role: &Role) -> Result<bool, ApiError> {
+    if named_by(&role.policies) {
         return Ok(true);
     }
     Ok(match &role.template {
-        Some(key) => granted_by(&templates::get(conn, key).await?.policies),
+        Some(key) => named_by(&templates::get(conn, key).await?.policies),
         None => false,
     })
 }
 
-/// Whether `subject` holds any control-plane capability: an operator.
-/// Compiles entitlements in a transaction of its own, so it can't run
-/// inside another.
-pub async fn held_by(conn: &mut Connection, subject: SubjectId) -> Result<bool, ApiError> {
-    let input = compile_input::load(conn, subject, None).await?;
-    Ok(compile(&input.catalog, &input.assignments)
-        .global
-        .iter()
-        .any(|action| action.starts_with(CAPABILITY_PREFIX)))
+/// Whether any global role assigned to `subject` names a control-plane
+/// capability, whatever the subject's state: a disabled operator holds
+/// nothing, but gets its capabilities back when enabled.
+pub async fn assigned_to(conn: &mut Connection, subject: SubjectId) -> Result<bool, ApiError> {
+    for role in roles::globally_assigned_to(conn, subject).await? {
+        if named_by_role(conn, &role).await? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// What the control-plane guard learned about the caller, for handlers that
@@ -123,13 +126,16 @@ impl Operator {
         }
     }
 
-    /// [`Self::require_all`] if `subject` is an operator.
+    /// [`Self::require_all`] if `subject` is assigned any capability. A
+    /// disabled subject counts: whoever may enable it, or give it a
+    /// credential, would otherwise get its capabilities.
+    // r[impl authz.control-plane.escalation]
     pub(crate) async fn may_change(
         self,
         conn: &mut Connection,
         subject: SubjectId,
     ) -> Result<(), ApiError> {
-        if self.all || !held_by(conn, subject).await? {
+        if self.all || !assigned_to(conn, subject).await? {
             return Ok(());
         }
         self.require_all("changing an operator's credentials or state")
