@@ -445,13 +445,56 @@ fn unknown_key_ids_refresh_jwks_at_most_so_often() {
         needs(&f.core.decide(&claims_token, &reading(), None, later)),
         vec![Need::Jwks]
     );
-    f.event(
-        40,
-        "signing_keys.changed",
-        json!({"kids": [stranger.kid()]}),
-        later,
-    );
-    assert!(f.core.poll_work(later).fetch.contains(&Need::Jwks));
+    // The request's host is fetching it: no second fetch is asked for.
+    assert_eq!(f.core.poll_work(later).fetch, vec![]);
+    f.core.on_fetch_failed(&Need::Jwks);
+    assert_eq!(f.core.poll_work(later).fetch, vec![Need::Jwks]);
+}
+
+/// The fixture's token signed by a key the core doesn't have yet, and that
+/// key's JWKS with the fixture's.
+fn rotated(f: &Fixture, now: u64) -> (String, JwkSet) {
+    let next = Signer::new(SigningKey::from_bytes(&[3; 32]));
+    let token = f.token(1, now);
+    let payload = token.split('.').nth(1).unwrap();
+    let claims: AccessClaims = serde_json::from_slice(&base64_decode(payload)).unwrap();
+    let mut keys = jwks(&f.signer);
+    keys.keys.extend(jwks(&next).keys);
+    (next.sign(&claims), keys)
+}
+
+// A JWKS a request asked for before a key change may still hold the revoked
+// key, whoever asked for it.
+// r[verify relying.fallback.signing-keys]
+#[test]
+fn a_jwks_a_request_asked_for_before_a_key_change_is_not_trusted() {
+    let mut f = Fixture::new();
+    f.warm(T0);
+    let later = T0 + 31_000;
+    f.core.on_feed_activity(later);
+    let (token, keys) = rotated(&f, later);
+    // Two requests ask for the unknown key at once.
+    for _ in 0..2 {
+        let asked = f.core.decide(&token, &reading(), None, later);
+        assert_eq!(needs(&asked), vec![Need::Jwks]);
+    }
+    let changed = json!({"kids": [f.signer.kid()]});
+    f.event(40, "signing_keys.changed", changed, later + 1);
+
+    // Neither request's fetch reflects the change, landed or failed, and no
+    // other is asked for until both are in.
+    f.core.on_jwks(keys.clone(), later + 2);
+    assert!(!f.core.is_trusted(later + 2));
+    assert_eq!(f.core.poll_work(later + 2).fetch, vec![]);
+    f.core.on_fetch_failed(&Need::Jwks);
+    assert!(!f.core.is_trusted(later + 3));
+    assert_eq!(needs(&f.decide(1, later + 3)), vec![Need::Check]);
+
+    // The fetch asked for after the change is the one to trust.
+    assert_eq!(f.core.poll_work(later + 4).fetch, vec![Need::Jwks]);
+    f.core.on_jwks(keys, later + 5);
+    assert!(f.core.is_trusted(later + 5));
+    assert_eq!(f.core.poll_work(later + 5).fetch, vec![]);
 }
 
 fn base64_decode(input: &str) -> Vec<u8> {

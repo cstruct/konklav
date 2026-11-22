@@ -25,7 +25,9 @@ pub struct Key {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "need", rename_all = "snake_case")]
 pub enum Need {
-    /// Fetch `/.well-known/jwks.json` and call [`Relying::on_jwks`].
+    /// Fetch `/.well-known/jwks.json` and call [`Relying::on_jwks`], or
+    /// [`Relying::on_fetch_failed`] when it fails or is given up: the core
+    /// asks for no other while it takes this one to be in flight.
     Jwks,
     /// Fetch `/v1/session-states/{session}` and call
     /// [`Relying::on_session`].
@@ -218,8 +220,9 @@ enum JwksTrust {
     /// The signing keys changed since the JWKS was fetched: a key in it may
     /// be revoked, so it isn't trusted until the next fetch lands.
     Changed,
-    /// As `Changed`, and the fetch in flight was asked for before the
-    /// change, so it may not reflect it either.
+    /// As `Changed`, and fetches in flight were asked for before the
+    /// change, so they may not reflect it either. No other is asked for
+    /// until each of them has landed or failed.
     Superseded,
 }
 
@@ -230,7 +233,9 @@ pub struct Relying {
     jwks: Option<JwkSet>,
     jwks_fetched_at: Option<u64>,
     jwks_wanted: bool,
-    jwks_in_flight: bool,
+    /// The JWKS fetches asked for, by `poll_work` or of a request's host
+    /// (`Need::Jwks`), whose result or failure hasn't been reported.
+    jwks_in_flight: usize,
     jwks_trust: JwksTrust,
     sessions: BTreeMap<SessionId, SessionChanged>,
     /// Sessions Konklav doesn't know: tokens for them are never valid.
@@ -254,7 +259,7 @@ impl Relying {
             jwks: None,
             jwks_fetched_at: None,
             jwks_wanted: true,
-            jwks_in_flight: false,
+            jwks_in_flight: 0,
             jwks_trust: JwksTrust::Current,
             sessions: BTreeMap::new(),
             unknown_sessions: BTreeSet::new(),
@@ -567,6 +572,9 @@ impl Relying {
                 return Err(invalid());
             }
             self.jwks_wanted = true;
+            // The host fetches it now: a key change heard of before it
+            // lands must know of it (`distrust_jwks`).
+            self.jwks_in_flight += 1;
             return Err(Outcome::Need {
                 needs: vec![Need::Jwks],
             });
@@ -889,14 +897,26 @@ impl Relying {
     pub fn on_jwks(&mut self, jwks: JwkSet, now: u64) {
         self.jwks = Some(jwks);
         self.jwks_fetched_at = Some(now);
-        self.jwks_in_flight = false;
-        if self.jwks_trust == JwksTrust::Superseded {
+        if self.jwks_reported() {
             // Asked for before the keys changed: fetch again.
-            self.jwks_trust = JwksTrust::Changed;
             return;
         }
         self.jwks_wanted = false;
         self.jwks_trust = JwksTrust::Current;
+    }
+
+    /// One JWKS fetch has landed or failed. Returns whether it was asked
+    /// for before a key change, so that it may not reflect it. Once the
+    /// last such fetch is reported, the next one asked for is trusted.
+    fn jwks_reported(&mut self) -> bool {
+        self.jwks_in_flight = self.jwks_in_flight.saturating_sub(1);
+        if self.jwks_trust != JwksTrust::Superseded {
+            return false;
+        }
+        if self.jwks_in_flight == 0 {
+            self.jwks_trust = JwksTrust::Changed;
+        }
+        true
     }
 
     /// The signing keys may have changed: the cached JWKS isn't trusted
@@ -904,7 +924,7 @@ impl Relying {
     // r[impl relying.fallback.signing-keys]
     fn distrust_jwks(&mut self) {
         self.jwks_wanted = true;
-        self.jwks_trust = if self.jwks_in_flight {
+        self.jwks_trust = if self.jwks_in_flight > 0 {
             JwksTrust::Superseded
         } else {
             JwksTrust::Changed
@@ -947,14 +967,12 @@ impl Relying {
         entry.in_flight = false;
     }
 
-    /// A fetch the core asked for failed; it may be asked for again.
+    /// A fetch the core asked for failed, or the host gave it up; it may be
+    /// asked for again.
     pub fn on_fetch_failed(&mut self, need: &Need) {
         match need {
             Need::Jwks => {
-                self.jwks_in_flight = false;
-                if self.jwks_trust == JwksTrust::Superseded {
-                    self.jwks_trust = JwksTrust::Changed;
-                }
+                self.jwks_reported();
             }
             Need::Entitlements { key } => {
                 if let Some(entry) = self.entries.get_mut(key) {
@@ -1128,8 +1146,8 @@ impl Relying {
         let mut fetch = Vec::new();
         let mut next = now + config.heartbeat_ms;
 
-        if self.jwks_wanted && !self.jwks_in_flight {
-            self.jwks_in_flight = true;
+        if self.jwks_wanted && self.jwks_in_flight == 0 {
+            self.jwks_in_flight = 1;
             fetch.push(Need::Jwks);
         }
 

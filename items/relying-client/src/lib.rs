@@ -144,6 +144,21 @@ impl Drop for Held<'_> {
     }
 }
 
+/// A fetch under way. Dropped before it landed, it is reported to the core
+/// as failed.
+struct Unreported<'a> {
+    client: &'a RelyingClient,
+    need: Option<&'a Need>,
+}
+
+impl Drop for Unreported<'_> {
+    fn drop(&mut self) {
+        if let Some(need) = self.need {
+            self.client.core().on_fetch_failed(need);
+        }
+    }
+}
+
 /// Every token kind, for verifying a token through the check API whatever
 /// its kind.
 const EVERY_TOKEN_KIND: [TokenKind; 5] = [
@@ -625,11 +640,19 @@ impl RelyingClient {
         }
     }
 
-    /// Fetches one thing the core needs and hands it over.
+    /// Fetches one thing the core needs and hands it over. The core hears
+    /// of every fetch that doesn't land: one that fails, and one given up
+    /// because its request's future was dropped, as when the client goes
+    /// away. The core takes it to be in flight until then.
+    // r[impl item.relying-client.fetch-reported]
     async fn fetch(&self, need: &Need) -> Result<(), Error> {
+        let mut unreported = Unreported {
+            client: self,
+            need: Some(need),
+        };
         let result = self.fetch_inner(need).await;
-        if result.is_err() {
-            self.core().on_fetch_failed(need);
+        if result.is_ok() {
+            unreported.need = None;
         }
         result
     }
@@ -803,7 +826,35 @@ async fn checked(response: reqwest::Response) -> Result<reqwest::Response, Error
 
 #[cfg(test)]
 mod tests {
-    use super::registered_scope_path;
+    use std::time::Duration;
+
+    use konklav_relying::{Config, Need};
+
+    use super::{ClientConfig, RelyingClient, now, registered_scope_path};
+
+    // The core asks for no second JWKS while it takes one to be in flight,
+    // so a fetch dropped with its request must not stay in flight for ever.
+    // r[verify item.relying-client.fetch-reported]
+    #[tokio::test]
+    async fn a_fetch_dropped_with_its_request_is_reported_as_failed() {
+        // Accepts connections and says nothing.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let client = RelyingClient::new(ClientConfig {
+            relying_url: url.clone(),
+            subject_url: url,
+            key_id: "key".into(),
+            secret: "secret".into(),
+            core: Config::default(),
+        });
+        assert_eq!(client.core().poll_work(now()).fetch, [Need::Jwks]);
+        assert_eq!(client.core().poll_work(now()).fetch, [], "in flight");
+
+        let fetch = client.fetch(&Need::Jwks);
+        let dropped = tokio::time::timeout(Duration::from_millis(50), fetch).await;
+        assert!(dropped.is_err(), "still waiting when it was dropped");
+        assert_eq!(client.core().poll_work(now()).fetch, [Need::Jwks]);
+    }
 
     // `..` percent-encoded is still a dot segment to a URL: the request for
     // `document/..` went to `/v1/registered-scopes/`.

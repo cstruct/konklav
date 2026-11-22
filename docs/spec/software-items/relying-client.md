@@ -23,6 +23,13 @@ however they are encoded, so the request would go to another path. It MUST
 instead tell the core that Konklav doesn't know the scope
 (`relying.cache.registered-unknown`).
 
+r[item.relying-client.fetch-reported]
+`RelyingClient` MUST report to the core every fetch the core asked for:
+its result, or its failure (`on_fetch_failed`), also for a fetch given up
+because the request that needed it was dropped. The core takes a fetch to
+be in flight until then, and asks for no other JWKS meanwhile
+(`relying.fallback.signing-keys`).
+
 ## Pacing and fake ids
 
 The binding offers pacing (see the nomenclature) and fake ids for a relying

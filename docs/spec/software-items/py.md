@@ -123,6 +123,12 @@ MUST tell the core that Konklav doesn't know the scope
 (`relying.cache.registered-unknown`), as `konklav-relying-client` does
 (`item.relying-client.path-segments`).
 
+r[item.py.fetch-reported]
+`RelyingClient` MUST report to the core every fetch the core asked for:
+its result, or its failure, also for a fetch cancelled with the request
+that needed it, as `item.relying-client.fetch-reported` requires of the
+Rust host.
+
 r[item.py.accepted-request]
 `RelyingClient.accept_request` MUST accept a request's presentation
 (`relying.verify.accepted-presentation`), taking the arguments

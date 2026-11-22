@@ -1,4 +1,5 @@
 import asyncio
+import json
 import uuid
 from typing import Any
 
@@ -581,5 +582,40 @@ def test_scope_ids_never_retarget_the_request() -> None:
         assert asked == [], "not asked: the core takes them for unknown"
         await client._fetch({"need": "registered_scope", "kind": "document", "id": "a/b ..?"})
         assert asked == [b"/v1/registered-scopes/document/a%2Fb%20..%3F"]
+
+    asyncio.run(scenario())
+
+
+# The core asks for no second JWKS while it takes one to be in flight, so a
+# fetch cancelled with its request must not stay in flight for ever.
+# r[verify item.py.fetch-reported]
+def test_a_fetch_cancelled_with_its_request_is_reported_as_failed() -> None:
+    async def scenario() -> None:
+        async def silent(request: httpx.Request) -> httpx.Response:
+            await asyncio.Event().wait()
+            raise AssertionError("never answers")
+
+        client = RelyingClient(
+            relying_url="http://konklav",
+            subject_url="http://konklav",
+            key_id="key",
+            secret="secret",
+            issuer=ISSUER,
+            audience=AUDIENCE,
+            http=httpx.AsyncClient(transport=httpx.MockTransport(silent)),
+        )
+
+        def due() -> list[dict[str, Any]]:
+            fetch: list[dict[str, Any]] = json.loads(client._core.poll_work(1_800_000_000_000))["fetch"]
+            return fetch
+
+        assert due() == [{"need": "jwks"}]
+        assert due() == [], "in flight"
+        fetch = asyncio.create_task(client._fetch({"need": "jwks"}))
+        await asyncio.sleep(0.01)
+        fetch.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await fetch
+        assert due() == [{"need": "jwks"}]
 
     asyncio.run(scenario())

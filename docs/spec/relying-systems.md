@@ -203,6 +203,9 @@ it arrives, the relying SDK MUST treat its cache as untrusted and decide
 through the check API, since the cached JWKS may hold a revoked key. The
 same MUST hold when a stream is opened without a cursor while a JWKS is
 cached, since key changes before the stream's start are never replayed.
+A JWKS whose fetch the SDK began before the event, for a request that
+presented an unknown key id or in the background, MUST NOT end that state:
+the SDK MUST fetch again once every such fetch has landed or failed.
 
 r[relying.fallback.equivalence]
 The relying SDK MUST report decisions made through the check API in the

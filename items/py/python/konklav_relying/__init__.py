@@ -633,10 +633,13 @@ class RelyingClient:
         body.pop("revision", None)
         return body
 
+    # r[impl item.py.fetch-reported]
     async def _fetch(self, need: Mapping[str, Any]) -> None:
         try:
             await self._fetch_inner(need)
-        except Exception:
+        except BaseException:
+            # Also a fetch cancelled with its request: the core takes it to
+            # be in flight until it hears otherwise.
             with self._lock:
                 self._core.on_fetch_failed(json.dumps(need))
             raise
