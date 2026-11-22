@@ -1480,7 +1480,7 @@
           "oidc-clients"
         ],
         "summary": "Registers or replaces an OIDC client.",
-        "description": "A disabled client is enabled again. Binding the client to a service\nprincipal that holds control-plane capabilities, or replacing a client\nbound to one, needs `konklav:control:all`.",
+        "description": "Redirect URIs, the login URL and the back-channel logout URI must be\n`https` URLs; plain `http` is for loopback hosts and development\ndeployments. A disabled client is enabled again. Binding the client to a service\nprincipal that holds control-plane capabilities, or replacing a client\nbound to one, needs `konklav:control:all`.",
         "operationId": "put_oidc_client",
         "parameters": [
           {
@@ -6408,7 +6408,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Where logout tokens are posted when a session of the client ends.\nAn `https` URL, and at a public address unless the deployment\nallows private ones."
           },
           "id_token_alg": {
             "$ref": "#/components/schemas/IdTokenAlgorithm"
@@ -6428,7 +6429,7 @@
               "string",
               "null"
             ],
-            "description": "The client's own login page, instead of the provider's."
+            "description": "The client's own login page, instead of the provider's. An `https`\nURL, or `http` on a loopback host."
           },
           "metadata": {
             "type": "object",
@@ -6438,14 +6439,15 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Where a logout may send the browser afterwards; as `redirect_uris`."
           },
           "redirect_uris": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Matched exactly; no fragments."
+            "description": "Matched exactly. `https` URLs, or `http` on a loopback host,\nwithout fragments."
           },
           "refresh": {
             "type": "boolean",

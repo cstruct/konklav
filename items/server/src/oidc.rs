@@ -35,6 +35,12 @@ pub struct OpenIdProvider {
     pub dpop_max_age: i64,
     /// Which clients must use DPoP regardless of their registration.
     pub require_dpop: crate::config::DpopRequirement,
+    /// Whether back-channel logout tokens may be sent to addresses that
+    /// aren't public: loopback, private, link-local and the like. Off
+    /// unless the deployment's clients are on its own network, since a
+    /// client registration would otherwise make Konklav post into it. Read
+    /// when the first logout token is sent.
+    pub logout_private_addresses: bool,
     /// The HTTP client back-channel logout tokens are sent with, built
     /// when first needed.
     logout_http: std::sync::OnceLock<reqwest::Client>,
@@ -146,18 +152,51 @@ impl OpenIdProvider {
             claims_hook: None,
             dpop_max_age: 60,
             require_dpop: crate::config::DpopRequirement::None,
+            logout_private_addresses: false,
             logout_http: std::sync::OnceLock::new(),
         })
     }
 
-    /// The HTTP client back-channel logout tokens are sent with.
+    /// The HTTP client back-channel logout tokens are sent with. Unless
+    /// private addresses are allowed, it connects to public ones only.
     ///
     /// # Panics
     ///
     /// If the client can't be built, which only happens without TLS roots.
+    // r[impl oidc.provider.logout.destinations]
     fn logout_http(&self) -> &reqwest::Client {
-        self.logout_http
-            .get_or_init(|| crate::outbound::client(LOGOUT_TIMEOUT).expect("an HTTP client"))
+        self.logout_http.get_or_init(|| {
+            let builder = crate::outbound::builder(LOGOUT_TIMEOUT);
+            if self.logout_private_addresses {
+                builder
+            } else {
+                crate::outbound::public_only(builder)
+            }
+            .build()
+            .expect("an HTTP client")
+        })
+    }
+
+    /// Sends a logout token to a client's back-channel logout URI, if
+    /// tokens may go there. A redirect isn't followed, and isn't a
+    /// delivery.
+    // r[impl oidc.provider.logout.destinations]
+    // r[impl federation.outbound.redirects]
+    async fn send_logout(&self, uri: &str, token: String) -> Result<(), String> {
+        let url = reqwest::Url::parse(uri).map_err(|error| error.to_string())?;
+        if !self.logout_private_addresses {
+            crate::outbound::public_destination(&url)?;
+        }
+        let request = self
+            .logout_http()
+            .post(url)
+            .form(&[("logout_token", token)]);
+        crate::telemetry::http::send(request, "backchannel_logout")
+            .await
+            .map_err(crate::outbound::ResponseError::from)
+            .and_then(crate::outbound::succeeded)
+            .map(drop)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -465,7 +504,6 @@ async fn deliver_leased(
             outcome,
         );
     };
-    let http = provider.logout_http();
     for logout in pending {
         let client = konklav_store::oidc_clients::get(conn, &logout.client_id).await?;
         let Some(uri) = &client.backchannel_logout_uri else {
@@ -479,17 +517,9 @@ async fn deliver_leased(
             logout.subject_id,
             logout.session_id,
         )?;
-        let sent = crate::telemetry::http::send(
-            http.post(uri).form(&[("logout_token", token)]),
-            "backchannel_logout",
-        )
-        .await
-        .map_err(crate::outbound::ResponseError::from)
-        // A redirect isn't followed, and isn't a delivery.
-        // r[impl federation.outbound.redirects]
-        .and_then(crate::outbound::succeeded);
+        let sent = provider.send_logout(uri, token).await;
         match sent {
-            Ok(_) => {
+            Ok(()) => {
                 delivered("delivered");
                 konklav_store::backchannel::complete(conn, logout.id).await?;
             }
@@ -503,8 +533,7 @@ async fn deliver_leased(
                 let backoff =
                     chrono::Duration::seconds(10 * 2_i64.pow(logout.attempts.unsigned_abs()));
                 let retry_at = chrono::Utc::now() + backoff.min(chrono::Duration::hours(1));
-                konklav_store::backchannel::retry(conn, logout.id, &error.to_string(), retry_at)
-                    .await?;
+                konklav_store::backchannel::retry(conn, logout.id, &error, retry_at).await?;
             }
         }
     }

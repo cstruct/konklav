@@ -120,6 +120,16 @@ type (`confidential` or `public`), registered redirect URIs, allowed grants
 and scopes, the audience of their access tokens, and the claims they may
 receive. Redirect URIs MUST match exactly.
 
+r[oidc.provider.client-urls]
+A client's redirect URIs, post-logout redirect URIs, login URL and
+back-channel logout URI MUST be refused when written unless they are
+absolute `https` URLs, or plain `http` URLs on a loopback host (`localhost`,
+a name under it, `127.0.0.0/8` or `::1`). A development configuration
+(`r[platform.config.published-secrets]`) MAY register plain `http` URLs on
+any host. No other scheme MUST ever be accepted, and redirect URIs MUST NOT
+have fragments. Registrations stored before this rule MUST stay readable
+and usable.
+
 r[oidc.provider.cors]
 The discovery document and the key set MUST allow cross-origin reads from
 any origin. The token, revocation and userinfo endpoints MUST allow
@@ -331,6 +341,15 @@ r[oidc.provider.logout]
 Konklav MUST support RP-initiated logout, and MUST send back-channel logout
 tokens to clients that registered a back-channel URI whenever a session
 they received tokens for ends.
+
+r[oidc.provider.logout.destinations]
+Logout tokens MUST only be sent to public addresses, unless the OpenID
+provider is configured to allow private ones: a back-channel logout URI
+whose host is, or resolves to, a loopback, private, link-local or otherwise
+non-public address MUST NOT be connected to, and MUST be refused when
+written if its host already shows it. Konklav MUST connect to the addresses
+it checked, so a name can't resolve differently between the check and the
+request.
 
 ## Federation between instances
 

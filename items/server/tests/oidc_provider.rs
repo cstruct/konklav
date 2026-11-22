@@ -66,6 +66,14 @@ fn provider() -> OpenIdProvider {
     .unwrap()
 }
 
+/// A provider that sends logout tokens to private addresses too, as the
+/// tests' relying systems are on this machine.
+fn provider_for_private_clients() -> OpenIdProvider {
+    let mut provider = provider();
+    provider.logout_private_addresses = true;
+    provider
+}
+
 async fn world() -> World {
     world_with(provider()).await
 }
@@ -921,7 +929,8 @@ async fn logout_ends_the_sign_in_and_notifies_clients() {
     );
     tokio::spawn(async move { axum::serve(listener, rp).await.unwrap() });
 
-    let world = world().await;
+    // The relying system is on this machine.
+    let world = world_with(provider_for_private_clients()).await;
     let app = &world.app;
     let updated = app
         .control(
@@ -1026,7 +1035,7 @@ async fn redirecting_backchannel() -> (String, std::sync::Arc<std::sync::Mutex<V
 #[tokio::test(flavor = "multi_thread")]
 async fn a_redirected_logout_token_is_not_delivered() {
     let (backchannel, received) = redirecting_backchannel().await;
-    let world = world().await;
+    let world = world_with(provider_for_private_clients()).await;
     let app = &world.app;
     let updated = app
         .control(
@@ -1063,6 +1072,138 @@ async fn a_redirected_logout_token_is_not_delivered() {
         received.lock().unwrap().is_empty(),
         "the token didn't follow the redirect"
     );
+}
+
+/// Signs in to the console client and out again, so a logout token is due,
+/// and returns how many deliveries were tried.
+async fn sign_in_and_out(world: &World) -> usize {
+    let app = &world.app;
+    let code = authorize(world, &[]).await;
+    let tokens = exchange(world, &code, VERIFIER).await;
+    let id_token = tokens.body["id_token"].as_str().unwrap();
+    let out = app
+        .send(
+            Method::GET,
+            &format!("/v1/oauth2/logout?id_token_hint={id_token}"),
+            &[],
+            None,
+        )
+        .await;
+    assert!(out.status.is_success(), "{:?}", out.body);
+    konklav_server::oidc::deliver_logouts(&app.state)
+        .await
+        .unwrap()
+}
+
+// r[verify oidc.provider.logout.destinations]
+#[tokio::test(flavor = "multi_thread")]
+async fn logout_tokens_are_not_sent_to_private_addresses() {
+    use diesel_async::RunQueryDsl;
+    let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let sink = received.clone();
+    let rp = axum::Router::new().route(
+        "/logout",
+        axum::routing::post(move |body: String| async move { sink.lock().unwrap().push(body) }),
+    );
+    tokio::spawn(async move { axum::serve(listener, rp).await.unwrap() });
+
+    // By address and by name.
+    for host in ["127.0.0.1", "localhost"] {
+        let uri = format!("http://{host}:{port}/logout");
+        let world = world().await;
+        let registered = world
+            .app
+            .control(
+                Method::PUT,
+                "/v1/oidc/clients/console",
+                Some(json!({
+                    "kind": "confidential",
+                    "redirect_uris": [REDIRECT],
+                    "audience": "console",
+                    "backchannel_logout_uri": uri,
+                })),
+            )
+            .await;
+        assert_eq!(registered.code(), "INVALID_REQUEST", "{host}");
+        // A registration from before such URIs were refused.
+        let mut conn = world.app.db.pool().get().await.unwrap();
+        diesel::sql_query(format!(
+            "update oidc_client set backchannel_logout_uri = '{uri}' where id = 'console'"
+        ))
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(sign_in_and_out(&world).await, 1);
+        assert!(received.lock().unwrap().is_empty(), "{host}");
+    }
+
+    // A deployment whose clients are on its own network allows them.
+    let world = world_with(provider_for_private_clients()).await;
+    let registered = world
+        .app
+        .control(
+            Method::PUT,
+            "/v1/oidc/clients/console",
+            Some(json!({
+                "kind": "confidential",
+                "redirect_uris": [REDIRECT],
+                "scopes": ["openid", "email", "groups"],
+                "audience": "console",
+                "backchannel_logout_uri": format!("http://localhost:{port}/logout"),
+            })),
+        )
+        .await;
+    assert_eq!(registered.status, StatusCode::OK, "{:?}", registered.body);
+    assert_eq!(sign_in_and_out(&world).await, 1);
+    assert_eq!(received.lock().unwrap().len(), 1);
+}
+
+// r[verify oidc.provider.client-urls]
+#[tokio::test(flavor = "multi_thread")]
+async fn clients_register_only_https_and_loopback_urls() {
+    let world = world().await;
+    let put = async |urls: Value| {
+        let mut client = json!({
+            "kind": "public",
+            "redirect_uris": ["https://spa.example/callback"],
+            "audience": "spa",
+        });
+        for (field, value) in urls.as_object().unwrap() {
+            client[field] = value.clone();
+        }
+        world
+            .app
+            .control(Method::PUT, "/v1/oidc/clients/spa", Some(client))
+            .await
+    };
+    for refused in [
+        json!({"redirect_uris": ["javascript:alert(document.cookie)"]}),
+        json!({"redirect_uris": ["data:text/html,<script>alert(1)</script>"]}),
+        json!({"redirect_uris": ["file:///etc/passwd"]}),
+        json!({"redirect_uris": ["com.example.app:/callback"]}),
+        json!({"redirect_uris": ["http://spa.example/callback"]}),
+        json!({"redirect_uris": ["https://spa.example/callback#fragment"]}),
+        json!({"post_logout_redirect_uris": ["javascript:alert(1)"]}),
+        json!({"post_logout_redirect_uris": ["https://spa.example/#bye"]}),
+        json!({"login_url": "javascript:alert(1)"}),
+        json!({"login_url": "http://login.example/"}),
+        json!({"backchannel_logout_uri": "http://spa.example/logout"}),
+        json!({"backchannel_logout_uri": "https://169.254.169.254/latest/meta-data/"}),
+        json!({"backchannel_logout_uri": "https://10.0.0.5/logout"}),
+    ] {
+        let reply = put(refused.clone()).await;
+        assert_eq!(reply.code(), "INVALID_REQUEST", "{refused}");
+    }
+    let accepted = put(json!({
+        "redirect_uris": ["https://spa.example/callback", "http://127.0.0.1:8400/callback"],
+        "post_logout_redirect_uris": ["http://localhost:8400/"],
+        "login_url": "https://login.spa.example/",
+        "backchannel_logout_uri": "https://spa.example/logout",
+    }))
+    .await;
+    assert_eq!(accepted.status, StatusCode::OK, "{:?}", accepted.body);
 }
 
 // r[verify oidc.provider.client-audience]

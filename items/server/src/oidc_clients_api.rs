@@ -5,7 +5,9 @@ use axum::extract::{Extension, Path, Query, State};
 use diesel_async::AsyncConnection;
 use konklav_api::{self as api, MetadataQuery, OidcClientDefinition, OidcClientSecret};
 use konklav_store::credentials::{self, CredentialData, CredentialKind};
-use konklav_store::oidc_clients::{self, ClientKind, IdTokenAlgorithm, OidcClient};
+use konklav_store::oidc_clients::{
+    self, ClientDefinition, ClientKind, IdTokenAlgorithm, OidcClient,
+};
 use konklav_store::{StoreError, sessions, subjects};
 use sha2::{Digest, Sha256};
 use utoipa_axum::router::OpenApiRouter;
@@ -14,7 +16,7 @@ use utoipa_axum::routes;
 use crate::capabilities::Operator;
 use crate::db::Db;
 use crate::error::{ApiError, ApiJson};
-use crate::{AppState, metadata, transport};
+use crate::{AppState, AuthContext, metadata, outbound, transport};
 
 /// OIDC clients, with the `OpenAPI` description of each route taken from
 /// its handler's `#[utoipa::path]`.
@@ -76,9 +78,53 @@ async fn may_change_bound(
     }
 }
 
+/// Checks the URLs of a registration being written: where browsers are
+/// sent (redirect URIs, the login URL) and where Konklav sends logout
+/// tokens. Registrations already stored aren't checked when read or used.
+// r[impl oidc.provider.client-urls]
+// r[impl oidc.provider.logout.destinations]
+fn check_urls(auth: &AuthContext, definition: &ClientDefinition) -> Result<(), String> {
+    // A development deployment runs on plain HTTP, its clients too.
+    let plain_http = auth
+        .browser
+        .as_ref()
+        .is_some_and(|browser| !browser.secure_cookies)
+        || outbound::client_url(&auth.issuer, false).is_ok_and(|url| url.scheme() == "http");
+    let redirects = definition
+        .redirect_uris
+        .iter()
+        .chain(&definition.post_logout_redirect_uris);
+    for uri in redirects {
+        if outbound::client_url(uri, plain_http)?.fragment().is_some() {
+            return Err(format!("`{uri}` has a fragment, which redirect URIs can't"));
+        }
+    }
+    if let Some(url) = &definition.login_url {
+        outbound::client_url(url, plain_http)?;
+    }
+    if let Some(uri) = &definition.backchannel_logout_uri {
+        let parsed = outbound::client_url(uri, plain_http)?;
+        let private = auth
+            .oidc
+            .as_ref()
+            .is_some_and(|provider| provider.logout_private_addresses);
+        if !private {
+            outbound::public_destination(&parsed).map_err(|reason| {
+                format!(
+                    "backchannel_logout_uri: {reason}, and logout tokens are only sent to \
+                     private addresses with `oidc_provider.backchannel_logout_private_addresses`"
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
 /// Registers or replaces an OIDC client.
 ///
-/// A disabled client is enabled again. Binding the client to a service
+/// Redirect URIs, the login URL and the back-channel logout URI must be
+/// `https` URLs; plain `http` is for loopback hosts and development
+/// deployments. A disabled client is enabled again. Binding the client to a service
 /// principal that holds control-plane capabilities, or replacing a client
 /// bound to one, needs `konklav:control:all`.
 #[utoipa::path(put, path = "/oidc/clients/{id}", operation_id = "put_oidc_client", tag = "oidc-clients",
@@ -106,15 +152,7 @@ async fn put_client(
             "a client's audience can't be Konklav's own",
         ));
     }
-    for uri in &definition.redirect_uris {
-        let parsed = reqwest::Url::parse(uri)
-            .map_err(|_| ApiError::invalid_request(format!("`{uri}` is not a URL")))?;
-        if parsed.fragment().is_some() {
-            return Err(ApiError::invalid_request(
-                "redirect URIs can't have fragments",
-            ));
-        }
-    }
+    check_urls(&state.auth, &definition).map_err(ApiError::invalid_request)?;
     if let Some(jwks) = &definition.jwks
         && serde_json::from_value::<jsonwebtoken::jwk::JwkSet>(jwks.clone()).is_err()
     {

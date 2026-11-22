@@ -104,6 +104,13 @@ New pieces:
   - ID-token algorithm (`ES256`, `EdDSA` or, with an RSA key, `RS256`)
   - whether refresh is allowed
 
+  Its URLs (redirect and post-logout redirect URIs, the login URL and the
+  back-channel logout URI) must be `https`, or plain `http` on a loopback
+  host as native apps and local development use; a development
+  configuration may register plain `http` anywhere. Private-use schemes
+  such as `com.example.app:` aren't accepted: native apps use claimed
+  `https` links or a loopback redirect.
+
   `POST …/secret` issues a confidential client's secret once; Konklav
   keeps only its SHA-256. `DELETE` disables the client and revokes its
   sessions, keeping the registration as history.
@@ -225,6 +232,14 @@ registered as pre-consented.
   - leases due tokens
   - signs them as `logout+jwt` with the client's algorithm
   - posts them, retrying with backoff up to eight times
+
+  A registration decides where Konklav posts, so the worker only connects
+  to public addresses: a URI whose host is, or resolves to, a loopback,
+  private or link-local address (a cloud metadata service, say) is never
+  called, and the connection goes to the addresses that were checked. A
+  deployment whose clients are on its own network sets
+  `oidc_provider.backchannel_logout_private_addresses`. Redirects aren't
+  followed.
 
   Sessions that simply expire send nothing; clients know `exp`.
 
