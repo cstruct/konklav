@@ -839,19 +839,25 @@ struct CompletePhone {
     session: SessionRequest,
 }
 
-/// `POST /v1/login/phone/complete`
+/// `POST /v1/login/phone/complete`: a guess at a code is a login attempt,
+/// counted against the phone number and the client address like a guess at
+/// a password, whether or not the number has a code outstanding.
 // r[impl authn.login.session-request]
+// r[impl authn.login.rate-limit]
 async fn complete_phone(
     State(state): State<AppState>,
     dpop::Bound(dpop_jkt): dpop::Bound,
+    address: ClientAddress,
     headers: HeaderMap,
     ApiJson(body): ApiJson<CompletePhone>,
 ) -> Result<Response, ApiError> {
     let mut conn = state.pool.get().await?;
     let browser = body.session.check(&state, &mut conn, &headers).await?;
     let recipient = credentials::normalize_identifier(&body.phone);
-    let challenge =
-        redeem_code(&mut conn, Purpose::PhoneCode, &recipient, &body.code, None).await?;
+    let attempt = begin_attempt(&mut conn, CredentialKind::PhoneOtp, &recipient, address).await?;
+    let redeemed = redeem_code(&mut conn, Purpose::PhoneCode, &recipient, &body.code, None).await;
+    attempt.finish(&mut conn, redeemed.is_ok()).await?;
+    let challenge = redeemed?;
     let credential =
         credentials::get(&mut conn, challenge.credential_id.ok_or_else(invalid_code)?).await?;
     start_passwordless_session(

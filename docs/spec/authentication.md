@@ -32,7 +32,8 @@ address across identifiers, more loosely, so one source can't try many
 identifiers. An attempt MUST
 count toward the limit while it is being checked, so concurrent attempts
 can't exceed it, and every check of a credential's secret MUST count,
-including those made for step-up and password change.
+including those made for step-up and password change, and every check of
+a code sent for a phone-code login.
 
 r[authn.login.hashing-bound]
 Password and secret-key hashing MUST run with bounded concurrency, so a

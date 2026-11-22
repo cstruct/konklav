@@ -1503,6 +1503,38 @@ async fn a_password_its_subject_sets_keeps_the_credentials_restrictions() {
     restricted_login("a fresh password").await;
 }
 
+// r[verify authn.login.rate-limit]
+#[tokio::test(flavor = "multi_thread")]
+async fn phone_code_guesses_count_toward_the_address_limit() {
+    let app = TestApp::new().await;
+    let guess = |peer: &str, n: usize| {
+        let peer = peer.parse().unwrap();
+        let app = &app;
+        async move {
+            app.send_from(
+                Some(peer),
+                Method::POST,
+                "/v1/login/phone/complete",
+                &[],
+                Some(json!({"phone": format!("+4670{n:07}"), "code": "000000"})),
+            )
+            .await
+        }
+    };
+    for n in 0..100 {
+        assert_eq!(
+            guess("203.0.113.9:1000", n).await.code(),
+            "INVALID_CREDENTIALS"
+        );
+    }
+    assert_eq!(guess("203.0.113.9:1001", 100).await.code(), "RATE_LIMITED");
+    assert_eq!(
+        guess("198.51.100.1:1000", 100).await.code(),
+        "INVALID_CREDENTIALS",
+        "other addresses are unaffected"
+    );
+}
+
 // r[verify authn.login.staged]
 #[tokio::test(flavor = "multi_thread")]
 async fn partial_sessions_cannot_use_the_relying_surface() {
