@@ -103,8 +103,10 @@ passed since it was made.
 
 r[retention.assertions]
 A recorded client-assertion, bearer-assertion or DPoP-proof identifier
-MUST be deleted once the assertion or proof it was recorded for has expired
-(for a DPoP proof: once it is too old to pass the freshness check).
+MUST be deleted once the assertion or proof it was recorded for is no longer
+accepted, and not before: for an assertion, once its expiry and the allowed
+clock skew have passed; for a DPoP proof, once it is too old to pass the
+freshness check.
 
 r[retention.sessions]
 A session MUST be deleted a configured period after it expired or was

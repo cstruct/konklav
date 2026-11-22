@@ -200,6 +200,18 @@ pub struct WorkloadAssertion {
     pub exp: i64,
 }
 
+impl WorkloadAssertion {
+    /// The last moment [`Provider::verify_assertion`] accepts the assertion:
+    /// its `exp` and the leeway, plus a second since validation compares
+    /// whole seconds. Its `jti` is remembered until then. `None` if `exp`
+    /// isn't a representable time.
+    #[must_use]
+    pub fn accepted_until(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        let until = self.exp.checked_add(LEEWAY_SECONDS.cast_signed() + 1)?;
+        chrono::DateTime::from_timestamp(until, 0)
+    }
+}
+
 pub struct Provider {
     pub settings: Settings,
     http: reqwest::Client,

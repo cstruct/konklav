@@ -280,6 +280,11 @@ r[oidc.provider.client-credentials]
 Service principals MUST be able to obtain access tokens with the client
 credentials grant, authenticating with a client secret or `private_key_jwt`.
 
+r[oidc.provider.client-assertion.replay]
+A `private_key_jwt` client assertion MUST carry a `jti`, and each one MUST
+authenticate its client at most once for as long as the assertion is
+accepted, the clock-skew allowance after its `exp` included.
+
 r[oidc.provider.revocation]
 Clients MUST be able to revoke a refresh or access token they were issued
 (RFC 7009), which MUST end the session behind it. Revoking an unknown token
@@ -364,7 +369,9 @@ principal's.
 
 r[federation.jwt-bearer.replay]
 An assertion MUST carry a `jti`, and each one MUST be exchanged at most
-once per upstream issuer until it expires.
+once per upstream issuer for as long as the assertion is accepted, the
+clock-skew allowance after its `exp` included. An assertion whose `exp` is
+not a representable time MUST be refused.
 
 ## Audit
 

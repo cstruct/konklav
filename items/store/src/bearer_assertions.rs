@@ -7,23 +7,22 @@ use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use crate::StoreResult;
 use crate::schema::bearer_assertion;
 
-/// Records an assertion's `jti`. Returns false if the issuer's assertion
-/// was already exchanged, so a replay is refused. Expired records are
-/// pruned.
+/// Records an assertion's `jti` until `accepted_until`, the last moment
+/// the assertion passes validation, clock-skew leeway included. Returns
+/// false if the issuer's assertion was already exchanged, so a replay is
+/// refused. The sweeper prunes records past that moment, never this
+/// function: an assertion presented again must still find its own record.
 pub async fn record(
     conn: &mut AsyncPgConnection,
     issuer: &str,
     jti: &str,
-    expires_at: DateTime<Utc>,
+    accepted_until: DateTime<Utc>,
 ) -> StoreResult<bool> {
-    diesel::delete(bearer_assertion::table.filter(bearer_assertion::expires_at.lt(Utc::now())))
-        .execute(conn)
-        .await?;
     let inserted = diesel::insert_into(bearer_assertion::table)
         .values((
             bearer_assertion::issuer.eq(issuer),
             bearer_assertion::jti.eq(jti),
-            bearer_assertion::expires_at.eq(expires_at),
+            bearer_assertion::expires_at.eq(accepted_until),
         ))
         .on_conflict_do_nothing()
         .execute(conn)

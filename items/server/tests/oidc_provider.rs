@@ -755,6 +755,11 @@ const KEY_X: &str = "Y6_1EEzqCvOEimuWQdUYPZi0Vo88sqdVzRqcBdc1zB4";
 const KEY_Y: &str = "Pw2tFlEGx2LLaNm81VIuU-rOYrc_hgsMC1Kgo0J5ey0";
 
 fn assertion(client: &str, jti: &str) -> String {
+    assertion_expiring(client, jti, 60)
+}
+
+/// A client assertion whose `exp` is `expires_in` seconds from now.
+fn assertion_expiring(client: &str, jti: &str, expires_in: i64) -> String {
     let now = chrono::Utc::now().timestamp();
     let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
     header.kid = Some("robot-key".into());
@@ -762,7 +767,7 @@ fn assertion(client: &str, jti: &str) -> String {
         &header,
         &json!({
             "iss": client, "sub": client, "aud": format!("{ISSUER}/v1/oauth2/token"),
-            "jti": jti, "iat": now, "exp": now + 60,
+            "jti": jti, "iat": now, "exp": now + expires_in,
         }),
         &jsonwebtoken::EncodingKey::from_ec_pem(ID_TOKEN_KEY.as_bytes()).unwrap(),
     )
@@ -834,6 +839,17 @@ async fn bound_clients_get_service_tokens_with_private_key_jwt() {
     assert_eq!(
         forged.body["error"], "invalid_client",
         "console has no keys"
+    );
+    // An assertion is accepted for a while after its `exp`, for clock skew,
+    // and is remembered for as long.
+    // r[verify oidc.provider.client-assertion.replay]
+    let late = assertion_expiring("robot", "jti-late", -5);
+    let accepted = grant(late.clone()).await;
+    assert_eq!(accepted.status, StatusCode::OK, "{:?}", accepted.body);
+    let replayed = grant(late).await;
+    assert_eq!(
+        replayed.body["error"], "invalid_client",
+        "each jti works once, also just after exp"
     );
 
     // Unbinding the principal ends client credentials.

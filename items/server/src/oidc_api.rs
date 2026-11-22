@@ -990,6 +990,9 @@ async fn authenticate_client(
     }
 }
 
+/// Clock skew tolerated on a client assertion's `exp`.
+const ASSERTION_LEEWAY_SECONDS: i64 = 30;
+
 /// Authenticates a client by a JWT it signed with a key from its
 /// registered `jwks` (RFC 7523): `iss` and `sub` are the client id, `aud`
 /// names the token endpoint or the issuer, and each `jti` works once.
@@ -1031,15 +1034,22 @@ async fn authenticate_assertion(
     validation.sub = Some(client_id.clone());
     validation.set_audience(&[endpoint(state, "token"), state.auth.issuer.clone()]);
     validation.set_required_spec_claims(&["exp", "iss", "sub", "aud", "jti"]);
-    validation.leeway = 30;
+    validation.leeway = ASSERTION_LEEWAY_SECONDS.cast_unsigned();
     let claims = jsonwebtoken::decode::<AssertionClaims>(assertion, &key, &validation)
         .ok()?
         .claims;
     if claims.sub != client_id {
         return None;
     }
-    let expires = chrono::DateTime::from_timestamp(claims.exp, 0)?;
-    konklav_store::client_assertions::record(conn, &client_id, &claims.jti, expires)
+    // Remembered for as long as the assertion passes validation, leeway
+    // included, so it can't be replayed just after `exp`. The extra second
+    // covers validation comparing whole seconds.
+    // r[impl oidc.provider.client-assertion.replay]
+    let accepted_until = claims
+        .exp
+        .checked_add(ASSERTION_LEEWAY_SECONDS + 1)
+        .and_then(|until| chrono::DateTime::from_timestamp(until, 0))?;
+    konklav_store::client_assertions::record(conn, &client_id, &claims.jti, accepted_until)
         .await
         .ok()?
         .then_some(client)
@@ -1606,12 +1616,14 @@ async fn jwt_bearer_grant(
     }
     // Each assertion is exchanged once; a second exchange means it leaked.
     // r[impl federation.jwt-bearer.replay]
-    let expires = chrono::DateTime::from_timestamp(verified.exp, 0).unwrap_or_else(Utc::now);
+    let Some(accepted_until) = verified.accepted_until() else {
+        return Ok(invalid_grant("the assertion is invalid"));
+    };
     if !konklav_store::bearer_assertions::record(
         conn,
         &provider.settings.issuer,
         &verified.jti,
-        expires,
+        accepted_until,
     )
     .await?
     {

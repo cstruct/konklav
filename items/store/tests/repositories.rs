@@ -7,7 +7,9 @@ use konklav_store::credentials::{
 };
 use konklav_store::sessions::{self, ClientKind, NewSession, Rotation, SessionFilter, Stage};
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
-use konklav_store::{Connection, StoreError, dpop_proofs, events, signing_keys};
+use konklav_store::{
+    Connection, StoreError, bearer_assertions, client_assertions, dpop_proofs, events, signing_keys,
+};
 use konklav_test_support::TestDatabase;
 
 const HASH: &str = "$argon2id$v=19$m=8,t=1,p=1$c29tZXNhbHQ$aGFzaGhhc2hoYXNo";
@@ -642,5 +644,44 @@ async fn configured_keys_rotate_and_can_be_revoked() {
             .count(),
         4,
         "publish k1, publish k2, rotate, revoke; the no-op sync emits nothing"
+    );
+}
+
+// r[verify oidc.provider.client-assertion.replay]
+// r[verify federation.jwt-bearer.replay]
+#[tokio::test(flavor = "multi_thread")]
+async fn an_assertion_id_stays_recorded_until_swept() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    diesel::sql_query(
+        "insert into oidc_client (id, kind, redirect_uris, audience)
+         values ('robot', 'confidential', '{https://robot.example/cb}', 'robot-api')",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    // Recording must not prune: a replay that arrives when the record has
+    // just passed would otherwise remove the record and be accepted.
+    let past = Utc::now() - Duration::seconds(1);
+    assert!(
+        client_assertions::record(&mut conn, "robot", "a", past)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !client_assertions::record(&mut conn, "robot", "a", past)
+            .await
+            .unwrap()
+    );
+    let issuer = "https://upstream.example";
+    assert!(
+        bearer_assertions::record(&mut conn, issuer, "a", past)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !bearer_assertions::record(&mut conn, issuer, "a", past)
+            .await
+            .unwrap()
     );
 }
