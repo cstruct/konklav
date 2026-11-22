@@ -499,6 +499,76 @@ async fn importing_a_subject_as_disabled_ends_its_sessions() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_bound_totp_seed_moved_to_another_factor_does_not_decrypt() {
+    use konklav_authn::{EncryptedSecret, EncryptionError};
+    use konklav_store::mfa::{self, FactorData, TotpData};
+
+    let app = TestApp::new().await;
+    let secrets = &app.state.auth.secrets;
+    let mut conn = app.db.pool().get().await.unwrap();
+    let ada = app.human("ada@example.com", "correct horse battery").await;
+    let eve = app.human("eve@example.com", "correct horse battery").await;
+    let stored = |sealed: EncryptedSecret| {
+        FactorData::Totp(TotpData {
+            key_id: sealed.key_id,
+            nonce: sealed.nonce,
+            ciphertext: sealed.ciphertext,
+            last_step: None,
+        })
+    };
+    let mut factors = Vec::new();
+    for (subject, seed) in [(&ada, b"ada's seed"), (&eve, b"eve's seed")] {
+        let subject = subject.parse().unwrap();
+        let id = uuid::Uuid::now_v7();
+        let sealed = secrets
+            .encrypt_bound(&mfa::totp_binding(id, subject), seed)
+            .unwrap();
+        let factor = mfa::create_with_id(&mut conn, id, subject, &stored(sealed))
+            .await
+            .unwrap();
+        factors.push(factor);
+    }
+    let open = |factor: &mfa::Factor| {
+        let FactorData::Totp(data) = &factor.data else {
+            panic!("a TOTP factor");
+        };
+        let sealed = EncryptedSecret {
+            key_id: data.key_id.clone(),
+            nonce: data.nonce.clone(),
+            ciphertext: data.ciphertext.clone(),
+        };
+        secrets.decrypt_bound(&factor.totp_binding(), &sealed)
+    };
+    assert_eq!(open(&factors[0]).unwrap(), b"ada's seed");
+    assert_eq!(open(&factors[1]).unwrap(), b"eve's seed");
+
+    // Eve, writing to the database, puts her seed on Ada's factor.
+    mfa::set_data(&mut conn, factors[0].id, &factors[1].data)
+        .await
+        .unwrap();
+    let moved = mfa::get(&mut conn, factors[0].subject_id, factors[0].id)
+        .await
+        .unwrap();
+    assert_eq!(moved.data, factors[1].data);
+    assert_eq!(open(&moved), Err(EncryptionError::Decrypt));
+
+    // Or she makes her own factor one of Ada's.
+    let mut given = factors[1].clone();
+    given.subject_id = factors[0].subject_id;
+    assert_eq!(open(&given), Err(EncryptionError::Decrypt));
+
+    // A seed stored before seeds were bound still decrypts.
+    let old = mfa::create(
+        &mut conn,
+        factors[0].subject_id,
+        &stored(secrets.encrypt(b"old seed").unwrap()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(open(&old).unwrap(), b"old seed");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn importing_needs_the_capability() {
     let app = TestApp::new().await;
     app.human("ops@example.com", "correct horse battery").await;

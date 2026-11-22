@@ -502,13 +502,14 @@ pub(super) async fn factor(
             Ok(existing) => {
                 let same = match (&existing.data, &wanted.material) {
                     (FactorData::Totp(stored), FactorMaterial::Totp { seed_base32 }) => {
+                        let sealed = konklav_authn::EncryptedSecret {
+                            key_id: stored.key_id.clone(),
+                            nonce: stored.nonce.clone(),
+                            ciphertext: stored.ciphertext.clone(),
+                        };
                         let stored = context
                             .secrets
-                            .decrypt(&konklav_authn::EncryptedSecret {
-                                key_id: stored.key_id.clone(),
-                                nonce: stored.nonce.clone(),
-                                ciphertext: stored.ciphertext.clone(),
-                            })
+                            .decrypt_bound(&existing.totp_binding(), &sealed)
                             .map_err(|e| invalid(e.to_string()))?;
                         import::decode_base32(seed_base32).as_deref() == Some(stored.as_slice())
                     }
