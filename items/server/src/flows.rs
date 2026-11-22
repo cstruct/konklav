@@ -345,7 +345,7 @@ async fn enroll_totp(
         .auth
         .secrets
         .encrypt(seed.as_bytes())
-        .map_err(|e| ApiError::new(ErrorCode::Internal, e.to_string()))?;
+        .map_err(ApiError::internal)?;
     let factor = mfa::create(
         &mut conn,
         session.subject_id,
@@ -487,7 +487,7 @@ async fn verify_totp_locked(
             nonce: data.nonce.clone(),
             ciphertext: data.ciphertext.clone(),
         })
-        .map_err(|e| ApiError::new(ErrorCode::Internal, e.to_string()))?;
+        .map_err(ApiError::internal)?;
     let step = verify_totp(
         &TotpSecret::from_bytes(seed),
         code,

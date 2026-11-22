@@ -892,6 +892,44 @@ async fn changing_factors_needs_a_recent_authentication() {
     assert_eq!(removed.body["removed"], true, "{:?}", removed.body);
 }
 
+/// Which encryption keys are configured is for the server log, not for
+/// clients.
+#[tokio::test(flavor = "multi_thread")]
+async fn encryption_failures_dont_name_keys_to_clients() {
+    let app = TestApp::new().await;
+    app.human(EMAIL, PASSWORD).await;
+    let session = token(&app.login(EMAIL, PASSWORD).await);
+    let enrolled = post_bearer(&app, "/v1/mfa/totp", &session, json!({})).await;
+    let factor = enrolled.body["factor_id"].as_str().unwrap().to_owned();
+    {
+        // The seed is under a key this server doesn't have.
+        let mut conn = app.db.pool().get().await.unwrap();
+        diesel::sql_query(r#"update mfa_factor set data = jsonb_set(data, '{key_id}', '"k1"')"#)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+    }
+    let activated = post_bearer(
+        &app,
+        &format!("/v1/mfa/{factor}/activate"),
+        &session,
+        json!({"code": "000000"}),
+    )
+    .await;
+    assert_eq!(activated.code(), "INTERNAL", "{:?}", activated.body);
+    assert_eq!(activated.body["error"]["message"], "internal error");
+
+    let keyless = TestApp::with_auth(|auth| {
+        auth.secrets = konklav_authn::SecretBox::new([]).unwrap();
+    })
+    .await;
+    keyless.human(EMAIL, PASSWORD).await;
+    let session = token(&keyless.login(EMAIL, PASSWORD).await);
+    let enrolled = post_bearer(&keyless, "/v1/mfa/totp", &session, json!({})).await;
+    assert_eq!(enrolled.code(), "INTERNAL", "{:?}", enrolled.body);
+    assert_eq!(enrolled.body["error"]["message"], "internal error");
+}
+
 // r[verify challenge.send-limit]
 // r[verify platform.error.no-enumeration]
 #[tokio::test(flavor = "multi_thread")]
