@@ -77,7 +77,10 @@ copy-paste or a QR code. Whoever holds the link redeems it:
   when the person signs in.
 - or with the identifier and password of an existing account, which is
   checked as a password login would check it and starts a session the same
-  way, `client`, `flags` and MFA included.
+  way, `client`, `flags` and MFA included. An account that requires MFA
+  gets only its partial session from this: the invite stays pending, and
+  is redeemed signed in once MFA has completed, so the password alone
+  never joins the account to a tenant.
 
 A link-only invite never creates an account. Nobody proved an address, and
 a bearer link's holder could claim anyone's, then appear to the inviter
