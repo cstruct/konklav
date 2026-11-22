@@ -154,20 +154,36 @@ impl Accepted {
 
 /// The `(jkt, jti)` of proofs this core accepted for tokens that verified,
 /// until they could no longer pass the freshness check. Bounded: when full
-/// of live entries it refuses new proofs rather than forgetting old ones.
+/// of live entries it refuses new proofs rather than forgetting old ones,
+/// and one key's proofs take at most a share of it, so that whoever holds
+/// one token can't fill it and have everyone else's proofs refused.
 // r[impl relying.verify.dpop-replay]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Replays {
     seen: BTreeMap<(String, String), u64>,
 }
 
+/// One key's proofs take at most this fraction of the replay set, and at
+/// least one entry.
+pub(crate) const REPLAY_KEY_SHARE: usize = 100;
+
 impl Replays {
     fn seen(&self, accepted: &Accepted) -> bool {
         self.seen.contains_key(&accepted.key)
     }
 
+    /// The remembered proofs made with the key `jkt`.
+    fn of_key<'a>(
+        &'a self,
+        jkt: &'a str,
+    ) -> impl Iterator<Item = (&'a (String, String), &'a u64)> + 'a {
+        self.seen
+            .range((jkt.to_owned(), String::new())..)
+            .take_while(move |((key, _), _)| key == jkt)
+    }
+
     /// Remembers `accepted`. Returns false if it is remembered already, or
-    /// there is no room for it.
+    /// there is no room for it: in the set, or in its key's share of it.
     pub(crate) fn remember(&mut self, accepted: Accepted, capacity: usize, now: u64) -> bool {
         if self.seen(&accepted) {
             return false;
@@ -177,6 +193,21 @@ impl Replays {
         }
         if self.seen.len() >= capacity {
             return false;
+        }
+        let share = (capacity / REPLAY_KEY_SHARE).max(1);
+        let jkt = accepted.key.0.as_str();
+        if self.of_key(jkt).count() >= share {
+            let expired: Vec<_> = self
+                .of_key(jkt)
+                .filter(|(_, until)| **until <= now)
+                .map(|(key, _)| key.clone())
+                .collect();
+            if expired.is_empty() {
+                return false;
+            }
+            for key in expired {
+                self.seen.remove(&key);
+            }
         }
         self.seen.insert(accepted.key, accepted.until);
         true

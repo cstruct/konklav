@@ -50,7 +50,12 @@ verified, locally or by the check API, and never for a token that doesn't,
 so that proofs anyone can sign take no room. A proof MUST NOT be accepted
 twice for a token that verifies, also when requests carrying it are decided
 at the same time or through the check API. A proof whose `jti` is longer
-than 128 bytes MUST be refused.
+than 128 bytes MUST be refused. What is remembered MUST be bounded, and a
+proof there is no room for MUST be refused rather than an older one
+forgotten. The proofs made with one key MUST take at most a hundredth of
+that room (at least one proof), and that key's further proofs MUST be
+refused until some of them expire, so that whoever holds one valid token
+can't have every other client's proofs refused.
 
 r[relying.verify.dpop-challenge]
 When the relying SDK refuses an access token for its DPoP proof or scheme,

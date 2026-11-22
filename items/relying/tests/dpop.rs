@@ -263,6 +263,51 @@ fn a_full_replay_set_refuses_new_proofs_until_old_ones_expire() {
     assert_eq!(f.decide(&dpop(&token, Some(fresh)), later), allowed());
 }
 
+// Whoever holds one valid token can sign any number of proofs for it.
+// r[verify relying.verify.dpop-replay]
+#[test]
+fn one_keys_proofs_take_only_a_share_of_the_replay_set() {
+    let mut f = Fixture::new(Config {
+        dpop_replay_capacity: 200,
+        ..config()
+    });
+    f.warm();
+    let token = f.bound();
+    for jti in ["a", "b"] {
+        let presented = dpop(&token, Some(f.proof(&token, jti)));
+        assert_eq!(f.decide(&presented, T0), allowed());
+    }
+    // The key's share, a hundredth, is used up.
+    for jti in ["c", "d"] {
+        let presented = dpop(&token, Some(f.proof(&token, jti)));
+        let refused = denied(DenyReason::InvalidDpopProof);
+        assert_eq!(f.decide(&presented, T0), refused);
+        assert_eq!(
+            f.core.accept_presented(&presented, T0),
+            Acceptance::InvalidProof
+        );
+    }
+    let replayed = dpop(&token, Some(f.proof(&token, "a")));
+    assert_eq!(
+        f.decide(&replayed, T0),
+        denied(DenyReason::InvalidDpopProof)
+    );
+
+    // Everyone else's proofs still have room.
+    let other = DpopKey::new(2);
+    let others = f.token(Some(other.jkt()));
+    let proof = other.proof_at("GET", URL, Some(&others), seconds(T0), "a");
+    assert_eq!(f.decide(&dpop(&others, Some(proof)), T0), allowed());
+
+    // Once the key's proofs are too old to be replayed, it has room again.
+    let later = T0 + 95_000;
+    f.core.on_feed_activity(later);
+    let fresh = f
+        .key
+        .proof_at("GET", URL, Some(&token), seconds(later), "e");
+    assert_eq!(f.decide(&dpop(&token, Some(fresh)), later), allowed());
+}
+
 /// A token of the fixture's subject signed by a key Konklav doesn't have,
 /// bound to the fixture's DPoP key: what anyone can make.
 fn forged(f: &Fixture) -> String {
