@@ -48,7 +48,7 @@ from fastapi.requests import HTTPConnection
 from konklav_relying import AccessToken, RateLimit
 
 from konklav_fastapi.errors import handle_rate_limited
-from konklav_fastapi.routes import KonklavRoutes, _current_token
+from konklav_fastapi.routes import KonklavRoutes, _current_token, address_key
 
 __all__ = ["RouteRateLimit", "handle_rate_limited"]
 
@@ -132,7 +132,7 @@ def _render(parts: Sequence[_Part], connection: HTTPConnection, token: AccessTok
             if address is None:
                 # r[impl item.py-fastapi.client-address]
                 raise RuntimeError("the connection has no client address for the rate-limit key")
-            values.append(address)
+            values.append(address_key(address))
     # A JSON array, so that different values can't render the same key.
     return json.dumps(values, separators=(",", ":"))
 

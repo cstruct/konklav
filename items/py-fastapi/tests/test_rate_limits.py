@@ -278,6 +278,12 @@ def test_the_peer_is_the_client_unless_it_is_a_trusted_proxy() -> None:
     assert whoami(app, "10.1.2.3", ["192.0.2.66", "198.51.100.1"]) == "198.51.100.1", "several headers"
     assert whoami(app, "10.1.2.3", ["10.0.0.1, 10.0.0.2"]) == "10.0.0.1", "only proxies: the first"
     assert whoami(app, "10.1.2.3", ["junk"]) == "10.1.2.3", "nothing usable: the peer"
+    # Skipping a hop that doesn't parse would let a proxy that appends
+    # `ip:port` hand the choice to a hop the client wrote itself.
+    assert whoami(app, "10.1.2.3", ["192.0.2.66, 198.51.100.1:4711"]) == "10.1.2.3"
+    assert whoami(app, "10.1.2.3", ["192.0.2.66, 198.51.100.1:4711", "10.0.0.2"]) == "10.0.0.2", "the last one vouched for"
+    assert whoami(app, "10.1.2.3", ["192.0.2.66,"]) == "10.1.2.3"
+    assert whoami(app, "10.1.2.3", ["192.0.2.66, fe80::1%eth0"]) == "10.1.2.3"
     assert whoami(app, "::ffff:10.1.2.3", ["198.51.100.1"]) == "198.51.100.1", "IPv4-mapped peers"
     assert whoami(app, "::1", ["2001:db8::1"]) == "2001:db8::1"
 
@@ -286,6 +292,30 @@ def test_the_peer_is_the_client_unless_it_is_a_trusted_proxy() -> None:
 def test_without_trusted_proxies_the_peer_is_the_client() -> None:
     app, _ = address_app()
     assert whoami(app, "10.1.2.3", ["198.51.100.1"]) == "10.1.2.3"
+
+
+# r[verify item.py-fastapi.client-address-key]
+def test_ipv6_addresses_are_keyed_by_their_64_bit_prefix() -> None:
+    from konklav_fastapi.routes import address_key
+
+    assert address_key("2001:db8:1:2:3:4:5:6") == "2001:db8:1:2::/64"
+    assert address_key("2001:db8:1:2::1") == address_key("2001:db8:1:2:ffff::9")
+    assert address_key("2001:db8:1:2::1") != address_key("2001:db8:1:3::1")
+    assert address_key("203.0.113.9") == "203.0.113.9"
+    assert address_key("::ffff:203.0.113.9") == "203.0.113.9"
+
+    app = FastAPI()
+    limit = per_minute("address6", 1)
+
+    @app.get("/ping", dependencies=[RoutePolicy.public(), RouteRateLimit(limit, "{client:address}")])
+    async def ping() -> dict[str, bool]:
+        return {"ok": True}
+
+    KonklavRoutes(trusted_proxies=["10.0.0.0/8"]).install(app)
+    with TestClient(app, client=("10.0.0.1", 1)) as http:
+        assert http.get("/ping", headers={"x-forwarded-for": "2001:db8:1:2::1"}).status_code == 200
+        assert http.get("/ping", headers={"x-forwarded-for": "2001:db8:1:2::2"}).status_code == 429, "one /64"
+        assert http.get("/ping", headers={"x-forwarded-for": "2001:db8:1:3::1"}).status_code == 200
 
 
 def test_invalid_trusted_proxies_are_refused() -> None:

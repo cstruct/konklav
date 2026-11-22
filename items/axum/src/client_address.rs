@@ -3,11 +3,13 @@
 //! The socket's peer is the client unless it is a trusted proxy. Then the
 //! client is the last address in `X-Forwarded-For` that isn't a trusted
 //! proxy too, since proxies append and everything before the last untrusted
-//! hop is the client's own claim. The Konklav server takes its own clients'
-//! addresses alike (`platform.server.client-address`).
+//! hop is the client's own claim. A hop that isn't an address ends the walk
+//! for the same reason: what lies before it can't be vouched for. The
+//! Konklav server takes its own clients' addresses alike
+//! (`platform.server.client-address`).
 
 use std::fmt;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
 use axum::extract::{ConnectInfo, FromRequestParts};
 use axum::http::HeaderMap;
@@ -84,20 +86,42 @@ pub(crate) fn resolve(peer: IpAddr, headers: &HeaderMap, trusted: &[Network]) ->
     if !is_trusted(peer) {
         return peer.to_canonical();
     }
-    let hops: Vec<IpAddr> = headers
+    // Header values that aren't text are kept as hops that don't parse.
+    let hops: Vec<&str> = headers
         .get_all("x-forwarded-for")
         .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(','))
-        .filter_map(|hop| hop.trim().parse().ok())
+        .flat_map(|value| value.to_str().unwrap_or("").split(','))
         .collect();
-    hops.iter()
-        .rev()
-        .find(|hop| !is_trusted(**hop))
-        .or(hops.first())
-        .copied()
-        .unwrap_or(peer)
-        .to_canonical()
+    // From the peer backwards, each trusted proxy vouches for the hop
+    // before it. The walk ends at the first hop that isn't trusted, which
+    // is the client, or that isn't an address, such as `ip:port`: skipping
+    // that one would hand the choice to a hop the client wrote. Then the
+    // client is the nearest proxy that was vouched for.
+    let mut client = peer;
+    for hop in hops.iter().rev() {
+        let Ok(hop) = hop.trim().parse::<IpAddr>() else {
+            break;
+        };
+        client = hop;
+        if !is_trusted(hop) {
+            break;
+        }
+    }
+    client.to_canonical()
+}
+
+/// `address` as `{client:address}` keys a rate limit: an IPv6 address by
+/// its /64 prefix, since whoever holds one address there usually holds them
+/// all, and an IPv4-mapped one as the IPv4 address it maps.
+// r[impl item.axum.client-address-key]
+pub(crate) fn key(address: IpAddr) -> String {
+    match address.to_canonical() {
+        IpAddr::V4(address) => address.to_string(),
+        IpAddr::V6(address) => {
+            let prefix = u128::from(address) & !u128::from(u64::MAX);
+            format!("{}/64", Ipv6Addr::from(prefix))
+        }
+    }
 }
 
 impl Konklav {
@@ -191,19 +215,51 @@ mod tests {
             "a trusted proxy without a header is the client"
         );
         assert_eq!(
-            resolve(
-                ip("::ffff:10.0.0.1"),
-                &headers(&["garbage, 2001:db8::1"]),
-                &trusted
-            ),
+            resolve(ip("::ffff:10.0.0.1"), &headers(&["2001:db8::1"]), &trusted),
             ip("2001:db8::1"),
-            "IPv4-mapped peers are IPv4, and hops that don't parse are skipped"
+            "IPv4-mapped peers are IPv4"
         );
         assert_eq!(
             resolve(ip("::ffff:203.0.113.9"), &HeaderMap::new(), &[]),
             ip("203.0.113.9"),
             "without trusted proxies the peer is the client, as IPv4"
         );
+    }
+
+    // Skipping a hop that doesn't parse would let a proxy that appends
+    // `ip:port` hand the choice to a hop the client wrote itself.
+    // r[verify item.axum.client-address]
+    #[test]
+    fn a_hop_that_is_not_an_address_ends_the_walk() {
+        let trusted = networks(&["10.0.0.0/8"]);
+        let proxy = ip("10.0.0.1");
+        assert_eq!(
+            resolve(proxy, &headers(&["1.2.3.4, 203.0.113.9:4711"]), &trusted),
+            proxy,
+            "nothing vouched for is left but the peer"
+        );
+        assert_eq!(
+            resolve(
+                proxy,
+                &headers(&["1.2.3.4, 203.0.113.9:4711", "10.0.0.2"]),
+                &trusted
+            ),
+            ip("10.0.0.2"),
+            "the last hop a trusted proxy vouched for"
+        );
+        for unparsable in ["1.2.3.4, unknown", "1.2.3.4,", "1.2.3.4, fe80::1%eth0"] {
+            assert_eq!(resolve(proxy, &headers(&[unparsable]), &trusted), proxy);
+        }
+    }
+
+    // r[verify item.axum.client-address-key]
+    #[test]
+    fn ipv6_addresses_are_keyed_by_their_64_bit_prefix() {
+        assert_eq!(key(ip("2001:db8:1:2:3:4:5:6")), "2001:db8:1:2::/64");
+        assert_eq!(key(ip("2001:db8:1:2::1")), key(ip("2001:db8:1:2:ffff::9")));
+        assert_ne!(key(ip("2001:db8:1:2::1")), key(ip("2001:db8:1:3::1")));
+        assert_eq!(key(ip("203.0.113.9")), "203.0.113.9");
+        assert_eq!(key(ip("::ffff:203.0.113.9")), "203.0.113.9");
     }
 
     #[test]

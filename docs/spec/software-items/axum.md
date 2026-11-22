@@ -174,8 +174,18 @@ r[item.axum.client-address]
 (addresses or networks in CIDR notation, IPv4-mapped IPv6 addresses read as
 IPv4). Then it MUST answer the last address in `X-Forwarded-For` that isn't
 a trusted proxy, or the first when all are, or the peer without one, like
-the server's `platform.server.client-address`. A request without a peer
+the server's `platform.server.client-address`. A hop that isn't an address,
+such as `ip:port`, MUST end the walk from the last hop backwards, answering
+the nearest hop before it was reached (the peer if none), rather than be
+skipped for a hop the client may have written. A request without a peer
 address MUST be refused rather than given an empty key.
+
+r[item.axum.client-address-key]
+`{client:address}` MUST render an IPv4 address, or an IPv4-mapped IPv6
+address, as the IPv4 address, and any other IPv6 address as its /64 prefix
+(`2001:db8:1:2::/64`), so that one client can't spread over the addresses
+of its own network. It MUST render the same key as `konklav-fastapi`
+(`item.py-fastapi.client-address-key`).
 
 r[item.axum.rate-limited]
 A refused event MUST be answered as `Denied::RateLimited`: 429, a JSON body

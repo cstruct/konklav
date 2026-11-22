@@ -261,18 +261,31 @@ def _method(connection: HTTPConnection) -> str:
 
 def _ip(address: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
     """`address` parsed, an IPv4-mapped IPv6 address as IPv4."""
+    if "%" in address:
+        # A zone isn't part of an address `konklav-axum` and Konklav parse.
+        raise ValueError(address)
     parsed = ipaddress.ip_address(address)
     if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped is not None:
         return parsed.ipv4_mapped
     return parsed
 
 
-def _parses(address: str) -> bool:
+# r[impl item.py-fastapi.client-address-key]
+def address_key(address: str) -> str:
+    """
+    `address` as `{client:address}` keys a rate limit: an IPv6 address by
+    its /64 prefix, since whoever holds one address there usually holds them
+    all, and an IPv4-mapped one as the IPv4 address it maps.
+    """
     try:
-        _ip(address)
+        parsed = _ip(address)
     except ValueError:
-        return False
-    return True
+        # Not an IP address, such as a Unix socket peer: as given.
+        return address
+    if isinstance(parsed, ipaddress.IPv4Address):
+        return str(parsed)
+    prefix = int(parsed) & ~((1 << 64) - 1)
+    return f"{ipaddress.IPv6Address(prefix)}/64"
 
 
 def _canonical(address: str) -> str:
@@ -385,22 +398,29 @@ class KonklavRoutes:
         peer address. It is the peer, unless the peer is a trusted proxy:
         then the last address in `X-Forwarded-For` that isn't one too, since
         proxies append and everything before that is the client's own claim.
+        A hop that isn't an address ends the walk for the same reason.
         """
         if connection.client is None:
             return None
         peer = connection.client.host
         if not self._is_trusted(peer):
             return _canonical(peer)
-        hops = [
-            hop.strip()
-            for value in connection.headers.getlist("x-forwarded-for")
-            for hop in value.split(",")
-            if _parses(hop.strip())
-        ]
+        hops = [hop.strip() for value in connection.headers.getlist("x-forwarded-for") for hop in value.split(",")]
+        # From the peer backwards, each trusted proxy vouches for the hop
+        # before it. The walk ends at the first hop that isn't trusted,
+        # which is the client, or that isn't an address, such as `ip:port`:
+        # skipping that one would hand the choice to a hop the client wrote.
+        # Then the client is the nearest proxy that was vouched for.
+        client = peer
         for hop in reversed(hops):
+            try:
+                _ip(hop)
+            except ValueError:
+                break
+            client = hop
             if not self._is_trusted(hop):
-                return _canonical(hop)
-        return _canonical(hops[0]) if hops else _canonical(peer)
+                break
+        return _canonical(client)
 
     def _is_trusted(self, address: str) -> bool:
         try:
