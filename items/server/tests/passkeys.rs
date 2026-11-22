@@ -112,10 +112,16 @@ impl Device {
 async fn with_passkey(app: &TestApp, device: &mut Device) -> String {
     app.human(EMAIL, PASSWORD).await;
     let session = token(&app.login(EMAIL, PASSWORD).await);
+    register(app, device, &session).await;
+    session
+}
+
+/// Registers a passkey on `device` from the session `session` is for.
+async fn register(app: &TestApp, device: &mut Device, session: &str) {
     let started = post_bearer(
         app,
         "/v1/passkeys/registration/options",
-        &session,
+        session,
         json!({"label": "Laptop"}),
     )
     .await;
@@ -124,7 +130,7 @@ async fn with_passkey(app: &TestApp, device: &mut Device) -> String {
     let registered = post_bearer(
         app,
         "/v1/passkeys/registration",
-        &session,
+        session,
         json!({"ceremony": started.body["ceremony"], "credential": credential}),
     )
     .await;
@@ -135,7 +141,6 @@ async fn with_passkey(app: &TestApp, device: &mut Device) -> String {
         registered.body
     );
     assert_eq!(registered.body["label"], "Laptop");
-    session
 }
 
 async fn login_options(app: &TestApp) -> Value {
@@ -198,6 +203,51 @@ async fn a_registered_passkey_logs_in_without_an_identifier() {
     );
     assert_eq!(listed.body[0]["label"], "Laptop");
     assert!(listed.body[0]["last_used_at"].is_string());
+}
+
+// r[verify authn.passkey.session-flags]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_passkey_keeps_the_flags_of_the_session_that_registered_it() {
+    let app = app().await;
+    let catalog = json!({
+        "actions": [{"name": "me"}],
+        "session_flags": [
+            {"name": "read_only", "kind": "restrictive"},
+            {"name": "kiosk", "kind": "restrictive", "requestable": true}
+        ]
+    });
+    let reply = app.control(Method::PUT, "/v1/catalog", Some(catalog)).await;
+    assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+    let subject = app.human(EMAIL, PASSWORD).await;
+    let detail = app
+        .control(Method::GET, &format!("/v1/subjects/{subject}"), None)
+        .await;
+    let credential = detail.body["credentials"][0]["id"].as_str().unwrap();
+    let set = app
+        .control(
+            Method::PUT,
+            &format!("/v1/credentials/{credential}/session-flags"),
+            Some(json!({"session_flags": ["read_only"]})),
+        )
+        .await;
+    assert_eq!(set.status, StatusCode::OK, "{:?}", set.body);
+
+    // One flag from the credential and one the login asked for.
+    let restricted = app
+        .post(
+            "/v1/login/password",
+            json!({"identifier": EMAIL, "password": PASSWORD, "flags": ["kiosk"]}),
+        )
+        .await;
+    assert_eq!(restricted.status, StatusCode::OK, "{:?}", restricted.body);
+    let mut device = Device::new();
+    register(&app, &mut device, &token(&restricted)).await;
+
+    let reply = log_in(&app, &mut device).await;
+    assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+    let mut flags = app.verify(&token(&reply)).await.sfl;
+    flags.sort();
+    assert_eq!(flags, ["kiosk", "read_only"]);
 }
 
 // r[verify challenge.single-use]

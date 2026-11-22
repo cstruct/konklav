@@ -112,6 +112,14 @@ A human subject MUST be able to register a passkey only from a full session
 ceremony's challenge MUST be single-use, bound to that session, and expire.
 Passkeys MUST NOT be created any other way.
 
+r[authn.passkey.session-flags]
+A passkey registered from a session that carries restrictive flags MUST
+carry those flags as its credential's session flags
+(`session.flags.credential`), whether the session got them from its
+credential or from its login request, so that registering a passkey can't
+be used to shed a restriction. An operator can change them afterwards, as
+for any credential.
+
 r[authn.passkey.discoverable]
 Passkey login MUST NOT require a login identifier. Konklav MUST find the
 credential by the credential ID the authenticator returns, and MUST refuse

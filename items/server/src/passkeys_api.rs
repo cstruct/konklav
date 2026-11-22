@@ -16,13 +16,13 @@ use chrono::{DateTime, Duration, Utc};
 use diesel_async::AsyncConnection;
 use konklav_authn::{generate_secret, hash_challenge_secret};
 use konklav_core::{CredentialId, Cursor, SubjectId};
-use konklav_store::Connection;
 use konklav_store::challenges::{self, Challenge, NewChallenge, Purpose};
 use konklav_store::credentials::{
     self, Credential, CredentialData, CredentialKind, NewCredential, PublicKeyData,
 };
 use konklav_store::sessions::{self, Session, SessionFilter, Stage};
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
+use konklav_store::{Connection, catalog};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use webauthn_rs::prelude::{PublicKeyCredential, RegisterPublicKeyCredential};
@@ -301,6 +301,26 @@ struct Registration {
     credential: RegisterPublicKeyCredential,
 }
 
+/// The restrictive flags `session` carries, which a passkey registered from
+/// it must carry too: otherwise a login with the passkey would start a
+/// session without the restrictions of the one that registered it.
+// r[impl authn.passkey.session-flags]
+async fn restrictive_flags(
+    conn: &mut Connection,
+    session: &Session,
+) -> Result<Vec<String>, ApiError> {
+    if session.flags.is_empty() {
+        return Ok(Vec::new());
+    }
+    let restrictive = catalog::load(conn).await?.restrictive_flags();
+    Ok(session
+        .flags
+        .iter()
+        .filter(|flag| restrictive.contains(*flag))
+        .cloned()
+        .collect())
+}
+
 /// `POST /v1/passkeys/registration`
 async fn register(
     State(state): State<AppState>,
@@ -321,20 +341,28 @@ async fn register(
     let registered = verifier
         .finish_registration(details.state, &body.credential, label)
         .map_err(|error| rejected(&error))?;
+    let flags = restrictive_flags(&mut conn, &session).await?;
     // r[impl credential.public-key.no-mfa]
-    let credential = credentials::insert(
-        &mut conn,
-        NewCredential {
-            id: CredentialId::new_v7(),
-            subject_id: session.subject_id,
-            identifier: registered.credential_id,
-            data: CredentialData::PublicKey(registered.data),
-            mfa_factors_required: 0,
-            replaces: None,
-            metadata: konklav_store::metadata::empty(),
-        },
-    )
-    .await?;
+    let new = NewCredential {
+        id: CredentialId::new_v7(),
+        subject_id: session.subject_id,
+        identifier: registered.credential_id,
+        data: CredentialData::PublicKey(registered.data),
+        mfa_factors_required: 0,
+        replaces: None,
+        metadata: konklav_store::metadata::empty(),
+    };
+    // In one transaction, so the passkey never exists without the flags.
+    let credential = conn
+        .transaction::<_, ApiError, _>(async |conn| {
+            let mut credential = credentials::insert(conn, new).await?;
+            if !flags.is_empty() {
+                credentials::set_session_flags(conn, credential.id, &flags).await?;
+                credential.session_flags = flags;
+            }
+            Ok(credential)
+        })
+        .await?;
     let view = PasskeyView::of(&credential).expect("a public-key credential");
     Ok((StatusCode::CREATED, Json(view)).into_response())
 }
