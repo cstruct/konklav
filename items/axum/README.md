@@ -196,9 +196,12 @@ takes the same tokens would pass here whenever the client could reach this
 one under that server's name. So set `public_origin` to the origin clients
 address, such as `https://api.example` (call it again for each further
 origin; the request's `Host` then only chooses among them). The proof is
-checked against that origin and the request's path. `public_url` is a hook
-for what an origin can't say, such as a proxy that rewrites paths; it must
-not read the origin from the request either.
+checked against that origin and the path the client addressed, which on a
+route of a nested router includes the prefix it is nested at. `public_url`
+is a hook for what an origin can't say, such as a proxy that rewrites
+paths; it must not read the origin from the request either, and inside a
+nested router it finds the whole path in `axum::extract::OriginalUri`, not
+in `parts.uri`.
 
 Without `public_origin` or `public_url`, every DPoP proof is refused
 (`invalid_dpop_proof`) and an error is logged; bearer tokens are unaffected.

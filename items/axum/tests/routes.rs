@@ -454,6 +454,27 @@ async fn proofs_are_checked_against_the_configured_origin_not_the_host_header() 
     );
 }
 
+// A proof for `/documents/1` must not pass on the route a nested router
+// really serves at `/admin/documents/1`.
+// r[verify item.axum.proof-url]
+#[tokio::test]
+async fn proofs_on_nested_routes_are_checked_against_the_whole_path() {
+    let host = FakeHost::allowing();
+    let policy = RoutePolicy::new(&Policy::new()).unwrap();
+    let admin = Router::new().route("/documents/{document}", get(ok).route_layer(policy));
+    let nested = Router::new().nest("/admin", Router::new().nest("/v1", admin));
+    let app = app(&konklav(&host), nested);
+
+    let headers = [("authorization", "DPoP tenant"), ("dpop", "proof")];
+    let answer = send(&app, request("/admin/v1/documents/1?x=1", &headers)).await;
+    assert_eq!(answer.status, StatusCode::OK);
+    let descriptor = host.accepted().pop().unwrap().request.unwrap();
+    assert_eq!(
+        descriptor.url,
+        "http://api.example/admin/v1/documents/1?x=1"
+    );
+}
+
 fn deciding(decision: Result<Decision, Error>) -> Arc<FakeHost> {
     let decision = Mutex::new(Some(decision));
     FakeHost::deciding(move |_| decision.lock().unwrap().take().unwrap())

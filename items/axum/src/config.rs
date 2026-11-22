@@ -202,6 +202,9 @@ impl KonklavBuilder {
     /// proofs are checked against it. It must not build the URL's origin
     /// from the request's `Host` or forwarded headers, which the client
     /// chooses.
+    /// Inside a nested router `parts.uri` lacks the prefix the router is
+    /// nested at: read the whole path from [`axum::extract::OriginalUri`]
+    /// in `parts.extensions`.
     #[must_use]
     pub fn public_url(mut self, url: impl Fn(&Parts) -> String + Send + Sync + 'static) -> Self {
         self.inner.public_url = Some(Arc::new(url));

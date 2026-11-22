@@ -87,7 +87,8 @@ The URL a DPoP proof is checked against MUST come from the application's
 configuration, never from what the request says of its own origin, as for
 Konklav's own endpoints (`oidc.provider.dpop.htu`): the public-URL hook's
 answer, else a configured public origin followed by the path the client
-addressed. With several public origins configured, the request's authority
+addressed: the whole path, also on a route of a nested router, whose
+requests axum hands on without the prefix it is nested at. With several public origins configured, the request's authority
 or `Host` header MUST only choose among them, the first when it names none
 of them. With neither a hook nor an origin, the presentation MUST be
 accepted without a URL, so that the relying core refuses any DPoP proof

@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use axum::extract::{FromRequestParts, Query, RawPathParams};
+use axum::extract::{FromRequestParts, OriginalUri, Query, RawPathParams};
 use axum::http::request::Parts;
 use axum::http::{Method, header};
 use axum::response::{IntoResponse, Response};
@@ -111,9 +111,15 @@ pub(crate) fn is_websocket(parts: &Parts) -> bool {
         && lists(parts, header::UPGRADE, "websocket")
 }
 
-/// The path and query the client addressed.
+/// The path and query the client addressed. Inside a nested router the
+/// request's own URI has lost the prefix, so this reads the one axum kept.
+// r[impl item.axum.proof-url]
 fn addressed_path(parts: &Parts) -> &str {
-    parts.uri.path_and_query().map_or("/", |path| path.as_str())
+    let uri = parts
+        .extensions
+        .get::<OriginalUri>()
+        .map_or(&parts.uri, |original| &original.0);
+    uri.path_and_query().map_or("/", |path| path.as_str())
 }
 
 /// The authority the request names for itself: its target's, else its
