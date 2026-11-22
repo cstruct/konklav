@@ -286,14 +286,21 @@ browser login, or federated sign-in, without a DPoP proof or `dpop_jkt` is
 then refused.
 
 r[session.dpop.surfaces]
-The subject-facing and control-plane surfaces MUST accept Konklav's own
+Every surface, on whichever listener it is served, MUST accept Konklav's own
 sender-constrained access tokens under the `DPoP` scheme with a valid proof,
 and refuse them under `Bearer` (`r[token.dpop.scheme]`). A proof's `htu`
 MUST be one of the configured base URLs at which clients address Konklav,
 followed by the request's path, so a reverse proxy that mounts a surface
 under a prefix can be described. Unless configured, the base URLs MUST be
 the issuer and each allowed browser origin, with and without the
-console's `/control` prefix.
+console's `/control` prefix; a surface addressed at another URL, such as
+the relying surface on its own port, needs its base URL configured.
+
+r[session.dpop.fail-closed]
+Authenticating a request by its access token MUST refuse a
+sender-constrained token whose DPoP proof was not verified for that
+request, whatever the listener's routing, so that leaving the proof check
+out of a route can't turn the token into a bearer token.
 
 r[session.client-kind]
 Whether a login returns cookies or body tokens MUST be decided by the

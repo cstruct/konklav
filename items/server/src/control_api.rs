@@ -198,14 +198,21 @@ async fn authorize_operator(
         });
     }
     let mut conn = db.get().await?;
-    let (_, session) = crate::subject_api::verify_access_token(state, &mut conn, presented)
+    let invalid = || {
+        ApiError::new(
+            ErrorCode::Unauthenticated,
+            "missing or invalid control-plane credentials",
+        )
+    };
+    let (claims, session) = crate::subject_api::verify_access_token(state, &mut conn, presented)
         .await
-        .map_err(|_| {
-            ApiError::new(
-                ErrorCode::Unauthenticated,
-                "missing or invalid control-plane credentials",
-            )
-        })?;
+        .map_err(|_| invalid())?;
+    // As in `subject_api::authenticate`: not trusted on the middleware
+    // being mounted.
+    // r[impl session.dpop.fail-closed]
+    if claims.cnf.is_some() && !crate::dpop::proven(presented) {
+        return Err(invalid());
+    }
     if session.stage == konklav_store::sessions::Stage::Partial {
         return Err(ApiError::new(ErrorCode::Forbidden, "complete MFA first"));
     }

@@ -776,8 +776,12 @@ pub(crate) fn refuse_impersonation(session: &Session) -> Result<(), ApiError> {
 }
 
 /// Verifies a bearer access token and its session: the session must be
-/// active and the token issued at its current version.
+/// active and the token issued at its current version. A sender-constrained
+/// token is refused unless `dpop::own_surfaces` verified its proof for this
+/// request, wherever the handler is mounted.
 // r[impl session.version]
+// r[impl session.dpop.fail-closed]
+// r[impl token.dpop.scheme]
 pub(crate) async fn authenticate(
     state: &AppState,
     conn: &mut Connection,
@@ -794,9 +798,14 @@ pub(crate) async fn authenticate(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or_else(unauthenticated)?;
-    // A sender-constrained token reaches here as a bearer token only after
-    // `dpop::own_surfaces` checked its proof.
-    verify_access_token(state, conn, token).await
+    let (claims, session) = verify_access_token(state, conn, token).await?;
+    // `dpop::own_surfaces` hands on a sender-constrained token as a bearer
+    // token once it checked the proof. Without that, the token is refused
+    // here rather than trusted on the middleware being mounted.
+    if claims.cnf.is_some() && !dpop::proven(token) {
+        return Err(unauthenticated());
+    }
+    Ok((claims, session))
 }
 
 /// Verifies an access token and its session: the session must be active

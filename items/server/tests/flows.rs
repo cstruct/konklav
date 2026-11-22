@@ -1503,3 +1503,21 @@ async fn a_password_its_subject_sets_keeps_the_credentials_restrictions() {
     restricted_login("a fresh password").await;
 }
 
+// r[verify authn.login.staged]
+#[tokio::test(flavor = "multi_thread")]
+async fn partial_sessions_cannot_use_the_relying_surface() {
+    let app = TestApp::new().await;
+    let service = app.service_token().await;
+    let path = format!("/v1/entitlements/{}", app.verify(&service).await.sub);
+    let served = app.with_bearer(Method::GET, &path, &service).await;
+    assert_eq!(served.status, StatusCode::OK, "{:?}", served.body);
+    {
+        let mut conn = app.db.pool().get().await.unwrap();
+        diesel::sql_query("update session set stage = 'partial'")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+    }
+    let refused = app.with_bearer(Method::GET, &path, &service).await;
+    assert_eq!(refused.code(), "FORBIDDEN", "{:?}", refused.body);
+}

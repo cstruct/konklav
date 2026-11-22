@@ -254,8 +254,9 @@ config_tree! {
             /// signing, such as the next key ahead of a rotation.
             #[facet(default)]
             pub published_key_files: Vec<String>,
-            /// Base URLs at which clients address the subject-facing and
-            /// control-plane surfaces, for the `htu` of DPoP proofs: a
+            /// Base URLs at which clients address the subject-facing,
+            /// relying and control-plane surfaces, for the `htu` of DPoP
+            /// proofs: a
             /// proof must name one of them followed by the request's path.
             /// List each prefix a reverse proxy mounts a surface under,
             /// such as `https://admin.example/control`. Defaults to the

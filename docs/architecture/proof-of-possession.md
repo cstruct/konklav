@@ -153,13 +153,18 @@ and reaches the control plane, so it's the most valuable token to steal.
   passes `dpop_jkt` to `/v1/login/oidc/{provider}/start` instead, as for
   the authorization endpoint. Impersonation sessions keep the operator's
   binding.
-- **One check for both surfaces.** A middleware on the subject-facing and
-  control-plane routers handles Konklav's own tokens (those with its own
-  audience): under `DPoP` it verifies the proof and hands the handlers a
-  plain bearer token, under `Bearer` it refuses a token with `cnf`, and
+- **One check for every surface.** A middleware on every listener, the
+  relying surface's included, handles Konklav's own tokens (those with its
+  own audience): under `DPoP` it verifies the proof and hands the handlers
+  a bearer token it vouches for, under `Bearer` it refuses a token with
+  `cnf`, and
   for a request without a token it verifies a binding proof that the
   session-starting handlers and the cookie refresh pick up. The OpenID
   provider's endpoints and client tokens are left to `oidc_api`.
+  Authentication itself refuses a token with `cnf` whose proof the
+  middleware didn't verify for that request, so a route mounted without
+  the middleware fails closed. A relying surface addressed at a URL of
+  its own needs that URL in `tokens.dpop_urls`.
 - **`htu` behind a proxy.** The console reaches the control plane at
   `/control/v1/…`, which a proxy maps to `/v1/…`. `tokens.dpop_urls` lists
   the base URLs clients use, such as `https://admin.example` and

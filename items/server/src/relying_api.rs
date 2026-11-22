@@ -13,6 +13,7 @@ use konklav_authz::{
 };
 use konklav_core::{Cursor, SubjectId, TenantId};
 use konklav_store::registered_scopes::{self, RegisteredScope};
+use konklav_store::sessions::Stage;
 use konklav_store::subjects::{self, SubjectKind};
 use konklav_store::{Connection, StoreError, compile_input, tenants};
 use serde::{Deserialize, Serialize};
@@ -30,13 +31,17 @@ pub fn routes() -> Router<AppState> {
         .route("/erased-subjects", get(erased_subjects))
 }
 
-/// Only service principals may use the relying surface.
+/// Only service principals may use the relying surface, with a session
+/// that finished logging in.
 pub(crate) async fn require_service(
     state: &AppState,
     conn: &mut Connection,
     headers: &HeaderMap,
 ) -> Result<SubjectId, ApiError> {
-    let (claims, _) = authenticate(state, conn, headers).await?;
+    let (claims, session) = authenticate(state, conn, headers).await?;
+    if session.stage == Stage::Partial {
+        return Err(ApiError::new(ErrorCode::Forbidden, "complete MFA first"));
+    }
     let caller = subjects::get(conn, claims.sub).await?;
     if caller.kind == SubjectKind::Service {
         Ok(caller.id)
