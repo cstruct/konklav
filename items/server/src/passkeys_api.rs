@@ -59,6 +59,10 @@ pub(crate) const PASSKEY_AMR: [&str; 2] = ["swk", "mfa"];
 const CEREMONY_MINUTES: i64 = 5;
 /// Registrations a subject may start per 10 minutes.
 const REGISTRATION_LIMIT: i64 = 10;
+/// Logins one client address may start, per window in seconds. Looser than
+/// the limit on its failed logins: logins that then succeed count too, and
+/// many people can share an address.
+const LOGIN_START_LIMITS: [(i64, i64); 2] = [(10 * 60, 300), (24 * 60 * 60, 5000)];
 const LABEL_MAX: usize = 100;
 
 fn verifier(state: &AppState) -> Result<&Verifier, ApiError> {
@@ -111,13 +115,15 @@ struct Details {
     state: serde_json::Value,
 }
 
-/// Stores ceremony state and returns its `<id>.<secret>` token.
+/// Stores ceremony state and returns its `<id>.<secret>` token. The
+/// `recipient` is what starts of this ceremony are counted by.
 // r[impl challenge.single-use]
 async fn begin(
     conn: &mut Connection,
     purpose: Purpose,
     subject: Option<SubjectId>,
     session: Option<&Session>,
+    recipient: String,
     details: Details,
 ) -> Result<String, ApiError> {
     let id = uuid::Uuid::now_v7();
@@ -131,7 +137,7 @@ async fn begin(
             credential_id: None,
             mfa_factor_id: None,
             session_id: session.map(|s| s.id),
-            recipient: subject.map(|s| s.to_string()).unwrap_or_default(),
+            recipient,
             secret_hash: hash_challenge_secret(&id.to_string(), &secret),
             details: serde_json::to_value(&details).map_err(ApiError::internal)?,
             expires_at: Utc::now() + Duration::minutes(CEREMONY_MINUTES),
@@ -289,6 +295,7 @@ async fn registration_options(
         Purpose::PasskeyRegister,
         Some(subject),
         Some(&session),
+        subject.to_string(),
         details,
     )
     .await?;
@@ -367,18 +374,47 @@ async fn register(
     Ok((StatusCode::CREATED, Json(view)).into_response())
 }
 
-/// `POST /v1/login/passkey/options`
+/// `POST /v1/login/passkey/options`: anyone may start a login, and each
+/// start stores a ceremony, so starts are limited per client address. The
+/// ceremony records the address, keyed as login attempts key it, as its
+/// recipient, which is what the limit counts.
+// r[impl authn.passkey.login-start-limit]
 async fn login_options(
     State(state): State<AppState>,
+    address: ClientAddress,
 ) -> Result<Json<Ceremony<impl Serialize>>, ApiError> {
     let verifier = verifier(&state)?;
     let (options, ceremony_state) = verifier.start_login().map_err(ApiError::internal)?;
     let mut conn = state.pool.get().await?;
+    let address = address.key();
+    if let Some(address) = &address {
+        let now = Utc::now();
+        for (window, limit) in LOGIN_START_LIMITS {
+            let since = now - Duration::seconds(window);
+            let started =
+                challenges::count_since(&mut conn, Purpose::PasskeyLogin, address, None, since)
+                    .await?;
+            if started >= limit {
+                return Err(ApiError::new(
+                    ErrorCode::RateLimited,
+                    "too many requests; try again later",
+                ));
+            }
+        }
+    }
     let details = Details {
         label: None,
         state: ceremony_state,
     };
-    let ceremony = begin(&mut conn, Purpose::PasskeyLogin, None, None, details).await?;
+    let ceremony = begin(
+        &mut conn,
+        Purpose::PasskeyLogin,
+        None,
+        None,
+        address.unwrap_or_default(),
+        details,
+    )
+    .await?;
     Ok(Json(Ceremony { ceremony, options }))
 }
 
@@ -490,6 +526,7 @@ async fn step_up_options(
         Purpose::PasskeyLogin,
         Some(session.subject_id),
         Some(&session),
+        session.subject_id.to_string(),
         details,
     )
     .await?;

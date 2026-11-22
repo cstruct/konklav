@@ -130,6 +130,12 @@ Passkey login MUST NOT require a login identifier. Konklav MUST find the
 credential by the credential ID the authenticator returns, and MUST refuse
 the assertion unless its user handle names the credential's subject.
 
+r[authn.passkey.login-start-limit]
+Starting a passkey login stores a ceremony for a caller that has proven
+nothing, so starts MUST be limited per client address, keyed as
+`authn.login.rate-limit` keys addresses, over several windows. A start
+beyond the limit MUST be refused as rate-limited.
+
 r[authn.passkey.origin]
 Registrations and assertions MUST be refused unless the client data's origin
 is a configured passkey origin and the authenticator data's RP ID hash

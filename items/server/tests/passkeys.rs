@@ -263,6 +263,26 @@ async fn a_login_ceremony_works_once() {
     refused(&login(&app, &started["ceremony"], credential).await);
 }
 
+// r[verify authn.passkey.login-start-limit]
+#[tokio::test(flavor = "multi_thread")]
+async fn login_starts_are_limited_per_client_address() {
+    let app = app().await;
+    let start = async |peer: &str| {
+        let peer = Some(peer.parse().unwrap());
+        app.send_from(peer, Method::POST, "/v1/login/passkey/options", &[], None)
+            .await
+    };
+    for n in 0..300 {
+        // A new address in the same /64 for every start.
+        let started = start(&format!("[2001:db8:0:1::{n:x}]:1000")).await;
+        assert_eq!(started.status, StatusCode::OK, "{:?}", started.body);
+    }
+    let limited = start("[2001:db8:0:1:ffff::1]:1000").await;
+    assert_eq!(limited.code(), "RATE_LIMITED", "{:?}", limited.body);
+    let other = start("[2001:db8:0:2::1]:1000").await;
+    assert_eq!(other.status, StatusCode::OK, "{:?}", other.body);
+}
+
 // r[verify authn.passkey.origin]
 #[tokio::test(flavor = "multi_thread")]
 async fn assertions_for_another_origin_or_relying_party_id_are_refused() {
