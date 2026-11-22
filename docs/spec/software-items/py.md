@@ -108,6 +108,13 @@ collection of strings, or one as `audience`, and MUST refuse both, neither,
 a bare string as `audiences` and an empty collection. Its verified
 `AccessToken`'s `aud` is the audience the token carried.
 
+r[item.py.http]
+The `httpx` client `RelyingClient` makes for itself MUST give up on any
+part of a request after 10 seconds and MUST NOT follow redirects. On the
+change feed's stream, with its own client or one it was given,
+`RelyingClient` MUST instead give up once nothing arrived for as long as
+the core takes to stop trusting it (`relying.fallback.lag`).
+
 r[item.py.accepted-request]
 `RelyingClient.accept_request` MUST accept a request's presentation
 (`relying.verify.accepted-presentation`), taking the arguments

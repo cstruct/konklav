@@ -156,6 +156,10 @@ class InvalidDpopProof(Exception):
     """
 
 
+_REQUEST_TIMEOUT = 10.0
+"""Seconds connecting to Konklav may take, and any request but the feed."""
+
+
 def _now() -> int:
     return time.time_ns() // 1_000_000
 
@@ -224,7 +228,12 @@ class RelyingClient:
         self._subject_url = subject_url.rstrip("/")
         self._key_id = key_id
         self._secret = secret
-        self._http = http or httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None))
+        # r[impl item.py.http]
+        self._http = http or httpx.AsyncClient(timeout=httpx.Timeout(_REQUEST_TIMEOUT))
+        # The feed's stream stays open, so only its silence is bounded: by
+        # when the core stops trusting it anyway (`relying.fallback.lag`).
+        silence = config.get("heartbeat_ms", 10_000) * config.get("missed_heartbeats", 3)
+        self._feed_timeout = httpx.Timeout(_REQUEST_TIMEOUT, read=max(silence, 1) / 1000)
         self._audiences = _audiences(audience, audiences)
         self._core = Core(json.dumps({"issuer": issuer, "audiences": self._audiences, **config}))
         # Decisions are synchronous calls into Rust; the lock only guards
@@ -704,7 +713,7 @@ class RelyingClient:
         if cursor is not None:
             headers["last-event-id"] = str(cursor)
         url = f"{self._relying_url}/v1/events"
-        async with self._http.stream("GET", url, headers=headers) as response:
+        async with self._http.stream("GET", url, headers=headers, timeout=self._feed_timeout) as response:
             _checked(response)
             with self._lock:
                 self._core.on_feed_connected(_now())

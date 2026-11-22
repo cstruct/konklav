@@ -237,3 +237,50 @@ async fn a_proof_the_check_api_decided_with_is_refused_again() {
         Verified::InvalidProof
     );
 }
+
+// r[verify item.relying-client.http]
+#[tokio::test]
+async fn redirects_are_not_followed_with_the_secret() {
+    let fake = Fake::new(|path, _| match path {
+        "/v1/login/secret-key" => (307, Some("/elsewhere".into()), json!({})),
+        _ => login(),
+    })
+    .await;
+    let client = fake.client(1);
+    let decided = client.decide("token", &Requirements::default()).await;
+    assert!(decided.is_err(), "fails closed");
+    assert_eq!(fake.paths(), ["/v1/login/secret-key"]);
+}
+
+// r[verify item.relying-client.http]
+#[tokio::test(start_paused = true)]
+async fn a_konklav_that_never_answers_fails_the_decision() {
+    // Accepts connections and says nothing.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let fake = Fake {
+        address,
+        requests: Arc::default(),
+    };
+    let client = fake.client(1);
+    let started = tokio::time::Instant::now();
+    let decided = client.decide("token", &Requirements::default()).await;
+    assert!(decided.is_err(), "fails closed");
+    assert!(started.elapsed() <= Duration::from_secs(11));
+    drop(listener);
+}
+
+// r[verify item.relying-client.http]
+#[test]
+fn the_secret_stays_out_of_debug_output() {
+    let config = ClientConfig {
+        relying_url: "http://konklav:8081".into(),
+        subject_url: "http://konklav:8080".into(),
+        key_id: "key".into(),
+        secret: SECRET.into(),
+        core: Config::default(),
+    };
+    let shown = format!("{config:?}");
+    assert!(shown.contains("key_id: \"key\""), "{shown}");
+    assert!(!shown.contains(SECRET), "{shown}");
+}

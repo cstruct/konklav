@@ -5,6 +5,16 @@ native Rust host binding for the relying core. Its decisions follow the
 relying-system rules (`relying.*`) and the core's (`item.relying.*`); this
 file holds what the binding adds on its own.
 
+## HTTP
+
+r[item.relying-client.http]
+`RelyingClient` MUST give up connecting to Konklav, and on any request but
+the change feed's, after 10 seconds, and on the change feed's stream once
+nothing arrived for as long as the core takes to stop trusting it
+(`relying.fallback.lag`). It MUST NOT follow redirects, which would send
+the secret key or a token wherever a redirect points. `ClientConfig`'s
+`Debug` output MUST NOT show the secret.
+
 ## Pacing and fake ids
 
 The binding offers pacing (see the nomenclature) and fake ids for a relying

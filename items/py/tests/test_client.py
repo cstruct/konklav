@@ -342,6 +342,24 @@ def test_a_proof_the_check_api_decided_with_is_refused_again() -> None:
     asyncio.run(scenario())
 
 
+# r[verify item.py.http]
+def test_requests_time_out_but_the_feed_only_when_silent() -> None:
+    fake = FakeKonklav(Keys(), *(str(uuid.uuid4()) for _ in range(3)))
+    client = RelyingClient(
+        relying_url="http://konklav",
+        subject_url="http://konklav",
+        key_id="key",
+        secret="secret",
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        heartbeat_ms=2_000,
+    )
+    assert client._http.timeout == httpx.Timeout(10.0)
+    assert client._http.follow_redirects is False
+    assert client._feed_timeout == httpx.Timeout(10.0, read=6.0)
+    assert fake.calls == []
+
+
 # r[verify item.py.accepted-request]
 # r[verify relying.verify.route-authority]
 def test_a_route_decision_vouches_for_its_requests_later_decisions() -> None:

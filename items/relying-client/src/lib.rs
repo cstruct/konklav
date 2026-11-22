@@ -47,8 +47,11 @@ use konklav_token::{AccessClaims, JwkSet, TokenKind};
 use serde::Deserialize;
 use tokio::sync::{Notify, mpsc};
 
+/// How long connecting to Konklav may take, and any request but the feed.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Where Konklav is and how to authenticate to it.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ClientConfig {
     /// Base URL of the relying surface, such as `https://konklav:8081`.
     pub relying_url: String,
@@ -58,6 +61,20 @@ pub struct ClientConfig {
     pub key_id: String,
     pub secret: String,
     pub core: Config,
+}
+
+// The secret stays out of logs.
+// r[impl item.relying-client.http]
+impl std::fmt::Debug for ClientConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientConfig")
+            .field("relying_url", &self.relying_url)
+            .field("subject_url", &self.subject_url)
+            .field("key_id", &self.key_id)
+            .field("secret", &"[redacted]")
+            .field("core", &self.core)
+            .finish()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -183,15 +200,35 @@ struct LoginResponse {
     expires_in: u64,
 }
 
+/// The HTTP client: it gives up on a Konklav that doesn't answer, and never
+/// follows a redirect, which would send the secret key or a token wherever
+/// the redirect points.
+// r[impl item.relying-client.http]
+fn http_client(core: &Config) -> reqwest::Client {
+    // The feed's stream stays open, so only its silence is bounded: by when
+    // the core stops trusting it anyway (`relying.fallback.lag`).
+    let silence = core.heartbeat_ms.saturating_mul(core.missed_heartbeats);
+    reqwest::Client::builder()
+        .connect_timeout(REQUEST_TIMEOUT)
+        .read_timeout(Duration::from_millis(silence.max(1)))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("the HTTP client can be built")
+}
+
 impl RelyingClient {
+    /// # Panics
+    ///
+    /// If the HTTP client can't be built, as `reqwest::Client::new` does.
     #[must_use]
     pub fn new(config: ClientConfig) -> Self {
         let core = Relying::new(config.core.clone());
+        let http = http_client(&config.core);
         Self {
             inner: Arc::new(Inner {
                 config,
                 core: Mutex::new(core),
-                http: reqwest::Client::new(),
+                http,
                 token: tokio::sync::Mutex::new(None),
                 wake: Notify::new(),
                 erasures: Mutex::new(None),
@@ -302,6 +339,7 @@ impl RelyingClient {
                 "key_id": self.inner.config.key_id,
                 "secret": self.inner.config.secret,
             }))
+            .timeout(REQUEST_TIMEOUT)
             .send()
             .await?;
         let login: LoginResponse = checked(response).await?.json().await?;
@@ -321,6 +359,7 @@ impl RelyingClient {
             .http
             .get(url)
             .bearer_auth(self.bearer().await?)
+            .timeout(REQUEST_TIMEOUT)
             .send()
             .await?;
         Ok(response)
@@ -557,6 +596,7 @@ impl RelyingClient {
             .post(url)
             .bearer_auth(self.bearer().await?)
             .json(&body)
+            .timeout(REQUEST_TIMEOUT)
             .send()
             .await?;
         match Relying::from_check(checked(response).await?.json::<Decision>().await?) {
