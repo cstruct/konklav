@@ -496,6 +496,44 @@ async fn a_disabled_subject_redeems_nothing() {
     assert_eq!(rows(&app, "membership").await, 1);
 }
 
+// r[verify authn.invite.mfa-first]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_password_that_needs_mfa_redeems_nothing_before_mfa() {
+    let app = TestApp::new().await;
+    let worker = worker(&app).await;
+    let tenant = tenant_with_reader(&app).await;
+    app.human("ada@example.com", PASSWORD).await;
+    let require_mfa = async |factors: i16| {
+        let mut conn = app.db.pool().get().await.unwrap();
+        let update = format!("update credential set mfa_factors_required = {factors}");
+        diesel::sql_query(update).execute(&mut conn).await.unwrap();
+    };
+    require_mfa(1).await;
+    let link = token(&invite(&app, json!({"tenant": tenant, "roles": ["viewer"]})).await);
+
+    let redeem = json!({"token": link, "identifier": "ada@example.com", "password": PASSWORD});
+    let partial = app.post("/v1/invites/redeem", redeem).await;
+    assert_eq!(partial.status, StatusCode::OK, "{:?}", partial.body);
+    assert_eq!(partial.body["token_kind"], "partial");
+    assert_eq!(rows(&app, "membership").await, 0, "no membership");
+    assert!(events(&app, &worker, "invite.redeemed").await.is_empty());
+    assert_eq!(preview(&app, &link).await.body["state"], "pending");
+    let early = redeem_signed_in(&app, &access(&partial), json!({"token": link})).await;
+    assert_eq!(early.code(), "FORBIDDEN", "{:?}", early.body);
+    assert_eq!(
+        rows(&app, "membership").await,
+        0,
+        "nor with the partial session"
+    );
+
+    // A full session redeems it, signed in.
+    require_mfa(0).await;
+    let full = access(&app.login("ada@example.com", PASSWORD).await);
+    let redeemed = redeem_signed_in(&app, &full, json!({"token": link})).await;
+    assert_eq!(redeemed.status, StatusCode::OK, "{:?}", redeemed.body);
+    assert_eq!(rows(&app, "membership").await, 1);
+}
+
 // r[verify authn.invite.preview]
 // r[verify authn.invite.revoke]
 // r[verify metadata.public]

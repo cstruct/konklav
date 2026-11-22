@@ -560,7 +560,8 @@ async fn preview_invite(
 /// link-only invite is redeemed by whoever holds it: a signed-in subject
 /// (with an `Authorization` header), or the owner of an existing password
 /// account. Either way the invited membership is activated, and a login
-/// starts a session.
+/// starts a session. Only an account that requires MFA gets its partial
+/// session without redeeming anything, and redeems signed in after MFA.
 // r[impl authn.invite.redeem]
 // r[impl authn.login.session-request]
 async fn redeem_invite(
@@ -606,7 +607,12 @@ async fn redeem_invite(
         None
     };
     if let Some(credential) = credential {
-        consume_and_join(&mut conn, &challenge, credential.subject_id).await?;
+        // A password alone doesn't prove an account that requires MFA, so
+        // it redeems nothing: the invite waits for the full session.
+        // r[impl authn.invite.mfa-first]
+        if credential.mfa_factors_required == 0 {
+            consume_and_join(&mut conn, &challenge, credential.subject_id).await?;
+        }
         // The account signs in as password login would, MFA and all.
         return start_session(
             &state,

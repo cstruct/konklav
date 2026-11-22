@@ -417,7 +417,17 @@ decides who it shares it with. It MUST be redeemable either
   (`authn.login.rate-limit`, `authn.login.timing`,
   `platform.error.no-enumeration`, `credential.mfa-requirement`), which
   then starts a session as the password login would, with the `client` and
-  `flags` of `authn.login.session-request`.
+  `flags` of `authn.login.session-request` (but see
+  `authn.invite.mfa-first`).
+
+r[authn.invite.mfa-first]
+When the password credential that redeems a link-only invite requires MFA
+(`credential.mfa-requirement`), the redemption MUST start the partial
+session a password login would and nothing more: it MUST NOT consume the
+invite, activate its membership or assign its roles, since the password
+alone would otherwise let whoever knows it attach the subject to a tenant.
+The subject redeems the invite signed in, once MFA has made the session
+full.
 
 Redeeming a link-only invite MUST NOT create a subject or credential: no
 address was proved, and the holder of a bearer link could claim anyone's.
