@@ -29,11 +29,13 @@ impl Stage {
         }
     }
 
+    /// A stage this version doesn't know, such as one a later version
+    /// stored, reads as the one that allows least.
     fn parse(value: &str) -> Self {
         match value {
-            "partial" => Self::Partial,
+            "identity" => Self::Identity,
             "tenant" => Self::Tenant,
-            _ => Self::Identity,
+            _ => Self::Partial,
         }
     }
 }

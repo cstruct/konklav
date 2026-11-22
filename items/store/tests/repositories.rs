@@ -516,6 +516,33 @@ async fn expired_sessions_do_not_rotate() {
     ));
 }
 
+// A stage only a later version knows must not read as a finished login.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_in_an_unknown_stage_reads_as_partial() {
+    let db = TestDatabase::new().await;
+    let mut conn = db.pool().get().await.unwrap();
+    let subject = subject(&mut conn).await;
+    let credential = password(&mut conn, subject, "a@x").await;
+    let id = session(&mut conn, subject, credential, b"r1").await;
+    assert_eq!(
+        sessions::get(&mut conn, id).await.unwrap().stage,
+        Stage::Identity
+    );
+    for statement in [
+        "alter table session drop constraint session_stage_check",
+        "update session set stage = 'elevated'",
+    ] {
+        diesel::sql_query(statement)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        sessions::get(&mut conn, id).await.unwrap().stage,
+        Stage::Partial
+    );
+}
+
 // r[verify session.revocation.targets]
 // r[verify session.history]
 // r[verify feed.outbox]
