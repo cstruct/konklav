@@ -23,6 +23,8 @@ use crate::config::BrowserConfig;
 const METADATA_TTL: Duration = Duration::from_secs(3600);
 /// The soonest the provider's keys are fetched again for an unknown `kid`.
 const KEYS_MIN_REFRESH: Duration = Duration::from_secs(60);
+/// How long a request to a provider may take.
+const TIMEOUT: Duration = Duration::from_secs(10);
 /// Clock skew tolerated on `exp`, `iat` and `auth_time`.
 const LEEWAY_SECONDS: u64 = 60;
 /// The authentication method every federated session gets, whatever else
@@ -192,6 +194,19 @@ fn merge_userinfo(claims: &mut IdClaims, info: serde_json::Value) -> Result<(), 
     Ok(())
 }
 
+/// The JSON a provider answered a request with. Anything but a success,
+/// a redirect included, and a body over the size limit fail.
+// r[impl federation.outbound.redirects]
+// r[impl federation.outbound.size]
+async fn answer<T: serde::de::DeserializeOwned>(
+    sent: reqwest::Result<reqwest::Response>,
+) -> Result<T, FederationError> {
+    let response = sent.map_err(|error| FederationError::Provider(error.to_string()))?;
+    crate::outbound::json(response)
+        .await
+        .map_err(|error| FederationError::Provider(error.to_string()))
+}
+
 /// The claims of an accepted workload assertion.
 #[derive(Debug, Deserialize)]
 pub struct WorkloadAssertion {
@@ -257,13 +272,7 @@ impl Provider {
         url: &str,
         operation: &'static str,
     ) -> Result<T, FederationError> {
-        crate::telemetry::http::send(self.http.get(url), operation)
-            .await
-            .and_then(reqwest::Response::error_for_status)
-            .map_err(|error| FederationError::Provider(error.to_string()))?
-            .json()
-            .await
-            .map_err(|error| FederationError::Provider(error.to_string()))
+        answer(crate::telemetry::http::send(self.http.get(url), operation).await).await
     }
 
     /// The provider's keys, fetched again when `refresh` is set (an ID token
@@ -344,14 +353,7 @@ impl Provider {
                 ("redirect_uri", &self.settings.redirect_uri),
                 ("code_verifier", code_verifier),
             ]);
-        let tokens: Tokens = crate::telemetry::http::send(request, "idp_token")
-            .await
-            .and_then(reqwest::Response::error_for_status)
-            .map_err(|error| FederationError::Provider(error.to_string()))?
-            .json()
-            .await
-            .map_err(|error| FederationError::Provider(error.to_string()))?;
-        Ok(tokens)
+        answer(crate::telemetry::http::send(request, "idp_token").await).await
     }
 
     /// Adds the provider's userinfo claims to `claims`, when it has a
@@ -367,16 +369,8 @@ impl Provider {
         let (Some(endpoint), Some(token)) = (&metadata.userinfo_endpoint, access_token) else {
             return Ok(());
         };
-        let info: serde_json::Value = crate::telemetry::http::send(
-            self.http.get(endpoint).bearer_auth(token),
-            "idp_userinfo",
-        )
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(|error| FederationError::Provider(error.to_string()))?
-        .json()
-        .await
-        .map_err(|error| FederationError::Provider(error.to_string()))?;
+        let request = self.http.get(endpoint).bearer_auth(token);
+        let info = answer(crate::telemetry::http::send(request, "idp_userinfo").await).await?;
         merge_userinfo(claims, info)
     }
 
@@ -403,16 +397,13 @@ impl Provider {
     pub async fn peer_events(&self, after: i64) -> Result<PeerPage, FederationError> {
         let metadata = self.metadata().await?;
         let after = after.to_string();
-        self.peer_post(
-            metadata.konklav_peer_events_endpoint.as_ref(),
-            &[("after", &after)],
-        )
-        .await?
-        .error_for_status()
-        .map_err(|error| FederationError::Provider(error.to_string()))?
-        .json()
-        .await
-        .map_err(|error| FederationError::Provider(error.to_string()))
+        let response = self
+            .peer_post(
+                metadata.konklav_peer_events_endpoint.as_ref(),
+                &[("after", &after)],
+            )
+            .await?;
+        answer(Ok(response)).await
     }
 
     /// The upstream subject's current claims, with `active`, or None if the
@@ -431,13 +422,7 @@ impl Provider {
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        response
-            .error_for_status()
-            .map_err(|error| FederationError::Provider(error.to_string()))?
-            .json()
-            .await
-            .map(Some)
-            .map_err(|error| FederationError::Provider(error.to_string()))
+        answer(Ok(response)).await.map(Some)
     }
 
     /// Validates an ID token issued for this login.
@@ -611,10 +596,7 @@ impl Providers {
     /// client secret.
     // r[impl federation.idp.config]
     pub fn from_config(config: &BrowserConfig) -> Result<Self, String> {
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .map_err(|error| error.to_string())?;
+        let http = crate::outbound::client(TIMEOUT).map_err(|error| error.to_string())?;
         let mut providers = HashMap::new();
         for provider in &config.identity_providers {
             let secret = config
@@ -703,9 +685,14 @@ impl Providers {
     }
 
     /// Providers from settings already built, for tests and embedding.
+    ///
+    /// # Panics
+    ///
+    /// If the HTTP client can't be built, which only happens without TLS
+    /// roots.
     #[must_use]
     pub fn from_settings(settings: impl IntoIterator<Item = Settings>) -> Self {
-        let http = reqwest::Client::new();
+        let http = crate::outbound::client(TIMEOUT).expect("an HTTP client");
         Self(
             settings
                 .into_iter()

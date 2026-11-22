@@ -978,8 +978,7 @@ async fn logout_ends_the_sign_in_and_notifies_clients() {
         .await;
     assert_eq!(own.code(), "SESSION_ENDED");
 
-    let http = reqwest::Client::new();
-    let tried = konklav_server::oidc::deliver_logouts(&app.state, &http)
+    let tried = konklav_server::oidc::deliver_logouts(&app.state)
         .await
         .unwrap();
     assert_eq!(tried, 1);
@@ -994,11 +993,75 @@ async fn logout_ends_the_sign_in_and_notifies_clients() {
     assert_eq!(claims["sid"], sid);
     assert!(claims["events"]["http://schemas.openid.net/event/backchannel-logout"].is_object());
     assert_eq!(
-        konklav_server::oidc::deliver_logouts(&app.state, &http)
+        konklav_server::oidc::deliver_logouts(&app.state)
             .await
             .unwrap(),
         0,
         "delivered once"
+    );
+}
+
+/// A relying system whose back-channel logout URI redirects to `/moved`,
+/// which records the tokens it gets.
+async fn redirecting_backchannel() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use axum::routing::post;
+    let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let uri = format!("http://{}/logout", listener.local_addr().unwrap());
+    let sink = received.clone();
+    let rp = axum::Router::new()
+        .route(
+            "/logout",
+            post(|| async { axum::response::Redirect::temporary("/moved") }),
+        )
+        .route(
+            "/moved",
+            post(move |body: String| async move { sink.lock().unwrap().push(body) }),
+        );
+    tokio::spawn(async move { axum::serve(listener, rp).await.unwrap() });
+    (uri, received)
+}
+
+// r[verify federation.outbound.redirects]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_redirected_logout_token_is_not_delivered() {
+    let (backchannel, received) = redirecting_backchannel().await;
+    let world = world().await;
+    let app = &world.app;
+    let updated = app
+        .control(
+            Method::PUT,
+            "/v1/oidc/clients/console",
+            Some(json!({
+                "kind": "confidential",
+                "redirect_uris": [REDIRECT],
+                "scopes": ["openid", "email", "groups", "tenant"],
+                "audience": "console",
+                "backchannel_logout_uri": backchannel,
+            })),
+        )
+        .await;
+    assert_eq!(updated.status, StatusCode::OK, "{:?}", updated.body);
+    let code = authorize(&world, &[]).await;
+    let tokens = exchange(&world, &code, VERIFIER).await;
+    let id_token = tokens.body["id_token"].as_str().unwrap();
+    let out = app
+        .send(
+            Method::GET,
+            &format!("/v1/oauth2/logout?id_token_hint={id_token}"),
+            &[],
+            None,
+        )
+        .await;
+    assert!(out.status.is_success(), "{:?}", out.body);
+
+    let tried = konklav_server::oidc::deliver_logouts(&app.state)
+        .await
+        .unwrap();
+    assert_eq!(tried, 1);
+    assert!(
+        received.lock().unwrap().is_empty(),
+        "the token didn't follow the redirect"
     );
 }
 
@@ -1473,6 +1536,10 @@ enum HookAnswer {
     Profile,
     Missing,
     Broken,
+    /// A redirect to where the profile is.
+    Redirect,
+    /// The profile, in two megabytes.
+    Long,
 }
 
 struct FakeHook {
@@ -1490,7 +1557,8 @@ impl FakeHook {
         let answer = std::sync::Arc::new(std::sync::Mutex::new(HookAnswer::Profile));
         let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let (answering, recording) = (answer.clone(), requests.clone());
-        let router = axum::Router::new().route(
+        let profile = || async { axum::Json(json!({"name": "Ada Lovelace"})) };
+        let router = axum::Router::new().route("/profile", post(profile)).route(
             "/claims",
             post(move |body: String| {
                 recording.lock().unwrap().push(body);
@@ -1509,6 +1577,14 @@ impl FakeHook {
                         .into_response(),
                         HookAnswer::Missing => StatusCode::NOT_FOUND.into_response(),
                         HookAnswer::Broken => StatusCode::BAD_GATEWAY.into_response(),
+                        HookAnswer::Redirect => {
+                            axum::response::Redirect::temporary("/profile").into_response()
+                        }
+                        HookAnswer::Long => axum::Json(json!({
+                            "name": "Ada Lovelace",
+                            "locale": "x".repeat(2 * 1024 * 1024),
+                        }))
+                        .into_response(),
                     }
                 }
             }),
@@ -1669,6 +1745,20 @@ async fn claims_hook_failures_omit_or_refuse_as_configured() {
         "{:?}",
         info.body
     );
+}
+
+// r[verify federation.outbound.redirects]
+// r[verify federation.outbound.size]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_claims_hook_that_redirects_or_answers_at_length_has_failed() {
+    use konklav_server::config::ClaimsHookFailure;
+    let hook = FakeHook::start().await;
+    let world = world_with(hook.provider(ClaimsHookFailure::Fail, 0)).await;
+    for answer in [HookAnswer::Redirect, HookAnswer::Long] {
+        *hook.answer.lock().unwrap() = answer;
+        let info = userinfo_for(&world, "openid email profile").await;
+        assert_eq!(info.status, StatusCode::SERVICE_UNAVAILABLE);
+    }
 }
 
 // r[verify oidc.provider.claims-hook.cache]

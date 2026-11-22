@@ -353,6 +353,20 @@ r[federation.peer.pinning]
 A downstream instance MUST be able to pin the upstream's signing keys
 instead of discovering them.
 
+## Outbound requests
+
+r[federation.outbound.redirects]
+Konklav MUST NOT follow redirects on the requests it sends to identity
+providers, upstream instances, the claims hook and back-channel logout URIs.
+A redirect MUST count as a failed request, so client secrets, access tokens,
+signed claims requests and logout tokens only go to the URL that was
+configured, discovered or registered.
+
+r[federation.outbound.size]
+Konklav MUST give up on each of those requests after a bounded time, and
+MUST read at most 1 MiB of an answer. A longer answer MUST count as a failed
+request.
+
 ## Break-glass
 
 r[federation.break-glass]
