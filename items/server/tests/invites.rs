@@ -485,7 +485,8 @@ async fn a_disabled_subject_redeems_nothing() {
     let refused = app.post("/v1/invites/redeem", redeem.clone()).await;
     assert_eq!(refused.code(), "INVALID_CREDENTIALS", "{:?}", refused.body);
     assert_eq!(rows(&app, "membership").await, 0, "no membership");
-    assert!(events(&app, &worker, "invite.redeemed").await.is_empty());
+    let redemptions = events(&app, &worker, "invite.redeemed").await;
+    assert_eq!(redemptions, Vec::<Value>::new());
     let pending = preview(&app, link.as_str().unwrap()).await;
     assert_eq!(pending.body["state"], "pending", "{:?}", pending.body);
 
@@ -516,7 +517,8 @@ async fn a_password_that_needs_mfa_redeems_nothing_before_mfa() {
     assert_eq!(partial.status, StatusCode::OK, "{:?}", partial.body);
     assert_eq!(partial.body["token_kind"], "partial");
     assert_eq!(rows(&app, "membership").await, 0, "no membership");
-    assert!(events(&app, &worker, "invite.redeemed").await.is_empty());
+    let redemptions = events(&app, &worker, "invite.redeemed").await;
+    assert_eq!(redemptions, Vec::<Value>::new());
     assert_eq!(preview(&app, &link).await.body["state"], "pending");
     let early = redeem_signed_in(&app, &access(&partial), json!({"token": link})).await;
     assert_eq!(early.code(), "FORBIDDEN", "{:?}", early.body);
