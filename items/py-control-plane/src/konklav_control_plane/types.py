@@ -452,7 +452,9 @@ class ImportedCredentialMaterialPassword(TypedDict):
     kind: Literal['password']
     password_hash: str
     """
-    The password's hash, an Argon2 PHC string; never the password.
+    The password's hash, never the password: an Argon2 PHC string
+    asking for at most 256 MiB of memory, 16 iterations and a
+    parallelism of 16.
     """
 
 
@@ -508,7 +510,8 @@ class ImportedSecretSlot(TypedDict):
     expires_at: NotRequired[str | None]
     hash: str
     """
-    The slot secret's hash, an Argon2 PHC string.
+    The slot secret's hash, an Argon2 PHC string asking for at most
+    256 MiB of memory, 16 iterations and a parallelism of 16.
     """
 
 
@@ -1601,6 +1604,10 @@ class ImportedSession(TypedDict):
     auth_time: str
     client_kind: NotRequired[ClientKind]
     credential: CredentialId
+    """
+    One of the subject's credentials or, for an impersonation session,
+    of the impersonator's.
+    """
     expires_at: str
     flags: NotRequired[list[str]]
     """
@@ -1624,6 +1631,7 @@ class ImportedSession(TypedDict):
 class ImportedSubject(TypedDict):
     """
     A subject; an existing one keeps its kind but takes the record's state.
+    Its sessions end if that state is `disabled`.
     """
 
     id: SubjectId
@@ -1748,6 +1756,11 @@ class OidcClientDefinition(TypedDict):
     The audience of the client's access tokens; not Konklav's own.
     """
     backchannel_logout_uri: NotRequired[str | None]
+    """
+    Where logout tokens are posted when a session of the client ends.
+    An `https` URL, and at a public address unless the deployment
+    allows private ones.
+    """
     id_token_alg: NotRequired[IdTokenAlgorithm]
     jwks: NotRequired[dict[str, Any] | None]
     """
@@ -1756,16 +1769,21 @@ class OidcClientDefinition(TypedDict):
     kind: OidcClientKind
     login_url: NotRequired[str | None]
     """
-    The client's own login page, instead of the provider's.
+    The client's own login page, instead of the provider's. An `https`
+    URL, or `http` on a loopback host.
     """
     metadata: NotRequired[dict[str, Any]]
     """
     An object, opaque to Konklav.
     """
     post_logout_redirect_uris: NotRequired[list[str]]
+    """
+    Where a logout may send the browser afterwards; as `redirect_uris`.
+    """
     redirect_uris: list[str]
     """
-    Matched exactly; no fragments.
+    Matched exactly. `https` URLs, or `http` on a loopback host,
+    without fragments.
     """
     refresh: NotRequired[bool]
     """
