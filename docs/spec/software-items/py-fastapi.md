@@ -226,6 +226,11 @@ without a token), `IdentityToken` (only `identity` tokens) and
 evaluation, so no handler receives a token its route's policy hasn't
 allowed. On a public route, `OptionalToken` MUST verify a presented token
 with `verify_request_typed` and run the hooks, and refuse an invalid one.
+A public route admits no token kinds, so there `OptionalToken` MUST inject
+only an `identity` or `tenant` token, the token of a signed-in subject, and
+`None` for a valid token of any other kind, such as a `partial` token from
+before the second factor. `OptionalTokenOfAnyKind` MUST inject what
+`OptionalToken` does, and on a public route a valid token of any kind.
 
 r[item.py-fastapi.request-decider]
 The package MUST offer a `RequestDecider` dependency, which depends on the
@@ -244,7 +249,7 @@ Startup validation MUST refuse a route that injects a token dependency
 whose accepted token kinds don't include every kind the route's policy
 admits (its `token_kinds`, or only `tenant` when unset, Konklav's default),
 and a route with a public policy that injects any token dependency other
-than `OptionalToken`, or a `RequestDecider`.
+than `OptionalToken` and `OptionalTokenOfAnyKind`, or a `RequestDecider`.
 
 ## Pacing
 

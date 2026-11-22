@@ -105,9 +105,47 @@ token_extractor!(
     Some(TokenKind::Tenant)
 );
 
+/// The token kinds of a signed-in subject. The others (`partial`, after
+/// only a first factor, `reset_password` and `invite`) are valid tokens
+/// that sign nobody in.
+const SIGNED_IN: [TokenKind; 2] = [TokenKind::Identity, TokenKind::Tenant];
+
+/// The request's verified token, if any, and whether its route is public.
+/// On a public route a presented token is verified here, once, without a
+/// decision, and the hooks run; an invalid one is refused.
+async fn optional(
+    parts: &mut Parts,
+    extractor: &'static str,
+) -> Result<(Option<AccessClaims>, bool), Response> {
+    match evaluation(parts, extractor)? {
+        Evaluation::Allowed { token, .. } => Ok((Some(token), false)),
+        Evaluation::Public {
+            verified: true,
+            token,
+        } => Ok((token, true)),
+        Evaluation::Public {
+            verified: false, ..
+        } => {
+            let konklav = Konklav::of(parts).map_err(IntoResponse::into_response)?;
+            let token = konklav.verify(parts).await?;
+            parts.extensions.insert(Evaluation::Public {
+                verified: true,
+                token: token.clone(),
+            });
+            Ok((token, true))
+        }
+    }
+}
+
 /// The request's verified token, or `None` on a public route without one.
 /// On a public route a presented token is verified, without a decision, and
 /// the hooks run; an invalid one is refused.
+///
+/// A public route admits no token kinds, so there this gives only the
+/// token of a signed-in subject, an `identity` or `tenant` token, and
+/// `None` for any other valid token: a handler that greets whoever it gets
+/// must not take a `partial` token, issued before the second factor, for a
+/// sign-in. [`OptionalTokenOfAnyKind`] gives those too.
 #[derive(Clone, Debug, PartialEq)]
 pub struct OptionalToken(pub Option<AccessClaims>);
 
@@ -119,27 +157,37 @@ impl Deref for OptionalToken {
     }
 }
 
+// r[impl item.axum.injected-tokens]
 impl<S: Send + Sync> FromRequestParts<S> for OptionalToken {
     type Rejection = Response;
 
     async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Response> {
-        match evaluation(parts, "OptionalToken")? {
-            Evaluation::Allowed { token, .. } => Ok(Self(Some(token))),
-            Evaluation::Public {
-                verified: true,
-                token,
-            } => Ok(Self(token)),
-            Evaluation::Public {
-                verified: false, ..
-            } => {
-                let konklav = Konklav::of(parts).map_err(IntoResponse::into_response)?;
-                let token = konklav.verify(parts).await?;
-                parts.extensions.insert(Evaluation::Public {
-                    verified: true,
-                    token: token.clone(),
-                });
-                Ok(Self(token))
-            }
-        }
+        let (token, public) = optional(parts, "OptionalToken").await?;
+        Ok(Self(
+            token.filter(|token| !public || SIGNED_IN.contains(&token.knd)),
+        ))
+    }
+}
+
+/// As [`OptionalToken`], but on a public route it gives a valid token of
+/// any kind, also `partial`, `reset_password` and `invite` tokens, which
+/// sign nobody in: check its `knd` before relying on it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OptionalTokenOfAnyKind(pub Option<AccessClaims>);
+
+impl Deref for OptionalTokenOfAnyKind {
+    type Target = Option<AccessClaims>;
+
+    fn deref(&self) -> &Option<AccessClaims> {
+        &self.0
+    }
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for OptionalTokenOfAnyKind {
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Response> {
+        let (token, _) = optional(parts, "OptionalTokenOfAnyKind").await?;
+        Ok(Self(token))
     }
 }

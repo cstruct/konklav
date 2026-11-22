@@ -49,7 +49,11 @@ publishes it to PyPI with the other Python packages.
 - Client addresses: `KonklavRoutes.client_address`, which reads
   `X-Forwarded-For` only from `trusted_proxies`.
 - Injected tokens: `CurrentToken`, `OptionalToken`, `IdentityToken`,
-  `TenantToken`, and `RequestDecider`, refused on public routes.
+  `TenantToken`, and `RequestDecider`, refused on public routes. There
+  `OptionalToken` injects the token of a signed-in subject (`identity` or
+  `tenant`) and `None` for any other valid token, such as a `partial` one
+  from before the second factor; `OptionalTokenOfAnyKind` injects those
+  too.
 - Startup validation over every HTTP and websocket route, and
   `x-konklav-policy` in OpenAPI.
 - Pacing: `RoutePacing`, a dependency that paces the routes it is

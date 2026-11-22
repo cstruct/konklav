@@ -19,6 +19,7 @@ from konklav_fastapi import (
     IdentityToken,
     KonklavRoutes,
     OptionalToken,
+    OptionalTokenOfAnyKind,
     RequestDecider,
     ResolvedScope,
     RoutePolicy,
@@ -239,6 +240,41 @@ def test_optional_tokens_on_public_routes_are_verified() -> None:
         assert http.get("/hello", headers=bearer("unreachable")).status_code == 503
     assert len(fake.verified) == 3 and fake.decided == []
     assert seen == ["s-1"]
+
+
+# A `partial` token is valid before the second factor: a public route that
+# greets whoever `OptionalToken` gives it must not take it for a sign-in.
+# r[verify item.py-fastapi.injected-tokens]
+def test_optional_tokens_on_public_routes_are_those_of_signed_in_subjects() -> None:
+    app = FastAPI(dependencies=[RoutePolicy.public()])
+    seen: list[str] = []
+
+    @app.get("/hello")
+    async def hello(token: OptionalToken) -> str:
+        return "anyone" if token is None else token.knd
+
+    @app.get("/any")
+    async def any_kind(token: OptionalTokenOfAnyKind, signed_in: OptionalToken) -> list[str | None]:
+        return [None if token is None else token.knd, None if signed_in is None else signed_in.knd]
+
+    async def hook(connection: HTTPConnection, verified: AccessToken) -> None:
+        seen.append(verified.knd)
+
+    fake = FakeClient()
+    with serve(app, KonklavRoutes(on_verified=[hook]), fake) as http:
+        for kind in ("partial", "reset_password", "invite"):
+            assert http.get("/hello", headers=bearer(token(kind=kind, tenant=None))).json() == "anyone"
+        assert http.get("/hello", headers=bearer(token(kind="identity", tenant=None))).json() == "identity"
+        assert http.get("/hello", headers=bearer()).json() == "tenant"
+        assert http.get("/hello", headers=bearer("invalid")).status_code == 401
+        assert len(fake.verified) == 6
+        # Only when asked for, and verified once for both.
+        partial = bearer(token(kind="partial", tenant=None))
+        assert http.get("/any", headers=partial).json() == ["partial", None]
+        assert http.get("/any").json() == [None, None]
+        assert len(fake.verified) == 7
+    assert seen == ["partial", "reset_password", "invite", "identity", "tenant", "partial"]
+    assert fake.decided == []
 
 
 # r[verify item.py-fastapi.outcomes]

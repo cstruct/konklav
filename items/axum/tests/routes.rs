@@ -12,9 +12,9 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use konklav_authz::{Decision, DenyReason, StepUp};
 use konklav_axum::{
-    CurrentToken, Denied, IdentityToken, Konklav, KonklavBuilder, OptionalToken, Policy,
-    PolicyError, RequestDecider, ResolvedScope, RoutePolicy, RoutePolicyError, RouterPolicy,
-    TenantToken, path_param,
+    CurrentToken, Denied, IdentityToken, Konklav, KonklavBuilder, OptionalToken,
+    OptionalTokenOfAnyKind, Policy, PolicyError, RequestDecider, ResolvedScope, RoutePolicy,
+    RoutePolicyError, RouterPolicy, TenantToken, path_param,
 };
 use konklav_core::TenantId;
 use konklav_relying_client::Error;
@@ -919,6 +919,57 @@ async fn extractors_inject_the_verified_token() {
     .await;
     assert_eq!(invalid.status, StatusCode::UNAUTHORIZED);
     assert_eq!(host.decided().len(), 3, "public routes decide nothing");
+}
+
+async fn any_kind(token: OptionalTokenOfAnyKind) -> String {
+    token.0.map_or_else(
+        || "anonymous".to_owned(),
+        |token| serde_json::to_value(token.knd).unwrap().to_string(),
+    )
+}
+
+// A `partial` token is valid before the second factor: a public route that
+// greets whoever `OptionalToken` gives it must not take it for a sign-in.
+// r[verify item.axum.injected-tokens]
+#[tokio::test]
+async fn optional_tokens_on_public_routes_are_those_of_signed_in_subjects() {
+    let host = FakeHost::allowing();
+    let hooked = Arc::new(Mutex::new(0));
+    let counter = hooked.clone();
+    let konklav = Konklav::builder(host.clone())
+        .on_verified(move |_, _| {
+            *counter.lock().unwrap() += 1;
+            async { Ok(()) }
+        })
+        .build()
+        .unwrap();
+    let app = app(
+        &konklav,
+        Router::new()
+            .route("/public", get(optional).route_layer(RoutePolicy::public()))
+            .route("/any", get(any_kind).route_layer(RoutePolicy::public())),
+    );
+    let with = |token: &'static str| [("authorization", token)];
+    for (token, seen) in [
+        ("Bearer partial", json!("anonymous")),
+        ("Bearer identity", json!(SUBJECT)),
+        ("Bearer tenant", json!(SUBJECT)),
+    ] {
+        let answer = send(&app, request("/public", &with(token))).await;
+        assert_eq!(answer.body, seen, "{token}");
+    }
+    assert_eq!(*hooked.lock().unwrap(), 3, "verified, and the hooks ran");
+    let invalid = send(&app, request("/public", &with("Bearer invalid"))).await;
+    assert_eq!(invalid.status, StatusCode::UNAUTHORIZED);
+
+    // Only when asked for.
+    let partial = send(&app, request("/any", &with("Bearer partial"))).await;
+    assert_eq!(partial.body, json!("partial"));
+    assert_eq!(
+        send(&app, request("/any", &[])).await.body,
+        json!("anonymous")
+    );
+    assert_eq!(host.decided().len(), 0);
 }
 
 // r[verify item.axum.injected-kinds]

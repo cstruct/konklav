@@ -70,7 +70,7 @@ pub use outcome::{
 pub use pacing::{RoutePacing, RoutePacingService};
 pub use policy::{RoutePolicy, RoutePolicyService, RouterPolicy};
 pub use rate_limit::RouteRateLimit;
-pub use token::{CurrentToken, IdentityToken, OptionalToken, TenantToken};
+pub use token::{CurrentToken, IdentityToken, OptionalToken, OptionalTokenOfAnyKind, TenantToken};
 
 /// Pacing, for [`RoutePacing`] and for pacing work inside a handler.
 pub use konklav_relying_client::pacing::{Pacing, paced};

@@ -43,7 +43,10 @@ rate-limit key templates, in axum's terms (layers, extractors,
   and `RateLimited` (429).
 - Extractors: `CurrentToken`, `OptionalToken`, `IdentityToken`,
   `TenantToken`, `RequestDecider` (`item.axum.request-decider`), and
-  `ClientAddress`.
+  `ClientAddress`. On a public route `OptionalToken` gives the token of a
+  signed-in subject (`identity` or `tenant`) and `None` for any other valid
+  token, such as a `partial` one from before the second factor;
+  `OptionalTokenOfAnyKind` gives those too.
 - `RoutePacing`: a layer pacing the answers it wraps
   (`konklav_relying_client::pacing`, re-exported as `Pacing` and `paced`).
 - Rate limits: `RouteRateLimit(limit, key)` over

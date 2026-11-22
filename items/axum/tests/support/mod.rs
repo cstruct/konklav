@@ -47,8 +47,8 @@ pub fn claims(kind: &str) -> AccessClaims {
 
 type Decide = dyn Fn(&Requirements) -> Result<Decision, Error> + Send + Sync;
 
-/// Stands in for a started `RelyingClient`. It accepts the tokens `tenant`
-/// and `identity` (with claims of that kind), refuses `invalid`, refuses
+/// Stands in for a started `RelyingClient`. It accepts the tokens `tenant`,
+/// `identity` and `partial` (with claims of that kind), refuses `invalid`, refuses
 /// the proof of `bad-proof`, fails for `unreachable`, and decides with
 /// `decide`.
 pub struct FakeHost {
@@ -84,6 +84,7 @@ impl FakeHost {
         match presented.access_token().unwrap_or_default() {
             "tenant" => Ok(Verified::Valid(claims("tenant"))),
             "identity" => Ok(Verified::Valid(claims("identity"))),
+            "partial" => Ok(Verified::Valid(claims("partial"))),
             "bad-proof" => Ok(Verified::InvalidProof),
             "unreachable" => Err(Error::Exhausted),
             _ => Ok(Verified::Invalid),

@@ -251,13 +251,19 @@ token), `IdentityToken` (only `identity` tokens) and `TenantToken` (only
 handler receives a token its route's policy hasn't allowed, and MUST fail
 closed on a route without a `RoutePolicy`. On a public route,
 `OptionalToken` MUST verify a presented token without a decision and run
-the hooks, and refuse an invalid one.
+the hooks, and refuse an invalid one. A public route admits no token kinds,
+so there `OptionalToken` MUST give only an `identity` or `tenant` token, the
+token of a signed-in subject, and `None` for a valid token of any other
+kind, such as a `partial` token from before the second factor.
+`OptionalTokenOfAnyKind` MUST give what `OptionalToken` does, and on a
+public route a valid token of any kind
+(`item.py-fastapi.injected-tokens`).
 
 r[item.axum.injected-kinds]
 An extractor whose accepted token kinds don't include every kind the
 route's policy admits (its token kinds, or only `tenant` when unset), and
-any extractor other than `OptionalToken` on a public route, MUST fail
-closed (`item.axum.misconfiguration`) whatever the request's token.
+any extractor other than `OptionalToken` and `OptionalTokenOfAnyKind` on a
+public route, MUST fail closed (`item.axum.misconfiguration`) whatever the request's token.
 
 ## Validation
 

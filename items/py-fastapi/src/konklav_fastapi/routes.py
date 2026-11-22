@@ -30,7 +30,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from functools import cache
 from typing import Annotated, Any, ClassVar, Literal, Self, Unpack, cast
 
@@ -72,6 +72,7 @@ __all__ = [
     "IdentityToken",
     "KonklavRoutes",
     "OptionalToken",
+    "OptionalTokenOfAnyKind",
     "RequestDecider",
     "ResolvedScope",
     "RouteTenantResolver",
@@ -88,6 +89,12 @@ TOKEN_KINDS = frozenset({"partial", "identity", "tenant", "reset_password", "inv
 """Every token kind Konklav issues."""
 DEFAULT_TOKEN_KINDS = frozenset({"tenant"})
 """What a policy without `token_kinds` admits, as Konklav decides."""
+SIGNED_IN_TOKEN_KINDS = frozenset({"identity", "tenant"})
+"""
+The token kinds of a signed-in subject. The others (`partial`, after only a
+first factor, `reset_password` and `invite`) are valid tokens that sign
+nobody in.
+"""
 
 _SCOPE_KEY = "konklav_fastapi"
 
@@ -499,7 +506,7 @@ class KonklavRoutes:
             for name, _ in injected:
                 if name == "RequestDecider":
                     return "injects RequestDecider, but its policy is public, so there is nothing to decide with"
-                if name != "OptionalToken":
+                if name not in ("OptionalToken", "OptionalTokenOfAnyKind"):
                     return f"injects {name}, but its policy is public; use OptionalToken"
             return None
         if policy.token_kinds == frozenset():
@@ -721,13 +728,28 @@ class KonklavRoutes:
 _Evaluated = Annotated[None, Depends(_evaluate)]
 
 
+_PUBLIC_KEY = "konklav_fastapi.public"
+"""The scope key of a public route's presented token, once verified, of any kind."""
+
+
+async def _optional_token_of_any_kind(connection: HTTPConnection, _: _Evaluated) -> AccessToken | None:
+    outcome: _Outcome = connection.scope[_SCOPE_KEY]
+    if not outcome.public:
+        return outcome.token
+    if _PUBLIC_KEY not in connection.scope:
+        connection.scope[_PUBLIC_KEY] = await KonklavRoutes.of(connection)._verify(connection)
+    return cast(AccessToken | None, connection.scope[_PUBLIC_KEY])
+
+
 # r[impl item.py-fastapi.injected-tokens]
 async def _optional_token(connection: HTTPConnection, _: _Evaluated) -> AccessToken | None:
+    token = await _optional_token_of_any_kind(connection, _)
     outcome: _Outcome = connection.scope[_SCOPE_KEY]
-    if outcome.public:
-        outcome = _Outcome(public=True, token=await KonklavRoutes.of(connection)._verify(connection))
-        connection.scope[_SCOPE_KEY] = replace(outcome, public=False)
-    return outcome.token
+    if outcome.public and token is not None and token.knd not in SIGNED_IN_TOKEN_KINDS:
+        # A valid token that signs nobody in, such as one from before the
+        # second factor: a public route's handler gets no one.
+        return None
+    return token
 
 
 async def _current_token(token: Annotated[AccessToken | None, Depends(_optional_token)]) -> AccessToken:
@@ -752,7 +774,18 @@ _tenant_token = _of_kind("tenant")
 CurrentToken = Annotated[AccessToken, Depends(_current_token)]
 """The request's verified token, of any kind the route's policy admits."""
 OptionalToken = Annotated[AccessToken | None, Depends(_optional_token)]
-"""The request's verified token, or `None` on a public route without one."""
+"""
+The request's verified token, or `None` on a public route without one. A
+public route admits no token kinds, so there this is only the token of a
+signed-in subject, an `identity` or `tenant` token, and `None` for any other
+valid token, such as a `partial` one from before the second factor.
+"""
+OptionalTokenOfAnyKind = Annotated[AccessToken | None, Depends(_optional_token_of_any_kind)]
+"""
+As `OptionalToken`, but on a public route a valid token of any kind, also
+`partial`, `reset_password` and `invite` tokens, which sign nobody in: check
+its `knd` before relying on it.
+"""
 IdentityToken = Annotated[AccessToken, Depends(_identity_token)]
 """The request's verified `identity` token."""
 TenantToken = Annotated[AccessToken, Depends(_tenant_token)]
@@ -811,6 +844,7 @@ RequestDecider = Annotated[Decider, Depends(_request_decider)]
 # r[impl item.py-fastapi.injected-kinds]
 _INJECTED: dict[Callable[..., Any], tuple[str, frozenset[str]]] = {
     _optional_token: ("OptionalToken", TOKEN_KINDS),
+    _optional_token_of_any_kind: ("OptionalTokenOfAnyKind", TOKEN_KINDS),
     _current_token: ("CurrentToken", TOKEN_KINDS),
     _identity_token: ("IdentityToken", frozenset({"identity"})),
     _tenant_token: ("TenantToken", frozenset({"tenant"})),
