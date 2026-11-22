@@ -48,6 +48,13 @@ The client MUST take the control-plane surface's base URL without `/v1`
 and MUST keep any path prefix it has, so that a surface served behind a
 proxy under a prefix is reached at `<prefix>/v1/...`.
 
+r[item.py-control-plane.path-segments]
+An id the caller gives for a request's path MUST be sent as one
+percent-encoded path segment. An id that is empty, `.` or `..` MUST be
+refused with `ValueError` before anything is sent: HTTP clients and proxies
+resolve dot segments, percent-encoded ones too, so the request would reach
+another path than the method's.
+
 r[item.py-control-plane.whole-surface]
 Every operation in the control-plane API document MUST have a client
 method, and CI MUST fail when an operation has none.

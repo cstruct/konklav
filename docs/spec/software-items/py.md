@@ -115,6 +115,14 @@ change feed's stream, with its own client or one it was given,
 `RelyingClient` MUST instead give up once nothing arrived for as long as
 the core takes to stop trusting it (`relying.fallback.lag`).
 
+r[item.py.path-segments]
+`RelyingClient` MUST ask Konklav for a registered scope with its kind and
+id as one percent-encoded path segment each, and MUST NOT ask at all for a
+kind or id that is empty, `.` or `..`, which no path segment can carry: it
+MUST tell the core that Konklav doesn't know the scope
+(`relying.cache.registered-unknown`), as `konklav-relying-client` does
+(`item.relying-client.path-segments`).
+
 r[item.py.accepted-request]
 `RelyingClient.accept_request` MUST accept a request's presentation
 (`relying.verify.accepted-presentation`), taking the arguments

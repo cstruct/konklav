@@ -169,7 +169,18 @@ def metadata_filter(metadata: MetadataFilter | None) -> str | None:
     return None if metadata is None else json.dumps(dict(metadata), separators=(",", ":"), sort_keys=True)
 
 
+# r[impl item.py-control-plane.path-segments]
 def path(*segments: str) -> str:
     """A path under `/v1` from literal segments and caller-given ids, which
-    are escaped so they stay one segment each."""
+    are escaped so they stay one segment each.
+
+    Raises:
+        ValueError: for an id that is empty, `.` or `..`. No path segment
+            can carry those: clients and proxies resolve dot segments,
+            percent-encoded ones too, so the request would go to another
+            path, such as `/v1/x` for the id `..` under `/v1/tenants`.
+    """
+    for segment in segments:
+        if segment in ("", ".", ".."):
+            raise ValueError(f"{segment!r} can't be sent as an id: it would change the request's path")
     return "".join(f"/{quote(segment, safe='')}" for segment in segments)

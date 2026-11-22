@@ -188,6 +188,19 @@ def _audiences(audience: str | None, audiences: Collection[str] | None) -> list[
     return sorted(set(audiences))
 
 
+# r[impl item.py.path-segments]
+def _registered_scope_path(kind: str, id: str) -> str | None:
+    """
+    Where Konklav answers for the registered scope `kind`/`id`, each one
+    escaped path segment. `None` when a path can't name it: an empty
+    segment, or `.` or `..`, which clients and proxies resolve as dot
+    segments, so the request would go to another path.
+    """
+    if any(segment in ("", ".", "..") for segment in (kind, id)):
+        return None
+    return f"/v1/registered-scopes/{urllib.parse.quote(kind, safe='')}/{urllib.parse.quote(id, safe='')}"
+
+
 def _token_of(authorization: str) -> str:
     """The token after the scheme, for the check API."""
     return authorization.partition(" ")[2].strip()
@@ -652,9 +665,13 @@ class RelyingClient:
             with self._lock:
                 self._core.on_entitlements(response.text, _now())
         elif kind == "registered_scope":
-            kind_segment = urllib.parse.quote(need["kind"], safe="")
-            id_segment = urllib.parse.quote(need["id"], safe="")
-            response = await self._get(f"/v1/registered-scopes/{kind_segment}/{id_segment}")
+            path = _registered_scope_path(need["kind"], need["id"])
+            if path is None:
+                # Konklav can't be asked for it, so it holds no such scope.
+                with self._lock:
+                    self._core.on_registered_scope_unknown(need["kind"], need["id"], _now())
+                return
+            response = await self._get(path)
             if response.status_code == 404:
                 with self._lock:
                     self._core.on_registered_scope_unknown(need["kind"], need["id"], _now())

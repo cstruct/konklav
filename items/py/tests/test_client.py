@@ -551,3 +551,35 @@ def test_erasures_reach_the_handler_and_the_list_catches_up() -> None:
             await client.stop()
 
     asyncio.run(scenario())
+
+
+# httpx resolves dot segments, so the scope `document/..` was asked for at
+# `/v1/registered-scopes/`.
+# r[verify item.py.path-segments]
+def test_scope_ids_never_retarget_the_request() -> None:
+    async def scenario() -> None:
+        asked: list[bytes] = []
+
+        def konklav(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/v1/login/secret-key":
+                return httpx.Response(200, json={"access_token": "service", "expires_in": 900})
+            asked.append(request.url.raw_path)
+            return httpx.Response(404)
+
+        client = RelyingClient(
+            relying_url="http://konklav",
+            subject_url="http://konklav",
+            key_id="key",
+            secret="secret",
+            issuer=ISSUER,
+            audience=AUDIENCE,
+            http=httpx.AsyncClient(transport=httpx.MockTransport(konklav)),
+        )
+        for unnameable in ["", ".", ".."]:
+            await client._fetch({"need": "registered_scope", "kind": "document", "id": unnameable})
+            await client._fetch({"need": "registered_scope", "kind": unnameable, "id": "d-1"})
+        assert asked == [], "not asked: the core takes them for unknown"
+        await client._fetch({"need": "registered_scope", "kind": "document", "id": "a/b ..?"})
+        assert asked == [b"/v1/registered-scopes/document/a%2Fb%20..%3F"]
+
+    asyncio.run(scenario())

@@ -15,6 +15,14 @@ nothing arrived for as long as the core takes to stop trusting it
 the secret key or a token wherever a redirect points. `ClientConfig`'s
 `Debug` output MUST NOT show the secret.
 
+r[item.relying-client.path-segments]
+`RelyingClient` MUST ask Konklav for a registered scope with its kind and
+id as one percent-encoded path segment each, and MUST NOT ask at all for a
+kind or id that is empty, `.` or `..`: a URL takes those for dot segments
+however they are encoded, so the request would go to another path. It MUST
+instead tell the core that Konklav doesn't know the scope
+(`relying.cache.registered-unknown`).
+
 ## Pacing and fake ids
 
 The binding offers pacing (see the nomenclature) and fake ids for a relying

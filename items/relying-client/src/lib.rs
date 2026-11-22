@@ -155,8 +155,28 @@ const EVERY_TOKEN_KIND: [TokenKind; 5] = [
 ];
 
 /// `value` as one percent-encoded URL path segment: scope ids are opaque.
-fn path_segment(value: &str) -> String {
-    percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC).to_string()
+/// `None` for what no path segment can carry: nothing, and `.` and `..`,
+/// which a URL takes for dot segments however they are encoded, so the
+/// request would go to another path.
+// r[impl item.relying-client.path-segments]
+fn path_segment(value: &str) -> Option<String> {
+    if matches!(value, "" | "." | "..") {
+        return None;
+    }
+    Some(
+        percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC)
+            .to_string(),
+    )
+}
+
+/// Where Konklav answers for the registered scope `kind`/`id`, if a path
+/// can name it.
+fn registered_scope_path(kind: &str, id: &str) -> Option<String> {
+    Some(format!(
+        "/v1/registered-scopes/{}/{}",
+        path_segment(kind)?,
+        path_segment(id)?
+    ))
 }
 
 /// The current time in Unix milliseconds.
@@ -640,11 +660,11 @@ impl RelyingClient {
                 self.core().on_entitlements(set, now());
             }
             Need::RegisteredScope { kind, id } => {
-                let path = format!(
-                    "/v1/registered-scopes/{}/{}",
-                    path_segment(kind),
-                    path_segment(id)
-                );
+                let Some(path) = registered_scope_path(kind, id) else {
+                    // Konklav can't be asked for it, so it holds no such scope.
+                    self.core().on_registered_scope_unknown(kind, id, now());
+                    return Ok(());
+                };
                 let response = self.get(&path).await?;
                 if response.status() == reqwest::StatusCode::NOT_FOUND {
                     self.core().on_registered_scope_unknown(kind, id, now());
@@ -778,5 +798,34 @@ async fn checked(response: reqwest::Response) -> Result<reqwest::Response, Error
             status: response.status().as_u16(),
             body: response.text().await.unwrap_or_default(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::registered_scope_path;
+
+    // `..` percent-encoded is still a dot segment to a URL: the request for
+    // `document/..` went to `/v1/registered-scopes/`.
+    // r[verify item.relying-client.path-segments]
+    #[test]
+    fn scope_ids_never_retarget_the_request() {
+        let addressed = |kind, id| {
+            let path = registered_scope_path(kind, id)?;
+            let url = reqwest::Url::parse(&format!("http://konklav{path}")).unwrap();
+            Some(url.path().to_owned())
+        };
+        assert_eq!(
+            addressed("document", "a/b ..?").as_deref(),
+            Some("/v1/registered-scopes/document/a%2Fb%20%2E%2E%3F")
+        );
+        assert_eq!(
+            addressed("document", "...").as_deref(),
+            Some("/v1/registered-scopes/document/%2E%2E%2E")
+        );
+        for unnameable in ["", ".", ".."] {
+            assert_eq!(addressed("document", unnameable), None);
+            assert_eq!(addressed(unnameable, "d-1"), None);
+        }
     }
 }
