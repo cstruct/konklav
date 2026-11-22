@@ -162,6 +162,29 @@ async fn pacing_inside_the_policy_is_refused() {
     );
 }
 
+// An `Upgrade` header alone must not take a request out of pacing.
+// r[verify item.axum.route-pacing]
+// r[verify item.axum.websocket-requests]
+#[tokio::test]
+async fn requests_that_only_claim_to_upgrade_are_paced() {
+    let app = app(
+        &FakeHost::allowing(),
+        Router::new().route("/invites", get(ok).post(ok).route_layer(pacing())),
+    );
+    let mut claimed = request(
+        "/invites",
+        &[("connection", "upgrade"), ("upgrade", "websocket")],
+    );
+    *claimed.method_mut() = axum::http::Method::POST;
+    let started = Instant::now();
+    assert_eq!(send(&app, claimed).await.status, StatusCode::OK);
+    assert!(started.elapsed() >= FLOOR);
+
+    let started = Instant::now();
+    send(&app, request("/invites", &[("upgrade", "websocket")])).await;
+    assert!(started.elapsed() >= FLOOR, "no Connection: upgrade");
+}
+
 // r[verify item.axum.route-pacing]
 #[tokio::test]
 async fn websocket_upgrades_are_not_paced() {

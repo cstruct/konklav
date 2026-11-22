@@ -83,14 +83,32 @@ pub(crate) struct PresentedToken {
     pub(crate) scheme: Scheme,
 }
 
+/// Whether `name`'s values, as comma-separated lists, include `token`.
+fn lists(parts: &Parts, name: header::HeaderName, token: &str) -> bool {
+    parts
+        .headers
+        .get_all(name)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|listed| listed.trim().eq_ignore_ascii_case(token))
+}
+
+/// Whether the request asks to open a websocket: an HTTP/1.1 upgrade (a
+/// `GET` with `Connection: upgrade` and `Upgrade: websocket`, RFC 6455), or
+/// HTTP/2's extended CONNECT with the `websocket` protocol (RFC 8441). The
+/// `Upgrade` header alone, on any other request, makes no websocket.
+// r[impl item.axum.websocket-requests]
 pub(crate) fn is_websocket(parts: &Parts) -> bool {
-    // HTTP/1.1 upgrades, and HTTP/2's extended CONNECT (RFC 8441).
-    parts.method == Method::CONNECT
-        || parts
-            .headers
-            .get(header::UPGRADE)
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+    if parts.method == Method::CONNECT {
+        return parts
+            .extensions
+            .get::<hyper::ext::Protocol>()
+            .is_some_and(|protocol| protocol.as_str().eq_ignore_ascii_case("websocket"));
+    }
+    parts.method == Method::GET
+        && lists(parts, header::CONNECTION, "upgrade")
+        && lists(parts, header::UPGRADE, "websocket")
 }
 
 /// The URL the client addressed, without the public-URL hook.

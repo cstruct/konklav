@@ -216,7 +216,11 @@ async fn tokens_come_from_the_header_the_cookie_hook_or_a_websockets_query() {
         host.accepted().pop().unwrap().authorization,
         "Bearer tenant"
     );
-    let bound = [("upgrade", "websocket"), ("dpop", "proof")];
+    let bound = [
+        ("connection", "keep-alive, Upgrade"),
+        ("upgrade", "WebSocket"),
+        ("dpop", "proof"),
+    ];
     send(&app, request("/socket?token=tenant", &bound)).await;
     assert_eq!(host.accepted().pop().unwrap().authorization, "DPoP tenant");
 
@@ -226,6 +230,59 @@ async fn tokens_come_from_the_header_the_cookie_hook_or_a_websockets_query() {
         StatusCode::UNAUTHORIZED,
         "a refused upgrade is answered with its status"
     );
+}
+
+// An `Upgrade` header alone must not turn a request into a `GET` for its
+// proof, nor let its token come from the query.
+// r[verify item.axum.websocket-requests]
+// r[verify item.axum.token-extraction]
+// r[verify item.axum.verify-then-decide]
+#[tokio::test]
+async fn only_a_websocket_upgrade_is_taken_for_one() {
+    use axum::http::Method;
+
+    let host = FakeHost::allowing();
+    let policy = RoutePolicy::new(&Policy::new()).unwrap();
+    let app = app(
+        &konklav(&host),
+        Router::new().route("/things", axum::routing::any(ok).layer(policy)),
+    );
+    let upgrade = [("connection", "upgrade"), ("upgrade", "websocket")];
+    let with = |method: Method, uri: &str, headers: &[(&str, &str)]| {
+        let mut request = request(uri, headers);
+        *request.method_mut() = method;
+        request
+    };
+
+    for method in [Method::POST, Method::DELETE, Method::CONNECT] {
+        let headers = [upgrade[0], upgrade[1], ("authorization", "DPoP tenant")];
+        let sent = send(&app, with(method.clone(), "/things", &headers)).await;
+        assert_eq!(sent.status, StatusCode::OK, "{method}");
+        let descriptor = host.accepted().pop().unwrap().request.unwrap();
+        assert_eq!(descriptor.method, method.as_str(), "a GET proof won't do");
+        let query = send(&app, with(method, "/things?token=tenant", &upgrade)).await;
+        assert_eq!(query.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(query.body, json!({"error": {"code": "missing_token"}}));
+    }
+    // Nor does a GET that names the protocol without asking to upgrade.
+    for headers in [
+        [("connection", "keep-alive"), ("upgrade", "websocket")],
+        [("connection", "upgrade"), ("upgrade", "h2c")],
+    ] {
+        let query = send(&app, request("/things?token=tenant", &headers)).await;
+        assert_eq!(query.status, StatusCode::UNAUTHORIZED);
+    }
+    assert_eq!(host.accepted().len(), 3, "no query token was read");
+
+    // HTTP/2 opens a websocket with an extended CONNECT.
+    let mut connect = with(Method::CONNECT, "/things?token=tenant", &[]);
+    connect
+        .extensions_mut()
+        .insert(hyper::ext::Protocol::from_static("websocket"));
+    assert_eq!(send(&app, connect).await.status, StatusCode::OK);
+    let presented = host.accepted().pop().unwrap();
+    assert_eq!(presented.authorization, "Bearer tenant");
+    assert_eq!(presented.request.unwrap().method, "GET");
 }
 
 #[tokio::test]

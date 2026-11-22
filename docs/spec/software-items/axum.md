@@ -64,6 +64,14 @@ the `token` query parameter. A token from the cookie hook or the query
 parameter MUST be presented with the `DPoP` scheme when a `DPoP` header is
 present and as a bearer token otherwise.
 
+r[item.axum.websocket-requests]
+A request MUST be taken for a websocket upgrade request only when it is a
+`GET` whose `Connection` header lists `upgrade` and whose `Upgrade` header
+lists `websocket`, or an extended CONNECT whose `:protocol` is `websocket`
+(HTTP/2, RFC 8441). An `Upgrade` header on any other request MUST change
+nothing: its method stays its own for the DPoP proof, the `token` query
+parameter isn't read, and it is paced.
+
 r[item.axum.verify-then-decide]
 A route that isn't public MUST accept the request's presentation once
 (`relying.verify.accepted-presentation`) with the presented `Authorization`
