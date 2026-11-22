@@ -11,6 +11,12 @@ use tokio::net::TcpListener;
 
 use crate::{Result, fail};
 
+/// Recipients at this domain are refused for good, as a server refuses a
+/// mailbox it doesn't have.
+pub const NO_MAILBOX: &str = "@no-mailbox.invalid";
+/// Recipients at this domain are refused for now.
+pub const BUSY: &str = "@busy.invalid";
+
 /// A received message: its envelope and its raw content.
 #[derive(Clone, Debug)]
 pub struct Message {
@@ -131,10 +137,14 @@ async fn session(stream: tokio::net::TcpStream, messages: &Mutex<Vec<Message>>) 
                 message.from = address(&line);
                 b"250 OK\r\n"
             }
-            "RCPT" => {
-                message.to.push(address(&line));
-                b"250 OK\r\n"
-            }
+            "RCPT" => match address(&line) {
+                to if to.ends_with(NO_MAILBOX) => b"550 No such mailbox\r\n",
+                to if to.ends_with(BUSY) => b"451 Try again later\r\n",
+                to => {
+                    message.to.push(to);
+                    b"250 OK\r\n"
+                }
+            },
             "DATA" => {
                 write.write_all(b"354 End with <CRLF>.<CRLF>\r\n").await?;
                 let mut data = String::new();
