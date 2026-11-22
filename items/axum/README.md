@@ -171,6 +171,25 @@ so:
 These fail closed, before the handler, the first time a request reaches the
 route; test each route once to find them.
 
+**A route without a `RoutePolicy` layer is open.** Nothing in this crate
+sees a route it wasn't applied to, so its requests are evaluated by no one
+and served to anyone; `konklav-fastapi` refuses to start with such a route,
+and this crate can't. Only the extractors fail closed there, for a handler
+that takes one. A layer around the whole router can't close the gap: it
+runs before the route's own layers and can't tell whether one of them is a
+`RoutePolicy`, and after the handler it is too late. So:
+
+- Give every route a `RoutePolicy`, and the ones anyone may use
+  `RoutePolicy::public()`, so that a route without one is a mistake to
+  look for rather than a choice.
+- Add routes through one function of the application's that takes the
+  policy as an argument, instead of calling `Router::route` with a bare
+  handler.
+- Have handlers of routes that aren't public take an extractor
+  (`CurrentToken`, `TenantToken`, `RequestDecider`): it answers 500 on a
+  route without a policy.
+- Test each route once without a token and expect 401.
+
 ### Verification and DPoP
 
 The relying core answers each DPoP proof once and refuses it as a replay

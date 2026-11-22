@@ -303,6 +303,15 @@ error listing each route that fails a check. A route fails when:
 - it declares a `RoutePacing` that FastAPI resolves after the route's
   policy (`item.py-fastapi.route-pacing.order`).
 
+A route that can't declare dependencies, so no `RoutePolicy`, is served to
+anyone: a plain Starlette route or websocket route, a mount or a host
+route. Validation MUST refuse each one whose path, as the application
+serves it, the relying system hasn't named in `KonklavRoutes`'s
+`unprotected`, except FastAPI's own documentation routes (the OpenAPI
+document, the Swagger UI with its OAuth2 redirect, and ReDoc). It checks
+nothing inside a mount: an application mounted there installs a
+`KonklavRoutes` of its own.
+
 ## OpenAPI
 
 r[item.py-fastapi.openapi]

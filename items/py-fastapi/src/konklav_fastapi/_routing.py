@@ -108,6 +108,36 @@ def served_routes(app: FastAPI) -> Iterator[ServedRoute]:
         )
 
 
+@dataclass(frozen=True)
+class PlainRoute:
+    """
+    A route FastAPI serves that can't declare dependencies, so no
+    `RoutePolicy`: a plain Starlette route, a mount or a host.
+    """
+
+    original: BaseRoute
+    name: str
+    """Its path as the application serves it, or a host route's pattern."""
+
+    @property
+    def label(self) -> str:
+        return f"{type(self.original).__name__.upper()} {self.name}"
+
+
+def plain_routes(app: FastAPI) -> Iterator[PlainRoute]:
+    """Every route of `app` that is no API or websocket route, once per inclusion."""
+    for context in iter_route_contexts(app.routes):
+        original = context.original_route
+        if isinstance(original, APIRoute | APIWebSocketRoute):
+            continue
+        # 0.143 leaves an included plain route's own path empty and keeps
+        # the one it is served at on the route it rebuilt.
+        rebuilt = getattr(context, "starlette_route", None)
+        candidates = (getattr(context, "path", None), getattr(rebuilt, "path", None), getattr(original, "path", None))
+        name = next((path for path in candidates if path), None) or getattr(original, "host", "")
+        yield PlainRoute(original=original, name=str(name))
+
+
 def requested(connection: HTTPConnection) -> tuple[APIRoute | APIWebSocketRoute, Sequence[Depends]] | None:
     """The original route serving `connection` and its combined dependencies."""
     scope = connection.scope

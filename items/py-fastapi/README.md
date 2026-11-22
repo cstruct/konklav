@@ -55,7 +55,9 @@ publishes it to PyPI with the other Python packages.
   from before the second factor; `OptionalTokenOfAnyKind` injects those
   too.
 - Startup validation over every HTTP and websocket route, and
-  `x-konklav-policy` in OpenAPI.
+  `x-konklav-policy` in OpenAPI. A route that can't declare a `RoutePolicy`
+  (a plain Starlette route, a mount such as static files) is refused unless
+  its path is named in `KonklavRoutes(unprotected=...)`.
 - Pacing: `RoutePacing`, a dependency that paces the routes it is
   declared on, and `PacingMiddleware`, which paces every answer for chosen
   paths (`konklav_relying.pacing`).
@@ -159,6 +161,25 @@ before the hooks and the decision:
 ```python
 people = APIRouter(dependencies=[RoutePolicy(audiences={"app"})])
 ```
+
+### Routes without a policy
+
+Every API and websocket route must declare a `RoutePolicy` on some layer,
+`RoutePolicy.public()` included, or the application doesn't start. A plain
+Starlette route (`app.add_route`, `add_websocket_route`) and a mount
+(`app.mount("/static", StaticFiles(...))`) take no dependencies, so they
+can't declare one and nothing in this package sees their requests: they
+are served to anyone. Startup validation refuses them too, unless the
+application says it means to serve them that way:
+
+```python
+routes = KonklavRoutes(unprotected={"/static", "/metrics"})
+```
+
+FastAPI's own documentation routes (`/openapi.json`, `/docs`, `/redoc`)
+pass; turn them off on `FastAPI(...)` if they shouldn't be public.
+Validation looks at nothing inside a mount: a FastAPI application mounted
+there installs its own `KonklavRoutes`.
 
 ### Verification and DPoP
 

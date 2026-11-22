@@ -279,6 +279,16 @@ can't render. What depends on the matched route or the configuration MUST
 be checked on each request it concerns
 (`item.axum.misconfiguration`).
 
+A route that carries no `RoutePolicy` is outside what this crate can check,
+unlike in `konklav-fastapi`, which refuses to start with one
+(`item.py-fastapi.validation`): nothing evaluates its requests, and it is
+served to anyone unless its handler takes one of the extractors, which fail
+closed (`item.axum.injected-tokens`). A layer around the router can't
+refuse such a request either, since it runs before the route's own layers
+and can't tell whether one of them is a `RoutePolicy`. The relying system
+MUST therefore give every route a `RoutePolicy`, `RoutePolicy::public()`
+for the ones anyone may use.
+
 r[item.axum.misconfiguration]
 A request that meets a route the application set up wrongly MUST fail
 closed with 500 and an error logged naming the problem, before any handler

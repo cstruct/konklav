@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 from fastapi import APIRouter, FastAPI, HTTPException, WebSocket
-from fastapi.requests import HTTPConnection
-from fastapi.responses import StreamingResponse
+from fastapi.requests import HTTPConnection, Request
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.testclient import TestClient
 from konklav_relying import AccessToken, KonklavError, StepUp
 from starlette.websockets import WebSocketDisconnect
@@ -548,6 +548,42 @@ def test_tokens_of_a_kind_are_injected() -> None:
         assert http.get("/me", headers=bearer(token(kind="identity", tenant=None))).json() == "identity"
         assert http.get("/here", headers=bearer()).json() == "tenant:t-1"
     assert len(fake.decided) == 2
+
+
+# A mount or a plain Starlette route can't declare a policy: it must not be
+# served to anyone only because nobody looked.
+# r[verify item.py-fastapi.validation]
+def test_startup_validation_refuses_routes_that_can_declare_no_policy() -> None:
+    async def plain(request: Request) -> PlainTextResponse:
+        return PlainTextResponse("plain")
+
+    def application() -> FastAPI:
+        included = APIRouter()
+        included.add_route("/plain", plain)
+        included.add_websocket_route("/socket", plain)
+        app = FastAPI(dependencies=[RoutePolicy(tenant_actions={"a"})])
+        app.include_router(included, prefix="/in")
+        app.mount("/files", FastAPI())
+        app.add_route("/metrics", plain)
+        return app
+
+    with pytest.raises(RoutePolicyError) as refused:
+        KonklavRoutes().validate(application())
+    assert str(refused.value).splitlines()[1:] == [
+        f"{kind} {path}: can't declare a RoutePolicy, so it is served to anyone; "
+        "if that is meant, name its path in KonklavRoutes(unprotected=...)"
+        for kind, path in [
+            ("ROUTE", "/in/plain"),
+            ("WEBSOCKETROUTE", "/in/socket"),
+            ("MOUNT", "/files"),
+            ("ROUTE", "/metrics"),
+        ]
+    ]
+    # FastAPI's own documentation routes pass, and what the application names.
+    named = KonklavRoutes(unprotected={"/in/plain", "/in/socket", "/files", "/metrics"})
+    named.validate(application())
+    with pytest.raises(RoutePolicyError, match="ROUTE /metrics"), serve(application(), KonklavRoutes()):
+        pass
 
 
 # r[verify item.py-fastapi.validation]

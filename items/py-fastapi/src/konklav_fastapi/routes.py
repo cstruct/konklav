@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -52,6 +52,7 @@ from konklav_relying import (
     RelyingClient,
 )
 from konklav_relying.policy import PolicyFields
+from starlette.routing import Route
 
 from konklav_fastapi import _routing
 from konklav_fastapi.errors import (
@@ -353,6 +354,13 @@ class KonklavRoutes:
     here when the client can address this one by that server's name: only
     for tests, or behind a proxy that refuses every other `Host`.
     """
+    unprotected: Collection[str] = ()
+    """
+    The paths of the plain Starlette routes and the mounts the application
+    serves to anyone, such as `/static`. They can't declare a `RoutePolicy`,
+    so nothing here evaluates their requests, and startup validation refuses
+    each one that isn't named here.
+    """
     trusted_proxies: Sequence[str] = ()
     """
     Proxies' addresses or networks, such as `10.0.0.0/8`: behind one, the
@@ -467,7 +475,8 @@ class KonklavRoutes:
 
     def validate(self, app: FastAPI) -> None:
         """
-        Checks every API and websocket route's policy.
+        Checks every API and websocket route's policy, and that every other
+        route (a plain Starlette route, a mount) is named in `unprotected`.
 
         Raises:
             RoutePolicyError: listing every route that fails, and why.
@@ -477,6 +486,15 @@ class KonklavRoutes:
             f"{served.label}: {problem}"
             for served in _routing.served_routes(app)
             if (problem := self._problem(served)) is not None
+        ]
+        # FastAPI's own documentation routes are plain routes too.
+        documentation = {app.openapi_url, app.docs_url, app.redoc_url, app.swagger_ui_oauth2_redirect_url}
+        errors += [
+            f"{plain.label}: can't declare a RoutePolicy, so it is served to anyone; "
+            "if that is meant, name its path in KonklavRoutes(unprotected=...)"
+            for plain in _routing.plain_routes(app)
+            if plain.name not in self.unprotected
+            and not (type(plain.original) is Route and plain.name in documentation)
         ]
         if errors:
             raise RoutePolicyError("Routes without a valid route policy:\n" + "\n".join(errors))
