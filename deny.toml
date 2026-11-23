@@ -10,10 +10,6 @@ version = 2
 ignore = [
   # A proc macro leptos uses, finished rather than abandoned, with no replacement upstream.
   { id = "RUSTSEC-2024-0436", reason = "paste is only used at compile time, through leptos" },
-  # p256 0.13 needs crypto-bigint 0.5; the fix is in 0.7. The server only parses its
-  # ID-token key with p256 and derives the public key once at startup, and signs with
-  # aws-lc-rs, so no secret arithmetic an attacker can time runs through it.
-  { id = "RUSTSEC-2026-0387", reason = "p256 only loads the ID-token key; aws-lc-rs signs" },
   # No release fixes it. Only openidconnect pulls rsa in, as a dev-dependency for the
   # tests against Hydra, which only verify signatures with it: no private-key operation.
   { id = "RUSTSEC-2023-0071", reason = "rsa is only in the Hydra tests, through openidconnect" },
