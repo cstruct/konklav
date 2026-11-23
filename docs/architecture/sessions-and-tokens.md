@@ -82,16 +82,28 @@ copy-paste or a QR code. Whoever holds the link redeems it:
   is redeemed signed in once MFA has completed, so the password alone
   never joins the account to a tenant.
 
-A link-only invite never creates an account. Nobody proved an address, and
-a bearer link's holder could claim anyone's, then appear to the inviter
-under someone else's name. Someone without an account signs up through the
-relying system first. For the same reason an emailed invite's token is
+A link-only invite creates no account unless it was made to let a newcomer
+sign up. Nobody proved an address, and a bearer link's holder could claim
+anyone's, then appear to the inviter under someone else's name. So by
+default someone without an account signs up through the relying system
+first. A relying system that accepts that trade-off, as it does for the
+password accounts an operator makes, makes a sign-up invite: redeemed with
+an email, a password and `sign_up`, it creates the account, unverified, and
+joins it to the tenant; an email that already has an account is refused,
+and the invite stays pending for its owner to redeem with its password. For the same reason an emailed invite's token is
 never returned for a "copy link": that would let whoever got it create the
 account for the address.
 
+A relying system needn't hold `konklav:invites:manage`, which reaches every
+tenant, to make link-only invites. Granted the tenant capability
+`konklav:tenant:invite` in a tenant, its service principal makes, lists and
+revokes link-only invites into that tenant on the relying surface. They give
+only that tenant's roles, and none naming a `konklav:` action, so the
+capability doesn't spread through the invites it makes.
+
 `POST /v1/invites/preview` lets a login application show what an invite is
 for before sign-in: pending or redeemed, its expiry, whether it is
-link-only, and its public metadata, a small object the relying system set
+link-only, whether it lets a newcomer sign up, and its public metadata, a small object the relying system set
 for exactly this, such as the inviter's name. Anything else fails as
 redeeming it would, so a revoked invite looks expired, or like a token that
 never existed. Previews and redemptions are paced, and every token check

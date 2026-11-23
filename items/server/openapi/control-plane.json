@@ -4708,6 +4708,10 @@
             },
             "description": "Role keys in that tenant to assign."
           },
+          "sign_up": {
+            "type": "boolean",
+            "description": "Whether someone without an account may sign up when redeeming it,\nwith an email and a password that become a new password credential,\nunverified. Only a link-only invite can."
+          },
           "tenant": {
             "type": [
               "string",
@@ -6116,6 +6120,10 @@
             "items": {
               "type": "string"
             }
+          },
+          "sign_up": {
+            "type": "boolean",
+            "description": "Whether someone without an account may sign up when redeeming it."
           },
           "state": {
             "$ref": "#/components/schemas/InviteState"
@@ -9052,6 +9060,10 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "sign_up": {
+                "type": "boolean",
+                "description": "Whether someone without an account may sign up when redeeming it."
               },
               "state": {
                 "$ref": "#/components/schemas/InviteState"

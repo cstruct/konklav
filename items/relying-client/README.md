@@ -33,6 +33,14 @@ Native Rust host binding for the relying core, on tokio and reqwest.
       }
   }
   ```
+- Invites, for a relying system whose users invite others to their tenant by a link or a QR code ([`authn.invite.relying`](../../docs/spec/authentication.md)): with `konklav:tenant:invite` granted to its service principal in a tenant, `create_invite(tenant, &NewInvite { .. })` makes a link-only invite into it and answers the token, shown only once, for the link; `invites(tenant, before, limit)` lists the tenant's link-only invites, newest first; `revoke_invite(tenant, id)` revokes one. `NewInvite::sign_up` lets someone without an account sign up when redeeming it.
+
+  ```rust
+  let made = client
+      .create_invite(&tenant, &NewInvite { roles: vec!["member".into()], sign_up: true, ..Default::default() })
+      .await?;
+  let link = format!("{public_url}/invite#{}", made.token);
+  ```
 - `pacing` and `fake_ids`, so a relying system's own endpoints don't show, through their timing or their ids, whether a record exists:
   - `paced(Pacing::new(floor, jitter), work)` runs the work and a wait drawn from `floor ± jitter` together, and returns once both are done, an `Err` included. Dropping it drops the wait; a panic isn't paced. Tests use `Pacing::NONE`.
   - `fake_uuid7()` makes a UUIDv7 claiming now, for something the request would have just created; `fake_uuid7_within(window)` claims a millisecond from a past window, for something that would already exist. `claimed_ms` reads back the time a UUIDv7 claims.

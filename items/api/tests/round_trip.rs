@@ -2,14 +2,15 @@
 
 use konklav_api::{
     AssignRole, AssignmentTarget, Batch, BatchResults, CatalogDocument, CreateCredential,
-    CreateInvite, CreatedCredential, CreatedInvite, DecisionExplanation, Deleted, Entitlements,
-    ErrorCode, ErrorResponse, ExplainDecision, Explanation, IdTokenAlgorithm, ImportCredentials,
-    ImportFactors, ImportSessions, ImportSubjects, Imported, ImportedCredentialMaterial, Invite,
-    InvitePage, InvitePreview, MembershipDetail, OfferShare, OidcClient, OidcClientDefinition,
-    OidcClientSecret, PersonalDataReport, PutRole, PutTemplate, Reason, RecordRegisteredScope,
-    RegisteredScope, RegisteredScopeBatch, RegisteredScopeChanges, RevokeSessions, RevokeShare,
-    RevokedKey, RevokedSessions, Role, RotatedSlot, SessionPage, Share, ShareList, ShareTerms,
-    SigningKey, SlotExpiry, SubjectDetail, SubjectPage, Template, TenantPage, Written,
+    CreateInvite, CreateTenantInvite, CreatedCredential, CreatedInvite, DecisionExplanation,
+    Deleted, Entitlements, ErrorCode, ErrorResponse, ExplainDecision, Explanation,
+    IdTokenAlgorithm, ImportCredentials, ImportFactors, ImportSessions, ImportSubjects, Imported,
+    ImportedCredentialMaterial, Invite, InvitePage, InvitePreview, MembershipDetail, OfferShare,
+    OidcClient, OidcClientDefinition, OidcClientSecret, PersonalDataReport, PutRole, PutTemplate,
+    Reason, RecordRegisteredScope, RegisteredScope, RegisteredScopeBatch, RegisteredScopeChanges,
+    RevokeSessions, RevokeShare, RevokedKey, RevokedSessions, Role, RotatedSlot, SessionPage,
+    Share, ShareList, ShareTerms, SigningKey, SlotExpiry, SubjectDetail, SubjectPage, Template,
+    TenantPage, Written,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -640,6 +641,33 @@ fn invites_round_trip() {
     assert_eq!(minimal.public_metadata, json!({}));
     let link_only: CreateInvite = reads(json!({"tenant": "root"}));
     assert_eq!(link_only.email, None);
+    assert!(!link_only.sign_up);
+    round_trips::<CreateInvite>(&json!({
+        "tenant": "root",
+        "roles": [],
+        "facts": {},
+        "membership": null,
+        "expires_in_hours": 72,
+        "metadata": {},
+        "public_metadata": {},
+        "sign_up": true,
+    }));
+    round_trips::<CreateTenantInvite>(&json!({
+        "id": "0195e0a0-0000-7000-8000-00000000000c",
+        "roles": ["member"],
+        "facts": {},
+        "membership": "0195e0a0-0000-7000-8000-000000000003",
+        "expires_in_hours": 24,
+        "metadata": {"invited_by": "u-9"},
+        "public_metadata": {"inviter": "Ada"},
+        "sign_up": true,
+    }));
+    let tenant_invite: CreateTenantInvite = reads(json!({}));
+    assert_eq!(tenant_invite.expires_in_hours, 72);
+    assert!(
+        serde_json::from_value::<CreateTenantInvite>(json!({"email": "ada@example.com"})).is_err(),
+        "a relying-surface invite takes no address"
+    );
     round_trips::<Written<CreatedInvite>>(&json!({
         "invite_id": "0195e0a0-0000-7000-8000-00000000000c",
         "expires_at": "2026-11-05T10:00:00Z",
@@ -655,6 +683,7 @@ fn invites_round_trip() {
         "state": "pending",
         "expires_at": "2026-11-05T10:00:00Z",
         "link_only": true,
+        "sign_up": false,
         "public_metadata": {"inviter": "Ada"},
     }));
     let invite = json!({
@@ -669,6 +698,7 @@ fn invites_round_trip() {
         "metadata": {"tenant_id": "t-1"},
         "metadata_etag": "0123456789abcdef0123456789abcdef",
         "public_metadata": {},
+        "sign_up": false,
     });
     round_trips::<Invite>(&invite);
     let mut link_only = invite.clone();

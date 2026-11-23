@@ -23,6 +23,15 @@ however they are encoded, so the request would go to another path. It MUST
 instead tell the core that Konklav doesn't know the scope
 (`relying.cache.registered-unknown`).
 
+r[item.relying-client.invites]
+The client MUST make, list and revoke a tenant's link-only invites on the
+relying surface (`authn.invite.relying`), as its service principal, with
+the invite's id, roles, membership, facts, metadata, public metadata,
+expiry and whether it lets a newcomer sign up, and MUST hand back the
+token Konklav shows once. It MUST name the tenant and an invite's id as
+path segments (`item.relying-client.path-segments`), and MUST answer a
+refusal as the status and body Konklav answered.
+
 r[item.relying-client.fetch-reported]
 `RelyingClient` MUST report to the core every fetch the core asked for:
 its result, or its failure (`on_fetch_failed`), also for a fetch given up

@@ -48,8 +48,8 @@ pub use import::{
     ImportedSession, ImportedSubject,
 };
 pub use invites::{
-    CreateInvite, CreatedInvite, Invite, InvitePage, InvitePreview, InviteQuery, InviteState,
-    PreviewState,
+    CreateInvite, CreateTenantInvite, CreatedInvite, Invite, InvitePage, InvitePreview,
+    InviteQuery, InviteState, PreviewState, TenantInviteQuery,
 };
 pub use keys::{RevokedKey, SigningKey};
 pub use konklav_authz::{

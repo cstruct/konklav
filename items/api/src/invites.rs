@@ -44,6 +44,78 @@ pub struct CreateInvite {
     #[serde(default = "empty_object")]
     #[schema(value_type = Object)]
     pub public_metadata: serde_json::Value,
+    /// Whether someone without an account may sign up when redeeming it,
+    /// with an email and a password that become a new password credential,
+    /// unverified. Only a link-only invite can.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sign_up: bool,
+}
+
+/// Invites whoever the relying system shares the link with into the tenant
+/// in the path: a link-only invite made on the relying surface by a service
+/// principal holding `konklav:tenant:invite` there. Its roles are the
+/// tenant's, and none of them may name a `konklav:` action.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateTenantInvite {
+    /// The invite's id, chosen by the caller so that repeating the request
+    /// is safe; generated when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<uuid::Uuid>,
+    /// Role keys in the tenant to assign.
+    #[serde(default)]
+    pub roles: Vec<String>,
+    /// Membership facts.
+    #[serde(default = "empty_object")]
+    #[schema(value_type = Object)]
+    pub facts: serde_json::Value,
+    /// The id of the membership redemption creates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub membership: Option<MembershipId>,
+    /// Clamped to between 1 hour and 30 days.
+    #[serde(default = "default_hours")]
+    pub expires_in_hours: i64,
+    /// An object, opaque to Konklav, handed over on redemption.
+    #[serde(default = "empty_object")]
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
+    /// An object, opaque to Konklav, of at most 1024 bytes, that the
+    /// invite's preview shows to whoever holds its token.
+    #[serde(default = "empty_object")]
+    #[schema(value_type = Object)]
+    pub public_metadata: serde_json::Value,
+    /// Whether someone without an account may sign up when redeeming it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sign_up: bool,
+}
+
+impl CreateTenantInvite {
+    /// The same invite as the control plane takes it: link-only, into
+    /// `tenant`.
+    #[must_use]
+    pub fn into_invite(self, tenant: String) -> CreateInvite {
+        CreateInvite {
+            id: self.id,
+            email: None,
+            tenant: Some(tenant),
+            roles: self.roles,
+            facts: self.facts,
+            membership: self.membership,
+            expires_in_hours: self.expires_in_hours,
+            metadata: self.metadata,
+            public_metadata: self.public_metadata,
+            sign_up: self.sign_up,
+        }
+    }
+}
+
+/// Which of a tenant's invites to list on the relying surface: its
+/// link-only invites, newest first.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct TenantInviteQuery {
+    pub before: Option<uuid::Uuid>,
+    pub limit: Option<i64>,
 }
 
 fn default_hours() -> i64 {
@@ -102,6 +174,9 @@ pub struct Invite {
     /// What the invite's preview shows to whoever holds its token.
     #[schema(value_type = Object)]
     pub public_metadata: serde_json::Value,
+    /// Whether someone without an account may sign up when redeeming it.
+    #[serde(default)]
+    pub sign_up: bool,
 }
 
 /// Which invites to list.
@@ -142,6 +217,10 @@ pub struct InvitePreview {
     /// Whether the invite has no address, so anyone holding the link may
     /// redeem it, signed in.
     pub link_only: bool,
+    /// Whether someone without an account may sign up when redeeming it
+    /// (`sign_up` on the redemption).
+    #[serde(default)]
+    pub sign_up: bool,
     #[schema(value_type = Object)]
     pub public_metadata: serde_json::Value,
 }

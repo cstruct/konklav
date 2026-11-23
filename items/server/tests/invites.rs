@@ -564,6 +564,7 @@ async fn previews_show_public_metadata_and_tell_revoked_from_nothing() {
             "state": "pending",
             "expires_at": created.body["expires_at"],
             "link_only": true,
+            "sign_up": false,
             "public_metadata": {"inviter": "Ada", "access": "family"},
         }),
         "nothing else: no tenant, roles or metadata"

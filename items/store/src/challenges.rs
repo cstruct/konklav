@@ -187,6 +187,7 @@ pub async fn list_invites(
     conn: &mut AsyncPgConnection,
     tenant: Option<konklav_core::TenantId>,
     metadata: Option<&serde_json::Value>,
+    link_only: bool,
     before: Option<uuid::Uuid>,
     limit: i64,
 ) -> StoreResult<Vec<Challenge>> {
@@ -208,6 +209,10 @@ pub async fn list_invites(
     }
     if let Some(metadata) = metadata {
         query = query.filter(challenge::metadata.contains(metadata.clone()));
+    }
+    // A link-only invite has no recipient.
+    if link_only {
+        query = query.filter(challenge::recipient.eq(""));
     }
     if let Some(before) = before {
         query = query.filter(challenge::id.lt(before));

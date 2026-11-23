@@ -40,7 +40,9 @@ impl Surface {
                 .merge(passkeys_api::routes(state))
                 .merge(invites::subject_routes(state))
                 .merge(capabilities::routes()),
-            Self::Relying => relying_api::routes().merge(feed::routes()),
+            Self::Relying => relying_api::routes()
+                .merge(feed::routes())
+                .merge(invites::relying_routes()),
             Self::Control => control_api::routes(state),
         }
     }

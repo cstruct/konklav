@@ -61,12 +61,13 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - listing and removing the caller's own passkeys (`GET /v1/passkeys`, `DELETE /v1/passkeys/{id}`)
 
   Each ceremony's `webauthn-rs` state lives in a single-use challenge until the second call; the stored key is versioned opaque JSON in the credential's data.
-- MFA (TOTP and email-code factors; partial sessions can list their active factors, and browsers get their cookie when MFA completes), step-up, magic-link and phone-code login, password reset and change, invite preview and redemption (`src/invites.rs`: an emailed invite with a password for its address; a link-only invite, a bearer link, by a signed-in subject or with an existing account's identifier and password, never creating an account; token checks counted per client address with the login address limits), and impersonation. These emit `delivery.requested` for anything a relying system must send.
+- MFA (TOTP and email-code factors; partial sessions can list their active factors, and browsers get their cookie when MFA completes), step-up, magic-link and phone-code login, password reset and change, invite preview and redemption (`src/invites.rs`: an emailed invite with a password for its address; a link-only invite, a bearer link, by a signed-in subject or with an existing account's identifier and password, creating an account only when the invite lets a newcomer sign up (`sign_up`); token checks counted per client address with the login address limits), and impersonation. These emit `delivery.requested` for anything a relying system must send.
 - Relying surface, for service principals only:
   - `/.well-known/jwks.json`
   - `/v1/entitlements/{subject}[/{tenant}]`
   - `/v1/check`, which decides from current state, session validity included
   - `/v1/erased-subjects?since=&after=&limit=`, the erased subjects in the order they were erased, for catching up on `subject.erased` events the feed no longer holds
+  - `/v1/tenants/{tenant}/invites` (`POST` and `GET`) and `/v1/tenants/{tenant}/invites/{id}/revoke`, for a service principal holding the tenant capability `konklav:tenant:invite` in the tenant: link-only invites into it, with its roles but none naming a `konklav:` action, optionally letting a newcomer sign up (`src/invites.rs`)
 - Control-plane surface (`/v1`):
   - subjects (idempotent `PUT`, disable and enable; a subject's read lists its credentials and MFA factors, never their secrets)
   - erasure (`POST /v1/subjects/{id}/erase` removes all personal data Konklav holds about a subject and leaves the erased subject; it needs `konklav:subjects:erase`, and later writes to the subject answer `SUBJECT_ERASED`; see [erasure](../../docs/architecture/erasure.md))
@@ -182,6 +183,7 @@ mise run test
   - the bootstrap command, applying both example sets and every frozen set of a released format, re-runs, dry runs, conflicts and located problems, registered scopes in batches with one event, and an exported set bootstrapping an empty database unchanged (`tests/bootstrap.rs`)
   - idempotent creates for credentials, password replacement, assignments and invites (`tests/idempotency.rs`)
   - link-only invites: the token shown once and anew on a repeat, bearer redemption signed in or with an existing account's password, the preview with public metadata and revoked invites indistinguishable from unknown tokens, per-address limits on token checks (`tests/invites.rs`)
+  - invites a relying system makes on the relying surface, into its own tenants only and with their plain roles only, and signing up with one that lets a newcomer (`tests/relying_invites.rs`)
   - metadata: creates, lists and filters for every kind of object, merge patches with preconditions (alone and in batches), the size limit, nothing on the subject-facing or relying surfaces or in tokens, `metadata.changed` and its withholding on the feed, invite delivery and redemption, history, imports and erasure (`tests/metadata.rs`); bootstrap and export of format 1.1's metadata (`tests/bootstrap.rs`)
   - batches: references to earlier creates, failures that leave no trace, per-operation capabilities, limits, bulk endpoints inside a batch, a batch cut off by the request timeout, and idempotency keys with their secrets and lifetimes (`tests/batch.rs`). The test harness also checks each batch result against its own operation's schema.
 - Indirect coverage: none yet.
