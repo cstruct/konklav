@@ -207,6 +207,28 @@ Only then MUST Konklav issue the authorization code, and only to a browser
 that proves it both started the request and received its acceptance, so a
 request started by one person can't be completed with another's session.
 
+r[oidc.provider.login-page]
+A deployment MAY turn on the login page, a login application built into
+Konklav. The subject-facing surface MUST then serve it at `/login/`, and it
+MUST be the login URL of clients that register none unless the instance
+configures another. It MUST sign subjects in only through the
+subject-facing surface's public endpoints, from Konklav's own origin, and
+answer login requests only as other login applications do
+(`oidc.provider.login-handoff`, `oidc.provider.login-refusal`). Without it,
+`/login/` MUST answer 404.
+
+r[oidc.provider.login-page.headers]
+The login page's files MUST be served with a Content-Security-Policy that
+allows scripts, styles and connections from Konklav's own origin only and
+forbids framing, with `Referrer-Policy: no-referrer`, since its address
+holds the login request, and with `X-Content-Type-Options: nosniff`.
+
+r[oidc.provider.login-page.storage]
+The login page MUST NOT keep access or refresh tokens in web storage: the
+refresh token MUST be the HttpOnly cookie of a browser login, and the
+access token MUST stay in the page's memory. Its sessions MUST be bound to
+a non-extractable DPoP key whenever the browser can keep one.
+
 r[oidc.provider.id-token]
 ID tokens MUST carry `iss`, `sub` (the subject id), `aud` (the client id),
 `exp`, `iat`, `auth_time`, `nonce` when one was sent, `amr`, `acr` and

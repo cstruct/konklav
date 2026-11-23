@@ -2,6 +2,7 @@
 .agents/plans/*
 !.agents/plans/PLANS.md
 config/dev.signing-key.pem
+config/dev.id-token-key.pem
 mise.local.toml
 config/server.signing-private-key.pem
 items/py/.venv/

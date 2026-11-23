@@ -63,6 +63,7 @@ async fn server() -> Server {
             identity_providers: konklav_server::federation::Providers::default(),
             oidc: None,
             passkeys: None,
+            login_page: None,
             trusted_proxies: Vec::new(),
             batches: konklav_server::batch_api::BatchLimits::DEFAULT,
             metadata_limit: konklav_server::metadata::DEFAULT_LIMIT,

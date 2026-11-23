@@ -559,6 +559,10 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `login hand-off`
   - How Konklav's OpenID provider gets a subject signed in without its own user interface: it redirects to a configured login application, which signs the subject in through the subject-facing surface and then completes the pending login request.
 
+- `login page`
+  - The optional login application built into the server, served by the subject-facing surface at `/login/` when configured. It is the login URL of clients that register none, so Konklav's OpenID provider works without a login application of the deployment's own.
+  - It uses only the subject-facing surface's public endpoints, like any other login application.
+
 - `upstream` and `downstream` instance
   - In federation between Konklav instances, the upstream is the OpenID provider (for example, an operators' instance) and each downstream (dev, staging, a production region) trusts it as an identity provider.
 

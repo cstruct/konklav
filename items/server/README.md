@@ -54,6 +54,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - browser clients get the refresh token as an `HttpOnly` cookie and must pass Origin and `X-Konklav-Client` checks; password, email-link (on `complete`), phone-code and invite logins all take `client` and `flags` the same way
 - Subject-facing `login/tenant` moves a session into a tenant where the subject has an active membership. The new token carries `tid`, `mid` and portable facts. Logins may request restrictive session flags that the catalog marks as requestable. A confined flag keeps the session out of tenants whose facts don't match its confinement, at selection and at every tenant-token issuance, refresh included.
 - `GET /v1/capabilities`: the `konklav:` capabilities the caller holds, for operator tools such as the console.
+- The login page (`src/login_page.rs`, the app in [`items/login`](../login/README.md)): with `login_page { enabled true }`, the subject-facing surface serves it at `/login/` from files `build.rs` embeds, with a strict Content-Security-Policy, no framing and `no-referrer`, plus `/login/config.json`, which tells the page which sign-in methods are configured. It becomes the OpenID provider's login URL unless `oidc_provider.login_url` is set, the issuer's origin is added to the allowed browser origins, and identity providers may return to it. The `login-page` feature (on by default) embeds `items/login/dist`; without a build it embeds a placeholder and warns, or fails with `KONKLAV_REQUIRE_LOGIN_PAGE=1`.
 - Passkeys (`src/passkeys.rs` wraps `webauthn-rs`; routes in `src/passkeys_api.rs`):
   - registering from a recently authenticated full session (`passkeys/registration/options`, then `passkeys/registration`)
   - usernameless login (`login/passkey/options`, then `login/passkey`), recording `swk` and `mfa`
@@ -98,8 +99,8 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
   - `listen`, `database`, `log`
   - `tokens`: issuer, audience, lifetimes, signing-key PEM files, and `dpop_urls`: the base URLs clients address the subject-facing and control-plane surfaces at, which DPoP proofs must name (by default the issuer and each allowed browser origin, with and without the console's `/control` prefix; set it to list other proxy prefixes)
   - `history`: `enabled` (default off) and `retention_days` (default 90). Applied at startup, so every instance on a database must agree; turning it off discards what was recorded
-  - `browser`: allowed origins, cookie security, `require_dpop` (refuse browser sessions that aren't bound to a DPoP key), and the `passkeys` section (relying party ID and name, origins)
-  - `oidc_provider`: the ID-token keys, login URL, claims hook, `dpop_max_age_seconds` (how old a DPoP proof may be, default 60) and `require_dpop` (`none`, `public_clients` or `all`: which clients need DPoP on top of those registered with `require_dpop`), and `backchannel_logout_private_addresses` (default off: whether back-channel logout tokens may be sent to loopback, private and link-local addresses, for clients on Konklav's own network)
+  - `browser`: allowed origins, cookie security, `require_dpop` (refuse browser sessions that aren't bound to a DPoP key), the `passkeys` section (relying party ID and name, origins), identity providers (with an optional display `name` for the login page), and the `login_page` section (`enabled`, `title`)
+  - `oidc_provider`: the ID-token keys, login URL (required unless the login page is on), claims hook, `dpop_max_age_seconds` (how old a DPoP proof may be, default 60) and `require_dpop` (`none`, `public_clients` or `all`: which clients need DPoP on top of those registered with `require_dpop`), and `backchannel_logout_private_addresses` (default off: whether back-channel logout tokens may be sent to loopback, private and link-local addresses, for clients on Konklav's own network)
   - `serve` and `check-config` refuse the secrets published in this repository (the development and example bootstrap tokens and TOTP keys), and an issuer or claims-hook URL that isn't `https`, unless the configuration is a development one: `browser.secure_cookies false`, or an `http://` issuer on a loopback host
   - `control`: the bootstrap token (secret), batches: `batch_max_operations` (default 100), `batch_key_seconds` (how long an idempotency key is kept, default 600) and `batch_key_max_seconds` (the longest a batch may ask for, default 3600), and `metadata_max_bytes`, the largest an object's metadata may be as compact JSON (default 16384; `bootstrap` reads it too)
 
@@ -124,7 +125,7 @@ The Konklav server binary. It serves the subject-facing, relying and control-pla
 mise run serve
 ```
 
-This starts Postgres, creates an untracked dev signing key if needed, applies migrations, and serves on `127.0.0.1:8080` (subject), `:8081` (relying) and `:8082` (control).
+This starts Postgres, creates untracked dev signing and ID-token keys if needed, builds the login page, applies migrations, and serves on `127.0.0.1:8080` (subject, with the login page at <http://127.0.0.1:8080/login/>), `:8081` (relying) and `:8082` (control).
 
 ### Bootstrapping data
 

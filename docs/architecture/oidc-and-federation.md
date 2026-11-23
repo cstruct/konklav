@@ -141,7 +141,9 @@ New pieces:
 
 ### Login hand-off instead of a hosted page
 
-Konklav has no user interface, and `/v1/oauth2/authorize` doesn't add one:
+`/v1/oauth2/authorize` renders no user interface. It hands the browser to a
+login application, which is either the deployment's own or the login page
+built into the server (see [below](#the-built-in-login-page)):
 
 ![The login hand-off between the OIDC client, the browser, Konklav and the login application](diagrams/login-handoff.svg)
 
@@ -189,6 +191,37 @@ Konklav has no user interface, and `/v1/oauth2/authorize` doesn't add one:
 
 Consent screens are left to the login application. First-party clients are
 registered as pre-consented.
+
+### The built-in login page
+
+A deployment that only wants Konklav as a single sign-on provider for
+off-the-shelf clients, such as a Kubernetes cluster through `kubelogin` or
+Harbor, shouldn't have to write a login application first. With
+`login_page { enabled true }`, the subject-facing surface serves one at
+`/login/` (`r[oidc.provider.login-page]`), and it is the login URL of every
+client that registers none unless `oidc_provider.login_url` names another.
+
+It changes nothing in the hand-off above. The page is a Svelte app
+([`items/login`](../../items/login/README.md)) that the server embeds at
+build time, and it uses only the public `/v1` endpoints, from Konklav's
+own origin, as any login application would: it reads the login request,
+signs the subject in (password and MFA, passkeys, identity providers),
+enters the tenant a `tenant:<id>` scope asks for, and accepts or refuses.
+So the security argument of the hand-off holds for it unchanged, and a
+deployment can replace it with its own login application at any time.
+
+What the server adds:
+
+- the issuer's origin among the allowed browser origins, and among the
+  passkey origins when the issuer is within the relying party ID
+- the page's URL among every identity provider's return URLs
+- `/login/config.json`, the sign-in methods to offer
+- headers that keep the page from being framed or inlined into and its
+  address, which holds the login request, from leaking through the
+  `Referer` (`r[oidc.provider.login-page.headers]`)
+
+Like other browser clients, the page keeps no token in web storage
+(`r[oidc.provider.login-page.storage]`).
 
 ### Client credentials, revocation and logout
 
@@ -499,7 +532,7 @@ Proposed defaults, to confirm before implementation:
 
 | Decision | Proposed default | Alternatives |
 |---|---|---|
-| Login UI for the provider role | Hand-off to a configured login URL | A minimal hosted login page in Konklav |
+| Login UI for the provider role | Hand-off to a login URL; a login page built into the server, optional, is the default one | Only a configured login URL |
 | Account linking | Only while signed in; verified-email linking off unless a provider enables it with a domain allow-list | Always allow verified-email linking |
 | Claim mapping location | Provider configuration (Styx), reviewed and deployed with the instance | Control-plane resources editable at runtime |
 | Federated session lifetime | 1 hour for operator providers, configurable per provider | Instance-wide lifetime |

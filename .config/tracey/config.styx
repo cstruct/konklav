@@ -15,6 +15,12 @@ specs (
                 )
             }
             {
+                name typescript
+                include (
+                    items/login/src/**/*.ts
+                )
+            }
+            {
                 name python
                 include (
                     items/py-control-plane/**/*.py

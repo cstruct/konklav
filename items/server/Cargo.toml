@@ -6,6 +6,12 @@ license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+build = "build.rs"
+
+[features]
+default = ["login-page"]
+# Embeds the login page (items/login) in the binary; see build.rs.
+login-page = []
 
 [dependencies]
 aws-lc-rs.workspace = true

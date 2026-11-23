@@ -1,0 +1,168 @@
+# Login page
+
+`items/login` is the login page built into `konklav-server`: a small
+[Svelte](https://svelte.dev) app, bundled by Vite, that the server embeds
+and serves at `/login/` on the subject-facing surface when `login_page` is
+configured. It is a login application for Konklav's OpenID provider, so
+off-the-shelf OIDC clients (a Kubernetes cluster through `kubelogin`,
+Harbor, Grafana, Argo CD and the like) can sign people in through Konklav
+without the deployment writing a login application of its own.
+
+## Responsibilities
+
+- Answering login requests that Konklav's authorization endpoint hands off
+  to it (`?login_request=<id>`):
+  - single sign-on: a person already signed in here is sent straight back
+    to the client
+  - `prompt=none` (refused with `login_required` when nobody is signed in)
+    and `prompt=login` (a fresh sign-in, never an existing one)
+  - `login_hint`, which fills in the email address
+  - entering the tenant a `tenant:<id>` scope asks for
+  - cancelling, which refuses the request with `access_denied`
+- Signing in through the subject-facing surface as a browser client:
+  - password, followed by MFA (TOTP or an emailed code) when the credential
+    requires it
+  - passkeys, when `passkeys` is configured
+  - identity providers, one button each, with MFA afterwards when the
+    provider requires local factors
+- Without a login request, showing who is signed in, and signing out, which
+  ends every client session started from that sign-in.
+
+Out of scope:
+
+- Choosing a tenant when the request names none: Konklav has no endpoint
+  that lists a subject's memberships, so the client's session gets none.
+- Email-link and phone-code sign-in, and password reset: they need a
+  relying system that delivers challenges.
+- Registration, consent screens (clients are pre-consented) and
+  managing passkeys or MFA factors; the console does the latter for
+  operators.
+
+## Public interface
+
+- What the server serves under `/login/`: `index.html`, the hashed files in
+  `assets/`, and `config.json`, which the server writes and the page reads
+  on load (`src/lib/settings.ts`): the title, whether passkeys are
+  configured, the identity providers and the URL they return to.
+- `src/lib/`, the logic apart from the components:
+  - `api.ts`: calls to `/v1` with a DPoP proof each, Konklav's error
+    envelope, and where `/v1` is relative to the page
+  - `dpop.ts`: the page's non-extractable P-256 key and its proofs
+  - `webauthn.ts`: passkey options and assertions to and from webauthn-rs'
+    JSON
+  - `login-request.ts`: the request id from the address, `prompt`, and
+    keeping the id across an identity provider's round trip
+  - `flow.ts`: what to do on load and after each step, without the DOM
+- `src/*.svelte`: the views (`App`, `SignIn`, `Mfa`, `Account`).
+
+## Relationships
+
+### Dependency summary
+
+| Software item | Relationship |
+| --- | --- |
+| `konklav-server` (over HTTP) | The only backend, called from the server's own origin. The page uses only the subject-facing surface's public endpoints, like any other login application. |
+| Svelte 5, Vite, TypeScript | Components, bundling and types. Svelte compiles away, so the page ships about 20 kB of gzipped JavaScript and no framework runtime to speak of. |
+| Vitest, `svelte-check` | Unit tests and type checking. |
+
+### Dependent summary
+
+| Software item | Relationship |
+| --- | --- |
+| `konklav-server` | Embeds `dist/` at build time (`items/server/build.rs`, feature `login-page`, on by default) and serves it. Without a build it embeds a placeholder page and warns; with `KONKLAV_REQUIRE_LOGIN_PAGE=1`, as release builds and the container image set, it fails instead. |
+
+## Usage
+
+Turn the page on in the server's configuration. `browser` is required, since
+the page signs people in as a browser client:
+
+```styx
+tokens {
+    issuer "https://id.example"
+    // ...
+}
+browser {
+    allowed_origins ("https://id.example")
+}
+oidc_provider {
+    id_token_key_file "/etc/konklav/id-token-key.pem"
+    // No login_url: authorization requests go to https://id.example/login/.
+}
+login_page {
+    enabled true
+    title "Example Corp"
+}
+```
+
+With the page on, the server:
+
+- makes `{issuer}/login/` the login URL of every client that registers none,
+  unless `oidc_provider.login_url` says otherwise
+- adds the issuer's origin to `browser.allowed_origins`, and to
+  `passkeys.origins` when those are listed
+- adds `{issuer}/login/` to every identity provider's `return_urls`
+
+Then register clients through the control plane as usual. For a Kubernetes
+cluster with `kubelogin`, a public client:
+
+```json
+{
+  "kind": "public",
+  "redirect_uris": ["http://localhost:8000", "http://localhost:18000"],
+  "scopes": ["openid", "email", "groups"],
+  "audience": "kubernetes"
+}
+```
+
+with the API server's `--oidc-issuer-url` set to the issuer and
+`--oidc-client-id` to the client's id. Harbor and other server-side
+applications use a confidential client and its secret instead.
+
+The page must be served from the issuer's origin at `/login/`. Behind a
+reverse proxy that mounts Konklav under a path, the page finds `/v1` next to
+itself, but proofs name that path, so list it in `tokens.dpop_urls`.
+
+## Running
+
+```sh
+mise run login:build   # into items/login/dist, which the server embeds
+mise run serve         # builds it too, then serves config/dev.styx
+```
+
+The development configuration turns the page on, so it is at
+<http://127.0.0.1:8080/login/>. While changing it, `mise run login:dev`
+serves it on <http://localhost:5174> with hot reloading and proxies `/v1`
+to `mise run serve`, whose configuration allows that origin.
+
+## Testing
+
+```sh
+mise run login:test    # svelte-check and the Vitest unit tests
+cargo test -p konklav-server --test login_page
+```
+
+The unit tests cover the page's decisions (`src/lib/flow.test.ts`). The
+server's tests check how the page is served and run a login request through
+the calls the page makes.
+
+## Behavior notes
+
+- No token is kept in web storage. The refresh token is Konklav's HttpOnly
+  cookie, the access token lives in memory, and sessions are bound to a
+  non-extractable DPoP key kept in IndexedDB. Only the login request's id
+  goes to `sessionStorage`, while an identity provider has the browser; it
+  is no secret, since only the browser that started a request can finish
+  it.
+- The server sends a Content-Security-Policy allowing only the page's own
+  scripts, styles and connections, forbids framing, and sends
+  `Referrer-Policy: no-referrer`, since the address holds the login
+  request. The build therefore inlines nothing.
+
+## Traceability and related docs
+
+- [`docs/spec/federation.md`](../../docs/spec/federation.md):
+  `oidc.provider.login-page`, `oidc.provider.login-page.headers`,
+  `oidc.provider.login-page.storage`, and the hand-off rules it follows
+  (`oidc.provider.login-handoff`, `oidc.provider.login-refusal`,
+  `oidc.provider.prompt`).
+- [OIDC and federation](../../docs/architecture/oidc-and-federation.md#the-built-in-login-page).

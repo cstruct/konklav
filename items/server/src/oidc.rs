@@ -49,12 +49,24 @@ pub struct OpenIdProvider {
 impl OpenIdProvider {
     /// Loads the provider from configuration and the ID-token key file.
     // r[impl oidc.provider.algorithms]
-    pub fn load(config: &OidcProviderConfig, issuer: &str) -> Result<Self, String> {
+    ///
+    /// `login_page` is the built-in login page's URL, when it is served,
+    /// which is the login URL unless one is configured.
+    pub fn load(
+        config: &OidcProviderConfig,
+        issuer: &str,
+        login_page: Option<&str>,
+    ) -> Result<Self, String> {
+        let login_url = config
+            .login_url
+            .clone()
+            .or_else(|| login_page.map(str::to_owned))
+            .ok_or("oidc_provider.login_url is required unless login_page is configured")?;
         let pem = std::fs::read_to_string(Path::new(&config.id_token_key_file))
             .map_err(|error| format!("reading {}: {error}", config.id_token_key_file))?;
         let provider = Self::from_pem(
             &pem,
-            config.login_url.clone(),
+            login_url,
             config.jwks_uri.clone().unwrap_or_else(|| {
                 format!("{}/.well-known/jwks.json", issuer.trim_end_matches('/'))
             }),

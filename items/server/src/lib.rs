@@ -27,6 +27,7 @@ mod import_api;
 mod invites;
 mod issue;
 pub mod keys;
+pub mod login_page;
 pub mod metadata;
 mod metadata_api;
 pub mod oidc;
@@ -88,6 +89,8 @@ pub struct AuthContext {
     pub oidc: Option<oidc::OpenIdProvider>,
     /// Passkey support, when configured.
     pub passkeys: Option<passkeys::Verifier>,
+    /// The built-in login page, when configured.
+    pub login_page: Option<login_page::LoginPage>,
     /// Reverse proxies trusted to report client addresses.
     pub trusted_proxies: Vec<std::net::IpAddr>,
     /// How large control-plane batches may be, and how long their
@@ -247,6 +250,7 @@ impl AuthContext {
             identity_providers: federation::Providers::default(),
             oidc: None,
             passkeys: None,
+            login_page: None,
             trusted_proxies: Vec::new(),
             batches: control.batches(),
             metadata_limit: control.metadata_limit(),
