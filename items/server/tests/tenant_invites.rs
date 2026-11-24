@@ -254,6 +254,43 @@ async fn a_member_invites_only_into_plain_roles_they_hold() {
     assert_eq!(emailed.code(), "INVALID_REQUEST", "{:?}", emailed.body);
 }
 
+// r[verify authn.invite.tenant-roles-listed]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_member_lists_the_roles_their_invites_may_give() {
+    let app = TestApp::new().await;
+    let mine = tenant(&app).await;
+    let other = tenant(&app).await;
+    let (_, inviter) = member(&app, &mine, "ada@example.com", &["inviter", "viewer"]).await;
+    let (_, viewer) = member(&app, &mine, "bea@example.com", &["viewer"]).await;
+    let uri = format!("/v1/tenants/{mine}/invites/roles");
+
+    // Those they hold, but not the one naming a konklav: action, nor the
+    // tenant's others.
+    let listed = call(&app, Method::GET, &uri, &inviter, None).await;
+    assert_eq!(listed.status, StatusCode::OK, "{:?}", listed.body);
+    assert_eq!(listed.body, json!({"roles": ["viewer"]}));
+
+    // Refused as making an invite would be.
+    let refused = call(&app, Method::GET, &uri, &viewer, None).await;
+    assert_eq!(refused.code(), "FORBIDDEN", "{:?}", refused.body);
+    let elsewhere = call(
+        &app,
+        Method::GET,
+        &format!("/v1/tenants/{other}/invites/roles"),
+        &inviter,
+        None,
+    )
+    .await;
+    assert_eq!(elsewhere.code(), "FORBIDDEN", "{:?}", elsewhere.body);
+    let anonymous = app.send(Method::GET, &uri, &[], None).await;
+    assert_eq!(
+        anonymous.status,
+        StatusCode::UNAUTHORIZED,
+        "{:?}",
+        anonymous.body
+    );
+}
+
 // r[verify authn.invite.inviter]
 #[tokio::test(flavor = "multi_thread")]
 async fn an_operators_invite_records_the_operator_and_keeps_its_first_inviter() {

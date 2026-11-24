@@ -12,7 +12,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use chrono::{Duration, Utc};
 use diesel_async::AsyncConnection;
@@ -68,6 +68,7 @@ pub fn subject_routes(state: &AppState) -> Router<AppState> {
             "/tenants/{id}/invites",
             post(create_tenant_invite).get(list_tenant_invites),
         )
+        .route("/tenants/{id}/invites/roles", get(invitable_roles))
         .route(
             "/tenants/{id}/invites/{invite}/revoke",
             post(revoke_tenant_invite),
@@ -610,6 +611,35 @@ async fn list_tenant_invites(
         invites: found.into_iter().map(invite).collect(),
         next,
     }))
+}
+
+/// The roles a member's invite may give.
+#[derive(Serialize)]
+struct InvitableRoles {
+    /// Their keys, sorted.
+    roles: Vec<String>,
+}
+
+/// `GET /v1/tenants/{id}/invites/roles` on the subject-facing surface: the
+/// keys of the roles the calling member's invites may give there, those
+/// their membership holds tenant-wide that name no `konklav:` action.
+// r[impl authn.invite.tenant-roles-listed]
+async fn invitable_roles(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(tenant): Path<String>,
+) -> Result<Json<InvitableRoles>, ApiError> {
+    let mut conn = state.pool.get().await?;
+    let (member, tenant) = tenant_inviter(&state, &mut conn, &headers, &tenant).await?;
+    let held = held_roles(&mut conn, member, tenant).await?;
+    let mut keys = Vec::new();
+    for role in roles::list(&mut conn, tenant).await? {
+        if held.contains(&role.id) && !capabilities::named_by_role(&mut conn, &role).await? {
+            keys.push(role.key);
+        }
+    }
+    keys.sort();
+    Ok(Json(InvitableRoles { roles: keys }))
 }
 
 /// `POST /v1/tenants/{id}/invites/{invite}/revoke` on the subject-facing

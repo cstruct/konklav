@@ -484,6 +484,12 @@ invites another into more than they hold, and none whose policies, or whose
 template's, name a `konklav:` action, so the invites a tenant capability
 makes can't hand that capability, or any other, on.
 
+r[authn.invite.tenant-roles-listed]
+A member who may make invites into a tenant (`authn.invite.tenant`) MUST be
+able to list, by key, the roles an invite of theirs may give there
+(`authn.invite.tenant-roles`), so a relying system can offer them to
+choose from; anyone else MUST be refused as making an invite would be.
+
 r[authn.invite.inviter]
 Every invite MUST record who made it: the subject whose session made it on
 the subject-facing surface, or the operator who made it on the control
