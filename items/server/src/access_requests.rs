@@ -39,18 +39,25 @@ use crate::{AppState, import};
 /// configuration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
-    /// `None` when every active tenant does.
-    pub tenants: Option<HashSet<TenantId>>,
+    /// Tenant ids and keys; `None` when every active tenant takes requests.
+    pub tenants: Option<HashSet<tenants::Reference>>,
     /// How long after a denial the subject may ask the same tenant again.
     pub retry_after_denial: chrono::Duration,
 }
 
 impl Settings {
+    /// Whether `tenant` takes requests: named by its id or its key, or
+    /// every tenant does.
+    // r[impl tenant.key.reference]
     #[must_use]
-    pub fn takes(&self, tenant: TenantId) -> bool {
-        self.tenants
-            .as_ref()
-            .is_none_or(|tenants| tenants.contains(&tenant))
+    pub fn takes(&self, tenant: &tenants::Tenant) -> bool {
+        self.tenants.as_ref().is_none_or(|named| {
+            named.contains(&tenants::Reference::Id(tenant.id))
+                || tenant
+                    .key
+                    .as_ref()
+                    .is_some_and(|key| named.contains(&tenants::Reference::Key(key.clone())))
+        })
     }
 }
 
@@ -100,11 +107,6 @@ fn transport(request: &AccessRequest) -> api::AccessRequest {
     }
 }
 
-fn tenant_ref(value: &str) -> Result<TenantId, ApiError> {
-    tenants::parse_reference(value)
-        .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))
-}
-
 // --- Subject-facing ---------------------------------------------------------
 
 /// The same answer for every tenant a subject may not ask, so asking shows
@@ -125,9 +127,12 @@ async fn asker(
     tenant: &str,
 ) -> Result<(konklav_core::SubjectId, TenantId), ApiError> {
     let session = crate::flows::own_session(state, conn, headers).await?;
-    let tenant = tenant_ref(tenant)?;
     let settings = state.auth.access_requests.as_ref().ok_or_else(refused)?;
-    if !settings.takes(tenant) {
+    let tenant = crate::tenant_refs::resolve(conn, tenant)
+        .await?
+        .ok_or_else(refused)?;
+    let found = tenants::get(conn, tenant).await.map_err(|_| refused())?;
+    if !settings.takes(&found) {
         return Err(refused());
     }
     let subject = subjects::get(conn, session.subject_id).await?;
@@ -297,12 +302,12 @@ async fn list_access_requests(
     db: Db,
     Query(query): Query<AccessRequestQuery>,
 ) -> Result<Json<AccessRequestPage>, ApiError> {
+    let mut conn = db.get().await?;
     let filter = Filter {
-        tenant: query.tenant.as_deref().map(tenant_ref).transpose()?,
+        tenant: crate::tenant_refs::require_some(&mut conn, query.tenant.as_deref()).await?,
         subject: query.subject,
         state: query.state.map(store_state),
     };
-    let mut conn = db.get().await?;
     Ok(Json(
         page(&mut conn, filter, query.before, query.limit).await?,
     ))
@@ -584,7 +589,15 @@ async fn admitter(
     let caller = crate::flows::own_session(state, conn, headers)
         .await?
         .subject_id;
-    let tenant = tenant_ref(tenant)?;
+    let refused = || {
+        ApiError::new(
+            ErrorCode::Forbidden,
+            "deciding access requests to this tenant needs `konklav:tenant:admit` there",
+        )
+    };
+    let tenant = crate::tenant_refs::resolve(conn, tenant)
+        .await?
+        .ok_or_else(refused)?;
     let entitlements = compile_input::load(conn, caller, Some(tenant))
         .await?
         .compile();
@@ -593,10 +606,7 @@ async fn admitter(
     {
         Ok((caller, tenant))
     } else {
-        Err(ApiError::new(
-            ErrorCode::Forbidden,
-            "deciding access requests to this tenant needs `konklav:tenant:admit` there",
-        ))
+        Err(refused())
     }
 }
 
@@ -667,19 +677,38 @@ async fn tenant_deny(
 mod tests {
     use super::*;
 
+    fn tenant(key: Option<&str>) -> tenants::Tenant {
+        tenants::Tenant {
+            id: TenantId::new_v7(),
+            parent_id: Some(tenants::ROOT),
+            state: tenants::TenantState::Active,
+            facts: serde_json::json!({}),
+            metadata: serde_json::json!({}),
+            key: key.map(str::to_owned),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
     #[test]
     fn listed_tenants_take_requests_unless_all_do() {
-        let listed = TenantId::new_v7();
+        let listed = tenant(None);
+        let keyed = tenant(Some("acme"));
         let some = Settings {
-            tenants: Some(HashSet::from([listed])),
+            tenants: Some(HashSet::from([
+                tenants::Reference::Id(listed.id),
+                tenants::Reference::Key("acme".into()),
+            ])),
             retry_after_denial: chrono::Duration::hours(1),
         };
-        assert!(some.takes(listed));
-        assert!(!some.takes(TenantId::new_v7()));
+        assert!(some.takes(&listed));
+        assert!(some.takes(&keyed), "named by its key");
+        assert!(!some.takes(&tenant(None)));
+        assert!(!some.takes(&tenant(Some("other"))));
         let all = Settings {
             tenants: None,
             ..some
         };
-        assert!(all.takes(TenantId::new_v7()));
+        assert!(all.takes(&tenant(None)));
     }
 }

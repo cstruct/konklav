@@ -64,10 +64,11 @@ pub(crate) async fn create_tenant(
     facts: &serde_json::Value,
     metadata: &serde_json::Value,
     templates: &[String],
+    key: Option<&str>,
 ) -> Result<(Tenant, bool), ApiError> {
     validate_facts(conn, FactTarget::Tenant, facts).await?;
     let (tenant, created) =
-        tenants::create_with_metadata(conn, id, parent, facts, metadata).await?;
+        tenants::create_with_metadata(conn, id, parent, facts, metadata, key).await?;
     if created {
         roles::instantiate(conn, id, templates).await?;
     }

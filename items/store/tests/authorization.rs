@@ -87,7 +87,10 @@ async fn tenants_hang_off_the_root_and_are_created_idempotently() {
     let mut conn = db.pool().get().await.unwrap();
     let root = tenants::get(&mut conn, ROOT).await.unwrap();
     assert_eq!(root.parent_id, None);
-    assert_eq!(tenants::parse_reference("root"), Some(ROOT));
+    assert_eq!(
+        tenants::parse_reference("root"),
+        Some(tenants::Reference::Id(ROOT))
+    );
 
     let id = TenantId::new_v7();
     let (tenant, created) = tenants::create(&mut conn, id, ROOT, &json!({}))

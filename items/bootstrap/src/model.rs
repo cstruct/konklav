@@ -194,6 +194,9 @@ pub struct Role {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tenant {
     pub id: Id,
+    /// From format 1.2, its tenant key, stored with it. A nested tenant
+    /// without an `id` also takes its id from it, as in older formats.
+    pub key: Option<String>,
     pub parent: TenantRef,
     pub facts: Facts,
     /// Templates to derive roles from when the tenant is created.

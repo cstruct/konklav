@@ -274,15 +274,32 @@ pub fn tenant(id: &str) -> Request {
     Request::control(Method::Get, format!("/tenants/{}", encode(id)))
 }
 
+/// A tenant under `parent` (root when blank), with `key` unless blank.
 #[must_use]
-pub fn create_tenant(id: &str, parent: &str, facts: &Value, templates: &[String]) -> Request {
+pub fn create_tenant(
+    id: &str,
+    parent: &str,
+    key: &str,
+    facts: &Value,
+    templates: &[String],
+) -> Request {
     let parent = if parent.trim().is_empty() {
         "root"
     } else {
         parent.trim()
     };
-    Request::control(Method::Put, format!("/tenants/{}", encode(id)))
-        .json(json!({"parent": parent, "facts": facts, "templates": templates}))
+    let mut body = json!({"parent": parent, "facts": facts, "templates": templates});
+    if !key.trim().is_empty() {
+        body["key"] = json!(key.trim());
+    }
+    Request::control(Method::Put, format!("/tenants/{}", encode(id))).json(body)
+}
+
+/// Gives a tenant that has none a key, for good.
+#[must_use]
+pub fn set_tenant_key(id: &str, key: &str) -> Request {
+    Request::control(Method::Put, format!("/tenants/{}/key", encode(id)))
+        .json(json!({"key": key.trim()}))
 }
 
 #[must_use]
@@ -666,8 +683,16 @@ mod tests {
 
     #[test]
     fn tenants_default_to_the_root_parent() {
-        let request = create_tenant("t1", " ", &json!({}), &[]);
-        assert_eq!(request.body.unwrap()["parent"], "root");
+        let request = create_tenant("t1", " ", " ", &json!({}), &[]);
+        let body = request.body.unwrap();
+        assert_eq!(body["parent"], "root");
+        assert_eq!(body.get("key"), None, "no key unless one is given");
+        let keyed = create_tenant("t1", "acme", " acme-north ", &json!({}), &[]);
+        assert_eq!(keyed.body.unwrap()["key"], "acme-north");
+        assert_eq!(
+            set_tenant_key("t1", "acme").url(),
+            "/control/v1/tenants/t1/key"
+        );
     }
 
     #[test]

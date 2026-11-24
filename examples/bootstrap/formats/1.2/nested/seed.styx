@@ -1,0 +1,27 @@
+// Format 1.2 stores tenant keys: a tenant's `key` is its tenant key, usable
+// instead of its id wherever a tenant is named, and a tenant may have both
+// an `id` and a `key`. Pending until a release ships it.
+format 1.2
+id_namespace 7a2d0c4e-1b3f-4c8a-9e5d-2f6b8a1c3d40
+catalog_file "../catalog.json"
+
+templates ({key reader, policies ({action project:read})})
+
+tenants (
+    {
+        id 0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b
+        key acme
+        templates (reader)
+        children ({key acme-north})
+    }
+    {
+        // A top-level tenant naming its parent by key.
+        key acme-south
+        parent acme
+    }
+)
+
+subjects ({
+    email ada@acme.example
+    email_link true
+})

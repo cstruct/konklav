@@ -9,7 +9,7 @@ use diesel_async::AsyncConnection;
 use konklav_api::{
     self as api, AssignRole, CatalogDocument, CreateMembership, CreateTenant, Deleted,
     EntitlementQuery, Entitlements, ExplainQuery, Explanation, MembershipDetail, MembershipQuery,
-    MetadataQuery, PutRole, PutTemplate, SetTenantState, TenantPage, TenantQuery,
+    MetadataQuery, PutRole, PutTemplate, SetTenantKey, SetTenantState, TenantPage, TenantQuery,
 };
 use konklav_core::{MembershipId, SubjectId, TenantId};
 use konklav_store::catalog::{self, FactTarget};
@@ -27,6 +27,7 @@ use crate::control_api::{Written, created_status, parse_id};
 use crate::db::Db;
 use crate::error::{ApiError, ApiJson};
 use crate::import::{self, not_found_as, validate_facts};
+use crate::tenant_refs;
 use crate::{AppState, capabilities, metadata, transport};
 
 /// Tenants and memberships, with the `OpenAPI` description of each route
@@ -37,6 +38,7 @@ pub(crate) fn tenancy() -> OpenApiRouter<AppState> {
         .routes(routes!(create_tenant, get_tenant))
         .routes(routes!(set_tenant_facts))
         .routes(routes!(set_tenant_state))
+        .routes(routes!(set_tenant_key))
         .routes(routes!(list_memberships))
         .routes(routes!(create_membership, get_membership))
         .routes(routes!(set_membership_facts))
@@ -57,11 +59,6 @@ pub(crate) fn authz() -> OpenApiRouter<AppState> {
         .routes(routes!(unassign))
         .routes(routes!(list_templates))
         .routes(routes!(put_template, get_template))
-}
-
-fn tenant_ref(value: &str) -> Result<TenantId, ApiError> {
-    tenants::parse_reference(value)
-        .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))
 }
 
 // --- Catalog ----------------------------------------------------------------
@@ -119,11 +116,17 @@ async fn create_tenant(
 ) -> Result<Response, ApiError> {
     let id: TenantId = parse_id(&id, "tenant id")?;
     limit.check(&body.metadata)?;
-    let parent = body
-        .parent
+    if body
+        .key
         .as_deref()
-        .map_or(Ok(tenants::ROOT), tenant_ref)?;
+        .is_some_and(|key| !tenants::valid_key(key))
+    {
+        return Err(ApiError::invalid_request(INVALID_KEY));
+    }
     let mut conn = db.get().await?;
+    let parent = tenant_refs::require_some(&mut conn, body.parent.as_deref())
+        .await?
+        .unwrap_or(tenants::ROOT);
     let (tenant, created, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let (tenant, created) = import::create_tenant(
@@ -133,6 +136,7 @@ async fn create_tenant(
                 &body.facts,
                 &body.metadata,
                 &body.templates,
+                body.key.as_deref(),
             )
             .await?;
             Ok((tenant, created, events::last_in_transaction(conn).await?))
@@ -150,11 +154,11 @@ async fn create_tenant(
 }
 
 /// Gets a tenant.
-#[utoipa::path(get, path = "/tenants/{id}", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
+#[utoipa::path(get, path = "/tenants/{id}", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID, a tenant key or `root`")),
     responses((status = 200, body = api::Tenant)))]
 async fn get_tenant(db: Db, Path(id): Path<String>) -> Result<Json<api::Tenant>, ApiError> {
-    let id = tenant_ref(&id)?;
     let mut conn = db.get().await?;
+    let id = tenant_refs::require(&mut conn, &id).await?;
     Ok(Json(transport::tenant(
         tenants::get(&mut conn, id)
             .await
@@ -163,7 +167,7 @@ async fn get_tenant(db: Db, Path(id): Path<String>) -> Result<Json<api::Tenant>,
 }
 
 /// Replaces a tenant's facts.
-#[utoipa::path(put, path = "/tenants/{id}/facts", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
+#[utoipa::path(put, path = "/tenants/{id}/facts", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID, a tenant key or `root`")),
     request_body(content = Object, description = "The tenant's new facts"),
     responses((status = 200, body = Written<api::Tenant>)))]
 async fn set_tenant_facts(
@@ -171,8 +175,8 @@ async fn set_tenant_facts(
     Path(id): Path<String>,
     ApiJson(facts): ApiJson<serde_json::Value>,
 ) -> Result<Json<Written<api::Tenant>>, ApiError> {
-    let id = tenant_ref(&id)?;
     let mut conn = db.get().await?;
+    let id = tenant_refs::require(&mut conn, &id).await?;
     let (tenant, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             validate_facts(conn, FactTarget::Tenant, &facts).await?;
@@ -188,11 +192,56 @@ async fn set_tenant_facts(
     }))
 }
 
+const INVALID_KEY: &str =
+    "a tenant key is lowercase words joined by hyphens, at most 63 characters, and not `root`";
+
+/// Gives a tenant that has none a key.
+///
+/// The key can then be used instead of the tenant's id wherever a tenant is
+/// named. It never changes and is never removed: setting the key the tenant
+/// has answers 200 again, and any other key is a conflict, as is a key
+/// another tenant has.
+// r[impl tenant.key]
+#[utoipa::path(put, path = "/tenants/{id}/key", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID, a tenant key or `root`")),
+    request_body = SetTenantKey,
+    responses(
+        (status = 201, description = "The key was set", body = Written<api::Tenant>),
+        (status = 200, description = "The tenant had this key already", body = Written<api::Tenant>),
+        (status = 409, description = "The tenant has another key, or another tenant has this one", body = konklav_api::ErrorResponse),
+    ))]
+async fn set_tenant_key(
+    db: Db,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<SetTenantKey>,
+) -> Result<Response, ApiError> {
+    if !tenants::valid_key(&body.key) {
+        return Err(ApiError::invalid_request(INVALID_KEY));
+    }
+    let mut conn = db.get().await?;
+    let id = tenant_refs::require(&mut conn, &id).await?;
+    let (tenant, created, cursor) = conn
+        .transaction::<_, ApiError, _>(async |conn| {
+            let (tenant, created) = tenants::set_key(conn, id, &body.key)
+                .await
+                .map_err(not_found_as("tenant"))?;
+            Ok((tenant, created, events::last_in_transaction(conn).await?))
+        })
+        .await?;
+    Ok((
+        created_status(created),
+        Json(Written {
+            value: transport::tenant(tenant),
+            cursor,
+        }),
+    )
+        .into_response())
+}
+
 /// Sets a tenant's state.
 ///
 /// Leaving `active` ends every session targeting the tenant.
 // r[impl tenant.lifecycle.suspend-revokes]
-#[utoipa::path(put, path = "/tenants/{id}/state", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID or `root`")),
+#[utoipa::path(put, path = "/tenants/{id}/state", tag = "tenants", params(("id" = String, Path, description = "The tenant: a UUID, a tenant key or `root`")),
     request_body = SetTenantState,
     responses((status = 200, body = Written<api::Tenant>)))]
 async fn set_tenant_state(
@@ -200,8 +249,8 @@ async fn set_tenant_state(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<SetTenantState>,
 ) -> Result<Json<Written<api::Tenant>>, ApiError> {
-    let id = tenant_ref(&id)?;
     let mut conn = db.get().await?;
+    let id = tenant_refs::require(&mut conn, &id).await?;
     let (tenant, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let new_state = transport::store_tenant_state(body.state);
@@ -245,8 +294,8 @@ async fn create_membership(
 ) -> Result<Response, ApiError> {
     let id: MembershipId = parse_id(&id, "membership id")?;
     limit.check(&body.metadata)?;
-    let tenant = tenant_ref(&body.tenant)?;
     let mut conn = db.get().await?;
+    let tenant = tenant_refs::require(&mut conn, &body.tenant).await?;
     let (membership, created, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let (membership, created) = import::create_membership(
@@ -430,16 +479,16 @@ async fn put_template(
 
 /// Lists a tenant's roles.
 #[utoipa::path(get, path = "/tenants/{id}/roles", tag = "roles",
-    params(("id" = String, Path, description = "The tenant: a UUID or `root`"), MetadataQuery),
+    params(("id" = String, Path, description = "The tenant: a UUID, a tenant key or `root`"), MetadataQuery),
     responses((status = 200, body = Vec<api::Role>)))]
 async fn list_roles(
     db: Db,
     Path(tenant): Path<String>,
     Query(query): Query<MetadataQuery>,
 ) -> Result<Json<Vec<api::Role>>, ApiError> {
-    let tenant = tenant_ref(&tenant)?;
     let filter = metadata::filter(query.metadata.as_deref())?;
     let mut conn = db.get().await?;
+    let tenant = tenant_refs::require(&mut conn, &tenant).await?;
     Ok(Json(
         roles::list(&mut conn, tenant)
             .await?
@@ -452,14 +501,14 @@ async fn list_roles(
 
 /// Gets a role.
 #[utoipa::path(get, path = "/tenants/{id}/roles/{key}", tag = "roles",
-    params(("id" = String, Path, description = "The tenant: a UUID or `root`"), ("key" = String, Path)),
+    params(("id" = String, Path, description = "The tenant: a UUID, a tenant key or `root`"), ("key" = String, Path)),
     responses((status = 200, body = api::Role)))]
 async fn get_role(
     db: Db,
     Path((tenant, key)): Path<(String, String)>,
 ) -> Result<Json<api::Role>, ApiError> {
-    let tenant = tenant_ref(&tenant)?;
     let mut conn = db.get().await?;
+    let tenant = tenant_refs::require(&mut conn, &tenant).await?;
     Ok(Json(transport::role(
         roles::get(&mut conn, tenant, &key)
             .await
@@ -471,7 +520,7 @@ async fn get_role(
 ///
 /// Roles of the root tenant are global roles.
 #[utoipa::path(put, path = "/tenants/{id}/roles/{key}", tag = "roles",
-    params(("id" = String, Path, description = "The tenant: a UUID or `root`"), ("key" = String, Path)),
+    params(("id" = String, Path, description = "The tenant: a UUID, a tenant key or `root`"), ("key" = String, Path)),
     request_body = PutRole,
     responses((status = 200, body = Written<api::Role>)))]
 async fn put_role(
@@ -481,10 +530,10 @@ async fn put_role(
     limit: metadata::Limit,
     ApiJson(body): ApiJson<PutRole>,
 ) -> Result<Json<Written<api::Role>>, ApiError> {
-    let tenant = tenant_ref(&tenant)?;
     limit.check(&body.metadata)?;
     let definition = transport::role_definition(body);
     let mut conn = db.get().await?;
+    let tenant = tenant_refs::require(&mut conn, &tenant).await?;
     let (role, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             tenants::get(conn, tenant)
@@ -518,15 +567,15 @@ async fn put_role(
 
 /// Deletes a role.
 #[utoipa::path(delete, path = "/tenants/{id}/roles/{key}", tag = "roles",
-    params(("id" = String, Path, description = "The tenant: a UUID or `root`"), ("key" = String, Path)),
+    params(("id" = String, Path, description = "The tenant: a UUID, a tenant key or `root`"), ("key" = String, Path)),
     responses((status = 200, body = Written<Deleted>)))]
 async fn delete_role(
     db: Db,
     Extension(operator): Extension<Operator>,
     Path((tenant, key)): Path<(String, String)>,
 ) -> Result<Json<Written<Deleted>>, ApiError> {
-    let tenant = tenant_ref(&tenant)?;
     let mut conn = db.get().await?;
+    let tenant = tenant_refs::require(&mut conn, &tenant).await?;
     let (deleted, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             if let Ok(old) = roles::get(conn, tenant, &key).await
@@ -689,8 +738,8 @@ async fn subject_entitlements(
     Query(query): Query<EntitlementQuery>,
 ) -> Result<Json<Entitlements>, ApiError> {
     let id: SubjectId = parse_id(&id, "subject id")?;
-    let tenant = query.tenant.as_deref().map(tenant_ref).transpose()?;
     let mut conn = db.get().await?;
+    let tenant = tenant_refs::require_some(&mut conn, query.tenant.as_deref()).await?;
     let input = compile_input::load(&mut conn, id, tenant).await?;
     Ok(Json(input.compile()))
 }
@@ -702,9 +751,9 @@ async fn list_tenants(
     db: Db,
     Query(query): Query<TenantQuery>,
 ) -> Result<Json<TenantPage>, ApiError> {
-    let parent = query.parent.as_deref().map(tenant_ref).transpose()?;
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
     let mut conn = db.get().await?;
+    let parent = tenant_refs::require_some(&mut conn, query.parent.as_deref()).await?;
     let metadata = metadata::filter(query.metadata.as_deref())?;
     let tenants = tenants::list(&mut conn, parent, metadata.as_ref(), query.before, limit).await?;
     let next = (i64::try_from(tenants.len()) == Ok(limit))
@@ -718,16 +767,16 @@ async fn list_tenants(
 
 /// Lists a tenant's memberships.
 #[utoipa::path(get, path = "/tenants/{id}/memberships", tag = "memberships",
-    params(("id" = String, Path, description = "The tenant: a UUID or `root`"), MembershipQuery),
+    params(("id" = String, Path, description = "The tenant: a UUID, a tenant key or `root`"), MembershipQuery),
     responses((status = 200, body = Vec<api::Membership>)))]
 async fn list_memberships(
     db: Db,
     Path(id): Path<String>,
     Query(query): Query<MembershipQuery>,
 ) -> Result<Json<Vec<api::Membership>>, ApiError> {
-    let tenant = tenant_ref(&id)?;
     let metadata = metadata::filter(query.metadata.as_deref())?;
     let mut conn = db.get().await?;
+    let tenant = tenant_refs::require(&mut conn, &id).await?;
     let memberships =
         memberships::list_for_tenant(&mut conn, tenant, query.active, metadata.as_ref()).await?;
     Ok(Json(
@@ -748,8 +797,8 @@ async fn explain_entitlement(
     Query(query): Query<ExplainQuery>,
 ) -> Result<Json<Explanation>, ApiError> {
     let id: SubjectId = parse_id(&id, "subject id")?;
-    let tenant = query.tenant.as_deref().map(tenant_ref).transpose()?;
     let mut conn = db.get().await?;
+    let tenant = tenant_refs::require_some(&mut conn, query.tenant.as_deref()).await?;
     let input = compile_input::load(&mut conn, id, tenant).await?;
     Ok(Json(konklav_authz::explain(
         &input.catalog,

@@ -27,7 +27,8 @@ token.
     behind a confirmation that says what is removed and that it can't be
     undone. Erasing needs `konklav:subjects:erase`. An erased subject
     shows only what is left of it, with no actions.
-  - tenants (create, facts, state, children) and memberships (create,
+  - tenants (create, with a key if wanted, facts, state, children, and
+    setting a key on a tenant that has none) and memberships (create,
     facts, end, role assignments)
   - roles per tenant (the root tenant's are global, and built-in
     `konklav.` roles are shown read-only), templates, the catalog,

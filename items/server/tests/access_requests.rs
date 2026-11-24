@@ -11,6 +11,7 @@ use axum::http::{Method, StatusCode};
 use common::TestApp;
 use konklav_core::TenantId;
 use konklav_server::access_requests::Settings;
+use konklav_store::tenants::Reference;
 use serde_json::{Value, json};
 
 const PASSWORD: &str = "correct horse battery";
@@ -21,7 +22,7 @@ async fn app(tenants: Option<&[uuid::Uuid]>, retry: chrono::Duration) -> TestApp
     let tenants = tenants.map(|ids| {
         ids.iter()
             .copied()
-            .map(TenantId::from)
+            .map(|id| Reference::Id(TenantId::from(id)))
             .collect::<HashSet<_>>()
     });
     TestApp::with_auth(|auth| {

@@ -115,13 +115,19 @@ class Confinement(TypedDict):
 
 class CreateTenant(TypedDict):
     facts: NotRequired[dict[str, Any]]
+    key: NotRequired[str | None]
+    """
+    A tenant key: lowercase words joined by hyphens, such as
+    `acme-north`, unique among all tenants. It never changes once set.
+    """
     metadata: NotRequired[dict[str, Any]]
     """
     An object, opaque to Konklav.
     """
     parent: NotRequired[str | None]
     """
-    The parent tenant (a UUID or `root`); `root` when absent.
+    The parent tenant (a UUID, a tenant key or `root`); `root` when
+    absent.
     """
     templates: NotRequired[list[str]]
     """
@@ -828,6 +834,18 @@ without a tenant, `tenant` with one.
 """
 
 
+class SetTenantKey(TypedDict):
+    """
+    Gives a tenant that has none a key.
+    """
+
+    key: str
+    """
+    Lowercase words joined by hyphens, such as `acme-north`, at most 63
+    characters, not `root`, and unique among all tenants.
+    """
+
+
 type ShareId = str
 """
 Identifies a share of one tenant's scope with another tenant.
@@ -1230,6 +1248,11 @@ class WrittenTenant(TypedDict):
     created_at: str
     facts: dict[str, Any]
     id: TenantId
+    key: str | None
+    """
+    Its tenant key, usable instead of its id wherever a tenant is named;
+    once set, it never changes.
+    """
     metadata: dict[str, Any]
     """
     An object, opaque to Konklav.
@@ -1481,7 +1504,7 @@ class CreateInvite(TypedDict):
     """
     tenant: NotRequired[str | None]
     """
-    A tenant (UUID or `root`) to join on redemption.
+    A tenant (a UUID, a tenant key or `root`) to join on redemption.
     """
 
 
@@ -1494,7 +1517,7 @@ class CreateMembership(TypedDict):
     subject: SubjectId
     tenant: str
     """
-    The tenant (a UUID or `root`).
+    The tenant (a UUID, a tenant key or `root`).
     """
 
 
@@ -2257,6 +2280,11 @@ class Tenant(TypedDict):
     created_at: str
     facts: dict[str, Any]
     id: TenantId
+    key: str | None
+    """
+    Its tenant key, usable instead of its id wherever a tenant is named;
+    once set, it never changes.
+    """
     metadata: dict[str, Any]
     """
     An object, opaque to Konklav.

@@ -403,6 +403,7 @@ diesel::table! {
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
         metadata -> Jsonb,
+        key -> Nullable<Text>,
     }
 }
 

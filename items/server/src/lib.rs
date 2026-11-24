@@ -28,6 +28,7 @@ mod import_api;
 mod invites;
 mod issue;
 pub mod keys;
+pub mod login_methods;
 pub mod login_page;
 pub mod metadata;
 mod metadata_api;
@@ -48,6 +49,7 @@ mod subject_api;
 pub mod surface;
 pub mod sweeper;
 pub mod telemetry;
+mod tenant_refs;
 mod transport;
 
 use std::sync::Arc;

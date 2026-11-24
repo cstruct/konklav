@@ -41,7 +41,7 @@ pub struct AccessRequest {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct AccessRequestQuery {
-    /// Only requests for this tenant (a UUID or `root`).
+    /// Only requests for this tenant (a UUID, a tenant key or `root`).
     pub tenant: Option<String>,
     /// Only this subject's requests.
     pub subject: Option<SubjectId>,

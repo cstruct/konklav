@@ -121,6 +121,9 @@ pub(crate) struct Context<'a> {
     identifiers: BTreeSet<String>,
     /// Subjects found or created by login identifier during this run.
     subjects: BTreeMap<String, konklav_core::SubjectId>,
+    /// The tenants references name by key: the set's own tenants by their
+    /// keys, else stored tenants by theirs.
+    tenant_keys: BTreeMap<String, uuid::Uuid>,
 }
 
 /// Raised to roll the transaction back with the report.
@@ -168,8 +171,10 @@ pub async fn run(
             .map(konklav_store::credentials::normalize_identifier)
             .collect(),
         subjects: BTreeMap::new(),
+        tenant_keys: BTreeMap::new(),
     };
     let mut conn = pool.get().await?;
+    context.tenant_keys = tenant_keys(&mut conn, &set, context.namespace).await?;
     let result = conn
         .transaction::<_, Rollback, _>(async |conn| {
             let report = apply(conn, &mut context, set).await?;
@@ -215,7 +220,7 @@ async fn apply(
             .await;
         report.record("templates", &template.at, outcome);
     }
-    for tenant in parents_first(&set.tenants, context.namespace) {
+    for tenant in parents_first(&set.tenants, context.namespace, &context.tenant_keys) {
         let outcome = conn
             .transaction::<_, ApiError, _>(async |conn| {
                 records::tenant(conn, context, &catalog_document, tenant).await
@@ -264,8 +269,74 @@ async fn apply(
 
 type TenantRecord = Located<konklav_bootstrap::Tenant>;
 
+/// What each key a tenant reference may name resolves to: a tenant of the
+/// set with that key, else the stored tenant with it. Other external ids
+/// stay external ids.
+// r[impl bootstrap.tenant-key]
+async fn tenant_keys(
+    conn: &mut Connection,
+    set: &BootstrapSet,
+    namespace: Option<uuid::Uuid>,
+) -> Result<BTreeMap<String, uuid::Uuid>, ApiError> {
+    use konklav_bootstrap::{AssignmentTarget, Id, Kind, MembershipRef, TenantRef};
+    let mut keys = BTreeMap::new();
+    for tenant in &set.tenants {
+        let Some(id) = tenant.value.id.resolve(namespace, Kind::Tenant) else {
+            continue;
+        };
+        let key = match (&tenant.value.key, &tenant.value.id) {
+            (Some(key), _) | (None, Id::External(key)) => key,
+            (None, Id::Uuid(_)) => continue,
+        };
+        keys.entry(key.clone()).or_insert(id);
+    }
+    let named = |reference: &TenantRef| match reference {
+        TenantRef::Id(Id::External(key)) => Some(key.clone()),
+        _ => None,
+    };
+    let mut referenced: BTreeSet<String> = BTreeSet::new();
+    referenced.extend(set.tenants.iter().filter_map(|t| named(&t.value.parent)));
+    referenced.extend(set.roles.iter().filter_map(|r| named(&r.value.tenant)));
+    referenced.extend(
+        set.memberships
+            .iter()
+            .filter_map(|m| named(&m.value.tenant)),
+    );
+    referenced.extend(
+        set.registered_scopes
+            .iter()
+            .filter_map(|r| named(&r.value.tenant)),
+    );
+    referenced.extend(
+        set.assignments
+            .iter()
+            .filter_map(|a| match &a.value.target {
+                AssignmentTarget::Membership(MembershipRef::Of { tenant, .. }) => named(tenant),
+                _ => None,
+            }),
+    );
+    referenced.extend(set.sessions.iter().filter_map(|s| match &s.value.tenant {
+        Some(Id::External(key)) => Some(key.clone()),
+        _ => None,
+    }));
+    for key in referenced {
+        if keys.contains_key(&key) || !konklav_store::tenants::valid_key(&key) {
+            continue;
+        }
+        let reference = konklav_store::tenants::Reference::Key(key.clone());
+        if let Some(id) = konklav_store::tenants::resolve(conn, &reference).await? {
+            keys.insert(key, id.into());
+        }
+    }
+    Ok(keys)
+}
+
 /// Tenants ordered so a parent in the set comes before its children.
-fn parents_first(tenants: &[TenantRecord], namespace: Option<uuid::Uuid>) -> Vec<&TenantRecord> {
+fn parents_first<'a>(
+    tenants: &'a [TenantRecord],
+    namespace: Option<uuid::Uuid>,
+    keys: &BTreeMap<String, uuid::Uuid>,
+) -> Vec<&'a TenantRecord> {
     let index: BTreeMap<uuid::Uuid, usize> = tenants
         .iter()
         .enumerate()
@@ -280,6 +351,7 @@ fn parents_first(tenants: &[TenantRecord], namespace: Option<uuid::Uuid>) -> Vec
         tenants,
         index,
         namespace,
+        keys,
         placed: vec![false; tenants.len()],
         ordered: Vec::with_capacity(tenants.len()),
     };
@@ -289,15 +361,16 @@ fn parents_first(tenants: &[TenantRecord], namespace: Option<uuid::Uuid>) -> Vec
     order.ordered
 }
 
-struct Ordering<'a> {
+struct Ordering<'a, 'k> {
     tenants: &'a [TenantRecord],
     index: BTreeMap<uuid::Uuid, usize>,
     namespace: Option<uuid::Uuid>,
+    keys: &'k BTreeMap<String, uuid::Uuid>,
     placed: Vec<bool>,
     ordered: Vec<&'a TenantRecord>,
 }
 
-impl<'a> Ordering<'a> {
+impl<'a> Ordering<'a, '_> {
     /// Places tenant `i` after its parent. `depth` stops a cycle, which
     /// the store then refuses as a missing parent.
     fn visit(&mut self, i: usize, depth: usize) {
@@ -305,7 +378,12 @@ impl<'a> Ordering<'a> {
             return;
         }
         if let konklav_bootstrap::TenantRef::Id(parent) = &self.tenants[i].value.parent
-            && let Some(parent) = parent.resolve(self.namespace, konklav_bootstrap::Kind::Tenant)
+            && let Some(parent) = match parent {
+                konklav_bootstrap::Id::External(key) if self.keys.contains_key(key) => {
+                    self.keys.get(key).copied()
+                }
+                _ => parent.resolve(self.namespace, konklav_bootstrap::Kind::Tenant),
+            }
             && let Some(&p) = self.index.get(&parent)
             && p != i
         {

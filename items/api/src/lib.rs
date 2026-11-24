@@ -85,6 +85,6 @@ pub use subjects::{
 pub use templates::{PutTemplate, Template};
 pub use tenancy::{
     CreateMembership, CreateTenant, Membership, MembershipDetail, MembershipQuery, MembershipState,
-    SetTenantState, Tenant, TenantPage, TenantQuery, TenantState,
+    SetTenantKey, SetTenantState, Tenant, TenantPage, TenantQuery, TenantState,
 };
 pub use written::Written;

@@ -39,7 +39,7 @@ fn TenantSearch() -> impl IntoView {
     view! {
         <p>"The " <A href="/tenants/root">"root tenant"</A> " holds global roles."</p>
         <form class="filters" on:submit=search>
-            <Field label="Parent" value=parent placeholder="any; a UUID or root"/>
+            <Field label="Parent" value=parent placeholder="any; a UUID, a key or root"/>
             <button type="submit">"Search"</button>
         </form>
         <TenantList parent=query/>
@@ -60,11 +60,12 @@ fn TenantList(#[prop(into)] parent: Signal<String>) -> impl IntoView {
         }
         view! {
             <table>
-                <thead><tr><th>"Tenant"</th><th>"Parent"</th><th>"State"</th><th>"Facts"</th><th>"Created"</th></tr></thead>
+                <thead><tr><th>"Tenant"</th><th>"Key"</th><th>"Parent"</th><th>"State"</th><th>"Facts"</th><th>"Created"</th></tr></thead>
                 <tbody>
                     {page.tenants.into_iter().map(|tenant| view! {
                         <tr class:revoked=tenant.state != "active">
                             <td><A href=format!("/tenants/{}", tenant.id)><code>{tenant.id.clone()}</code></A></td>
+                            <td>{tenant.key.clone().map(|key| view! { <code>{key}</code> })}</td>
                             <td>{tenant.parent_id.clone().map(|p| view! { <A href=format!("/tenants/{p}")><Id id=p.clone()/></A> })}</td>
                             <td>{tenant.state.clone()}</td>
                             <td><code class="compact">{tenant.facts.to_string()}</code></td>
@@ -84,6 +85,7 @@ fn TenantList(#[prop(into)] parent: Signal<String>) -> impl IntoView {
 #[component]
 fn CreateTenant(parent: Signal<String>) -> impl IntoView {
     let console = use_console();
+    let key = RwSignal::new(String::new());
     let facts = RwSignal::new("{}".to_owned());
     let templates = RwSignal::new(String::new());
     let error = RwSignal::new(None);
@@ -100,6 +102,7 @@ fn CreateTenant(parent: Signal<String>) -> impl IntoView {
             endpoints::create_tenant(
                 &id,
                 &parent.get_untracked(),
+                &key.get_untracked(),
                 &facts,
                 &list(&templates.get_untracked()),
             ),
@@ -111,6 +114,7 @@ fn CreateTenant(parent: Signal<String>) -> impl IntoView {
         <h2>"New tenant"</h2>
         <form class="card" on:submit=submit>
             <p class="muted">"Under " <code>{parent}</code> "."</p>
+            <Field label="Key" value=key placeholder="none; such as acme-north, and it never changes"/>
             <JsonField label="Facts" value=facts rows=3/>
             <Field label="Templates to instantiate roles from" value=templates placeholder="comma-separated keys"/>
             <Problem error/>
@@ -177,8 +181,27 @@ fn TenantDetails(id: Signal<String>) -> impl IntoView {
                     </button>
                 })
                 .collect_view();
+            let new_key = RwSignal::new(String::new());
+            let set_key = move |event: SubmitEvent| {
+                event.prevent_default();
+                let key = new_key.get_untracked();
+                if confirm(&format!("Give this tenant the key `{}`? A tenant's key never changes.", key.trim())) {
+                    console.act(endpoints::set_tenant_key(&id.get_untracked(), &key), error, move |_: Value| resource.refetch());
+                }
+            };
+            let key = match tenant.key.clone() {
+                Some(key) => view! { <code>{key}</code> }.into_any(),
+                None => view! {
+                    <form class="inline" on:submit=set_key>
+                        <input placeholder="such as acme-north" bind:value=new_key/>
+                        <button type="submit" class="small">"Set key"</button>
+                    </form>
+                }
+                .into_any(),
+            };
             view! {
                 <dl class="facts">
+                    <dt>"Key"</dt><dd>{key}</dd>
                     <dt>"Parent"</dt>
                     <dd>{tenant.parent_id.clone().map(|p| view! { <A href=format!("/tenants/{p}")><code>{p.clone()}</code></A> })}</dd>
                     <dt>"State"</dt><dd>{tenant.state.clone()} " " {states}</dd>

@@ -737,7 +737,7 @@ impl ControlConfig {
             .iter()
             .map(|tenant| {
                 konklav_store::tenants::parse_reference(tenant)
-                    .ok_or_else(|| format!("access_requests: `{tenant}` is not a tenant id"))
+                    .ok_or_else(|| format!("access_requests: `{tenant}` is not a tenant id or key"))
             })
             .collect::<Result<std::collections::HashSet<_>, _>>()?;
         if tenants.is_empty() && !config.all_tenants {

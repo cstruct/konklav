@@ -110,6 +110,19 @@ class Tenants(_Resource[M]):
         return self._do(Call("PUT", path("tenants", id, "state"), json=body, written=True))
 
     @overload
+    async def set_key(self: Tenants[Direct], id: str, body: types.SetTenantKey) -> Written[types.Tenant]: ...
+
+    @overload
+    def set_key(self: Tenants[Batched], id: str, body: types.SetTenantKey) -> Pending[Written[types.Tenant]]: ...
+
+    @operation("set_tenant_key")
+    def set_key(self, id: str, body: types.SetTenantKey) -> Any:
+        """Gives a tenant that has none a key, usable instead of its id
+        wherever a tenant is named. A key never changes once set: the same
+        key again changes nothing, and any other is a conflict."""
+        return self._do(Call("PUT", path("tenants", id, "key"), json=body, create=True, written=True))
+
+    @overload
     async def patch_metadata(
         self: Tenants[Direct], id: str, body: dict[str, Any], *, if_match: str | None = None
     ) -> Written[types.Tenant]: ...

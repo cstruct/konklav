@@ -58,6 +58,11 @@ Terms are introduced in dependency order: each definition only uses terms define
   - The tenant that always exists. Its identifier is the nil UUID, and APIs accept `root` for it.
   - It is the top of the tenant tree and the home of `global roles` (see Authorization).
 
+- `tenant key`
+  - An optional, human-readable name for a tenant, such as `acme` or `acme-north`: lowercase words joined by hyphens, unique among all tenants.
+  - Wherever a tenant can be named by its UUID, its key can be used instead. Tokens and events still identify tenants by UUID.
+  - A tenant gets its key when it is created or later, and keeps it for good: a key never changes, is never removed and is never taken by another tenant.
+
 - `tenant tree`
   - Every tenant except the root has exactly one parent tenant.
   - A parent-child relationship grants nothing by itself. Access across tenants always requires an explicit membership or an `assumption grant` (see Authentication).

@@ -62,7 +62,17 @@ impl Context<'_> {
     fn tenant(&self, tenant: &TenantRef) -> Result<TenantId, ApiError> {
         match tenant {
             TenantRef::Root => Ok(tenants::ROOT),
-            TenantRef::Id(id) => Ok(self.uuid(id, Kind::Tenant)?.into()),
+            TenantRef::Id(id) => Ok(self.tenant_uuid(id)?.into()),
+        }
+    }
+
+    /// A tenant reference's UUID: a key the set or the database knows, or
+    /// else an id or external id.
+    // r[impl bootstrap.tenant-key]
+    fn tenant_uuid(&self, id: &Id) -> Result<uuid::Uuid, ApiError> {
+        match id {
+            Id::External(key) if self.tenant_keys.contains_key(key) => Ok(self.tenant_keys[key]),
+            _ => self.uuid(id, Kind::Tenant),
         }
     }
 
@@ -204,17 +214,36 @@ pub(super) async fn tenant(
         catalogs::typed_facts(catalog, FactTarget::Tenant, &tenant.value.facts).map_err(invalid)?;
     let metadata = &tenant.value.metadata;
     context.metadata(metadata)?;
+    // r[impl bootstrap.tenant-key]
+    let key = tenant.value.key.as_deref();
+    if let Some(key) = key
+        && !tenants::valid_key(key)
+    {
+        return Err(invalid(format!(
+            "`{key}` isn't a tenant key: lowercase words joined by hyphens, at most {} characters, not `root`",
+            tenants::KEY_MAX_LEN
+        )));
+    }
     if let Ok(existing) = tenants::get(conn, id).await
         && (existing.parent_id != Some(parent)
             || existing.facts != facts
-            || existing.metadata != *metadata)
+            || existing.metadata != *metadata
+            || existing.key.as_deref() != key)
     {
         return Err(conflict(format!(
-            "tenant {id} exists with another parent, other facts or other metadata"
+            "tenant {id} exists with another parent, other facts, other metadata or another key"
         )));
     }
-    let (_, created) =
-        import::create_tenant(conn, id, parent, &facts, metadata, &tenant.value.templates).await?;
+    let (_, created) = import::create_tenant(
+        conn,
+        id,
+        parent,
+        &facts,
+        metadata,
+        &tenant.value.templates,
+        key,
+    )
+    .await?;
     Ok(if created {
         Outcome::Created
     } else {
@@ -677,7 +706,7 @@ pub(super) async fn session(
         "id": context.uuid(&s.id, Kind::Session)?,
         "subject": context.uuid(&s.subject, Kind::Subject)?,
         "credential": context.uuid(&s.credential, Kind::Credential)?,
-        "tenant": optional(&s.tenant, Kind::Tenant)?,
+        "tenant": s.tenant.as_ref().map(|id| context.tenant_uuid(id)).transpose()?,
         "membership": optional(&s.membership, Kind::Membership)?,
         "stage": s.stage,
         "client_kind": s.client_kind.as_deref().unwrap_or("native"),

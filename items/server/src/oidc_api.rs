@@ -442,7 +442,7 @@ async fn authorize(state: &AppState, query: AuthorizeQuery) -> Result<Response, 
         code_challenge,
         max_age: query.max_age,
         acr_values: query.acr_values.clone(),
-        tenant,
+        tenant: requested_tenant(&mut conn, tenant).await?,
         prompt: (!prompt.is_empty()).then(|| prompt.join(" ")),
         login_hint: query.login_hint.clone(),
         requested_at: Utc::now().timestamp(),
@@ -551,14 +551,32 @@ fn is_code_challenge(challenge: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"-._~".contains(&b))
 }
 
+/// The tenant a `tenant:` scope names. A key no tenant has becomes an id
+/// no tenant has, so the request goes on exactly as one naming a UUID of no
+/// tenant does.
+// r[impl tenant.key.reference]
+async fn requested_tenant(
+    conn: &mut Connection,
+    reference: Option<tenants::Reference>,
+) -> Result<Option<TenantId>, ApiError> {
+    Ok(match reference {
+        Some(reference) => Some(
+            tenants::resolve(conn, &reference)
+                .await?
+                .unwrap_or_else(TenantId::new_v7),
+        ),
+        None => None,
+    })
+}
+
 /// The requested scopes the client may have, without repeats, and the
-/// tenant a `tenant:` scope names. Others are dropped, but `openid` must be
-/// requested, and at most one tenant.
+/// tenant a `tenant:` scope names, by id or key. Others are dropped, but
+/// `openid` must be requested, and at most one tenant.
 // r[impl oidc.provider.scopes]
 fn granted_scopes(
     client: &OidcClient,
     requested: Option<&str>,
-) -> Result<(Vec<String>, Option<TenantId>), &'static str> {
+) -> Result<(Vec<String>, Option<tenants::Reference>), &'static str> {
     let requested: Vec<&str> = requested.unwrap_or_default().split_whitespace().collect();
     if !requested.contains(&"openid") {
         return Err("invalid_scope");
@@ -575,9 +593,7 @@ fn granted_scopes(
         .collect();
     let tenant = match tenants.as_slice() {
         [] => None,
-        [one] => Some(TenantId::from(
-            one.parse::<uuid::Uuid>().map_err(|_| "invalid_scope")?,
-        )),
+        [one] => Some(tenants::parse_reference(one).ok_or("invalid_scope")?),
         _ => return Err("invalid_scope"),
     };
     Ok((scopes, tenant))

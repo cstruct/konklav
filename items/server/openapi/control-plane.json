@@ -22,7 +22,7 @@
           {
             "name": "tenant",
             "in": "query",
-            "description": "Only requests for this tenant (a UUID or `root`).",
+            "description": "Only requests for this tenant (a UUID, a tenant key or `root`).",
             "required": false,
             "schema": {
               "type": "string"
@@ -1011,7 +1011,7 @@
           {
             "name": "tenant",
             "in": "query",
-            "description": "Only invites to this tenant (a UUID or `root`).",
+            "description": "Only invites to this tenant (a UUID, a tenant key or `root`).",
             "required": false,
             "schema": {
               "type": "string"
@@ -2916,7 +2916,7 @@
           {
             "name": "tenant",
             "in": "query",
-            "description": "The tenant (a UUID or `root`); global entitlements only when absent.",
+            "description": "The tenant (a UUID, a tenant key or `root`); global entitlements only when absent.",
             "required": false,
             "schema": {
               "type": "string"
@@ -3019,7 +3019,7 @@
           {
             "name": "tenant",
             "in": "query",
-            "description": "The tenant (a UUID or `root`); global roles only when absent.",
+            "description": "The tenant (a UUID, a tenant key or `root`); global roles only when absent.",
             "required": false,
             "schema": {
               "type": "string"
@@ -3620,7 +3620,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -3724,7 +3724,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -3766,6 +3766,80 @@
         "x-konklav-capability": "konklav:tenants:manage"
       }
     },
+    "/v1/tenants/{id}/key": {
+      "put": {
+        "tags": [
+          "tenants"
+        ],
+        "summary": "Gives a tenant that has none a key.",
+        "description": "The key can then be used instead of the tenant's id wherever a tenant is\nnamed. It never changes and is never removed: setting the key the tenant\nhas answers 200 again, and any other key is a conflict, as is a key\nanother tenant has.",
+        "operationId": "set_tenant_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The tenant: a UUID, a tenant key or `root`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetTenantKey"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The tenant had this key already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Tenant"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The key was set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Tenant"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The tenant has another key, or another tenant has this one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
+      }
+    },
     "/v1/tenants/{id}/memberships": {
       "get": {
         "tags": [
@@ -3777,7 +3851,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -3840,7 +3914,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -3915,7 +3989,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -3969,7 +4043,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -4018,7 +4092,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -4076,7 +4150,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -4127,7 +4201,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -4210,7 +4284,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -4271,7 +4345,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -5079,7 +5153,7 @@
               "string",
               "null"
             ],
-            "description": "A tenant (UUID or `root`) to join on redemption."
+            "description": "A tenant (a UUID, a tenant key or `root`) to join on redemption."
           }
         }
       },
@@ -5102,7 +5176,7 @@
           },
           "tenant": {
             "type": "string",
-            "description": "The tenant (a UUID or `root`)."
+            "description": "The tenant (a UUID, a tenant key or `root`)."
           }
         }
       },
@@ -5127,6 +5201,13 @@
           "facts": {
             "type": "object"
           },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A tenant key: lowercase words joined by hyphens, such as\n`acme-north`, unique among all tenants. It never changes once set."
+          },
           "metadata": {
             "type": "object",
             "description": "An object, opaque to Konklav."
@@ -5136,7 +5217,7 @@
               "string",
               "null"
             ],
-            "description": "The parent tenant (a UUID or `root`); `root` when absent."
+            "description": "The parent tenant (a UUID, a tenant key or `root`); `root` when\nabsent."
           },
           "templates": {
             "type": "array",
@@ -8450,6 +8531,19 @@
           "tenant"
         ]
       },
+      "SetTenantKey": {
+        "type": "object",
+        "description": "Gives a tenant that has none a key.",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Lowercase words joined by hyphens, such as `acme-north`, at most 63\ncharacters, not `root`, and unique among all tenants."
+          }
+        }
+      },
       "SetTenantState": {
         "type": "object",
         "required": [
@@ -8948,6 +9042,7 @@
           "facts",
           "metadata",
           "metadata_etag",
+          "key",
           "created_at",
           "updated_at"
         ],
@@ -8961,6 +9056,13 @@
           },
           "id": {
             "$ref": "#/components/schemas/TenantId"
+          },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its tenant key, usable instead of its id wherever a tenant is named;\nonce set, it never changes."
           },
           "metadata": {
             "type": "object",
@@ -10227,6 +10329,7 @@
               "facts",
               "metadata",
               "metadata_etag",
+              "key",
               "created_at",
               "updated_at"
             ],
@@ -10240,6 +10343,13 @@
               },
               "id": {
                 "$ref": "#/components/schemas/TenantId"
+              },
+              "key": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Its tenant key, usable instead of its id wherever a tenant is named;\nonce set, it never changes."
               },
               "metadata": {
                 "type": "object",

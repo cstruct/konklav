@@ -313,7 +313,7 @@ async fn github_teams_drive_claim_mapping_with_read_org() {
             claim: "groups".into(),
             condition: Condition::Contains("acme/platform".into()),
             grant: Grant::Tenant {
-                tenant: tenant.into(),
+                tenant: konklav_store::tenants::Reference::Id(tenant.into()),
                 roles: vec![],
             },
         }],

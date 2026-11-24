@@ -527,3 +527,51 @@ fn a_metadata_cell_must_hold_a_json_object() {
         assert!(problem.message.contains("JSON object"), "{problem:?}");
     }
 }
+
+// r[verify bootstrap.tenant-key]
+#[test]
+fn tenant_keys_are_kept_from_format_1_2() {
+    let id = "0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+    let both = format!("tenants ({{id {id}, key acme}} {{key acme-north}})\n");
+    let dir = scratch(
+        "tenant-keys",
+        &[(
+            "seed.styx",
+            &format!("format 1.2\nid_namespace {NAMESPACE}\n{both}"),
+        )],
+    );
+    let set = read(&[dir]).unwrap();
+    let keys: Vec<_> = set
+        .tenants
+        .iter()
+        .map(|t| (t.value.id.clone(), t.value.key.clone()))
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            (Id::parse(id), Some("acme".to_owned())),
+            (Id::External("acme-north".into()), Some("acme-north".into())),
+        ]
+    );
+
+    // Before 1.2 a key is only an external id, and can't come with an id.
+    let older = scratch(
+        "tenant-keys-1-1",
+        &[(
+            "seed.styx",
+            &format!("format 1.1\nid_namespace {NAMESPACE}\ntenants ({{key acme-north}})\n"),
+        )],
+    );
+    let set = read(&[older]).unwrap();
+    assert_eq!(set.tenants[0].value.key, None, "not stored");
+    let (_, problems) = problems_of(
+        "tenant-keys-both-1-1",
+        &[("seed.styx", &format!("format 1.1\n{both}"))],
+    );
+    assert!(
+        problems.iter().any(|p| p
+            .message
+            .contains("both an `id` and a `key` only from format 1.2")),
+        "{problems:#?}"
+    );
+}

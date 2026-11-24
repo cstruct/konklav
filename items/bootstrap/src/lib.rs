@@ -124,6 +124,10 @@ pub fn read(paths: &[PathBuf]) -> Result<BootstrapSet, Vec<Problem>> {
             Err(mut found) => problems.append(&mut found),
         }
     }
+    let version = format
+        .as_ref()
+        .map_or(UNDECLARED, |declared| declared.value);
+    keep_tenant_keys(&mut set, version, &mut problems);
     if set.id_namespace.is_none() && set.uses_external_ids() {
         problems.push(Problem {
             at: None,
@@ -136,6 +140,29 @@ pub fn read(paths: &[PathBuf]) -> Result<BootstrapSet, Vec<Problem>> {
         Ok(set)
     } else {
         Err(problems)
+    }
+}
+
+/// The format a set's tenants may carry a tenant key from.
+pub const TENANT_KEYS: FormatVersion = FormatVersion { major: 1, minor: 2 };
+
+/// Before format 1.2 a tenant's `key` is only its external id: a tenant
+/// with both an `id` and a key is a problem, and no key is kept to store.
+// r[impl bootstrap.tenant-key]
+fn keep_tenant_keys(set: &mut BootstrapSet, version: FormatVersion, problems: &mut Vec<Problem>) {
+    if version >= TENANT_KEYS {
+        return;
+    }
+    for tenant in &mut set.tenants {
+        let Some(key) = tenant.value.key.take() else {
+            continue;
+        };
+        if tenant.value.id != Id::External(key) {
+            problems.push(Problem::at(
+                &tenant.at,
+                format!("a tenant has both an `id` and a `key` only from format {TENANT_KEYS}"),
+            ));
+        }
     }
 }
 

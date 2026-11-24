@@ -14,13 +14,58 @@ use crate::{StoreError, StoreResult};
 // r[impl tenant.root.bootstrap]
 pub const ROOT: TenantId = TenantId::from_uuid(uuid::Uuid::nil());
 
-/// Parses a tenant reference: a UUID or `root`.
+/// The longest a tenant key may be.
+pub const KEY_MAX_LEN: usize = 63;
+
+/// Whether `key` is a valid tenant key: lowercase words joined by hyphens,
+/// such as `acme-north`, at most [`KEY_MAX_LEN`] long, and not `root`.
+// r[impl tenant.key]
 #[must_use]
-pub fn parse_reference(value: &str) -> Option<TenantId> {
+pub fn valid_key(key: &str) -> bool {
+    key.len() <= KEY_MAX_LEN
+        && key != "root"
+        && key
+            .split('-')
+            .all(|word| !word.is_empty() && word.bytes().all(|b| b.is_ascii_lowercase()))
+}
+
+/// How a tenant is named: by its id (a UUID, or `root`), or by its key.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Reference {
+    Id(TenantId),
+    Key(String),
+}
+
+/// Parses a tenant reference: a UUID, `root`, or a tenant key. `None` when
+/// it is none of them.
+#[must_use]
+pub fn parse_reference(value: &str) -> Option<Reference> {
     if value == "root" {
-        Some(ROOT)
+        Some(Reference::Id(ROOT))
+    } else if let Ok(id) = value.parse() {
+        Some(Reference::Id(id))
     } else {
-        value.parse().ok()
+        valid_key(value).then(|| Reference::Key(value.to_owned()))
+    }
+}
+
+/// The tenant `reference` names: its id, or the id of the tenant with its
+/// key. `None` when no tenant has the key; an id is returned as given,
+/// whether or not a tenant has it.
+// r[impl tenant.key.reference]
+pub async fn resolve(
+    conn: &mut AsyncPgConnection,
+    reference: &Reference,
+) -> StoreResult<Option<TenantId>> {
+    match reference {
+        Reference::Id(id) => Ok(Some(*id)),
+        Reference::Key(key) => Ok(tenant::table
+            .filter(tenant::key.eq(key))
+            .select(tenant::id)
+            .first::<uuid::Uuid>(conn)
+            .await
+            .optional()?
+            .map(Into::into)),
     }
 }
 
@@ -59,6 +104,8 @@ pub struct Tenant {
     pub state: TenantState,
     pub facts: serde_json::Value,
     pub metadata: serde_json::Value,
+    /// Its tenant key, if it has one.
+    pub key: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -73,6 +120,7 @@ struct Row {
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     metadata: serde_json::Value,
+    key: Option<String>,
 }
 
 impl From<Row> for Tenant {
@@ -83,6 +131,7 @@ impl From<Row> for Tenant {
             state: TenantState::parse(&row.state),
             facts: row.facts,
             metadata: row.metadata,
+            key: row.key,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }
@@ -121,13 +170,14 @@ pub async fn create(
     parent: TenantId,
     facts: &serde_json::Value,
 ) -> StoreResult<(Tenant, bool)> {
-    create_with_metadata(conn, id, parent, facts, &crate::metadata::empty()).await
+    create_with_metadata(conn, id, parent, facts, &crate::metadata::empty(), None).await
 }
 
-/// Creates a tenant under `parent` with a caller-supplied id. Repeating the
-/// call with the same parent and metadata returns the existing tenant; a
-/// different parent or metadata is a conflict. Returns the tenant and
-/// whether it was created.
+/// Creates a tenant under `parent` with a caller-supplied id, and `key` if
+/// given. Repeating the call with the same parent, metadata and key returns
+/// the existing tenant; a different parent, metadata or key is a conflict,
+/// and so is a key another tenant has. Returns the tenant and whether it was
+/// created.
 // r[impl tenant.tree.single-parent]
 // r[impl tenant.authority]
 // r[impl metadata.write.create]
@@ -137,7 +187,14 @@ pub async fn create_with_metadata(
     parent: TenantId,
     facts: &serde_json::Value,
     metadata: &serde_json::Value,
+    key: Option<&str>,
 ) -> StoreResult<(Tenant, bool)> {
+    if key.is_some_and(|key| !valid_key(key)) {
+        return Err(StoreError::Conflict(format!(
+            "`{}` isn't a tenant key: lowercase words joined by hyphens, at most {KEY_MAX_LEN} characters, not `root`",
+            key.unwrap_or_default()
+        )));
+    }
     if id == ROOT {
         return Err(StoreError::Conflict(
             "the root tenant already exists".into(),
@@ -158,12 +215,15 @@ pub async fn create_with_metadata(
             tenant::parent_id.eq(parent.as_uuid()),
             tenant::facts.eq(facts),
             tenant::metadata.eq(metadata),
+            tenant::key.eq(key),
         ))
-        .on_conflict_do_nothing()
+        .on_conflict(tenant::id)
+        .do_nothing()
         .returning(Row::as_returning())
         .get_result(conn)
         .await
-        .optional()?;
+        .optional()
+        .map_err(|error| StoreError::from_unique_violation(error, "a tenant with this key"))?;
     if let Some(row) = inserted {
         return Ok((row.into(), true));
     }
@@ -176,8 +236,51 @@ pub async fn create_with_metadata(
         Err(StoreError::Conflict(format!(
             "tenant {id} already exists with other metadata"
         )))
+    } else if existing.key.as_deref() != key {
+        Err(StoreError::Conflict(format!(
+            "tenant {id} already exists with another key"
+        )))
     } else {
         Ok((existing, false))
+    }
+}
+
+/// Gives a tenant that has no key `key`. Setting the key it has changes
+/// nothing; any other key, or a key another tenant has, is a conflict.
+/// Returns the tenant and whether the key was set now.
+// r[impl tenant.key]
+pub async fn set_key(
+    conn: &mut AsyncPgConnection,
+    id: TenantId,
+    key: &str,
+) -> StoreResult<(Tenant, bool)> {
+    if !valid_key(key) {
+        return Err(StoreError::Conflict(format!(
+            "`{key}` isn't a tenant key: lowercase words joined by hyphens, at most {KEY_MAX_LEN} characters, not `root`"
+        )));
+    }
+    let existing = get(conn, id).await?;
+    match existing.key.as_deref() {
+        Some(had) if had == key => return Ok((existing, false)),
+        Some(had) => {
+            return Err(StoreError::Conflict(format!(
+                "tenant {id} already has the key `{had}`, and a tenant's key never changes"
+            )));
+        }
+        None => {}
+    }
+    let updated = diesel::update(tenant::table.find(id.as_uuid()))
+        .filter(tenant::key.is_null())
+        .set((tenant::key.eq(key), tenant::updated_at.eq(diesel::dsl::now)))
+        .returning(Row::as_returning())
+        .get_result::<Row>(conn)
+        .await
+        .optional()
+        .map_err(|error| StoreError::from_unique_violation(error, "a tenant with this key"))?;
+    match updated {
+        Some(row) => Ok((row.into(), true)),
+        // Keyed meanwhile.
+        None => Box::pin(set_key(conn, id, key)).await,
     }
 }
 
@@ -251,4 +354,44 @@ pub async fn list(
         .into_iter()
         .map(Tenant::from)
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // r[verify tenant.key]
+    #[test]
+    fn keys_are_lowercase_words_joined_by_hyphens() {
+        for key in ["acme", "acme-north", "a-b-c"] {
+            assert!(valid_key(key), "{key}");
+        }
+        for key in [
+            "",
+            "root",
+            "Acme",
+            "acme1",
+            "-acme",
+            "acme-",
+            "acme--north",
+            "acme_north",
+            "åsa",
+        ] {
+            assert!(!valid_key(key), "{key}");
+        }
+        assert!(valid_key(&"a".repeat(KEY_MAX_LEN)));
+        assert!(!valid_key(&"a".repeat(KEY_MAX_LEN + 1)));
+    }
+
+    #[test]
+    fn references_are_ids_root_or_keys() {
+        assert_eq!(parse_reference("root"), Some(Reference::Id(ROOT)));
+        let id = TenantId::new_v7();
+        assert_eq!(parse_reference(&id.to_string()), Some(Reference::Id(id)));
+        assert_eq!(
+            parse_reference("acme-north"),
+            Some(Reference::Key("acme-north".into()))
+        );
+        assert_eq!(parse_reference("Not a key"), None);
+    }
 }

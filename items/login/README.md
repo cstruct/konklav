@@ -43,6 +43,9 @@ Out of scope:
 
 ## Public interface
 
+- The page learns the sign-in methods from `/login/config.json`. A relying
+  system building its own sign-in screen reads the same list, without the
+  page's settings, from the public `GET /v1/login/methods`.
 - What the server serves under `/login/`: `index.html`, the hashed files in
   `assets/`, and `config.json`, which the server writes and the page reads
   on load (`src/lib/settings.ts`): the title, whether passkeys are

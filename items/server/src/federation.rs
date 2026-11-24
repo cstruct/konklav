@@ -5,7 +5,6 @@
 //! authorization codes and validates ID tokens. The HTTP flow around it is
 //! in `federation_api`.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -58,6 +57,9 @@ pub enum Protocol {
 #[derive(Clone, Debug, Default)]
 pub struct Settings {
     pub id: String,
+    /// What sign-in screens call it, as in "Continue with GitHub"; the id
+    /// when not configured.
+    pub name: Option<String>,
     pub protocol: Protocol,
     pub issuer: String,
     pub client_id: String,
@@ -656,9 +658,9 @@ fn protocol(provider: &crate::config::IdentityProvider) -> Result<Protocol, Stri
     }
 }
 
-/// The configured identity providers, by id.
+/// The configured identity providers, in configuration order.
 #[derive(Default)]
-pub struct Providers(HashMap<String, Arc<Provider>>);
+pub struct Providers(Vec<Arc<Provider>>);
 
 impl Providers {
     /// Builds the providers from configuration. Every provider needs a
@@ -666,8 +668,14 @@ impl Providers {
     // r[impl federation.idp.config]
     pub fn from_config(config: &BrowserConfig) -> Result<Self, String> {
         let http = crate::outbound::client(TIMEOUT).map_err(|error| error.to_string())?;
-        let mut providers = HashMap::new();
+        let mut providers: Vec<Arc<Provider>> = Vec::new();
         for provider in &config.identity_providers {
+            if providers.iter().any(|p| p.settings.id == provider.id) {
+                return Err(format!(
+                    "identity provider `{}` is configured twice",
+                    provider.id
+                ));
+            }
             let secret = config
                 .identity_provider_secrets
                 .iter()
@@ -688,6 +696,7 @@ impl Providers {
             let protocol = protocol(provider)?;
             let settings = Settings {
                 id: provider.id.clone(),
+                name: provider.name.clone(),
                 protocol,
                 issuer: provider.issuer.clone(),
                 client_id: provider.client_id.clone(),
@@ -747,10 +756,7 @@ impl Providers {
                     .collect::<Result<_, _>>()
                     .map_err(|error| format!("identity provider `{}`: {error}", provider.id))?,
             };
-            providers.insert(
-                provider.id.clone(),
-                Arc::new(Provider::new(settings, http.clone())),
-            );
+            providers.push(Arc::new(Provider::new(settings, http.clone())));
         }
         Ok(Self(providers))
     }
@@ -767,18 +773,19 @@ impl Providers {
         Self(
             settings
                 .into_iter()
-                .map(|s| (s.id.clone(), Arc::new(Provider::new(s, http.clone()))))
+                .map(|s| Arc::new(Provider::new(s, http.clone())))
                 .collect(),
         )
     }
 
     #[must_use]
     pub fn get(&self, id: &str) -> Option<&Arc<Provider>> {
-        self.0.get(id)
+        self.0.iter().find(|provider| provider.settings.id == id)
     }
 
+    /// The providers, in configuration order.
     pub fn iter(&self) -> impl Iterator<Item = &Arc<Provider>> {
-        self.0.values()
+        self.0.iter()
     }
 
     /// The scope some provider passes `claim` under, if any.

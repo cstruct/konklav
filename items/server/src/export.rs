@@ -229,6 +229,10 @@ async fn document(
             ("parent", Value::text(tenant_reference(tenant.parent_id))),
             ("facts", facts_value(&tenant.facts)?),
         ];
+        // r[impl bootstrap.tenant-key]
+        if let Some(key) = &tenant.key {
+            doc.insert(1, ("key", Value::text(key.clone())));
+        }
         // r[impl bootstrap.metadata]
         if !is_empty(&tenant.metadata) {
             doc.push(("metadata", metadata_value(&tenant.metadata)));

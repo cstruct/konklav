@@ -1110,13 +1110,14 @@ async fn impersonate(
     }
     let membership = match body.tenant.as_deref() {
         Some(reference) => {
-            let tenant = tenants::parse_reference(reference)
-                .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
+            let no_membership =
+                || ApiError::new(ErrorCode::Forbidden, "no active membership in that tenant");
+            let tenant = crate::tenant_refs::resolve(&mut conn, reference)
+                .await?
+                .ok_or_else(no_membership)?;
             let membership = memberships::find_active(&mut conn, target.id, tenant)
                 .await?
-                .ok_or_else(|| {
-                    ApiError::new(ErrorCode::Forbidden, "no active membership in that tenant")
-                })?;
+                .ok_or_else(no_membership)?;
             // The session keeps the caller's flags, and so their
             // confinements.
             // r[impl session.flags.confine.tenant]

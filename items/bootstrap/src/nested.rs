@@ -97,7 +97,8 @@ struct RoleDoc {
 #[facet(deny_unknown_fields)]
 struct TenantDoc {
     id: Option<String>,
-    /// A name for the tenant, used as its external id.
+    /// A name for the tenant: its external id when it has no `id`, and from
+    /// format 1.2 its tenant key.
     key: Option<String>,
     /// For top-level tenants only: a tenant id or `root` (the default).
     parent: Option<String>,
@@ -511,11 +512,12 @@ impl Reader<'_> {
     fn tenant(&mut self, parent: Option<TenantRef>, tenant: Spanned<TenantDoc>) {
         let at = self.at(&tenant);
         let doc = tenant.value;
-        let id = match (doc.id, doc.key) {
-            (Some(id), None) => Id::parse(&id),
-            (None, Some(key)) => Id::External(key),
-            _ => {
-                self.problem(&at, "a tenant needs exactly one of `id` and `key`");
+        // Both only from format 1.2, which `crate::read` checks.
+        let (id, key) = match (doc.id, doc.key) {
+            (Some(id), key) => (Id::parse(&id), key),
+            (None, Some(key)) => (Id::External(key.clone()), Some(key)),
+            (None, None) => {
+                self.problem(&at, "a tenant needs an `id` or a `key`");
                 return;
             }
         };
@@ -534,6 +536,7 @@ impl Reader<'_> {
         self.set.tenants.push(Located {
             value: Tenant {
                 id,
+                key,
                 parent,
                 facts,
                 templates: doc.templates.unwrap_or_default(),

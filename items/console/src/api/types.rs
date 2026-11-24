@@ -181,6 +181,9 @@ pub struct Tenant {
     /// `active`, `suspended` or `deleted`.
     pub state: String,
     pub facts: Value,
+    /// Its tenant key, usable instead of its id; it never changes.
+    #[serde(default)]
+    pub key: Option<String>,
     pub created_at: String,
 }
 

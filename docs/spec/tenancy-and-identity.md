@@ -32,6 +32,24 @@ identifier, for their own data.
 r[tenant.facts]
 Tenants MUST be able to carry facts declared in the action catalog.
 
+r[tenant.key]
+A tenant MAY have a key that matches `[a-z]+(-[a-z]+)*`, is at most 63
+characters long, isn't `root`, and is unique among all tenants. It MAY be
+given when the tenant is created, or set later on a tenant that has none,
+and MUST NOT change or be removed once set, so no other tenant can take it.
+Setting a tenant's key to the one it has MUST answer as the first time.
+
+r[tenant.key.reference]
+Wherever Konklav takes a tenant reference, a UUID or `root`, on any surface,
+in a `tenant:` scope or in configuration, it MUST also take a tenant key
+and treat it as the tenant that has it. A key no tenant has MUST be answered
+exactly as a UUID of no tenant is. Tokens, events and stored records MUST
+keep identifying tenants by UUID.
+
+r[tenant.key.event]
+`tenant.changed` MUST carry the tenant's key, and setting a key MUST emit
+it.
+
 ## Subjects
 
 r[subject.identifier.stable]

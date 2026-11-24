@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use konklav_core::{MembershipId, SubjectId, TenantId};
+use konklav_core::{MembershipId, SubjectId};
 use konklav_store::roles::{self, AssignmentTarget};
 use konklav_store::sessions::{self, SessionFilter};
 use konklav_store::{Connection, StoreError, memberships, tenants};
@@ -24,7 +24,8 @@ pub enum Condition {
 pub enum Grant {
     GlobalRole(String),
     Tenant {
-        tenant: TenantId,
+        /// A tenant id or key, resolved when the rule is applied.
+        tenant: tenants::Reference,
         roles: Vec<String>,
     },
 }
@@ -53,8 +54,8 @@ impl Rule {
             (Some(role), None) if config.roles.is_empty() => Grant::GlobalRole(role.clone()),
             (None, Some(tenant)) => Grant::Tenant {
                 tenant: tenants::parse_reference(tenant)
-                    .filter(|tenant| *tenant != tenants::ROOT)
-                    .ok_or_else(|| format!("`{tenant}` is not a tenant id"))?,
+                    .filter(|tenant| *tenant != tenants::Reference::Id(tenants::ROOT))
+                    .ok_or_else(|| format!("`{tenant}` is not a tenant id or key"))?,
                 roles: config.roles.clone(),
             },
             _ => {
@@ -102,7 +103,7 @@ impl Target {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Desired {
     pub global_roles: BTreeSet<String>,
-    pub tenants: BTreeMap<TenantId, BTreeSet<String>>,
+    pub tenants: BTreeMap<tenants::Reference, BTreeSet<String>>,
 }
 
 #[must_use]
@@ -116,7 +117,7 @@ pub fn evaluate(rules: &[Rule], claims: &Value) -> Desired {
             Grant::Tenant { tenant, roles } => {
                 desired
                     .tenants
-                    .entry(*tenant)
+                    .entry(tenant.clone())
                     .or_default()
                     .extend(roles.iter().cloned());
             }
@@ -150,7 +151,13 @@ pub async fn apply(
         }
     }
     let mut kept_memberships: BTreeSet<MembershipId> = BTreeSet::new();
-    for (tenant, keys) in &desired.tenants {
+    for (reference, keys) in &desired.tenants {
+        // r[impl tenant.key.reference]
+        let Some(tenant) = tenants::resolve(conn, reference).await? else {
+            tracing::warn!(provider, ?reference, "claim mapping names a missing tenant");
+            continue;
+        };
+        let tenant = &tenant;
         if matches!(tenants::get(conn, *tenant).await, Err(StoreError::NotFound)) {
             tracing::warn!(provider, %tenant, "claim mapping names a missing tenant");
             continue;
@@ -216,6 +223,8 @@ pub async fn apply(
 
 #[cfg(test)]
 mod tests {
+    use konklav_core::TenantId;
+
     use super::*;
 
     fn grant(claim: &str, contains: &str, global_role: &str) -> ClaimGrant {
@@ -253,7 +262,7 @@ mod tests {
             BTreeSet::from(["operator".to_owned()])
         );
         assert_eq!(
-            desired.tenants[&tenant],
+            desired.tenants[&tenants::Reference::Id(tenant)],
             BTreeSet::from(["agent".to_owned()])
         );
         assert_eq!(

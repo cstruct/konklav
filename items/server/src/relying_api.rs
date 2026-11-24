@@ -15,7 +15,7 @@ use konklav_core::{Cursor, SubjectId, TenantId};
 use konklav_store::registered_scopes::{self, RegisteredScope};
 use konklav_store::sessions::Stage;
 use konklav_store::subjects::{self, SubjectKind};
-use konklav_store::{Connection, StoreError, compile_input, tenants};
+use konklav_store::{Connection, StoreError, compile_input};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
@@ -96,10 +96,9 @@ async fn tenant_entitlements(
     Path((subject, tenant)): Path<(String, String)>,
 ) -> Result<Json<EntitlementSet>, ApiError> {
     let subject = parse_subject(&subject)?;
-    let tenant = tenants::parse_reference(&tenant)
-        .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
     let mut conn = state.pool.get().await?;
     require_service(&state, &mut conn, &headers).await?;
+    let tenant = crate::tenant_refs::require(&mut conn, &tenant).await?;
     Ok(Json(compile_for(&mut conn, subject, Some(tenant)).await?))
 }
 

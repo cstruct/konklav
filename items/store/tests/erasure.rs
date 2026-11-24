@@ -1555,6 +1555,7 @@ const DECISIONS: &[Table] = &[
             "created_at",
             "updated_at",
             "metadata",
+            "key",
         ],
         personal: &[],
         unreported: &[],

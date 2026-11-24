@@ -9,6 +9,15 @@ Konklav MUST support login with a password credential, with a phone
 one-time code, with an email magic link, with a passkey, and with a
 secret-key credential for service principals.
 
+r[authn.login.offered]
+The subject-facing surface MUST let anyone, without authenticating and
+from any origin, read the interactive sign-in methods this instance
+accepts, so a login application or relying system can offer exactly those:
+password sign-in, passkey sign-in when passkeys are configured, and every
+configured identity provider, in configuration order, with its id, display
+name, kind and the URL that starts a sign-in through it. It MUST NOT show a
+provider's client id, issuer, scopes, secrets or return URLs.
+
 r[authn.login.staged]
 Login MUST proceed through explicit stages, each issuing a token that is
 valid only for the next step:

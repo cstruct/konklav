@@ -54,6 +54,13 @@ out of scope" position.
 5. It redirects to the configured return URL. The browser receives the
    refresh cookie exactly as for a password login.
 
+A login application, or a relying system with a sign-in screen of its own,
+learns which buttons to show from `GET /v1/login/methods`
+(`r[authn.login.offered]`): password, passkeys when configured, and each
+identity provider in configuration order, with its id, display name, kind
+and start URL. It is public, so it shows what any sign-in screen shows and
+nothing else: no client ids, issuers, scopes or return URLs.
+
 Linking an extra provider to an existing subject happens while signed in:
 `POST /v1/credentials/oidc/{provider}/link` (with the access token, an
 allowed `Origin` and the client header) returns the provider URL and sets

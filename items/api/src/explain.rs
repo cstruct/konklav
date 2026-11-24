@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct ExplainQuery {
-    /// The tenant (a UUID or `root`); global roles only when absent.
+    /// The tenant (a UUID, a tenant key or `root`); global roles only when absent.
     pub tenant: Option<String>,
     /// The action to explain.
     pub action: String,

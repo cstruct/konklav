@@ -212,20 +212,13 @@ async fn explain_decision(
     ApiJson(body): ApiJson<ExplainDecision>,
 ) -> Result<Json<DecisionExplanation>, ApiError> {
     let subject: SubjectId = parse_id(&id, "subject id")?;
-    let mut tenant = body
-        .tenant
-        .as_deref()
-        .map(|value| {
-            tenants::parse_reference(value)
-                .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))
-        })
-        .transpose()?;
     if body.at.is_some() && body.session.is_some() {
         return Err(ApiError::invalid_request(
             "`at` can't be combined with a session: history doesn't keep sessions",
         ));
     }
     let mut conn = db.get().await?;
+    let mut tenant = crate::tenant_refs::require_some(&mut conn, body.tenant.as_deref()).await?;
     let now = Utc::now();
     let session = match body.session {
         Some(id) => Some(session_for(&mut conn, id, subject, &mut tenant).await?),
