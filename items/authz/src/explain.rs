@@ -641,7 +641,7 @@ fn session_checks(
         },
     ));
     let step_up = &requirements.step_up;
-    let satisfied = step_up_satisfied(step_up, claims, now);
+    let satisfied = step_up_satisfied(step_up, &crate::Caller::of(claims), now);
     checks.push(Check::new(
         "step_up",
         satisfied,

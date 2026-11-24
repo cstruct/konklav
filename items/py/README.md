@@ -130,10 +130,13 @@ For another tenant's scope, pass its owner as
 `requirements(ids, scope_tenants={"workspace": owner})`: then only shares
 satisfy it.
 
+`decide_for_subject(subject, tenant, requirements)` decides for a subject in a tenant (both ids) without a token, from the entitlement set the client fetches and caches for them, through the same evaluator as for tokens. Anything only a token carries is unmet, so a required session flag is denied as `missing_flag` and a required step-up as `no_token`. It raises `KonklavError` while the caches can't be trusted, as before the feed connects, and when the set can't be fetched; callers must deny. It only answers whether the subject may; it acts for no one.
+
 ### Typed results
 
-`decide`, `decide_request`, `verify` and `verify_request` return the decoded
-JSON. `decide_typed`, `decide_request_typed`, `verify_typed` and
+`decide`, `decide_request`, `decide_for_subject`, `verify` and
+`verify_request` return the decoded JSON. `decide_typed`,
+`decide_request_typed`, `decide_for_subject_typed`, `verify_typed` and
 `verify_request_typed` take the same arguments and return a `Decision` and
 an `AccessToken`:
 

@@ -307,7 +307,14 @@ class DenyReasonMissingActions(TypedDict):
     missing_actions: MissingActions
 
 
-type DenyReason = DenyReasonInvalidToken | DenyReasonInvalidDpopProof | DenyReasonTokenKind | DenyReasonRestrictedSession | DenyReasonConfinedSession | DenyReasonTenantFacts | DenyReasonMissingFlag | DenyReasonNoTenant | DenyReasonUnknownScope | DenyReasonMissingActions
+type DenyReasonNoToken = Literal['no_token']
+"""
+Decided without a token, for a subject in a tenant, and the
+operation needs step-up, which only a token can show.
+"""
+
+
+type DenyReason = DenyReasonInvalidToken | DenyReasonInvalidDpopProof | DenyReasonTokenKind | DenyReasonRestrictedSession | DenyReasonConfinedSession | DenyReasonTenantFacts | DenyReasonMissingFlag | DenyReasonNoTenant | DenyReasonUnknownScope | DenyReasonMissingActions | DenyReasonNoToken
 
 
 type Effect = Literal['allow', 'deny']

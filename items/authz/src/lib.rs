@@ -14,8 +14,8 @@ mod route_authority;
 
 pub use compile::{compile, shared};
 pub use evaluate::{
-    Decision, DenyReason, Obligation, Requirements, ScopeRequirement, StepUp, evaluate,
-    evaluate_with_route_authority,
+    Caller, Decision, DenyReason, Obligation, Requirements, ScopeRequirement, StepUp, evaluate,
+    evaluate_for, evaluate_with_route_authority,
 };
 pub use explain::{
     ActionExplanation, Check, Contribution, DecisionExplanation, ExplainInput, Explanation, Reason,

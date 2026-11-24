@@ -372,6 +372,37 @@ class RelyingClient:
             await asyncio.gather(*(self._fetch(need) for need in needs))
         raise KonklavError("could not reach a decision")
 
+    # r[impl relying.decision.subject]
+    # r[impl relying.decision.subject.fail-closed]
+    async def decide_for_subject(self, subject: str, tenant: str, requirements: Mapping[str, Any]) -> _DecisionJson:
+        """
+        Decide `requirements` for `subject` in `tenant` (both ids) without a
+        token, from the entitlement set this client fetches and caches for
+        them, as it does for tokens. It only answers whether they may; it
+        doesn't act on their behalf.
+
+        Anything only a token carries is unmet: it is decided as for a
+        `tenant` token whose session carries no flags and no
+        authentication, so a required session flag is denied as missing,
+        and a required step-up as `no_token`.
+
+        Raises `KonklavError` while the caches can't be trusted, as before
+        the feed connects (the check API decides for tokens only, so there
+        is nothing to fall back to), or when a fetch fails. Callers must
+        deny.
+        """
+        encoded = json.dumps(requirements)
+        for _ in range(4):
+            with self._lock:
+                outcome = json.loads(self._core.decide_for_subject(subject, tenant, encoded, _now()))
+            if outcome["outcome"] == "decided":
+                return outcome["decision"]
+            needs = outcome["needs"]
+            if any(need["need"] == "check" for need in needs):
+                raise KonklavError("the relying caches can't be trusted yet")
+            await asyncio.gather(*(self._fetch(need) for need in needs))
+        raise KonklavError("could not reach a decision")
+
     # -- typed results ----------------------------------------------------
 
     # r[impl item.py.typed.compatible]
@@ -394,6 +425,10 @@ class RelyingClient:
                 authorization=authorization, dpop=dpop, method=method, url=url, requirements=requirements
             )
         )
+
+    async def decide_for_subject_typed(self, subject: str, tenant: str, requirements: Mapping[str, Any]) -> Decision:
+        """`decide_for_subject`, returning a `Decision`."""
+        return Decision.from_json(await self.decide_for_subject(subject, tenant, requirements))
 
     async def verify_typed(self, token: str) -> AccessToken | None:
         """`verify`, returning an `AccessToken`."""

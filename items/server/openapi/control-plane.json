@@ -5270,6 +5270,14 @@
                 }
               }
             }
+          },
+          {
+            "type": "string",
+            "title": "DenyReasonNoToken",
+            "description": "Decided without a token, for a subject in a tenant, and the\noperation needs step-up, which only a token can show.",
+            "enum": [
+              "no_token"
+            ]
           }
         ]
       },

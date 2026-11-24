@@ -117,6 +117,33 @@ r[relying.decision.fail-closed]
 If the relying SDK can neither decide locally nor reach the check API, it
 MUST deny.
 
+### Deciding for a subject without a token
+
+r[relying.decision.subject]
+The relying SDK MUST be able to decide an operation's requirements for a
+subject in a tenant without a token, from the entitlement set it fetches and
+caches for that subject and tenant, through the same evaluator that decides
+for tokens. Anything only a token carries is unmet: the decision MUST be
+made as for a `tenant` token whose session carries no flags and no
+authentication methods, and with no DPoP proof. So a requirement that needs
+a session flag MUST be denied as a missing flag, one that needs step-up
+MUST be denied as needing a token (`no_token`) rather than answered with a
+step-up, and one that accepts no `tenant` token MUST be denied for its token
+kind. Tenant fact predicates MUST be decided from the cached set, as for a
+token.
+
+r[relying.decision.subject.fail-closed]
+Deciding for a subject MUST fail closed, like every other decision: while
+the SDK's caches can't be trusted, or when the entitlement set can't be
+fetched, it MUST answer with an error, which the caller treats as a deny.
+The check API decides for tokens only, so there is no fallback to it.
+
+r[relying.decision.subject.no-delegation]
+Deciding for a subject MUST only answer whether the subject may do what the
+requirements describe in the tenant. It MUST NOT act on the subject's
+behalf: it issues, exchanges and presents no token. Acting for a subject
+with a token of its own (token exchange) stays deferred.
+
 ## Entitlement cache
 
 r[relying.cache.ttl]

@@ -36,9 +36,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
 use konklav_authz::{Decision, DenyReason, EntitlementSet, Requirements, RouteAuthority};
-use konklav_core::Cursor;
 pub use konklav_core::feed::SubjectErased;
 use konklav_core::feed::{FeedEvent, SessionChanged};
+use konklav_core::{Cursor, SubjectId, TenantId};
 use konklav_relying::{
     Acceptance, Config, Key, Need, Outcome, PresentationId, Relying, ScopeRecord, Verification,
 };
@@ -85,6 +85,10 @@ pub enum Error {
     Status { status: u16, body: String },
     #[error("could not reach a decision")]
     Exhausted,
+    /// The caches can't be trusted yet, as before the change feed connects,
+    /// and a decision without a token has no check API to fall back to.
+    #[error("the relying caches can't be trusted yet")]
+    Untrusted,
 }
 
 /// What verifying a request's presentation found.
@@ -466,6 +470,45 @@ impl RelyingClient {
                 };
             }
             self.fetch_all(&needs).await?;
+        }
+        Err(Error::Exhausted)
+    }
+
+    /// Decides `requirements` for `subject` in `tenant` without a token,
+    /// from the entitlement set the client fetches and caches for them, as
+    /// it does for tokens. Fails closed: an error means deny.
+    ///
+    /// Anything only a token carries is unmet. It is decided as for a
+    /// `tenant` token whose session carries no flags and no authentication:
+    /// a required session flag is denied as missing, and a required step-up
+    /// as [`DenyReason::NoToken`]. It only answers whether the subject may;
+    /// it doesn't act on their behalf.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Untrusted`] while the caches can't be trusted, as before the
+    /// change feed connects: the check API decides for tokens only, so
+    /// there is nothing to fall back to. A failed fetch of the entitlement
+    /// set or a registered scope is its error.
+    // r[impl relying.decision.subject]
+    // r[impl relying.decision.subject.fail-closed]
+    pub async fn decide_for_subject(
+        &self,
+        subject: SubjectId,
+        tenant: TenantId,
+        requirements: &Requirements,
+    ) -> Result<Decision, Error> {
+        for _ in 0..4 {
+            let outcome = self
+                .core()
+                .decide_for_subject(subject, tenant, requirements, now());
+            match outcome {
+                Outcome::Decided { decision } => return Ok(decision),
+                Outcome::Need { needs } if needs.contains(&Need::Check) => {
+                    return Err(Error::Untrusted);
+                }
+                Outcome::Need { needs } => self.fetch_all(&needs).await?,
+            }
         }
         Err(Error::Exhausted)
     }

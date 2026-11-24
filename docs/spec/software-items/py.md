@@ -95,10 +95,10 @@ r[item.py.typed.access-token]
 seconds.
 
 r[item.py.typed.compatible]
-`RelyingClient`'s `decide`, `decide_request`, `verify` and `verify_request`
-MUST keep returning the decoded JSON. Typed results MUST come from separate
-methods, `decide_typed`, `decide_request_typed`, `verify_typed` and
-`verify_request_typed`, which take the same arguments, also accept a
+`RelyingClient`'s `decide`, `decide_request`, `decide_for_subject`, `verify`
+and `verify_request` MUST keep returning the decoded JSON. Typed results
+MUST come from separate methods, `decide_typed`, `decide_request_typed`,
+`decide_for_subject_typed`, `verify_typed` and `verify_request_typed`, which take the same arguments, also accept a
 `Requirements` mapping built by `Policy.requirements`, and raise the same
 errors.
 

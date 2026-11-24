@@ -10,7 +10,7 @@ use ed25519_dalek::SigningKey;
 use konklav_authz::{Decision, DenyReason, Requirements};
 use konklav_core::Cursor;
 use konklav_relying::Config;
-use konklav_relying_client::{ClientConfig, ErasureNotice, RelyingClient};
+use konklav_relying_client::{ClientConfig, ErasureNotice, Error, RelyingClient};
 use konklav_server::config::Listen;
 use konklav_server::feed::FeedHub;
 use konklav_server::keys::ConfiguredKeys;
@@ -145,6 +145,8 @@ struct World {
     membership: String,
     /// The human the token is for.
     human: String,
+    /// The service principal the client signs in as.
+    service: String,
 }
 
 async fn world() -> World {
@@ -254,6 +256,7 @@ async fn world() -> World {
         session: selected["session_id"].as_str().unwrap().to_owned(),
         membership,
         human: human.to_string(),
+        service: service.to_string(),
         client,
         config,
         server,
@@ -881,4 +884,122 @@ async fn a_route_decision_vouches_locally_and_through_the_check_api() {
             );
         }
     }
+}
+
+// r[verify relying.decision.subject]
+// r[verify relying.decision.subject.fail-closed]
+#[tokio::test(flavor = "multi_thread")]
+async fn decides_for_a_subject_without_a_token() {
+    let world = world().await;
+    let human: konklav_core::SubjectId = world.human.parse().unwrap();
+    let tenant = konklav_core::TenantId::from(world.tenant);
+
+    // A scope-bound grant: `project:write` at project p-1 only.
+    world
+        .server
+        .control(
+            Method::PUT,
+            "/v1/catalog",
+            json!({
+                "actions": [{"name": "project:read"}, {"name": "project:write"}],
+                "scope_kinds": [{"name": "project"}],
+            }),
+        )
+        .await;
+    world
+        .server
+        .control(
+            Method::PUT,
+            &format!("/v1/tenants/{}/roles/writer", world.tenant),
+            json!({"policies": [{"action": "project:write", "effect": "allow", "scope_bound": true}]}),
+        )
+        .await;
+    world
+        .server
+        .control(
+            Method::POST,
+            &format!("/v1/memberships/{}/assignments", world.membership),
+            json!({"role": "writer", "scope": {"kind": "project", "id": "p-1"}}),
+        )
+        .await;
+
+    // Not trusted before the feed connects, and the check API decides for
+    // tokens only.
+    let idle = RelyingClient::new(world.config.clone());
+    assert!(matches!(
+        idle.decide_for_subject(human, tenant, &reading()).await,
+        Err(Error::Untrusted)
+    ));
+
+    until_trusted(&world.client).await;
+    let decide = |requirements: Requirements| {
+        let client = &world.client;
+        async move {
+            client
+                .decide_for_subject(human, tenant, &requirements)
+                .await
+        }
+    };
+    assert!(matches!(
+        decide(reading()).await.unwrap(),
+        Decision::Allow { .. }
+    ));
+    let writing = |project: &str| Requirements {
+        scopes: vec![konklav_authz::ScopeRequirement {
+            tenant: None,
+            kind: "project".into(),
+            id: project.into(),
+            actions: BTreeSet::from(["project:write".to_owned()]),
+        }],
+        ..Requirements::default()
+    };
+    assert!(matches!(
+        decide(writing("p-1")).await.unwrap(),
+        Decision::Allow { .. }
+    ));
+    assert_eq!(
+        decide(writing("p-2")).await.unwrap(),
+        Decision::Deny {
+            reason: DenyReason::MissingActions {
+                actions: BTreeSet::from(["project:write".to_owned()])
+            }
+        }
+    );
+    let stepped_up = Requirements {
+        step_up: konklav_authz::StepUp {
+            min_methods: Some(1),
+            ..konklav_authz::StepUp::default()
+        },
+        ..reading()
+    };
+    assert_eq!(
+        decide(stepped_up).await.unwrap(),
+        Decision::Deny {
+            reason: DenyReason::NoToken
+        },
+        "only a token shows an authentication"
+    );
+
+    // Konklav now refuses the client: a set it hasn't cached can't be
+    // fetched, and that fails, while the cached set still answers.
+    world
+        .server
+        .control(
+            Method::POST,
+            "/v1/sessions/revoke",
+            json!({"subject": world.service}),
+        )
+        .await;
+    let stranger = konklav_core::SubjectId::new_v7();
+    assert!(matches!(
+        world
+            .client
+            .decide_for_subject(stranger, tenant, &reading())
+            .await,
+        Err(Error::Status { .. })
+    ));
+    assert!(matches!(
+        decide(reading()).await.unwrap(),
+        Decision::Allow { .. }
+    ));
 }
