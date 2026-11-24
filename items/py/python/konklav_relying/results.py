@@ -45,6 +45,7 @@ type DenyCode = Literal[
     "no_tenant",
     "unknown_scope",
     "missing_actions",
+    "no_token",
 ]
 """The deny reasons Konklav gives; `DenyReason.code` may hold others from a newer server."""
 

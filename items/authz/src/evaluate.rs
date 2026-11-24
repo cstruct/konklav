@@ -155,6 +155,11 @@ pub enum DenyReason {
     UnknownScope { kind: String, id: String },
     #[cfg_attr(feature = "openapi", schema(title = "DenyReasonMissingActions"))]
     MissingActions { actions: BTreeSet<String> },
+    /// Decided without a token, for a subject in a tenant, and the
+    /// operation needs step-up, which only a token can show.
+    // r[impl relying.decision.subject]
+    #[cfg_attr(feature = "openapi", schema(title = "DenyReasonNoToken"))]
+    NoToken,
 }
 
 /// A share's attributes, for the relying system to apply to an allowed
@@ -202,6 +207,50 @@ impl Decision {
         Self::Allow {
             obligations: Vec::new(),
             vouches: RouteAuthority::default(),
+        }
+    }
+}
+
+/// What a decision reads of the caller: a verified token's claims, or, to
+/// decide without a token, a subject in a tenant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Caller<'a> {
+    pub kind: TokenKind,
+    pub tenant: Option<konklav_core::TenantId>,
+    /// The session's flags.
+    pub flags: &'a [String],
+    /// The authentication methods, as in `amr`.
+    pub methods: &'a [String],
+    /// When the subject last authenticated, in Unix seconds; unknown
+    /// without a token.
+    pub auth_time: Option<i64>,
+}
+
+impl<'a> Caller<'a> {
+    /// The caller a verified token's claims describe.
+    #[must_use]
+    pub fn of(claims: &'a AccessClaims) -> Self {
+        Self {
+            kind: claims.knd,
+            tenant: claims.tid,
+            flags: &claims.sfl,
+            methods: &claims.amr,
+            auth_time: Some(claims.auth_time),
+        }
+    }
+
+    /// A subject in `tenant`, decided for without a token: as a `tenant`
+    /// token whose session carries no flags and no authentication, so
+    /// whatever only a token carries is unmet.
+    // r[impl relying.decision.subject]
+    #[must_use]
+    pub fn without_token(tenant: konklav_core::TenantId) -> Self {
+        Self {
+            kind: TokenKind::Tenant,
+            tenant: Some(tenant),
+            flags: &[],
+            methods: &[],
+            auth_time: None,
         }
     }
 }
@@ -259,19 +308,46 @@ pub fn evaluate_with_route_authority(
     registered: &RegisteredScopes,
     now: i64,
 ) -> Decision {
+    evaluate_for(
+        requirements,
+        route_authority,
+        Caller::of(claims),
+        restrictive_flags,
+        confinements,
+        entitlements,
+        registered,
+        now,
+    )
+}
+
+/// As [`evaluate_with_route_authority`], for a [`Caller`]: a token's, or a
+/// subject's in a tenant without a token ([`Caller::without_token`]).
+// r[impl item.authz.single-evaluator]
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_for(
+    requirements: &Requirements,
+    route_authority: Option<&RouteAuthority>,
+    caller: Caller<'_>,
+    restrictive_flags: &BTreeSet<String>,
+    confinements: &Confinements,
+    entitlements: &Entitlements,
+    registered: &RegisteredScopes,
+    now: i64,
+) -> Decision {
     let none = RouteAuthority::default();
     let authority = route_authority.unwrap_or(&none);
     let accepted = requirements
         .token_kinds
         .clone()
         .unwrap_or_else(|| BTreeSet::from([TokenKind::Tenant]));
-    if !accepted.contains(&claims.knd) {
+    if !accepted.contains(&caller.kind) {
         return Decision::Deny {
             reason: DenyReason::TokenKind,
         };
     }
 
-    for flag in &claims.sfl {
+    for flag in caller.flags {
         if restrictive_flags.contains(flag) && !requirements.admit_flags.contains(flag) {
             return Decision::Deny {
                 reason: DenyReason::RestrictedSession { flag: flag.clone() },
@@ -279,7 +355,7 @@ pub fn evaluate_with_route_authority(
         }
     }
     // Before any action is considered, so global actions can't lift it.
-    if let Some(flag) = confinements.violated(&claims.sfl, claims.tid.is_some()) {
+    if let Some(flag) = confinements.violated(caller.flags, caller.tenant.is_some()) {
         return Decision::Deny {
             reason: DenyReason::ConfinedSession {
                 flag: flag.to_owned(),
@@ -287,7 +363,7 @@ pub fn evaluate_with_route_authority(
         };
     }
     for flag in &requirements.require_flags {
-        if !claims.sfl.contains(flag) {
+        if !caller.flags.contains(flag) {
             return Decision::Deny {
                 reason: DenyReason::MissingFlag { flag: flag.clone() },
             };
@@ -296,7 +372,7 @@ pub fn evaluate_with_route_authority(
 
     // Before step-up, which can't help, and before any action is
     // considered, so global actions can't lift it.
-    if let Some(fact) = failing_tenant_fact(requirements, confinements, claims) {
+    if let Some(fact) = failing_tenant_fact(requirements, confinements, &caller) {
         return Decision::Deny {
             reason: DenyReason::TenantFacts {
                 fact: fact.to_owned(),
@@ -304,7 +380,7 @@ pub fn evaluate_with_route_authority(
         };
     }
 
-    if !step_up_satisfied(&requirements.step_up, claims, now) {
+    if !step_up_satisfied(&requirements.step_up, &caller, now) {
         return Decision::StepUp {
             requirement: requirements.step_up.clone(),
         };
@@ -314,7 +390,7 @@ pub fn evaluate_with_route_authority(
         .scopes
         .iter()
         .any(|required| !registered.kinds.contains(&required.kind));
-    if (!requirements.tenant.is_empty() || unregistered_scopes) && claims.tid.is_none() {
+    if (!requirements.tenant.is_empty() || unregistered_scopes) && caller.tenant.is_none() {
         return Decision::Deny {
             reason: DenyReason::NoTenant,
         };
@@ -340,7 +416,7 @@ pub fn evaluate_with_route_authority(
     let obligations = match scope_actions(
         requirements,
         authority,
-        claims,
+        &caller,
         entitlements,
         registered,
         now,
@@ -355,7 +431,7 @@ pub fn evaluate_with_route_authority(
         let vouches = if route_authority.is_some() {
             RouteAuthority::default()
         } else {
-            vouched_by(requirements, claims.tid, entitlements, registered)
+            vouched_by(requirements, caller.tenant, entitlements, registered)
         };
         Decision::Allow {
             obligations,
@@ -374,7 +450,7 @@ pub fn evaluate_with_route_authority(
 fn scope_actions(
     requirements: &Requirements,
     authority: &RouteAuthority,
-    claims: &AccessClaims,
+    caller: &Caller<'_>,
     entitlements: &Entitlements,
     registered: &RegisteredScopes,
     now: i64,
@@ -396,15 +472,18 @@ fn scope_actions(
                 });
             };
             let (granted, relied) =
-                registered_actions(entitlements, claims, record, &required.actions, now);
-            let owned = claims.tid == Some(record.tenant);
+                registered_actions(entitlements, caller, record, &required.actions, now);
+            let owned = caller.tenant == Some(record.tenant);
             (granted, relied, Some(record), owned)
-        } else if let Some(owner) = required.tenant.filter(|owner| Some(*owner) != claims.tid) {
+        } else if let Some(owner) = required
+            .tenant
+            .filter(|owner| Some(*owner) != caller.tenant)
+        {
             let (granted, relied) =
                 shared_actions(entitlements, owner, &scope, &required.actions, now);
             (granted, relied, None, false)
         } else {
-            let owned = claims.tid.is_some();
+            let owned = caller.tenant.is_some();
             (
                 entitlements.actions_at(Some(&scope)),
                 Vec::new(),
@@ -437,14 +516,14 @@ fn scope_actions(
 // r[impl authz.registered.no-tenant]
 fn registered_actions<'a>(
     entitlements: &'a Entitlements,
-    claims: &AccessClaims,
+    caller: &Caller<'_>,
     record: &Registration,
     required: &BTreeSet<String>,
     now: i64,
 ) -> (BTreeSet<&'a str>, Vec<Obligation>) {
     let mut granted: BTreeSet<&str> = entitlements.global.iter().map(String::as_str).collect();
     let mut obligations = Vec::new();
-    let Some(tenant) = claims.tid else {
+    let Some(tenant) = caller.tenant else {
         return (granted, obligations);
     };
     let scopes = std::iter::once(record.scope()).chain(record.containers.iter().cloned());
@@ -500,17 +579,17 @@ fn shared_actions<'a>(
 pub(crate) fn failing_tenant_fact<'a>(
     requirements: &'a Requirements,
     confinements: &Confinements,
-    claims: &AccessClaims,
+    caller: &Caller<'_>,
 ) -> Option<&'a str> {
-    if claims.tid.is_none() {
+    if caller.tenant.is_none() {
         return requirements.tenant_facts.keys().next().map(String::as_str);
     }
     failing_predicate(&requirements.tenant_facts, &confinements.tenant_facts)
 }
 
-pub(crate) fn step_up_satisfied(step_up: &StepUp, claims: &AccessClaims, now: i64) -> bool {
-    let counted = claims
-        .amr
+pub(crate) fn step_up_satisfied(step_up: &StepUp, caller: &Caller<'_>, now: i64) -> bool {
+    let counted = caller
+        .methods
         .iter()
         .filter(|method| {
             step_up
@@ -523,6 +602,6 @@ pub(crate) fn step_up_satisfied(step_up: &StepUp, claims: &AccessClaims, now: i6
     let enough = step_up.min_methods.is_none_or(|min| counted >= min);
     let fresh = step_up
         .max_age_seconds
-        .is_none_or(|max_age| now - claims.auth_time <= max_age);
+        .is_none_or(|max_age| caller.auth_time.is_some_and(|at| now - at <= max_age));
     enough && fresh
 }

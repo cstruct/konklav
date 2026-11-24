@@ -35,6 +35,7 @@ The core never makes network calls, reads clocks, spawns tasks or sleeps. Hosts 
 
 ## Public interface
 
+- `Relying::decide_for_subject(subject, tenant, requirements, now)` decides for a subject in a tenant without a token, from the cached entitlement set for `Key { subject, tenant: Some(tenant) }`, through `konklav_authz::evaluate_for` with `Caller::without_token`: as a `tenant` token whose session has no flags and no authentication, with a step-up it would need turned into `DenyReason::NoToken`. It needs the feed's trust only, not the JWKS; `Need::Check` means the host must fail (`relying.decision.subject`).
 - `Relying::decide` returns `Outcome::Decided` or `Outcome::Need { needs }`. `decide_presented` and `verify_presented` take a `Presented` (raw headers and a `RequestDescriptor`) for DPoP; `decide` and `verify` take a bearer token. `accept_presented` verifies a `Presented` once and holds it under a `PresentationId` for `decide_accepted`, which doesn't check the proof again, until `release_accepted`.
 - `decide_accepted`'s `route` flag marks the route decision (`relying.verify.route-authority`): what its allow vouches for is kept with the presentation, and every other decision of the request is decided with it. When a decision is handed to the check API, `route_authority` gives the `route_authority` to send with it, and `on_check_accepted` records the answer, keeping a route decision's vouches as a local one's are.
 - `Verification::InvalidProof` and `DenyReason::InvalidDpopProof` mean the relying system should answer with a `WWW-Authenticate: DPoP` challenge.
@@ -74,6 +75,7 @@ cargo build -p konklav-relying --target wasm32-unknown-unknown
   - registered scopes: lazy fetches, unknown scopes, moves within the debounce window, the size bound
   - DPoP: schemes, proofs checked before the check API, replays, the bounded replay set
   - route policies: merging, overrides, public policies, contradictions, requirements
+  - deciding for a subject without a token (`tests/subject.rs`): allowing, missing actions, scope-bound grants, token-only requirements denied, tenant facts from the set, untrusted caches, and the set fetched once and reused until it expires
   - rate limits: bursts and intervals, several windows, refusals that don't count, the local divisor, the key bound and expiry, store calls and backoff
 - Indirect coverage: the native client's end-to-end tests against a real server, the Python tests, and both hosts' rate-limit tests against a real Valkey, which run `STORE_SCRIPT`.
 

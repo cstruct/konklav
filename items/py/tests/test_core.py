@@ -127,3 +127,29 @@ def test_tenant_facts_are_decided_from_the_cached_set() -> None:
         except ValueError:
             continue
         raise AssertionError(f"{unmatchable} should be refused")
+
+
+# r[verify relying.decision.subject]
+# r[verify relying.decision.subject.fail-closed]
+def test_decides_for_a_subject_from_the_cached_set() -> None:
+    keys = Keys()
+    subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
+
+    def decide_for(core: Core, requirements: dict) -> dict:
+        return json.loads(core.decide_for_subject(subject, tenant, json.dumps(requirements), now()))
+
+    untrusted = Core(json.dumps({"issuer": ISSUER, "audience": AUDIENCE}))
+    assert decide_for(untrusted, {"tenant": ["project:read"]}) == {"outcome": "need", "needs": [{"need": "check"}]}
+
+    core = warm_core(keys, subject, tenant, session)
+    assert decide_for(core, {"tenant": ["project:read"]}) == {"outcome": "decided", "decision": {"decision": "allow"}}
+    assert decide_for(core, {"tenant": ["project:read"], "step_up": {"max_age_seconds": 60}})["decision"] == {
+        "decision": "deny",
+        "reason": "no_token",
+    }
+    try:
+        core.decide_for_subject("not a uuid", tenant, "{}", now())
+    except ValueError as error:
+        assert "subject" in str(error)
+    else:
+        raise AssertionError("a malformed subject is refused")

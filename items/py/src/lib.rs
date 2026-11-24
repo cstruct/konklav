@@ -5,8 +5,8 @@
 //! `konklav_relying` adds the I/O (httpx, asyncio) around it.
 
 use konklav_authz::{Decision, EntitlementSet, Requirements};
-use konklav_core::Cursor;
 use konklav_core::feed::{FeedEvent, SessionChanged};
+use konklav_core::{Cursor, SubjectId, TenantId};
 use konklav_relying::rate_limit::{
     Attempt, RateLimitConfig, RateLimited, RateLimiter, STORE_SCRIPT, StoreSecret,
 };
@@ -57,6 +57,31 @@ impl Core {
         let presented: Presented = parse(presented, "presented token")?;
         let requirements: Requirements = parse(requirements, "requirements")?;
         dump(&self.inner.decide_presented(&presented, &requirements, now))
+    }
+
+    /// Decides for `subject` (a UUID) in `tenant` (a UUID) without a token,
+    /// from the cached entitlement set. Returns an outcome like
+    /// [`Core::decide`]; a `check` need means the caches can't be trusted,
+    /// and the host must fail, since the check API decides for tokens only.
+    fn decide_for_subject(
+        &mut self,
+        subject: &str,
+        tenant: &str,
+        requirements: &str,
+        now: u64,
+    ) -> PyResult<String> {
+        let subject: SubjectId = subject
+            .parse()
+            .map_err(|_| PyValueError::new_err("invalid subject: not a UUID"))?;
+        let tenant: TenantId = tenant
+            .parse()
+            .map_err(|_| PyValueError::new_err("invalid tenant: not a UUID"))?;
+        let requirements: Requirements = parse(requirements, "requirements")?;
+        dump(
+            &self
+                .inner
+                .decide_for_subject(subject, tenant, &requirements, now),
+        )
     }
 
     /// Returns `{"outcome": "verified", "claims": ...}`, `{"outcome":

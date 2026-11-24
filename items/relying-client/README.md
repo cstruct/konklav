@@ -13,6 +13,15 @@ Native Rust host binding for the relying core, on tokio and reqwest.
   3. Asks `/v1/check` when the core says the caches can't be trusted.
 
   Errors mean deny. `decide_request` takes a `Presented` (the request's raw `Authorization` and `DPoP` headers and the public URL it addressed) so sender-constrained tokens work too; `decide` takes a bearer token.
+- `decide_for_subject(subject: SubjectId, tenant: TenantId, requirements: &Requirements) -> Result<Decision, Error>` decides for a subject in a tenant without a token (`relying.decision.subject`), such as whether to list someone as able to approve something. It uses the entitlement set the client fetches and caches for that subject and tenant, the same one their tokens are decided from, through the same evaluator. Anything only a token carries is unmet: it decides as for a `tenant` token whose session has no flags and no authentication, so a required session flag is denied as `MissingFlag` and a required step-up as `DenyReason::NoToken`. It fails closed: `Error::Untrusted` while the caches can't be trusted (there is no check API to fall back to, since it decides for tokens only), and the fetch's error when the set can't be fetched. It only answers whether the subject may; it acts for no one, and token exchange stays deferred.
+
+  ```rust
+  // Fails closed: an error is a deny.
+  let may_approve = matches!(
+      client.decide_for_subject(subject, tenant, &requirements).await,
+      Ok(Decision::Allow { .. })
+  );
+  ```
 - `accept_request`, `decide_accepted`, `release_accepted` and `verify_request`, for hosts that need a request's verified claims before they can state its requirements, or that decide more than once per request (`relying.verify.accepted-presentation`): `accept_request` verifies the token, its session and its DPoP proof once and returns the claims with a handle; `decide_accepted` decides for the handle, as often as the request needs, without checking the proof again, and its `route` flag marks the route decision, whose vouches the request's later decisions are made with, locally or through `/v1/check` (`relying.verify.route-authority`); `release_accepted` ends the handle once the request is answered; `verify_request` verifies without deciding. Each falls back to `/v1/check` like `decide`, and returns `Verified::{Valid, Invalid, InvalidProof}`.
 - `await_cursor` for read-your-writes after a Konklav write.
 - Erasure, for relying systems that keep data about subjects ([erasure](../../docs/architecture/erasure.md#through-the-relying-sdk)):
@@ -58,12 +67,13 @@ cargo test -p konklav-relying-client
 cargo test -p konklav-relying-client --features redis
 ```
 
-- Direct coverage: end to end against a real server on ephemeral ports:
+- Direct coverage: a scripted Konklav (`tests/client.rs`) for refusals, failures, stalls and redirects, including deciding for a subject before the feed connects without asking Konklav anything; and end to end against a real server on ephemeral ports:
   - check-API fallback before the feed connects, then local decisions
   - revocation through the feed
   - erasure: the notice at start, the live notice, and reading the list
   - read-your-writes after removing an assignment
   - accepting a request once and deciding for it once
+  - deciding for a subject without a token: allowing, missing actions, a scope-bound grant, step-up denied as `NoToken`, failing before the feed connects and when Konklav refuses the fetch, and answering from the cached set meanwhile
 - Rate limits against the development Valkey (`REDIS_URL`): one limit shared by two clients, refusals that don't count, hashed and expiring keys, and falling back to memory and recovering when a proxy cuts the connection.
 - Pacing and fake ids (`tests/pacing.rs` and the modules' own tests): the work and the wait together, errors waiting and cancellation and panics not, the delay's range, and the layout and claimed time of fake ids.
 

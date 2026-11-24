@@ -667,3 +667,52 @@ def test_background_work_backs_off_while_fetches_fail(monkeypatch: pytest.Monkey
             assert full / 2 <= wait <= full
 
     asyncio.run(scenario())
+
+
+# r[verify relying.decision.subject]
+# r[verify relying.decision.subject.fail-closed]
+def test_decides_for_a_subject_without_a_token() -> None:
+    async def scenario() -> None:
+        keys = Keys()
+        subject, tenant, session = (str(uuid.uuid4()) for _ in range(3))
+        fake = FakeKonklav(keys, subject, tenant, session)
+        client = client_for(fake)
+        reading = {"tenant": ["project:read"]}
+
+        # Before the feed connects there is nothing to decide from, and the
+        # check API decides for tokens only: no decision, and Konklav isn't
+        # asked.
+        with pytest.raises(KonklavError):
+            await client.decide_for_subject(subject, tenant, reading)
+        assert fake.calls == []
+
+        await client.start()
+        try:
+            await until_trusted(client)
+            assert await client.decide_for_subject(subject, tenant, reading) == {"decision": "allow"}
+            assert await client.decide_for_subject(subject, tenant, {"tenant": ["project:write"]}) == {
+                "decision": "deny",
+                "reason": {"missing_actions": {"actions": ["project:write"]}},
+            }
+            stepped_up = {**reading, "step_up": {"min_methods": 1}}
+            assert await client.decide_for_subject(subject, tenant, stepped_up) == {
+                "decision": "deny",
+                "reason": "no_token",
+            }
+            typed = await client.decide_for_subject_typed(subject, tenant, stepped_up)
+            assert not typed.allowed and typed.reason is not None and typed.reason.code == "no_token"
+            flagged = {**reading, "require_flags": ["hardware_key"]}
+            assert (await client.decide_for_subject_typed(subject, tenant, flagged)).reason == DenyReason(
+                "missing_flag", flag="hardware_key"
+            )
+            # One fetch of the set, reused since.
+            assert fake.calls.count(f"/v1/entitlements/{subject}/{tenant}") == 1
+
+            # A set that can't be fetched decides nothing.
+            fake.refuse_entitlements = True
+            with pytest.raises(KonklavError):
+                await client.decide_for_subject(str(uuid.uuid4()), tenant, reading)
+        finally:
+            await client.stop()
+
+    asyncio.run(scenario())

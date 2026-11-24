@@ -284,3 +284,29 @@ fn the_secret_stays_out_of_debug_output() {
     assert!(shown.contains("key_id: \"key\""), "{shown}");
     assert!(!shown.contains(SECRET), "{shown}");
 }
+
+// Deciding for a subject needs the cached sets: before the feed connects
+// it fails, without asking Konklav anything, since the check API decides
+// for tokens only.
+// r[verify relying.decision.subject.fail-closed]
+#[tokio::test]
+async fn deciding_for_a_subject_before_the_feed_connects_fails() {
+    let fake = Fake::new(|path, _| match path {
+        "/v1/login/secret-key" => login(),
+        _ => decision(&Decision::allow()),
+    })
+    .await;
+    let client = fake.client(1);
+    let decided = client
+        .decide_for_subject(
+            SubjectId::new_v7(),
+            TenantId::new_v7(),
+            &Requirements::default(),
+        )
+        .await;
+    assert!(
+        matches!(decided, Err(konklav_relying_client::Error::Untrusted)),
+        "{decided:?}"
+    );
+    assert!(fake.paths().is_empty(), "{:?}", fake.paths());
+}

@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use konklav_authz::{
-    Decision, DenyReason, EntitlementSet, RegisteredScopes, Registration, Requirements,
-    RouteAuthority, Scope, evaluate_with_route_authority,
+    Caller, Decision, DenyReason, EntitlementSet, RegisteredScopes, Registration, Requirements,
+    RouteAuthority, Scope, evaluate_for,
 };
 use konklav_core::feed::{
     EntitlementsChanged, FeedEvent, FeedPayload, ScopeChanged, SessionChanged, SubjectErased,
@@ -284,10 +284,16 @@ impl Relying {
     // r[impl relying.fallback.signing-keys]
     #[must_use]
     pub fn is_trusted(&self, now: u64) -> bool {
+        self.feed_trusted(now) && self.jwks_trust == JwksTrust::Current
+    }
+
+    /// Whether the cached entitlement sets can be trusted: the feed is
+    /// connected, caught up and recently heard from. Deciding without a
+    /// token needs no more; verifying a token also needs current keys.
+    fn feed_trusted(&self, now: u64) -> bool {
         let silence = self.config.heartbeat_ms * self.config.missed_heartbeats;
         self.feed.connected
             && !self.feed.catching_up
-            && self.jwks_trust == JwksTrust::Current
             && now.saturating_sub(self.feed.last_seen) < silence
     }
 
@@ -689,37 +695,105 @@ impl Relying {
             Ok(checked) => checked,
             Err(outcome) => return (outcome, false),
         };
-        let now_seconds = i64::try_from(now / 1000).unwrap_or(i64::MAX);
-
         let key = Key {
             subject: claims.sub,
             tenant: claims.tid,
         };
+        let decided = self.decide_with_set(
+            key,
+            requirements,
+            route_authority,
+            Caller::of(&claims),
+            &mut needs,
+            now,
+        );
+        let outcome = match decided {
+            Some(decision) => Outcome::Decided { decision },
+            None => Outcome::Need { needs },
+        };
+        (outcome, true)
+    }
+
+    /// Decides `requirements` for `caller` from the cached entitlement set
+    /// for `key` and the registered scopes they name, or adds to `needs`
+    /// what to fetch first and returns `None`. `needs` may already hold
+    /// what the caller's token needs; nothing is decided until it is empty.
+    fn decide_with_set(
+        &mut self,
+        key: Key,
+        requirements: &Requirements,
+        route_authority: Option<&RouteAuthority>,
+        caller: Caller<'_>,
+        needs: &mut Vec<Need>,
+        now: u64,
+    ) -> Option<Decision> {
         let usable = self.usable_entry(key, now);
         if let Some(entry) = self.entries.get_mut(&key) {
             entry.last_used = now;
         }
         let Some(set) = usable else {
             needs.push(Need::Entitlements { key });
-            return (Outcome::Need { needs }, true);
+            return None;
         };
-        let registered = self.registered_for(&set, requirements, now, &mut needs);
+        let registered = self.registered_for(&set, requirements, now, needs);
         if !needs.is_empty() {
-            return (Outcome::Need { needs }, true);
+            return None;
         }
-        let outcome = Outcome::Decided {
-            decision: evaluate_with_route_authority(
-                requirements,
-                route_authority,
-                &claims,
-                &set.restrictive_flags,
-                &set.confinements,
-                &set.entitlements,
-                &registered,
-                now_seconds,
-            ),
+        let now_seconds = i64::try_from(now / 1000).unwrap_or(i64::MAX);
+        Some(evaluate_for(
+            requirements,
+            route_authority,
+            caller,
+            &set.restrictive_flags,
+            &set.confinements,
+            &set.entitlements,
+            &registered,
+            now_seconds,
+        ))
+    }
+
+    /// Decides `requirements` for `subject` in `tenant` without a token,
+    /// from the entitlement set cached for them, or says what to fetch
+    /// first. Whatever only a token carries is unmet: it is decided as for
+    /// a `tenant` token whose session carries no flags and no
+    /// authentication, and a step-up it would need is a deny
+    /// ([`DenyReason::NoToken`]). It only answers whether they may: it acts
+    /// for no one.
+    ///
+    /// [`Need::Check`] means the cached entitlement sets can't be trusted:
+    /// the feed isn't connected, is catching up or has gone quiet. The
+    /// check API decides for tokens only, so the host must then fail: deny.
+    // r[impl relying.decision.subject]
+    // r[impl relying.decision.subject.fail-closed]
+    // r[impl relying.decision.subject.no-delegation]
+    pub fn decide_for_subject(
+        &mut self,
+        subject: SubjectId,
+        tenant: TenantId,
+        requirements: &Requirements,
+        now: u64,
+    ) -> Outcome {
+        // No token to verify, so the signing keys don't matter.
+        if !self.feed_trusted(now) {
+            return Outcome::Need {
+                needs: vec![Need::Check],
+            };
+        }
+        let key = Key {
+            subject,
+            tenant: Some(tenant),
         };
-        (outcome, true)
+        let mut needs = Vec::new();
+        let caller = Caller::without_token(tenant);
+        match self.decide_with_set(key, requirements, None, caller, &mut needs, now) {
+            Some(Decision::StepUp { .. }) => Outcome::Decided {
+                decision: Decision::Deny {
+                    reason: DenyReason::NoToken,
+                },
+            },
+            Some(decision) => Outcome::Decided { decision },
+            None => Outcome::Need { needs },
+        }
     }
 
     /// The records of the registered scopes `requirements` name, adding a

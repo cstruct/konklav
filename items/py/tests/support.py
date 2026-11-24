@@ -121,6 +121,8 @@ class FakeKonklav:
         self.checks: list[dict[str, Any]] = []
         # What `/v1/erased-subjects` lists, served one per page.
         self.erased: list[dict[str, Any]] = []
+        # Answer entitlement fetches with a server error.
+        self.refuse_entitlements = False
 
     def push(self, kind: str, payload: dict[str, Any]) -> int:
         self.cursor += 1
@@ -158,6 +160,8 @@ class FakeKonklav:
                 return httpx.Response(404, json={"error": {"code": "NOT_FOUND", "message": "x"}})
             return httpx.Response(200, json=self.session_state())
         if path.startswith("/v1/entitlements/"):
+            if self.refuse_entitlements:
+                return httpx.Response(500, json={"error": {"code": "INTERNAL", "message": "x"}})
             return httpx.Response(
                 200,
                 json={

@@ -17,6 +17,10 @@ The core is a state machine. Its inputs are:
 Its outputs are queries:
 
 - `decide(token, requirements, now) -> Decision | NeedsCheck(request)`
+- `decide_for_subject(subject, tenant, requirements, now) -> Decision |
+  NeedsCheck`, deciding without a token from the same cached set
+  (`r[relying.decision.subject]`). Whatever only a token carries is unmet,
+  and `NeedsCheck` means fail: the check API decides for tokens only.
 - `poll_work(now) -> [Fetch(key) | FetchScope(kind, id) | RefreshJwks | Reconnect]` together with
   `next_wakeup`
 - `await_cursor(c) -> Ready | Pending`
