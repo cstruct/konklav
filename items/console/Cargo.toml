@@ -10,7 +10,7 @@ publish.workspace = true
 [dependencies]
 base64.workspace = true
 futures-util.workspace = true
-gloo-net = { version = "0.7.0", default-features = false, features = ["http", "json"] }
+gloo-net = { version = "0.8.0", default-features = false, features = ["http", "json"] }
 js-sys = "0.3.106"
 leptos = { version = "0.8.22", features = ["csr"] }
 leptos_router = "0.8.12"
