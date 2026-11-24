@@ -94,12 +94,17 @@ and the invite stays pending for its owner to redeem with its password. For the 
 never returned for a "copy link": that would let whoever got it create the
 account for the address.
 
-A relying system needn't hold `konklav:invites:manage`, which reaches every
-tenant, to make link-only invites. Granted the tenant capability
-`konklav:tenant:invite` in a tenant, its service principal makes, lists and
-revokes link-only invites into that tenant on the relying surface. They give
-only that tenant's roles, and none naming a `konklav:` action, so the
-capability doesn't spread through the invites it makes.
+A tenant's own members can invite others into it, without an operator and
+without the relying system holding `konklav:invites:manage`, which reaches
+every tenant. A member granted the tenant capability `konklav:tenant:invite`
+there makes, lists and revokes link-only invites into the tenant on the
+subject-facing surface, with their own session; a relying system offers it
+by passing its users' requests on. Konklav checks the person, not the
+relying system: an invite gives only roles the inviter holds in the tenant,
+and none naming a `konklav:` action, so nobody invites another into more
+than they have and the capability doesn't spread through the invites it
+makes. Every invite records its inviter, the member or the operator, so who
+let someone in stays on record in Konklav.
 
 `POST /v1/invites/preview` lets a login application show what an invite is
 for before sign-in: pending or redeemed, its expiry, whether it is

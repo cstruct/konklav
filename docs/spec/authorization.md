@@ -120,8 +120,8 @@ r[authz.tenant-capability]
 the `konklav:` namespace that, unlike a control-plane capability, MAY be
 granted through tenant roles, and holds in the tenant whose membership it
 is assigned to, or in every tenant when granted through a global role. It
-lets a service principal make invites into the tenant on the relying
-surface (`authn.invite.relying`). Writing or assigning a role that names
+lets a subject make invites into the tenant on the subject-facing surface
+(`authn.invite.tenant`). Writing or assigning a role that names
 it MUST require `konklav:control:all`, as for a control-plane capability
 (`authz.control-plane.escalation`).
 

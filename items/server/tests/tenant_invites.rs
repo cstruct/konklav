@@ -1,6 +1,7 @@
-//! Invites a relying system makes for its own tenants on the relying
-//! surface, with the tenant capability `konklav:tenant:invite`, and signing
-//! up with an invite that lets a newcomer do so.
+//! Invites a tenant's members make into it on the subject-facing surface,
+//! with the tenant capability `konklav:tenant:invite`, giving only roles
+//! they hold; the inviter recorded on every invite; and signing up with an
+//! invite that lets a newcomer do so.
 
 #![allow(clippy::too_many_lines)]
 
@@ -12,13 +13,13 @@ use serde_json::{Value, json};
 
 const PASSWORD: &str = "correct horse battery";
 
-/// A tenant with the roles `viewer`, an ordinary one, and `inviter`, which
-/// names the tenant capability.
+/// A tenant with the roles `viewer` and `editor`, ordinary ones, and
+/// `inviter`, which names the tenant capability.
 async fn tenant(app: &TestApp) -> String {
     app.control(
         Method::PUT,
         "/v1/catalog",
-        Some(json!({"actions": [{"name": "record:read"}]})),
+        Some(json!({"actions": [{"name": "record:read"}, {"name": "record:write"}]})),
     )
     .await;
     let tenant = uuid::Uuid::now_v7().to_string();
@@ -32,6 +33,7 @@ async fn tenant(app: &TestApp) -> String {
     assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
     for (role, action) in [
         ("viewer", "record:read"),
+        ("editor", "record:write"),
         ("inviter", "konklav:tenant:invite"),
     ] {
         let written = app
@@ -46,11 +48,10 @@ async fn tenant(app: &TestApp) -> String {
     tenant
 }
 
-/// A service principal's access token, and its subject, a member of
-/// `tenant` with `roles`.
-async fn principal(app: &TestApp, tenant: &str, roles: &[&str]) -> String {
-    let token = app.service_token().await;
-    let subject = app.verify(&token).await.sub;
+/// A person who is a member of `tenant` with `roles`, signed in: their
+/// subject and access token.
+async fn member(app: &TestApp, tenant: &str, email: &str, roles: &[&str]) -> (String, String) {
+    let subject = app.human(email, PASSWORD).await;
     let membership = uuid::Uuid::now_v7();
     let joined = app
         .control(
@@ -70,33 +71,33 @@ async fn principal(app: &TestApp, tenant: &str, roles: &[&str]) -> String {
             .await;
         assert!(assigned.status.is_success(), "{:?}", assigned.body);
     }
-    token
+    let login = app.login(email, PASSWORD).await;
+    assert_eq!(login.status, StatusCode::OK, "{:?}", login.body);
+    (
+        subject,
+        login.body["access_token"].as_str().unwrap().to_owned(),
+    )
 }
 
-async fn relying(
-    app: &TestApp,
-    method: Method,
-    uri: &str,
-    token: &str,
-    body: Option<Value>,
-) -> Reply {
+async fn call(app: &TestApp, method: Method, uri: &str, token: &str, body: Option<Value>) -> Reply {
     let auth = format!("Bearer {token}");
     app.send(method, uri, &[("authorization", &auth)], body)
         .await
 }
 
-// r[verify authn.invite.relying]
+// r[verify authn.invite.tenant]
+// r[verify authn.invite.inviter]
 // r[verify authz.tenant-capability]
 #[tokio::test(flavor = "multi_thread")]
-async fn a_relying_system_invites_into_its_own_tenants_only() {
+async fn a_member_invites_into_their_own_tenant_only() {
     let app = TestApp::new().await;
     let mine = tenant(&app).await;
     let other = tenant(&app).await;
-    let inviter = principal(&app, &mine, &["inviter"]).await;
-    let viewer = principal(&app, &mine, &["viewer"]).await;
+    let (ada, inviter) = member(&app, &mine, "ada@example.com", &["inviter", "viewer"]).await;
+    let (_, viewer) = member(&app, &mine, "bea@example.com", &["viewer"]).await;
 
     // Made with its token shown once, link-only, into the tenant.
-    let made = relying(
+    let made = call(
         &app,
         Method::POST,
         &format!("/v1/tenants/{mine}/invites"),
@@ -108,9 +109,10 @@ async fn a_relying_system_invites_into_its_own_tenants_only() {
     let link = made.body["token"].as_str().unwrap().to_owned();
     let id = made.body["invite_id"].as_str().unwrap().to_owned();
 
-    // Not into another tenant, and not without the capability.
+    // Not into another tenant, not without the capability, and not without
+    // a session.
     for (tenant, token) in [(&other, &inviter), (&mine, &viewer)] {
-        let refused = relying(
+        let refused = call(
             &app,
             Method::POST,
             &format!("/v1/tenants/{tenant}/invites"),
@@ -120,22 +122,18 @@ async fn a_relying_system_invites_into_its_own_tenants_only() {
         .await;
         assert_eq!(refused.code(), "FORBIDDEN", "{:?}", refused.body);
     }
+    let anonymous = app
+        .post(&format!("/v1/tenants/{mine}/invites"), json!({}))
+        .await;
+    assert_eq!(
+        anonymous.status,
+        StatusCode::UNAUTHORIZED,
+        "{:?}",
+        anonymous.body
+    );
 
-    // Not by a person, even one holding the capability.
-    app.human("ada@example.com", PASSWORD).await;
-    let person = app.login("ada@example.com", PASSWORD).await;
-    let person = person.body["access_token"].as_str().unwrap().to_owned();
-    let refused = relying(
-        &app,
-        Method::POST,
-        &format!("/v1/tenants/{mine}/invites"),
-        &person,
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(refused.code(), "FORBIDDEN", "{:?}", refused.body);
-
-    // Listed: only the tenant's link-only invites, never an emailed one.
+    // Listed: only the tenant's link-only invites, never an emailed one,
+    // each with who made it.
     let emailed = app
         .control(
             Method::POST,
@@ -144,7 +142,7 @@ async fn a_relying_system_invites_into_its_own_tenants_only() {
         )
         .await;
     assert_eq!(emailed.status, StatusCode::CREATED, "{:?}", emailed.body);
-    let listed = relying(
+    let listed = call(
         &app,
         Method::GET,
         &format!("/v1/tenants/{mine}/invites"),
@@ -158,7 +156,8 @@ async fn a_relying_system_invites_into_its_own_tenants_only() {
     assert_eq!(invites[0]["id"], json!(id));
     assert_eq!(invites[0]["roles"], json!(["viewer"]));
     assert_eq!(invites[0]["state"], json!("pending"));
-    let elsewhere = relying(
+    assert_eq!(invites[0]["invited_by"], json!(ada));
+    let elsewhere = call(
         &app,
         Method::GET,
         &format!("/v1/tenants/{other}/invites"),
@@ -168,9 +167,21 @@ async fn a_relying_system_invites_into_its_own_tenants_only() {
     .await;
     assert_eq!(elsewhere.code(), "FORBIDDEN");
 
-    // Revoked from its own tenant only; the emailed one isn't its to revoke.
+    // The control plane shows the inviter too: the member, and none for the
+    // bootstrap token.
+    let got = app
+        .control(Method::GET, &format!("/v1/invites/{id}"), None)
+        .await;
+    assert_eq!(got.body["invited_by"], json!(ada));
     let emailed_id = emailed.body["invite_id"].as_str().unwrap();
-    let not_its = relying(
+    let got = app
+        .control(Method::GET, &format!("/v1/invites/{emailed_id}"), None)
+        .await;
+    assert_eq!(got.body["invited_by"], Value::Null, "{:?}", got.body);
+
+    // Revoked from its own tenant only; the emailed one isn't the member's
+    // to revoke.
+    let not_theirs = call(
         &app,
         Method::POST,
         &format!("/v1/tenants/{mine}/invites/{emailed_id}/revoke"),
@@ -178,8 +189,13 @@ async fn a_relying_system_invites_into_its_own_tenants_only() {
         None,
     )
     .await;
-    assert_eq!(not_its.status, StatusCode::NOT_FOUND, "{:?}", not_its.body);
-    let revoked = relying(
+    assert_eq!(
+        not_theirs.status,
+        StatusCode::NOT_FOUND,
+        "{:?}",
+        not_theirs.body
+    );
+    let revoked = call(
         &app,
         Method::POST,
         &format!("/v1/tenants/{mine}/invites/{id}/revoke"),
@@ -195,17 +211,17 @@ async fn a_relying_system_invites_into_its_own_tenants_only() {
     assert_eq!(preview.code(), "INVALID_CREDENTIALS");
 }
 
-// r[verify authn.invite.relying-roles]
-// r[verify authn.invite.relying]
+// r[verify authn.invite.tenant-roles]
+// r[verify authn.invite.tenant]
 #[tokio::test(flavor = "multi_thread")]
-async fn a_relying_invite_gives_only_the_tenants_plain_roles() {
+async fn a_member_invites_only_into_plain_roles_they_hold() {
     let app = TestApp::new().await;
     let mine = tenant(&app).await;
-    let inviter = principal(&app, &mine, &["inviter"]).await;
+    let (_, inviter) = member(&app, &mine, "ada@example.com", &["inviter", "viewer"]).await;
     let make = |body: Value| {
         let (app, mine, inviter) = (&app, &mine, &inviter);
         async move {
-            relying(
+            call(
                 app,
                 Method::POST,
                 &format!("/v1/tenants/{mine}/invites"),
@@ -215,7 +231,14 @@ async fn a_relying_invite_gives_only_the_tenants_plain_roles() {
             .await
         }
     };
-    // Not the power to invite, nor any role naming a konklav: action.
+    // A role they hold.
+    let held = make(json!({"roles": ["viewer"]})).await;
+    assert_eq!(held.status, StatusCode::CREATED, "{:?}", held.body);
+    // Not one of the tenant's they don't hold.
+    let more = make(json!({"roles": ["viewer", "editor"]})).await;
+    assert_eq!(more.code(), "FORBIDDEN", "{:?}", more.body);
+    // Not the power to invite, though they hold it, nor any role naming a
+    // konklav: action.
     let handing_on = make(json!({"roles": ["inviter"]})).await;
     assert_eq!(
         handing_on.code(),
@@ -231,12 +254,49 @@ async fn a_relying_invite_gives_only_the_tenants_plain_roles() {
     assert_eq!(emailed.code(), "INVALID_REQUEST", "{:?}", emailed.body);
 }
 
-/// A sign-up invite into a fresh tenant, made by a relying system, and its
-/// token.
+// r[verify authn.invite.inviter]
+#[tokio::test(flavor = "multi_thread")]
+async fn an_operators_invite_records_the_operator_and_keeps_its_first_inviter() {
+    let app = TestApp::new().await;
+    let ada = app.human("ada@example.com", PASSWORD).await;
+    let granted = app
+        .control(
+            Method::POST,
+            &format!("/v1/subjects/{ada}/global-assignments"),
+            Some(json!({"role": "konklav.admin"})),
+        )
+        .await;
+    assert!(granted.status.is_success(), "{:?}", granted.body);
+    let operator = app.login("ada@example.com", PASSWORD).await.body["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let id = uuid::Uuid::now_v7();
+    let body = json!({"id": id, "public_metadata": {"inviter": "Ada"}});
+    let made = call(
+        &app,
+        Method::POST,
+        "/v1/invites",
+        &operator,
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{:?}", made.body);
+    // A repeat by someone else is the same invite, still Ada's.
+    let repeated = app.control(Method::POST, "/v1/invites", Some(body)).await;
+    assert_eq!(repeated.status, StatusCode::OK, "{:?}", repeated.body);
+    let got = app
+        .control(Method::GET, &format!("/v1/invites/{id}"), None)
+        .await;
+    assert_eq!(got.body["invited_by"], json!(ada), "{:?}", got.body);
+}
+
+/// A sign-up invite into a fresh tenant, made by a member, and its token.
 async fn sign_up_invite(app: &TestApp) -> (String, String) {
     let mine = tenant(app).await;
-    let inviter = principal(app, &mine, &["inviter"]).await;
-    let made = relying(
+    let email = format!("{}@example.com", uuid::Uuid::now_v7());
+    let (_, inviter) = member(app, &mine, &email, &["inviter", "viewer"]).await;
+    let made = call(
         app,
         Method::POST,
         &format!("/v1/tenants/{mine}/invites"),

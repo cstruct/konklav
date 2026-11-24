@@ -1034,6 +1034,7 @@ class WrittenInvite(TypedDict):
     """
     expires_at: str
     id: str
+    invited_by: SubjectId | None
     membership: MembershipId | None
     metadata: dict[str, Any]
     """
@@ -1669,6 +1670,7 @@ class Invite(TypedDict):
     """
     expires_at: str
     id: str
+    invited_by: SubjectId | None
     membership: MembershipId | None
     metadata: dict[str, Any]
     """

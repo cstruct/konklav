@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use konklav_core::MembershipId;
+use konklav_core::{MembershipId, SubjectId};
 use serde::{Deserialize, Serialize};
 
 use crate::tenancy::empty_object;
@@ -51,10 +51,10 @@ pub struct CreateInvite {
     pub sign_up: bool,
 }
 
-/// Invites whoever the relying system shares the link with into the tenant
-/// in the path: a link-only invite made on the relying surface by a service
-/// principal holding `konklav:tenant:invite` there. Its roles are the
-/// tenant's, and none of them may name a `konklav:` action.
+/// Invites whoever the link is shared with into the tenant in the path: a
+/// link-only invite made on the subject-facing surface by a member holding
+/// `konklav:tenant:invite` there. Its roles are ones the member holds in the
+/// tenant, and none of them may name a `konklav:` action.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateTenantInvite {
@@ -177,6 +177,11 @@ pub struct Invite {
     /// Whether someone without an account may sign up when redeeming it.
     #[serde(default)]
     pub sign_up: bool,
+    /// Who made it: a member of its tenant, or an operator; `null` for the
+    /// bootstrap token, and for invites made before Konklav recorded it.
+    #[serde(default)]
+    #[schema(required)]
+    pub invited_by: Option<SubjectId>,
 }
 
 /// Which invites to list.

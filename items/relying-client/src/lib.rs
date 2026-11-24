@@ -28,7 +28,6 @@
 //! The decision rules live in `konklav-relying`; this crate only moves bytes.
 
 pub mod fake_ids;
-pub mod invites;
 pub mod pacing;
 pub mod rate_limit;
 
@@ -411,24 +410,6 @@ impl RelyingClient {
             refresh_at: now() + lifetime / 5 * 4,
         });
         Ok(login.access_token)
-    }
-
-    async fn post<T: serde::Serialize + ?Sized>(
-        &self,
-        path: &str,
-        body: Option<&T>,
-    ) -> Result<reqwest::Response, Error> {
-        let url = format!("{}{path}", self.inner.config.relying_url);
-        let mut request = self
-            .inner
-            .http
-            .post(url)
-            .bearer_auth(self.bearer().await?)
-            .timeout(REQUEST_TIMEOUT);
-        if let Some(body) = body {
-            request = request.json(body);
-        }
-        Ok(request.send().await?)
     }
 
     async fn get(&self, path: &str) -> Result<reqwest::Response, Error> {

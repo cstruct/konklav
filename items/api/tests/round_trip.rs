@@ -699,10 +699,12 @@ fn invites_round_trip() {
         "metadata_etag": "0123456789abcdef0123456789abcdef",
         "public_metadata": {},
         "sign_up": false,
+        "invited_by": null,
     });
     round_trips::<Invite>(&invite);
     let mut link_only = invite.clone();
     link_only["email"] = Value::Null;
+    link_only["invited_by"] = json!("0195e0a0-0000-7000-8000-000000000004");
     round_trips::<Invite>(&link_only);
     round_trips::<InvitePage>(&json!({"invites": [invite], "next": null}));
 }

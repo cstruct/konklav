@@ -6067,7 +6067,8 @@
           "consumed_at",
           "metadata",
           "metadata_etag",
-          "public_metadata"
+          "public_metadata",
+          "invited_by"
         ],
         "properties": {
           "consumed_at": {
@@ -6092,6 +6093,17 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "invited_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SubjectId",
+                "description": "Who made it: a member of its tenant, or an operator; `null` for the\nbootstrap token, and for invites made before Konklav recorded it."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "membership": {
             "oneOf": [
@@ -9007,7 +9019,8 @@
               "consumed_at",
               "metadata",
               "metadata_etag",
-              "public_metadata"
+              "public_metadata",
+              "invited_by"
             ],
             "properties": {
               "consumed_at": {
@@ -9032,6 +9045,17 @@
               "id": {
                 "type": "string",
                 "format": "uuid"
+              },
+              "invited_by": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SubjectId",
+                    "description": "Who made it: a member of its tenant, or an operator; `null` for the\nbootstrap token, and for invites made before Konklav recorded it."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "membership": {
                 "oneOf": [

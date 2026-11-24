@@ -4,15 +4,16 @@
 //! the relying system to share; whoever holds it redeems it, signed in or
 //! with an existing account's password, or, if the invite lets a newcomer
 //! sign up, with a new one's. Anyone holding a token may preview the invite
-//! first. A relying system's service principal makes link-only invites into
-//! a tenant on the relying surface, where it holds `konklav:tenant:invite`.
+//! first. A tenant's member holding `konklav:tenant:invite` there makes
+//! link-only invites into it on the subject-facing surface, giving only
+//! roles they hold there. Every invite records who made it.
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use chrono::{Duration, Utc};
 use diesel_async::AsyncConnection;
 use konklav_api::{
@@ -37,6 +38,7 @@ use subtle::ConstantTimeEq;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use crate::capabilities::Operator;
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::subject_api::{
     Client, SessionRequest, begin_attempt, begin_token_attempt, check_password,
@@ -54,25 +56,22 @@ pub(crate) fn invites() -> OpenApiRouter<AppState> {
         .routes(routes!(revoke_invite))
 }
 
-/// Making, listing and revoking a tenant's link-only invites on the relying
-/// surface, for a service principal holding `konklav:tenant:invite` there.
-pub fn relying_routes() -> Router<AppState> {
-    Router::new()
-        .route(
-            "/tenants/{tenant}/invites",
-            post(create_tenant_invite).get(list_tenant_invites),
-        )
-        .route(
-            "/tenants/{tenant}/invites/{id}/revoke",
-            post(revoke_tenant_invite),
-        )
-}
-
+/// Previewing and redeeming invites, paced; and making, listing and
+/// revoking a tenant's link-only invites, for a member holding
+/// `konklav:tenant:invite` there.
 pub fn subject_routes(state: &AppState) -> Router<AppState> {
     Router::new()
         .route("/invites/redeem", post(redeem_invite))
         .route("/invites/preview", post(preview_invite))
         .route_layer(middleware::from_fn_with_state(state.clone(), pacing::pace))
+        .route(
+            "/tenants/{id}/invites",
+            post(create_tenant_invite).get(list_tenant_invites),
+        )
+        .route(
+            "/tenants/{id}/invites/{invite}/revoke",
+            post(revoke_tenant_invite),
+        )
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -92,6 +91,20 @@ struct InviteDetails {
     /// Left out when false, as `public_metadata` is when empty.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     sign_up: bool,
+    /// Who made it; left out of the comparison of an idempotent repeat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    invited_by: Option<SubjectId>,
+}
+
+/// An invite's details without its inviter, as an idempotent repeat
+/// compares them.
+// r[impl authn.invite.inviter]
+fn without_inviter(details: &serde_json::Value) -> serde_json::Value {
+    let mut details = details.clone();
+    if let Some(object) = details.as_object_mut() {
+        object.remove("invited_by");
+    }
+    details
 }
 
 fn empty_object() -> serde_json::Value {
@@ -133,28 +146,40 @@ fn token_of(invite: uuid::Uuid, secret: &str) -> String {
 // r[impl metadata.invites]
 // r[impl authn.invite.emailed]
 // r[impl authn.invite.link-only]
+// r[impl authn.invite.inviter]
 async fn create_invite(
     db: Db,
+    Extension(operator): Extension<Operator>,
     limit: metadata::Limit,
     ApiJson(body): ApiJson<CreateInvite>,
 ) -> Result<(StatusCode, Json<Written<CreatedInvite>>), ApiError> {
-    create(db, limit, body, Origin::ControlPlane).await
+    create(db, limit, body, Inviter::Operator(operator.subject)).await
 }
 
-/// Which surface an invite is made on.
+/// Who makes an invite.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Origin {
-    /// By an operator, with `konklav:invites:manage`.
-    ControlPlane,
-    /// By a service principal, with `konklav:tenant:invite` in the tenant.
-    Relying,
+enum Inviter {
+    /// An operator, with `konklav:invites:manage`; `None` for the bootstrap
+    /// token.
+    Operator(Option<SubjectId>),
+    /// A member of the invite's tenant, with `konklav:tenant:invite` there.
+    Member(SubjectId),
+}
+
+impl Inviter {
+    fn subject(self) -> Option<SubjectId> {
+        match self {
+            Self::Operator(subject) => subject,
+            Self::Member(subject) => Some(subject),
+        }
+    }
 }
 
 async fn create(
     db: Db,
     limit: metadata::Limit,
     body: CreateInvite,
-    origin: Origin,
+    inviter: Inviter,
 ) -> Result<(StatusCode, Json<Written<CreatedInvite>>), ApiError> {
     limit.check(&body.metadata)?;
     // r[impl metadata.public]
@@ -194,6 +219,7 @@ async fn create(
         membership: body.membership,
         public_metadata: body.public_metadata.clone(),
         sign_up: body.sign_up,
+        invited_by: inviter.subject(),
     })
     .unwrap_or_default();
     let (expires_at, created, token, cursor) = conn
@@ -211,7 +237,7 @@ async fn create(
                 .await;
             }
             if let Some(reference) = &body.tenant {
-                check_roles(conn, reference, &body.roles, origin).await?;
+                check_roles(conn, reference, &body.roles, inviter).await?;
             }
             // What Postgres stored, to the microsecond, so a repeat answers
             // the same `expires_at`.
@@ -259,33 +285,62 @@ async fn create(
     ))
 }
 
-/// Checks that the tenant `reference` names exists and has each of `roles`;
-/// an invite made on the relying surface may give none that names a
-/// `konklav:` action.
+/// Checks that the tenant `reference` names exists and has each of `roles`.
+/// A member may give only roles their membership there holds tenant-wide,
+/// and none that names a `konklav:` action.
 async fn check_roles(
     conn: &mut konklav_store::Connection,
     reference: &str,
     keys: &[String],
-    origin: Origin,
+    inviter: Inviter,
 ) -> Result<(), ApiError> {
     let tenant = tenants::parse_reference(reference)
         .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
     tenants::get(conn, tenant)
         .await
         .map_err(|_| ApiError::not_found("tenant"))?;
+    let held = match inviter {
+        Inviter::Operator(_) => None,
+        Inviter::Member(subject) => Some(held_roles(conn, subject, tenant).await?),
+    };
     for key in keys {
         let role = roles::get(conn, tenant, key)
             .await
             .map_err(|_| ApiError::not_found("role"))?;
-        // r[impl authn.invite.relying-roles]
-        if origin == Origin::Relying && capabilities::named_by_role(conn, &role).await? {
+        let Some(held) = &held else { continue };
+        // r[impl authn.invite.tenant-roles]
+        if !held.contains(&role.id) {
+            return Err(ApiError::new(
+                ErrorCode::Forbidden,
+                format!("you can only invite others into roles you hold, and not `{key}`"),
+            ));
+        }
+        if capabilities::named_by_role(conn, &role).await? {
             return Err(ApiError::invalid_request(format!(
-                "role `{key}` names a konklav: action, which an invite made on the relying \
-                 surface can't give"
+                "role `{key}` names a konklav: action, which a member's invite can't give"
             )));
         }
     }
     Ok(())
+}
+
+/// The roles `subject`'s active membership in `tenant` is assigned
+/// tenant-wide; none without one.
+// r[impl authn.invite.tenant-roles]
+async fn held_roles(
+    conn: &mut konklav_store::Connection,
+    subject: SubjectId,
+    tenant: TenantId,
+) -> Result<Vec<uuid::Uuid>, ApiError> {
+    let Some(membership) = memberships::find_active(conn, subject, tenant).await? else {
+        return Ok(Vec::new());
+    };
+    Ok(roles::assignments_of_membership(conn, membership.id)
+        .await?
+        .into_iter()
+        .filter(|assignment| assignment.scope.is_none())
+        .map(|assignment| assignment.role_id)
+        .collect())
 }
 
 /// Answers an idempotent repeat of a create: the same invite again, with a
@@ -309,7 +364,7 @@ async fn repeat(
     let id = existing.id;
     let same = existing.purpose == Purpose::Invite.as_str()
         && existing.recipient == recipient
-        && existing.details == *details
+        && without_inviter(&existing.details) == without_inviter(details)
         && existing.metadata == *metadata;
     if !same {
         return Err(ApiError::new(
@@ -459,18 +514,19 @@ async fn revoke(conn: &mut konklav_store::Connection, id: uuid::Uuid) -> Result<
     Ok(invite(revoked))
 }
 
-/// The tenant in the path, if the calling service principal holds
-/// `konklav:tenant:invite` tenant-wide there, or globally. Only service
-/// principals use the relying surface.
-// r[impl authn.invite.relying]
+/// The calling member and the tenant in the path, if the member's own full
+/// session holds `konklav:tenant:invite` tenant-wide there, or globally.
+// r[impl authn.invite.tenant]
 // r[impl authz.tenant-capability]
 async fn tenant_inviter(
     state: &AppState,
     conn: &mut konklav_store::Connection,
     headers: &HeaderMap,
     tenant: &str,
-) -> Result<TenantId, ApiError> {
-    let caller = crate::relying_api::require_service(state, conn, headers).await?;
+) -> Result<(SubjectId, TenantId), ApiError> {
+    let caller = crate::flows::own_session(state, conn, headers)
+        .await?
+        .subject_id;
     let tenant = tenants::parse_reference(tenant)
         .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
     let entitlements = compile_input::load(conn, caller, Some(tenant))
@@ -479,19 +535,20 @@ async fn tenant_inviter(
     if entitlements.tenant.contains(capabilities::TENANT_INVITE)
         || entitlements.global.contains(capabilities::TENANT_INVITE)
     {
-        Ok(tenant)
+        Ok((caller, tenant))
     } else {
         Err(ApiError::new(
             ErrorCode::Forbidden,
-            "making invites into this tenant needs `konklav:tenant:invite` there",
+            "inviting others into this tenant needs `konklav:tenant:invite` there",
         ))
     }
 }
 
-/// `POST /v1/tenants/{tenant}/invites` on the relying surface: a link-only
-/// invite into the tenant, as `POST /v1/invites` makes one, its token shown
-/// once.
-// r[impl authn.invite.relying]
+/// `POST /v1/tenants/{id}/invites` on the subject-facing surface: a
+/// link-only invite into the tenant, as `POST /v1/invites` makes one, its
+/// token shown once, and its inviter the calling member.
+// r[impl authn.invite.tenant]
+// r[impl authn.invite.inviter]
 async fn create_tenant_invite(
     State(state): State<AppState>,
     db: Db,
@@ -500,7 +557,7 @@ async fn create_tenant_invite(
     Path(tenant): Path<String>,
     ApiJson(body): ApiJson<CreateTenantInvite>,
 ) -> Result<(StatusCode, Json<Written<CreatedInvite>>), ApiError> {
-    let tenant = {
+    let (member, tenant) = {
         let mut conn = state.pool.get().await?;
         tenant_inviter(&state, &mut conn, &headers, &tenant).await?
     };
@@ -508,14 +565,15 @@ async fn create_tenant_invite(
         db,
         limit,
         body.into_invite(tenant.to_string()),
-        Origin::Relying,
+        Inviter::Member(member),
     )
     .await
 }
 
-/// `GET /v1/tenants/{tenant}/invites` on the relying surface: the tenant's
-/// link-only invites, newest first; never an emailed invite's address.
-// r[impl authn.invite.relying]
+/// `GET /v1/tenants/{id}/invites` on the subject-facing surface: the
+/// tenant's link-only invites, newest first; never an emailed invite's
+/// address.
+// r[impl authn.invite.tenant]
 async fn list_tenant_invites(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -523,7 +581,7 @@ async fn list_tenant_invites(
     Query(query): Query<TenantInviteQuery>,
 ) -> Result<Json<InvitePage>, ApiError> {
     let mut conn = state.pool.get().await?;
-    let tenant = tenant_inviter(&state, &mut conn, &headers, &tenant).await?;
+    let (_, tenant) = tenant_inviter(&state, &mut conn, &headers, &tenant).await?;
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
     let found =
         challenges::list_invites(&mut conn, Some(tenant), None, true, query.before, limit).await?;
@@ -536,16 +594,17 @@ async fn list_tenant_invites(
     }))
 }
 
-/// `POST /v1/tenants/{tenant}/invites/{id}/revoke` on the relying surface:
-/// revokes one of the tenant's link-only invites; any other is not found.
-// r[impl authn.invite.relying]
+/// `POST /v1/tenants/{id}/invites/{invite}/revoke` on the subject-facing
+/// surface: revokes one of the tenant's link-only invites; any other is not
+/// found.
+// r[impl authn.invite.tenant]
 async fn revoke_tenant_invite(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path((tenant, id)): Path<(String, String)>,
 ) -> Result<Json<Invite>, ApiError> {
     let mut conn = state.pool.get().await?;
-    let tenant = tenant_inviter(&state, &mut conn, &headers, &tenant).await?;
+    let (_, tenant) = tenant_inviter(&state, &mut conn, &headers, &tenant).await?;
     let id = parse_invite_id(&id)?;
     let found = find_invite(&mut conn, id).await?;
     let details: InviteDetails = serde_json::from_value(found.details.clone()).unwrap_or_default();
@@ -596,6 +655,7 @@ pub(crate) fn invite(challenge: challenges::Challenge) -> Invite {
         metadata: challenge.metadata,
         public_metadata: details.public_metadata,
         sign_up: details.sign_up,
+        invited_by: details.invited_by,
     }
 }
 

@@ -375,7 +375,8 @@ creates. Redemption by a subject that already has a different active
 membership in that tenant MUST fail with a typed conflict.
 
 r[authn.invite.revoke]
-An operator MUST be able to revoke an invite that hasn't been redeemed.
+An operator, or a tenant's member as `authn.invite.tenant` allows, MUST be
+able to revoke an invite that hasn't been redeemed.
 Redeeming a revoked invite MUST fail exactly as redeeming an expired one
 does. Revoking an invite again MUST change nothing, and revoking a redeemed
 invite MUST fail with a typed conflict.
@@ -451,23 +452,34 @@ identifier already belongs to a password credential, redeeming MUST fail
 as a typed conflict and leave the invite pending. An invite not made so
 MUST refuse `sign_up` as an invalid request.
 
-### Invites a relying system makes
+### Invites a tenant's members make
 
-r[authn.invite.relying]
-On the relying surface, a service principal that holds
-`konklav:tenant:invite` tenant-wide in a tenant (`authz.tenant-capability`)
-MUST be able to make, list and revoke invites into that tenant, and MUST be
-refused for any other. Such an invite MUST be link-only
-(`authn.invite.link-only`), and MAY name a membership id, facts, metadata,
-public metadata, an expiry and whether it lets a newcomer sign up
-(`authn.invite.sign-up`), as an invite made on the control plane does.
-Listing MUST show only the tenant's link-only invites, never an emailed
-one's address. Revoking MUST behave as `authn.invite.revoke`.
+r[authn.invite.tenant]
+On the subject-facing surface, a subject with a full session that isn't
+impersonated and that holds `konklav:tenant:invite` tenant-wide in a tenant
+(`authz.tenant-capability`) MUST be able to make, list and revoke invites
+into that tenant, and MUST be refused for any other, and with a partial
+session. Such an invite MUST be link-only (`authn.invite.link-only`), and
+MAY name a membership id, facts, metadata, public metadata, an expiry and
+whether it lets a newcomer sign up (`authn.invite.sign-up`), as an invite
+made on the control plane does. Listing MUST show only the tenant's
+link-only invites, never an emailed one's address. Revoking MUST behave as
+`authn.invite.revoke`. A relying system offers this to its users by passing
+their requests on, so Konklav checks the person who invites, not the
+relying system.
 
-r[authn.invite.relying-roles]
-An invite made on the relying surface MUST name only roles of its tenant,
-and none whose policies, or whose template's, name a `konklav:` action, so
-the invites a tenant capability makes can't hand a capability on.
+r[authn.invite.tenant-roles]
+An invite a tenant's member makes MUST name only roles of its tenant that
+the inviter's active membership there is assigned tenant-wide, so no one
+invites another into more than they hold, and none whose policies, or whose
+template's, name a `konklav:` action, so the invites a tenant capability
+makes can't hand that capability, or any other, on.
+
+r[authn.invite.inviter]
+Every invite MUST record who made it: the subject whose session made it on
+the subject-facing surface, or the operator who made it on the control
+plane, none for the bootstrap token. Listing and getting an invite MUST
+show it. An idempotent repeat by someone else MUST keep the first inviter.
 
 r[authn.invite.token-limits]
 Every check of an invite token, to redeem or to preview it, MUST count as
