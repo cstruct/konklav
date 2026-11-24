@@ -4708,6 +4708,10 @@
             },
             "description": "Role keys in that tenant to assign."
           },
+          "sign_up": {
+            "type": "boolean",
+            "description": "Whether someone without an account may sign up when redeeming it,\nwith an email and a password that become a new password credential,\nunverified. Only a link-only invite can."
+          },
           "tenant": {
             "type": [
               "string",
@@ -6063,7 +6067,8 @@
           "consumed_at",
           "metadata",
           "metadata_etag",
-          "public_metadata"
+          "public_metadata",
+          "invited_by"
         ],
         "properties": {
           "consumed_at": {
@@ -6088,6 +6093,17 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "invited_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SubjectId",
+                "description": "Who made it: a member of its tenant, or an operator; `null` for the\nbootstrap token, and for invites made before Konklav recorded it."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "membership": {
             "oneOf": [
@@ -6116,6 +6132,10 @@
             "items": {
               "type": "string"
             }
+          },
+          "sign_up": {
+            "type": "boolean",
+            "description": "Whether someone without an account may sign up when redeeming it."
           },
           "state": {
             "$ref": "#/components/schemas/InviteState"
@@ -8999,7 +9019,8 @@
               "consumed_at",
               "metadata",
               "metadata_etag",
-              "public_metadata"
+              "public_metadata",
+              "invited_by"
             ],
             "properties": {
               "consumed_at": {
@@ -9024,6 +9045,17 @@
               "id": {
                 "type": "string",
                 "format": "uuid"
+              },
+              "invited_by": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SubjectId",
+                    "description": "Who made it: a member of its tenant, or an operator; `null` for the\nbootstrap token, and for invites made before Konklav recorded it."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "membership": {
                 "oneOf": [
@@ -9052,6 +9084,10 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "sign_up": {
+                "type": "boolean",
+                "description": "Whether someone without an account may sign up when redeeming it."
               },
               "state": {
                 "$ref": "#/components/schemas/InviteState"

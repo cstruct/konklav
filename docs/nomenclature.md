@@ -118,7 +118,7 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `action`
   - A named permission that can be granted, such as `document:read` or `report:export`.
   - Action names are colon-delimited hierarchical names.
-  - The `konklav:` namespace is reserved for `control-plane capabilities` (see Authorization) and cannot be authored.
+  - The `konklav:` namespace is reserved for `control-plane capabilities` and `tenant capabilities` (see Authorization) and cannot be authored.
   - Konklav never interprets what an action means. It only records who holds it, and where.
 
 - `action group`
@@ -235,7 +235,9 @@ Terms are introduced in dependency order: each definition only uses terms define
   - `emailed invite`: an invite to an email address, whose token Konklav asks to have delivered there and never returns.
   - `link-only invite`: an invite without an address. Konklav delivers nothing and returns its token once, when it is created, for the relying system to share as a link.
   - `bearer link`: a link-only invite's link, redeemable by whoever holds it, since there is no address to match.
-  - `invite preview`: what the subject-facing surface shows about an invite to whoever holds its token, before sign-in: its state, expiry, whether it is link-only and its public metadata.
+  - `inviter`: the subject who made an invite, or the operator, recorded on the invite.
+  - `sign-up invite`: a link-only invite made to let someone without an account sign up when redeeming it, with an email and a password that become a new password credential, unverified.
+  - `invite preview`: what the subject-facing surface shows about an invite to whoever holds its token, before sign-in: its state, expiry, whether it is link-only, whether it is a sign-up invite, and its public metadata.
 
 - `session`
   - Konklav's server-side record of one authentication, from login until sign-out, expiry, or revocation.
@@ -353,6 +355,10 @@ Terms are introduced in dependency order: each definition only uses terms define
   - A built-in action in the `konklav:` namespace that governs Konklav's own control-plane operations.
   - Examples: creating tenants, revoking sessions, impersonating subjects.
   - Capabilities can only be granted through global assignments.
+
+- `tenant capability`
+  - A built-in action in the `konklav:` namespace that, unlike a control-plane capability, is granted through tenant roles and holds in that tenant.
+  - The one there is: `konklav:tenant:invite`, which lets a member of the tenant make link-only invites into it on the subject-facing surface, giving only roles they hold there.
 
 - `built-in role`
   - A global role that Konklav defines and ships, granting a fixed set of control-plane capabilities.

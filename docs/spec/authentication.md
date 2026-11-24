@@ -375,7 +375,8 @@ creates. Redemption by a subject that already has a different active
 membership in that tenant MUST fail with a typed conflict.
 
 r[authn.invite.revoke]
-An operator MUST be able to revoke an invite that hasn't been redeemed.
+An operator, or a tenant's member as `authn.invite.tenant` allows, MUST be
+able to revoke an invite that hasn't been redeemed.
 Redeeming a revoked invite MUST fail exactly as redeeming an expired one
 does. Revoking an invite again MUST change nothing, and revoking a redeemed
 invite MUST fail with a typed conflict.
@@ -429,12 +430,56 @@ alone would otherwise let whoever knows it attach the subject to a tenant.
 The subject redeems the invite signed in, once MFA has made the session
 full.
 
-Redeeming a link-only invite MUST NOT create a subject or credential: no
-address was proved, and the holder of a bearer link could claim anyone's.
-Someone without an account signs up first, through the relying system, and
-then redeems the invite signed in. An emailed invite MUST be redeemed only
+Redeeming a link-only invite MUST NOT create a subject or credential,
+unless the invite was made to let a newcomer sign up
+(`authn.invite.sign-up`): no address was proved, and the holder of a bearer
+link could claim anyone's. Otherwise someone without an account signs up
+first, through the relying system, and then redeems the invite signed in. An emailed invite MUST be redeemed only
 as `authn.invite.redeem` describes, never by a signed-in subject or with a
 login identifier.
+
+r[authn.invite.sign-up]
+A link-only invite made to let a newcomer sign up MUST be redeemable
+without a session with a login identifier, a password and `sign_up`.
+Konklav MUST then create a human subject and a password credential with
+that identifier and password, of at least 8 characters as an emailed
+invite's new password is, redeem the invite for the new subject as
+`authn.invite.redeem` says, and start a session as a password login would,
+with the `client` and `flags` of `authn.login.session-request`. The
+identifier is not proved, as an operator-made password credential's isn't:
+the relying system decides who it shares such a link with. When the
+identifier already belongs to a password credential, redeeming MUST fail
+as a typed conflict and leave the invite pending. An invite not made so
+MUST refuse `sign_up` as an invalid request.
+
+### Invites a tenant's members make
+
+r[authn.invite.tenant]
+On the subject-facing surface, a subject with a full session that isn't
+impersonated and that holds `konklav:tenant:invite` tenant-wide in a tenant
+(`authz.tenant-capability`) MUST be able to make, list and revoke invites
+into that tenant, and MUST be refused for any other, and with a partial
+session. Such an invite MUST be link-only (`authn.invite.link-only`), and
+MAY name a membership id, facts, metadata, public metadata, an expiry and
+whether it lets a newcomer sign up (`authn.invite.sign-up`), as an invite
+made on the control plane does. Listing MUST show only the tenant's
+link-only invites, never an emailed one's address. Revoking MUST behave as
+`authn.invite.revoke`. A relying system offers this to its users by passing
+their requests on, so Konklav checks the person who invites, not the
+relying system.
+
+r[authn.invite.tenant-roles]
+An invite a tenant's member makes MUST name only roles of its tenant that
+the inviter's active membership there is assigned tenant-wide, so no one
+invites another into more than they hold, and none whose policies, or whose
+template's, name a `konklav:` action, so the invites a tenant capability
+makes can't hand that capability, or any other, on.
+
+r[authn.invite.inviter]
+Every invite MUST record who made it: the subject whose session made it on
+the subject-facing surface, or the operator who made it on the control
+plane, none for the bootstrap token. Listing and getting an invite MUST
+show it. An idempotent repeat by someone else MUST keep the first inviter.
 
 r[authn.invite.token-limits]
 Every check of an invite token, to redeem or to preview it, MUST count as
@@ -449,8 +494,9 @@ r[authn.invite.preview]
 The subject-facing surface MUST let anyone holding an invite token, signed
 in or not, preview the invite before redeeming it, so that a login
 application can show what it is for. A pending or redeemed invite's
-preview MUST give its state, its expiry, whether it is link-only, and its
-public metadata (`metadata.public`), and nothing else: not its address,
+preview MUST give its state, its expiry, whether it is link-only, whether
+it lets a newcomer sign up (`authn.invite.sign-up`), and its public
+metadata (`metadata.public`), and nothing else: not its address,
 tenant, roles, membership or metadata. An unknown, expired, used-up or
 revoked token MUST fail exactly as redeeming it fails, so a preview can't
 tell a revoked invite from an expired or unknown one

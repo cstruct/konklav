@@ -1034,6 +1034,7 @@ class WrittenInvite(TypedDict):
     """
     expires_at: str
     id: str
+    invited_by: SubjectId | None
     membership: MembershipId | None
     metadata: dict[str, Any]
     """
@@ -1049,6 +1050,10 @@ class WrittenInvite(TypedDict):
     What the invite's preview shows to whoever holds its token.
     """
     roles: list[str]
+    sign_up: NotRequired[bool]
+    """
+    Whether someone without an account may sign up when redeeming it.
+    """
     state: InviteState
     tenant: str | None
     cursor: NotRequired[Cursor | None]
@@ -1407,6 +1412,12 @@ class CreateInvite(TypedDict):
     """
     Role keys in that tenant to assign.
     """
+    sign_up: NotRequired[bool]
+    """
+    Whether someone without an account may sign up when redeeming it,
+    with an email and a password that become a new password credential,
+    unverified. Only a link-only invite can.
+    """
     tenant: NotRequired[str | None]
     """
     A tenant (UUID or `root`) to join on redemption.
@@ -1659,6 +1670,7 @@ class Invite(TypedDict):
     """
     expires_at: str
     id: str
+    invited_by: SubjectId | None
     membership: MembershipId | None
     metadata: dict[str, Any]
     """
@@ -1674,6 +1686,10 @@ class Invite(TypedDict):
     What the invite's preview shows to whoever holds its token.
     """
     roles: list[str]
+    sign_up: NotRequired[bool]
+    """
+    Whether someone without an account may sign up when redeeming it.
+    """
     state: InviteState
     tenant: str | None
 

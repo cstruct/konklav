@@ -2,45 +2,49 @@
 //! roles. An emailed invite's token is delivered to the address, whose owner
 //! redeems it with a password. A link-only invite's token is shown once, for
 //! the relying system to share; whoever holds it redeems it, signed in or
-//! with an existing account's password. Anyone holding a token may preview
-//! the invite first.
+//! with an existing account's password, or, if the invite lets a newcomer
+//! sign up, with a new one's. Anyone holding a token may preview the invite
+//! first. A tenant's member holding `konklav:tenant:invite` there makes
+//! link-only invites into it on the subject-facing surface, giving only
+//! roles they hold there. Every invite records who made it.
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use chrono::{Duration, Utc};
 use diesel_async::AsyncConnection;
 use konklav_api::{
-    CreateInvite, CreatedInvite, Invite, InvitePage, InvitePreview, InviteQuery, InviteState,
-    PreviewState,
+    CreateInvite, CreateTenantInvite, CreatedInvite, Invite, InvitePage, InvitePreview,
+    InviteQuery, InviteState, PreviewState, TenantInviteQuery,
 };
 
 use crate::client_address::ClientAddress;
 use crate::control_api::{Written, created_status};
 use crate::db::Db;
 use konklav_authn::{PasswordCheck, generate_secret, hash_challenge_secret};
-use konklav_core::{CredentialId, MembershipId, SubjectId};
+use konklav_core::{CredentialId, MembershipId, SubjectId, TenantId};
 use konklav_store::challenges::{self, NewChallenge, Purpose};
 use konklav_store::credentials::{
     self, CredentialData, CredentialKind, NewCredential, PasswordData,
 };
 use konklav_store::roles::{self, AssignmentTarget};
 use konklav_store::subjects::{self, SubjectKind, SubjectState};
-use konklav_store::{events, memberships, tenants};
+use konklav_store::{compile_input, events, memberships, tenants};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use crate::capabilities::Operator;
 use crate::error::{ApiError, ApiJson, ErrorCode};
 use crate::subject_api::{
     Client, SessionRequest, begin_attempt, begin_token_attempt, check_password,
     invalid_credentials, start_passwordless_session, start_session,
 };
-use crate::{AppState, metadata, pacing};
+use crate::{AppState, capabilities, metadata, pacing};
 
 /// Creating invites on the control plane, with the `OpenAPI` description
 /// taken from the handler's `#[utoipa::path]`. Redeeming one is on the
@@ -52,11 +56,22 @@ pub(crate) fn invites() -> OpenApiRouter<AppState> {
         .routes(routes!(revoke_invite))
 }
 
+/// Previewing and redeeming invites, paced; and making, listing and
+/// revoking a tenant's link-only invites, for a member holding
+/// `konklav:tenant:invite` there.
 pub fn subject_routes(state: &AppState) -> Router<AppState> {
     Router::new()
         .route("/invites/redeem", post(redeem_invite))
         .route("/invites/preview", post(preview_invite))
         .route_layer(middleware::from_fn_with_state(state.clone(), pacing::pace))
+        .route(
+            "/tenants/{id}/invites",
+            post(create_tenant_invite).get(list_tenant_invites),
+        )
+        .route(
+            "/tenants/{id}/invites/{invite}/revoke",
+            post(revoke_tenant_invite),
+        )
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -73,6 +88,23 @@ struct InviteDetails {
     /// equal on an idempotent repeat.
     #[serde(default = "empty_object", skip_serializing_if = "is_empty_object")]
     public_metadata: serde_json::Value,
+    /// Left out when false, as `public_metadata` is when empty.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    sign_up: bool,
+    /// Who made it; left out of the comparison of an idempotent repeat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    invited_by: Option<SubjectId>,
+}
+
+/// An invite's details without its inviter, as an idempotent repeat
+/// compares them.
+// r[impl authn.invite.inviter]
+fn without_inviter(details: &serde_json::Value) -> serde_json::Value {
+    let mut details = details.clone();
+    if let Some(object) = details.as_object_mut() {
+        object.remove("invited_by");
+    }
+    details
 }
 
 fn empty_object() -> serde_json::Value {
@@ -114,10 +146,40 @@ fn token_of(invite: uuid::Uuid, secret: &str) -> String {
 // r[impl metadata.invites]
 // r[impl authn.invite.emailed]
 // r[impl authn.invite.link-only]
+// r[impl authn.invite.inviter]
 async fn create_invite(
     db: Db,
+    Extension(operator): Extension<Operator>,
     limit: metadata::Limit,
     ApiJson(body): ApiJson<CreateInvite>,
+) -> Result<(StatusCode, Json<Written<CreatedInvite>>), ApiError> {
+    create(db, limit, body, Inviter::Operator(operator.subject)).await
+}
+
+/// Who makes an invite.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Inviter {
+    /// An operator, with `konklav:invites:manage`; `None` for the bootstrap
+    /// token.
+    Operator(Option<SubjectId>),
+    /// A member of the invite's tenant, with `konklav:tenant:invite` there.
+    Member(SubjectId),
+}
+
+impl Inviter {
+    fn subject(self) -> Option<SubjectId> {
+        match self {
+            Self::Operator(subject) => subject,
+            Self::Member(subject) => Some(subject),
+        }
+    }
+}
+
+async fn create(
+    db: Db,
+    limit: metadata::Limit,
+    body: CreateInvite,
+    inviter: Inviter,
 ) -> Result<(StatusCode, Json<Written<CreatedInvite>>), ApiError> {
     limit.check(&body.metadata)?;
     // r[impl metadata.public]
@@ -128,6 +190,12 @@ async fn create_invite(
         .is_some_and(|email| !email.contains('@'))
     {
         return Err(ApiError::invalid_request("email must be an email address"));
+    }
+    // r[impl authn.invite.sign-up]
+    if body.sign_up && body.email.is_some() {
+        return Err(ApiError::invalid_request(
+            "only a link-only invite can let a newcomer sign up",
+        ));
     }
     if (!body.roles.is_empty() || body.membership.is_some()) && body.tenant.is_none() {
         return Err(ApiError::invalid_request(
@@ -150,6 +218,8 @@ async fn create_invite(
         facts: body.facts.clone(),
         membership: body.membership,
         public_metadata: body.public_metadata.clone(),
+        sign_up: body.sign_up,
+        invited_by: inviter.subject(),
     })
     .unwrap_or_default();
     let (expires_at, created, token, cursor) = conn
@@ -167,16 +237,7 @@ async fn create_invite(
                 .await;
             }
             if let Some(reference) = &body.tenant {
-                let tenant = tenants::parse_reference(reference)
-                    .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
-                tenants::get(conn, tenant)
-                    .await
-                    .map_err(|_| ApiError::not_found("tenant"))?;
-                for role in &body.roles {
-                    roles::get(conn, tenant, role)
-                        .await
-                        .map_err(|_| ApiError::not_found("role"))?;
-                }
+                check_roles(conn, reference, &body.roles, inviter).await?;
             }
             // What Postgres stored, to the microsecond, so a repeat answers
             // the same `expires_at`.
@@ -224,6 +285,64 @@ async fn create_invite(
     ))
 }
 
+/// Checks that the tenant `reference` names exists and has each of `roles`.
+/// A member may give only roles their membership there holds tenant-wide,
+/// and none that names a `konklav:` action.
+async fn check_roles(
+    conn: &mut konklav_store::Connection,
+    reference: &str,
+    keys: &[String],
+    inviter: Inviter,
+) -> Result<(), ApiError> {
+    let tenant = tenants::parse_reference(reference)
+        .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
+    tenants::get(conn, tenant)
+        .await
+        .map_err(|_| ApiError::not_found("tenant"))?;
+    let held = match inviter {
+        Inviter::Operator(_) => None,
+        Inviter::Member(subject) => Some(held_roles(conn, subject, tenant).await?),
+    };
+    for key in keys {
+        let role = roles::get(conn, tenant, key)
+            .await
+            .map_err(|_| ApiError::not_found("role"))?;
+        let Some(held) = &held else { continue };
+        // r[impl authn.invite.tenant-roles]
+        if !held.contains(&role.id) {
+            return Err(ApiError::new(
+                ErrorCode::Forbidden,
+                format!("you can only invite others into roles you hold, and not `{key}`"),
+            ));
+        }
+        if capabilities::named_by_role(conn, &role).await? {
+            return Err(ApiError::invalid_request(format!(
+                "role `{key}` names a konklav: action, which a member's invite can't give"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The roles `subject`'s active membership in `tenant` is assigned
+/// tenant-wide; none without one.
+// r[impl authn.invite.tenant-roles]
+async fn held_roles(
+    conn: &mut konklav_store::Connection,
+    subject: SubjectId,
+    tenant: TenantId,
+) -> Result<Vec<uuid::Uuid>, ApiError> {
+    let Some(membership) = memberships::find_active(conn, subject, tenant).await? else {
+        return Ok(Vec::new());
+    };
+    Ok(roles::assignments_of_membership(conn, membership.id)
+        .await?
+        .into_iter()
+        .filter(|assignment| assignment.scope.is_none())
+        .map(|assignment| assignment.role_id)
+        .collect())
+}
+
 /// Answers an idempotent repeat of a create: the same invite again, with a
 /// new token for a pending link-only invite, since Konklav keeps only the
 /// token's hash; or a conflict when the content differs.
@@ -245,7 +364,7 @@ async fn repeat(
     let id = existing.id;
     let same = existing.purpose == Purpose::Invite.as_str()
         && existing.recipient == recipient
-        && existing.details == *details
+        && without_inviter(&existing.details) == without_inviter(details)
         && existing.metadata == *metadata;
     if !same {
         return Err(ApiError::new(
@@ -337,8 +456,15 @@ async fn list_invites(
         .transpose()?;
     let filter = metadata::filter(query.metadata.as_deref())?;
     let mut conn = db.get().await?;
-    let found =
-        challenges::list_invites(&mut conn, tenant, filter.as_ref(), query.before, limit).await?;
+    let found = challenges::list_invites(
+        &mut conn,
+        tenant,
+        filter.as_ref(),
+        false,
+        query.before,
+        limit,
+    )
+    .await?;
     let next = (i64::try_from(found.len()) == Ok(limit))
         .then(|| found.last().map(|invite| invite.id))
         .flatten();
@@ -371,15 +497,122 @@ async fn revoke_invite(db: Db, Path(id): Path<String>) -> Result<Json<Invite>, A
     let id = parse_invite_id(&id)?;
     let mut conn = db.get().await?;
     find_invite(&mut conn, id).await?;
-    challenges::revoke(&mut conn, id, Utc::now()).await?;
-    let revoked = find_invite(&mut conn, id).await?;
+    Ok(Json(revoke(&mut conn, id).await?))
+}
+
+/// Revokes the invite `id`, again harmlessly; a redeemed one conflicts.
+// r[impl authn.invite.revoke]
+async fn revoke(conn: &mut konklav_store::Connection, id: uuid::Uuid) -> Result<Invite, ApiError> {
+    challenges::revoke(conn, id, Utc::now()).await?;
+    let revoked = find_invite(conn, id).await?;
     if revoked.revoked_at.is_none() {
         return Err(ApiError::new(
             ErrorCode::Conflict,
             "the invite was already redeemed",
         ));
     }
-    Ok(Json(invite(revoked)))
+    Ok(invite(revoked))
+}
+
+/// The calling member and the tenant in the path, if the member's own full
+/// session holds `konklav:tenant:invite` tenant-wide there, or globally.
+// r[impl authn.invite.tenant]
+// r[impl authz.tenant-capability]
+async fn tenant_inviter(
+    state: &AppState,
+    conn: &mut konklav_store::Connection,
+    headers: &HeaderMap,
+    tenant: &str,
+) -> Result<(SubjectId, TenantId), ApiError> {
+    let caller = crate::flows::own_session(state, conn, headers)
+        .await?
+        .subject_id;
+    let tenant = tenants::parse_reference(tenant)
+        .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
+    let entitlements = compile_input::load(conn, caller, Some(tenant))
+        .await?
+        .compile();
+    if entitlements.tenant.contains(capabilities::TENANT_INVITE)
+        || entitlements.global.contains(capabilities::TENANT_INVITE)
+    {
+        Ok((caller, tenant))
+    } else {
+        Err(ApiError::new(
+            ErrorCode::Forbidden,
+            "inviting others into this tenant needs `konklav:tenant:invite` there",
+        ))
+    }
+}
+
+/// `POST /v1/tenants/{id}/invites` on the subject-facing surface: a
+/// link-only invite into the tenant, as `POST /v1/invites` makes one, its
+/// token shown once, and its inviter the calling member.
+// r[impl authn.invite.tenant]
+// r[impl authn.invite.inviter]
+async fn create_tenant_invite(
+    State(state): State<AppState>,
+    db: Db,
+    limit: metadata::Limit,
+    headers: HeaderMap,
+    Path(tenant): Path<String>,
+    ApiJson(body): ApiJson<CreateTenantInvite>,
+) -> Result<(StatusCode, Json<Written<CreatedInvite>>), ApiError> {
+    let (member, tenant) = {
+        let mut conn = state.pool.get().await?;
+        tenant_inviter(&state, &mut conn, &headers, &tenant).await?
+    };
+    create(
+        db,
+        limit,
+        body.into_invite(tenant.to_string()),
+        Inviter::Member(member),
+    )
+    .await
+}
+
+/// `GET /v1/tenants/{id}/invites` on the subject-facing surface: the
+/// tenant's link-only invites, newest first; never an emailed invite's
+/// address.
+// r[impl authn.invite.tenant]
+async fn list_tenant_invites(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(tenant): Path<String>,
+    Query(query): Query<TenantInviteQuery>,
+) -> Result<Json<InvitePage>, ApiError> {
+    let mut conn = state.pool.get().await?;
+    let (_, tenant) = tenant_inviter(&state, &mut conn, &headers, &tenant).await?;
+    let limit = query.limit.unwrap_or(50).clamp(1, 500);
+    let found =
+        challenges::list_invites(&mut conn, Some(tenant), None, true, query.before, limit).await?;
+    let next = (i64::try_from(found.len()) == Ok(limit))
+        .then(|| found.last().map(|invite| invite.id))
+        .flatten();
+    Ok(Json(InvitePage {
+        invites: found.into_iter().map(invite).collect(),
+        next,
+    }))
+}
+
+/// `POST /v1/tenants/{id}/invites/{invite}/revoke` on the subject-facing
+/// surface: revokes one of the tenant's link-only invites; any other is not
+/// found.
+// r[impl authn.invite.tenant]
+async fn revoke_tenant_invite(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((tenant, id)): Path<(String, String)>,
+) -> Result<Json<Invite>, ApiError> {
+    let mut conn = state.pool.get().await?;
+    let (_, tenant) = tenant_inviter(&state, &mut conn, &headers, &tenant).await?;
+    let id = parse_invite_id(&id)?;
+    let found = find_invite(&mut conn, id).await?;
+    let details: InviteDetails = serde_json::from_value(found.details.clone()).unwrap_or_default();
+    let into = details.tenant.as_deref().and_then(tenants::parse_reference);
+    if !is_link_only(&found) || into != Some(tenant) {
+        return Err(ApiError::not_found("invite"));
+    }
+    Ok(Json(revoke(&mut conn, id).await?))
 }
 
 fn parse_invite_id(id: &str) -> Result<uuid::Uuid, ApiError> {
@@ -421,6 +654,8 @@ pub(crate) fn invite(challenge: challenges::Challenge) -> Invite {
         metadata_etag: metadata::etag(&challenge.metadata),
         metadata: challenge.metadata,
         public_metadata: details.public_metadata,
+        sign_up: details.sign_up,
+        invited_by: details.invited_by,
     }
 }
 
@@ -432,9 +667,14 @@ struct RedeemInvite {
     #[serde(default)]
     password: Option<String>,
     /// For a link-only invite redeemed without a session: the login
-    /// identifier of the existing password credential `password` proves.
+    /// identifier of the existing password credential `password` proves,
+    /// or, with `sign_up`, of the new one it becomes.
     #[serde(default)]
     identifier: Option<String>,
+    /// Signs up: makes a new account of `identifier` and `password`, if the
+    /// invite lets a newcomer do so (`authn.invite.sign-up`).
+    #[serde(default)]
+    sign_up: bool,
     #[serde(flatten)]
     session: SessionRequest,
 }
@@ -551,6 +791,7 @@ async fn preview_invite(
         state,
         expires_at: challenge.expires_at,
         link_only: challenge.recipient.is_empty(),
+        sign_up: details.sign_up,
         public_metadata: details.public_metadata,
     }))
 }
@@ -578,7 +819,7 @@ async fn redeem_invite(
         .password
         .clone()
         .ok_or_else(|| ApiError::invalid_request("a password is required without a session"))?;
-    if body.identifier.is_none() && password.chars().count() < 8 {
+    if (body.identifier.is_none() || body.sign_up) && password.chars().count() < 8 {
         return Err(ApiError::invalid_request(
             "passwords need at least 8 characters",
         ));
@@ -586,6 +827,26 @@ async fn redeem_invite(
     let mut conn = state.pool.get().await?;
     let browser = body.session.check(&state, &mut conn, &headers).await?;
     let challenge = usable(check_token(&mut conn, &body.token, address).await?)?;
+    if body.sign_up {
+        let identifier = body
+            .identifier
+            .as_deref()
+            .ok_or_else(|| ApiError::invalid_request("signing up needs an identifier"))?;
+        drop(conn);
+        let credential = sign_up(&state, &challenge, identifier, &password).await?;
+        let mut conn = state.pool.get().await?;
+        return start_session(
+            &state,
+            &mut conn,
+            &credential,
+            &["pwd"],
+            body.session.client,
+            browser.as_ref(),
+            &body.session.flags,
+            dpop_jkt,
+        )
+        .await;
+    }
     let credential = if is_link_only(&challenge) {
         // r[impl authn.invite.bearer]
         let identifier = body.identifier.as_deref().ok_or_else(|| {
@@ -700,6 +961,63 @@ async fn redeem_emailed(
     .await
 }
 
+/// Signs a newcomer up with a link-only invite that lets them: a human
+/// subject and a password credential of `identifier`, unverified, made and
+/// joined to the invite's tenant in one transaction, so a conflict leaves
+/// the invite pending. The caller holds no database connection: the
+/// password is hashed before one is checked out.
+// r[impl authn.invite.sign-up]
+async fn sign_up(
+    state: &AppState,
+    challenge: &challenges::Challenge,
+    identifier: &str,
+    password: &str,
+) -> Result<konklav_store::credentials::Credential, ApiError> {
+    let details: InviteDetails =
+        serde_json::from_value(challenge.details.clone()).unwrap_or_default();
+    if !is_link_only(challenge) || !details.sign_up {
+        return Err(ApiError::invalid_request(
+            "this invite doesn't let a newcomer sign up",
+        ));
+    }
+    let identifier = credentials::normalize_identifier(identifier);
+    if identifier.is_empty() {
+        return Err(ApiError::invalid_request("signing up needs an identifier"));
+    }
+    let new = password.to_owned();
+    let hash = state.auth.hashing(move |hasher| hasher.hash(&new)).await?;
+    let mut conn = state.pool.get().await?;
+    conn.transaction::<_, ApiError, _>(async |conn| {
+        if credentials::find_active(conn, CredentialKind::Password, &identifier)
+            .await?
+            .is_some()
+        {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "this address already has an account; sign in with its password to join",
+            ));
+        }
+        let subject = SubjectId::new_v7();
+        subjects::create(conn, subject, SubjectKind::Human).await?;
+        let credential = credentials::insert(
+            conn,
+            NewCredential {
+                id: CredentialId::new_v7(),
+                subject_id: subject,
+                identifier: identifier.clone(),
+                data: CredentialData::Password(PasswordData { hash }),
+                mfa_factors_required: 0,
+                replaces: None,
+                metadata: konklav_store::metadata::empty(),
+            },
+        )
+        .await?;
+        consume_and_join(conn, challenge, subject).await?;
+        Ok(credential)
+    })
+    .await
+}
+
 /// What a signed-in redemption answers: the membership it joined, if any,
 /// and the change-feed cursor of its last event.
 #[derive(Serialize)]
@@ -725,6 +1043,7 @@ async fn redeem_signed_in(
     let session = crate::flows::own_session(state, &mut conn, headers).await?;
     if body.password.is_some()
         || body.identifier.is_some()
+        || body.sign_up
         || !body.session.flags.is_empty()
         || matches!(body.session.client, Client::Browser)
     {

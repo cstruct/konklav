@@ -29,6 +29,9 @@ pub const IMPORT: &str = "konklav:import";
 pub const CLIENTS: &str = "konklav:clients:manage";
 pub const DELIVERY_READ: &str = "konklav:delivery:read";
 pub const SCOPES_REGISTER: &str = "konklav:scopes:register";
+/// A tenant capability, not a control-plane one: granted through tenant
+/// roles, it holds in that tenant (`authz.tenant-capability`).
+pub const TENANT_INVITE: &str = "konklav:tenant:invite";
 
 /// Whether `subject` holds `capability` through its global assignments.
 // r[impl authz.control-plane.capability]
