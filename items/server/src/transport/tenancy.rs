@@ -16,6 +16,7 @@ pub(crate) fn tenant(tenant: Tenant) -> api::Tenant {
         facts: tenant.facts,
         metadata_etag: crate::metadata::etag(&tenant.metadata),
         metadata: tenant.metadata,
+        key: tenant.key,
         created_at: tenant.created_at,
         updated_at: tenant.updated_at,
     }

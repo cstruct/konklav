@@ -11,6 +11,7 @@ use konklav_server::config::{
 };
 use konklav_server::feed::FeedHub;
 use konklav_server::keys::ConfiguredKeys;
+use konklav_server::login_page::LoginPage;
 use konklav_server::serve::{BoundServer, shutdown_signal};
 use ordna_core::ConfigContexts;
 use std::path::Path;
@@ -291,16 +292,26 @@ async fn serve(
     listen: ListenConfig,
     database: DatabaseConfig,
     tokens: TokensConfig,
-    browser: BrowserConfig,
+    mut browser: BrowserConfig,
     control: ControlConfig,
     feed: FeedConfig,
     mfa: MfaConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     config::check_deployment(&tokens, &browser, &control, &mfa)?;
+    let login_page = LoginPage::configure(&tokens.tokens, &mut browser)?;
+    let login_page_url = login_page
+        .as_ref()
+        .map(|_| LoginPage::url(&tokens.tokens.issuer));
     let oidc = tokens
         .oidc_provider
         .as_ref()
-        .map(|config| konklav_server::oidc::OpenIdProvider::load(config, &tokens.tokens.issuer))
+        .map(|config| {
+            konklav_server::oidc::OpenIdProvider::load(
+                config,
+                &tokens.tokens.issuer,
+                login_page_url.as_deref(),
+            )
+        })
         .transpose()?;
     let pacing = konklav_server::pacing::Pacing {
         floor: tokens.pacing_floor(),
@@ -332,6 +343,7 @@ async fn serve(
     }
     let mut auth = AuthContext::new(&tokens, browser.browser.as_ref(), &control, keys.signer);
     auth.control_token_expires_at = control.bootstrap_expiry()?;
+    auth.access_requests = control.access_requests()?;
     if auth.control_token.is_some() {
         tracing::warn!(
             expires_at = ?auth.control_token_expires_at,
@@ -350,6 +362,7 @@ async fn serve(
     auth.trusted_proxies
         .clone_from(&listen.listen.trusted_proxies);
     auth.oidc = oidc;
+    auth.login_page = login_page;
     auth.identity_providers = konklav_server::federation::Providers::from_config(&browser)?;
     auth.passkeys = browser
         .passkeys

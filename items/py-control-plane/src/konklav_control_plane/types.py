@@ -5,6 +5,11 @@ from __future__ import annotations
 
 from typing import Any, Literal, NotRequired, TypedDict
 
+type AccessRequestState = Literal['pending', 'approved', 'denied', 'withdrawn']
+"""
+Where an access request stands.
+"""
+
 
 class ActionEntry(TypedDict):
     """
@@ -110,13 +115,19 @@ class Confinement(TypedDict):
 
 class CreateTenant(TypedDict):
     facts: NotRequired[dict[str, Any]]
+    key: NotRequired[str | None]
+    """
+    A tenant key: lowercase words joined by hyphens, such as
+    `acme-north`, unique among all tenants. It never changes once set.
+    """
     metadata: NotRequired[dict[str, Any]]
     """
     An object, opaque to Konklav.
     """
     parent: NotRequired[str | None]
     """
-    The parent tenant (a UUID or `root`); `root` when absent.
+    The parent tenant (a UUID, a tenant key or `root`); `root` when
+    absent.
     """
     templates: NotRequired[list[str]]
     """
@@ -823,6 +834,18 @@ without a tenant, `tenant` with one.
 """
 
 
+class SetTenantKey(TypedDict):
+    """
+    Gives a tenant that has none a key.
+    """
+
+    key: str
+    """
+    Lowercase words joined by hyphens, such as `acme-north`, at most 63
+    characters, not `root`, and unique among all tenants.
+    """
+
+
 type ShareId = str
 """
 Identifies a share of one tenant's scope with another tenant.
@@ -948,6 +971,22 @@ class VouchedScope(TypedDict):
     actions: list[str]
     id: str
     kind: str
+
+
+class WrittenAccessRequest(TypedDict):
+    """
+    A write's result and the cursor of the last event it produced, if any.
+    """
+
+    created_at: str
+    decided_at: str | None
+    decided_by: SubjectId | None
+    id: str
+    membership_id: MembershipId | None
+    state: AccessRequestState
+    subject_id: SubjectId
+    tenant_id: TenantId
+    cursor: NotRequired[Cursor | None]
 
 
 class WrittenBatchResults(TypedDict):
@@ -1209,6 +1248,11 @@ class WrittenTenant(TypedDict):
     created_at: str
     facts: dict[str, Any]
     id: TenantId
+    key: str | None
+    """
+    Its tenant key, usable instead of its id wherever a tenant is named;
+    once set, it never changes.
+    """
     metadata: dict[str, Any]
     """
     An object, opaque to Konklav.
@@ -1222,6 +1266,46 @@ class WrittenTenant(TypedDict):
     state: TenantState
     updated_at: str
     cursor: NotRequired[Cursor | None]
+
+
+class AccessRequest(TypedDict):
+    """
+    A signed-in subject's request for a membership in a tenant.
+    """
+
+    created_at: str
+    decided_at: str | None
+    decided_by: SubjectId | None
+    id: str
+    membership_id: MembershipId | None
+    state: AccessRequestState
+    subject_id: SubjectId
+    tenant_id: TenantId
+
+
+class AccessRequestPage(TypedDict):
+    access_requests: list[AccessRequest]
+    next: str | None
+
+
+class ApproveAccessRequest(TypedDict):
+    """
+    Approves an access request: the subject becomes a member of the tenant.
+    """
+
+    facts: NotRequired[dict[str, Any]]
+    """
+    Membership facts.
+    """
+    membership: NotRequired[MembershipId | None]
+    metadata: NotRequired[dict[str, Any]]
+    """
+    The membership's metadata, an object opaque to Konklav.
+    """
+    roles: NotRequired[list[str]]
+    """
+    Role keys in the tenant to assign to the membership.
+    """
 
 
 class AssignRole(TypedDict):
@@ -1420,7 +1504,7 @@ class CreateInvite(TypedDict):
     """
     tenant: NotRequired[str | None]
     """
-    A tenant (UUID or `root`) to join on redemption.
+    A tenant (a UUID, a tenant key or `root`) to join on redemption.
     """
 
 
@@ -1433,7 +1517,7 @@ class CreateMembership(TypedDict):
     subject: SubjectId
     tenant: str
     """
-    The tenant (a UUID or `root`).
+    The tenant (a UUID, a tenant key or `root`).
     """
 
 
@@ -2196,6 +2280,11 @@ class Tenant(TypedDict):
     created_at: str
     facts: dict[str, Any]
     id: TenantId
+    key: str | None
+    """
+    Its tenant key, usable instead of its id wherever a tenant is named;
+    once set, it never changes.
+    """
     metadata: dict[str, Any]
     """
     An object, opaque to Konklav.

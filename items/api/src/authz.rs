@@ -46,6 +46,6 @@ pub struct AssignRole {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct EntitlementQuery {
-    /// The tenant (a UUID or `root`); global entitlements only when absent.
+    /// The tenant (a UUID, a tenant key or `root`); global entitlements only when absent.
     pub tenant: Option<String>,
 }

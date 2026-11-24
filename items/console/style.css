@@ -164,6 +164,8 @@ th, td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--line); vertical-
 tr.revoked td, tr.denied td { color: var(--muted); }
 td.actions { white-space: nowrap; }
 td.actions button { margin-right: 0.25rem; }
+form.inline { display: flex; gap: 0.35rem; align-items: center; margin: 0; }
+form.inline input { width: 12rem; font-size: 0.85rem; padding: 0.15rem 0.4rem; }
 
 dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1.25rem; margin: 0 0 1rem; }
 dl.facts dt { color: var(--muted); }

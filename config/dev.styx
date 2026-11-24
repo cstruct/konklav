@@ -29,8 +29,9 @@ tokens {
 // Origins whose pages may use browser sign-in with the refresh cookie. The
 // console (`mise run console:serve`) serves on port 8083 and proxies /v1
 // and /control/v1 here, so Konklav sees requests from that origin.
+// The login page's development server (`mise run login:dev`) is on 5174.
 browser {
-    allowed_origins ("http://localhost:5173" "http://127.0.0.1:8083" "http://localhost:8083")
+    allowed_origins ("http://localhost:5173" "http://127.0.0.1:8083" "http://localhost:8083" "http://localhost:5174")
     secure_cookies false
 }
 
@@ -40,4 +41,23 @@ passkeys {
     rp_id localhost
     rp_name "Konklav (dev)"
     origins ("http://localhost:8083" "http://localhost:5173")
+}
+
+// Konklav as an OpenID provider, with its built-in login page at
+// http://127.0.0.1:8080/login/ as the login URL. `mise run dev:signing-key`
+// creates the untracked ID-token key. Passkeys aren't offered there, since
+// WebAuthn doesn't accept the issuer's IP address.
+oidc_provider {
+    id_token_key_file "config/dev.id-token-key.pem"
+}
+
+login_page {
+    enabled true
+    title "Konklav (dev)"
+}
+
+// Anyone signed in may ask to join any tenant from the login page; decide
+// at /v1/access-requests on the control plane.
+access_requests {
+    all_tenants true
 }

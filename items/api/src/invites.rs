@@ -18,7 +18,7 @@ pub struct CreateInvite {
     /// the token once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
-    /// A tenant (UUID or `root`) to join on redemption.
+    /// A tenant (a UUID, a tenant key or `root`) to join on redemption.
     pub tenant: Option<String>,
     /// Role keys in that tenant to assign.
     #[serde(default)]
@@ -188,7 +188,7 @@ pub struct Invite {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct InviteQuery {
-    /// Only invites to this tenant (a UUID or `root`).
+    /// Only invites to this tenant (a UUID, a tenant key or `root`).
     pub tenant: Option<String>,
     /// A JSON object of strings, numbers and booleans: only objects whose
     /// metadata has each of its keys at the top level with an equal value.

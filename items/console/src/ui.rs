@@ -6,6 +6,7 @@
     reason = "Leptos components take their props by value and return views"
 )]
 
+mod access_requests;
 mod app;
 mod authz;
 mod clients;

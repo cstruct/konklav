@@ -957,9 +957,11 @@ async fn select_tenant(
     if session.stage == Stage::Partial {
         return Err(ApiError::new(ErrorCode::Forbidden, "complete MFA first"));
     }
-    let tenant_id = tenants::parse_reference(&body.tenant)
-        .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
     let no_access = || ApiError::new(ErrorCode::Forbidden, "no active membership in that tenant");
+    // A key no tenant has is answered as a tenant the subject may not enter.
+    let tenant_id = crate::tenant_refs::resolve(&mut conn, &body.tenant)
+        .await?
+        .ok_or_else(no_access)?;
     let tenant = tenants::get(&mut conn, tenant_id)
         .await
         .map_err(|_| no_access())?;

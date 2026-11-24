@@ -273,8 +273,10 @@ config_tree! {
             /// tokens.
             pub id_token_key_file: String,
             /// Where authorization requests send people to sign in, unless
-            /// the client registered its own login URL.
-            pub login_url: String,
+            /// the client registered its own login URL. Defaults to the
+            /// built-in login page, `{issuer}/login/`, when `login_page` is
+            /// configured, and is required otherwise.
+            pub login_url: Option<String>,
             /// Defaults to `{issuer}/.well-known/jwks.json`.
             pub jwks_uri: Option<String>,
             /// PKCS#8 PEM file with an RSA key of at least 2048 bits that
@@ -377,6 +379,20 @@ config_tree! {
             #[facet(default)]
             pub origins: Vec<String>,
         }>,
+        /// The login page built into the server, served by the
+        /// subject-facing surface at `/login/`: a login application for
+        /// Konklav's OpenID provider that needs no deployment of its own.
+        /// A section of its own, loaded with `browser`, which it needs.
+        /// Without it, `/login/` answers 404.
+        /// Turn it on with `login_page { enabled true }`: an empty section
+        /// reads as no section.
+        pub login_page: Option<pub struct LoginPage {
+            #[facet(default = true)]
+            pub enabled: bool,
+            /// The page's heading and title, such as the organization's
+            /// name. Defaults to `Sign in`.
+            pub title: Option<String>,
+        }>,
         /// OpenID providers browser clients can sign in through. A section
         /// of its own, loaded with `browser` (contexts are limited in
         /// number).
@@ -384,8 +400,16 @@ config_tree! {
         pub identity_providers: Vec<pub struct IdentityProvider {
             /// Used in URLs and credential identifiers; lowercase.
             pub id: String,
+            /// What the login page calls the provider, as in "Continue with
+            /// Example". Defaults to the id.
+            pub name: Option<String>,
+            /// `oidc` (the default), an OpenID provider, or `github`:
+            /// GitHub or GitHub Enterprise, which sign in with plain OAuth
+            /// 2.0 and describe people through their REST API.
+            pub kind: Option<String>,
             /// The provider's issuer; endpoints and keys come from its
-            /// discovery document.
+            /// discovery document. For `github`, GitHub's web address:
+            /// `https://github.com`, or a GitHub Enterprise one.
             pub issuer: String,
             pub client_id: String,
             /// This instance's `/v1/login/oidc/{id}/callback` URL, as
@@ -495,6 +519,22 @@ config_tree! {
             /// compact JSON.
             #[facet(default = 16384)]
             pub metadata_max_bytes: u32,
+        }>,
+        /// Access requests: signed-in people may ask for a membership in
+        /// the tenants named here, and operators approve or deny on the
+        /// control plane. Without it, nobody can ask.
+        pub access_requests: Option<pub struct AccessRequests {
+            /// Tenants (UUIDs or `root`) that take requests.
+            #[facet(default)]
+            pub tenants: Vec<String>,
+            /// Every active tenant takes requests. Asking then tells
+            /// whoever is signed in which tenant ids exist.
+            #[facet(default)]
+            pub all_tenants: bool,
+            /// How long after a denial the subject may ask the same tenant
+            /// again.
+            #[facet(default = 168)]
+            pub retry_after_denial_hours: u32,
         }>,
     }
 }
@@ -683,6 +723,35 @@ impl Database {
 pub const MIN_BOOTSTRAP_TOKEN_CHARS: usize = 32;
 
 impl ControlConfig {
+    /// Which tenants take access requests, if any do.
+    ///
+    /// # Errors
+    ///
+    /// When `access_requests` names no tenant, or something that isn't one.
+    pub fn access_requests(&self) -> Result<Option<crate::access_requests::Settings>, String> {
+        let Some(config) = &self.access_requests else {
+            return Ok(None);
+        };
+        let tenants = config
+            .tenants
+            .iter()
+            .map(|tenant| {
+                konklav_store::tenants::parse_reference(tenant)
+                    .ok_or_else(|| format!("access_requests: `{tenant}` is not a tenant id or key"))
+            })
+            .collect::<Result<std::collections::HashSet<_>, _>>()?;
+        if tenants.is_empty() && !config.all_tenants {
+            return Err(
+                "access_requests names no tenants: list `tenants`, or set `all_tenants true`"
+                    .into(),
+            );
+        }
+        Ok(Some(crate::access_requests::Settings {
+            tenants: (!config.all_tenants).then_some(tenants),
+            retry_after_denial: chrono::Duration::hours(i64::from(config.retry_after_denial_hours)),
+        }))
+    }
+
     /// The batch limits, the defaults when `[control]` is absent.
     #[must_use]
     pub fn batches(&self) -> crate::batch_api::BatchLimits {

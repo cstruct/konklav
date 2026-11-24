@@ -104,11 +104,12 @@ jobs:
         with:
           persist-credentials: false
 
-      # Only Rust, as pinned in mise.toml, not the tests' tools.
-      - name: Install Rust
+      # Only Rust and Node (for the login page), as pinned in mise.toml, not
+      # the tests' tools.
+      - name: Install Rust and Node
         uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
-          install_args: rust
+          install_args: rust node
 
       # Restore only: a cache saved by a tag run is scoped to the tag, so no
       # other run could restore it.
@@ -123,7 +124,13 @@ jobs:
           restore-keys: |
             release-${{ matrix.target }}-
 
+      - name: Build the login page
+        run: mise run login:build
+
+      # Fails rather than embed the placeholder page.
       - name: Build release binary
+        env:
+          KONKLAV_REQUIRE_LOGIN_PAGE: "1"
         run: cargo build --locked --release --bin konklav-server --target "$TARGET"
 
       - name: Smoke test release binary

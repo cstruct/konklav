@@ -1,6 +1,7 @@
 //! The Konklav server: one binary serving the subject-facing, relying and
 //! control-plane surfaces.
 
+pub mod access_requests;
 pub mod batch_api;
 pub mod bootstrap;
 mod capabilities;
@@ -27,6 +28,8 @@ mod import_api;
 mod invites;
 mod issue;
 pub mod keys;
+pub mod login_methods;
+pub mod login_page;
 pub mod metadata;
 mod metadata_api;
 pub mod oidc;
@@ -46,6 +49,7 @@ mod subject_api;
 pub mod surface;
 pub mod sweeper;
 pub mod telemetry;
+mod tenant_refs;
 mod transport;
 
 use std::sync::Arc;
@@ -88,6 +92,10 @@ pub struct AuthContext {
     pub oidc: Option<oidc::OpenIdProvider>,
     /// Passkey support, when configured.
     pub passkeys: Option<passkeys::Verifier>,
+    /// The built-in login page, when configured.
+    pub login_page: Option<login_page::LoginPage>,
+    /// Which tenants take access requests; `None` when none do.
+    pub access_requests: Option<access_requests::Settings>,
     /// Reverse proxies trusted to report client addresses.
     pub trusted_proxies: Vec<std::net::IpAddr>,
     /// How large control-plane batches may be, and how long their
@@ -247,6 +255,8 @@ impl AuthContext {
             identity_providers: federation::Providers::default(),
             oidc: None,
             passkeys: None,
+            login_page: None,
+            access_requests: None,
             trusted_proxies: Vec::new(),
             batches: control.batches(),
             metadata_limit: control.metadata_limit(),
@@ -276,7 +286,10 @@ mod tests {
         let mut auth = AuthContext::new(
             &tokens,
             None,
-            &config::ControlConfig { control: None },
+            &config::ControlConfig {
+                control: None,
+                access_requests: None,
+            },
             signer,
         );
         auth.hashing_slots = HashingSlots::new(slots, 16);

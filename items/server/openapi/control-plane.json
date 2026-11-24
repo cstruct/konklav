@@ -10,6 +10,242 @@
     "version": "1.9.0"
   },
   "paths": {
+    "/v1/access-requests": {
+      "get": {
+        "tags": [
+          "access-requests"
+        ],
+        "summary": "Lists access requests, newest first.",
+        "description": "Optionally only those for one tenant, from one subject, or in one state,\nsuch as the pending ones to decide.",
+        "operationId": "list_access_requests",
+        "parameters": [
+          {
+            "name": "tenant",
+            "in": "query",
+            "description": "Only requests for this tenant (a UUID, a tenant key or `root`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "subject",
+            "in": "query",
+            "description": "Only this subject's requests.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectId"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AccessRequestState"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessRequestPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
+      }
+    },
+    "/v1/access-requests/{id}": {
+      "get": {
+        "tags": [
+          "access-requests"
+        ],
+        "summary": "Gets an access request.",
+        "operationId": "get_access_request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessRequest"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
+      }
+    },
+    "/v1/access-requests/{id}/approve": {
+      "post": {
+        "tags": [
+          "access-requests"
+        ],
+        "summary": "Approves an access request: the subject becomes a member of the tenant,\nwith the facts and roles given, in one transaction.",
+        "description": "When the subject has become a member meanwhile, the approval records\nthat membership and creates none, but still assigns the roles. Giving a\nrole that names a `konklav:` action needs `konklav:control:all`. No one\nmay approve their own request. Approving an approved request again\nanswers 200 with it and changes nothing; a denied or withdrawn one can't\nbe approved.",
+        "operationId": "approve_access_request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveAccessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_AccessRequest"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Denied or withdrawn already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
+      }
+    },
+    "/v1/access-requests/{id}/deny": {
+      "post": {
+        "tags": [
+          "access-requests"
+        ],
+        "summary": "Denies an access request.",
+        "description": "The subject may ask the same tenant again only after\n`access_requests.retry_after_denial_hours`. No one may deny their own\nrequest. Denying a denied request again answers 200 with it; an approved\nor withdrawn one can't be denied.",
+        "operationId": "deny_access_request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_AccessRequest"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Approved or withdrawn already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
+      }
+    },
     "/v1/assignments/{id}": {
       "delete": {
         "tags": [
@@ -775,7 +1011,7 @@
           {
             "name": "tenant",
             "in": "query",
-            "description": "Only invites to this tenant (a UUID or `root`).",
+            "description": "Only invites to this tenant (a UUID, a tenant key or `root`).",
             "required": false,
             "schema": {
               "type": "string"
@@ -2680,7 +2916,7 @@
           {
             "name": "tenant",
             "in": "query",
-            "description": "The tenant (a UUID or `root`); global entitlements only when absent.",
+            "description": "The tenant (a UUID, a tenant key or `root`); global entitlements only when absent.",
             "required": false,
             "schema": {
               "type": "string"
@@ -2783,7 +3019,7 @@
           {
             "name": "tenant",
             "in": "query",
-            "description": "The tenant (a UUID or `root`); global roles only when absent.",
+            "description": "The tenant (a UUID, a tenant key or `root`); global roles only when absent.",
             "required": false,
             "schema": {
               "type": "string"
@@ -3384,7 +3620,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -3488,7 +3724,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -3530,6 +3766,80 @@
         "x-konklav-capability": "konklav:tenants:manage"
       }
     },
+    "/v1/tenants/{id}/key": {
+      "put": {
+        "tags": [
+          "tenants"
+        ],
+        "summary": "Gives a tenant that has none a key.",
+        "description": "The key can then be used instead of the tenant's id wherever a tenant is\nnamed. It never changes and is never removed: setting the key the tenant\nhas answers 200 again, and any other key is a conflict, as is a key\nanother tenant has.",
+        "operationId": "set_tenant_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The tenant: a UUID, a tenant key or `root`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetTenantKey"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The tenant had this key already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Tenant"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The key was set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_Tenant"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The tenant has another key, or another tenant has this one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
+      }
+    },
     "/v1/tenants/{id}/memberships": {
       "get": {
         "tags": [
@@ -3541,7 +3851,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -3604,7 +3914,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -3679,7 +3989,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -3733,7 +4043,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -3782,7 +4092,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -3840,7 +4150,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -3891,7 +4201,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -3974,7 +4284,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -4035,7 +4345,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The tenant: a UUID or `root`",
+            "description": "The tenant: a UUID, a tenant key or `root`",
             "required": true,
             "schema": {
               "type": "string"
@@ -4079,6 +4389,100 @@
   },
   "components": {
     "schemas": {
+      "AccessRequest": {
+        "type": "object",
+        "description": "A signed-in subject's request for a membership in a tenant.",
+        "required": [
+          "id",
+          "subject_id",
+          "tenant_id",
+          "state",
+          "membership_id",
+          "created_at",
+          "decided_at",
+          "decided_by"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "decided_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SubjectId",
+                "description": "Who approved, denied or withdrew it; null for the bootstrap token or\nerasure."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "membership_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MembershipId",
+                "description": "Once approved, the membership the approval created, or found when\nthe subject had become a member meanwhile."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/AccessRequestState"
+          },
+          "subject_id": {
+            "$ref": "#/components/schemas/SubjectId"
+          },
+          "tenant_id": {
+            "$ref": "#/components/schemas/TenantId"
+          }
+        }
+      },
+      "AccessRequestPage": {
+        "type": "object",
+        "required": [
+          "access_requests",
+          "next"
+        ],
+        "properties": {
+          "access_requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccessRequest"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "AccessRequestState": {
+        "type": "string",
+        "description": "Where an access request stands.",
+        "enum": [
+          "pending",
+          "approved",
+          "denied",
+          "withdrawn"
+        ]
+      },
       "ActionEntry": {
         "type": "object",
         "description": "A declared action.",
@@ -4147,6 +4551,38 @@
           },
           "reason": {
             "$ref": "#/components/schemas/Reason"
+          }
+        }
+      },
+      "ApproveAccessRequest": {
+        "type": "object",
+        "description": "Approves an access request: the subject becomes a member of the tenant.",
+        "properties": {
+          "facts": {
+            "type": "object",
+            "description": "Membership facts."
+          },
+          "membership": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MembershipId",
+                "description": "The id of the membership the approval creates, so that a relying\nsystem can name it; generated when absent."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "description": "The membership's metadata, an object opaque to Konklav."
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Role keys in the tenant to assign to the membership."
           }
         }
       },
@@ -4717,7 +5153,7 @@
               "string",
               "null"
             ],
-            "description": "A tenant (UUID or `root`) to join on redemption."
+            "description": "A tenant (a UUID, a tenant key or `root`) to join on redemption."
           }
         }
       },
@@ -4740,7 +5176,7 @@
           },
           "tenant": {
             "type": "string",
-            "description": "The tenant (a UUID or `root`)."
+            "description": "The tenant (a UUID, a tenant key or `root`)."
           }
         }
       },
@@ -4765,6 +5201,13 @@
           "facts": {
             "type": "object"
           },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A tenant key: lowercase words joined by hyphens, such as\n`acme-north`, unique among all tenants. It never changes once set."
+          },
           "metadata": {
             "type": "object",
             "description": "An object, opaque to Konklav."
@@ -4774,7 +5217,7 @@
               "string",
               "null"
             ],
-            "description": "The parent tenant (a UUID or `root`); `root` when absent."
+            "description": "The parent tenant (a UUID, a tenant key or `root`); `root` when\nabsent."
           },
           "templates": {
             "type": "array",
@@ -8088,6 +8531,19 @@
           "tenant"
         ]
       },
+      "SetTenantKey": {
+        "type": "object",
+        "description": "Gives a tenant that has none a key.",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Lowercase words joined by hyphens, such as `acme-north`, at most 63\ncharacters, not `root`, and unique among all tenants."
+          }
+        }
+      },
       "SetTenantState": {
         "type": "object",
         "required": [
@@ -8586,6 +9042,7 @@
           "facts",
           "metadata",
           "metadata_etag",
+          "key",
           "created_at",
           "updated_at"
         ],
@@ -8599,6 +9056,13 @@
           },
           "id": {
             "$ref": "#/components/schemas/TenantId"
+          },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its tenant key, usable instead of its id wherever a tenant is named;\nonce set, it never changes."
           },
           "metadata": {
             "type": "object",
@@ -8699,6 +9163,88 @@
             "type": "string"
           }
         }
+      },
+      "Written_AccessRequest": {
+        "allOf": [
+          {
+            "type": "object",
+            "description": "A signed-in subject's request for a membership in a tenant.",
+            "required": [
+              "id",
+              "subject_id",
+              "tenant_id",
+              "state",
+              "membership_id",
+              "created_at",
+              "decided_at",
+              "decided_by"
+            ],
+            "properties": {
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "decided_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "decided_by": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SubjectId",
+                    "description": "Who approved, denied or withdrew it; null for the bootstrap token or\nerasure."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "membership_id": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/MembershipId",
+                    "description": "Once approved, the membership the approval created, or found when\nthe subject had become a member meanwhile."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "$ref": "#/components/schemas/AccessRequestState"
+              },
+              "subject_id": {
+                "$ref": "#/components/schemas/SubjectId"
+              },
+              "tenant_id": {
+                "$ref": "#/components/schemas/TenantId"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
       },
       "Written_BatchResults": {
         "allOf": [
@@ -9783,6 +10329,7 @@
               "facts",
               "metadata",
               "metadata_etag",
+              "key",
               "created_at",
               "updated_at"
             ],
@@ -9796,6 +10343,13 @@
               },
               "id": {
                 "$ref": "#/components/schemas/TenantId"
+              },
+              "key": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Its tenant key, usable instead of its id wherever a tenant is named;\nonce set, it never changes."
               },
               "metadata": {
                 "type": "object",

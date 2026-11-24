@@ -172,18 +172,17 @@ async fn revoke(
 
 /// Lists a tenant's shares.
 #[utoipa::path(get, path = "/tenants/{id}/shares", operation_id = "list_shares", tag = "shares",
-    params(("id" = String, Path, description = "The tenant: a UUID or `root`"), ShareQuery),
+    params(("id" = String, Path, description = "The tenant: a UUID, a tenant key or `root`"), ShareQuery),
     responses((status = 200, body = ShareList)))]
 async fn list(
     db: Db,
     Path(tenant): Path<String>,
     Query(query): Query<ShareQuery>,
 ) -> Result<Json<ShareList>, ApiError> {
-    let tenant = tenants::parse_reference(&tenant)
-        .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
     let side = query.side.map(transport::store_share_side);
     let filter = metadata::filter(query.metadata.as_deref())?;
     let mut conn = db.get().await?;
+    let tenant = crate::tenant_refs::require(&mut conn, &tenant).await?;
     Ok(Json(ShareList {
         shares: shares::list(&mut conn, tenant, side, filter.as_ref())
             .await?

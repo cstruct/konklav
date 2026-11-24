@@ -274,15 +274,32 @@ pub fn tenant(id: &str) -> Request {
     Request::control(Method::Get, format!("/tenants/{}", encode(id)))
 }
 
+/// A tenant under `parent` (root when blank), with `key` unless blank.
 #[must_use]
-pub fn create_tenant(id: &str, parent: &str, facts: &Value, templates: &[String]) -> Request {
+pub fn create_tenant(
+    id: &str,
+    parent: &str,
+    key: &str,
+    facts: &Value,
+    templates: &[String],
+) -> Request {
     let parent = if parent.trim().is_empty() {
         "root"
     } else {
         parent.trim()
     };
-    Request::control(Method::Put, format!("/tenants/{}", encode(id)))
-        .json(json!({"parent": parent, "facts": facts, "templates": templates}))
+    let mut body = json!({"parent": parent, "facts": facts, "templates": templates});
+    if !key.trim().is_empty() {
+        body["key"] = json!(key.trim());
+    }
+    Request::control(Method::Put, format!("/tenants/{}", encode(id))).json(body)
+}
+
+/// Gives a tenant that has none a key, for good.
+#[must_use]
+pub fn set_tenant_key(id: &str, key: &str) -> Request {
+    Request::control(Method::Put, format!("/tenants/{}/key", encode(id)))
+        .json(json!({"key": key.trim()}))
 }
 
 #[must_use]
@@ -476,6 +493,35 @@ pub fn create_invite(email: &str, tenant: &str, roles: &[String], hours: i64) ->
     Request::control(Method::Post, "/invites").json(body)
 }
 
+// --- Access requests ---------------------------------------------------------
+
+/// Access requests, newest first, optionally for one tenant or in one state.
+#[must_use]
+pub fn access_requests(tenant: &str, state: &str, before: Option<&str>) -> Request {
+    Request::control(Method::Get, "/access-requests")
+        .query("tenant", Some(tenant))
+        .query("state", Some(state))
+        .query("before", before)
+}
+
+/// Approves a request, making its subject a member with `roles`.
+#[must_use]
+pub fn approve_access_request(id: &str, roles: &[String]) -> Request {
+    Request::control(
+        Method::Post,
+        format!("/access-requests/{}/approve", encode(id)),
+    )
+    .json(json!({"roles": roles}))
+}
+
+#[must_use]
+pub fn deny_access_request(id: &str) -> Request {
+    Request::control(
+        Method::Post,
+        format!("/access-requests/{}/deny", encode(id)),
+    )
+}
+
 // --- OIDC clients ------------------------------------------------------------
 
 #[must_use]
@@ -617,9 +663,36 @@ mod tests {
     }
 
     #[test]
+    fn access_requests_are_listed_and_decided_on_the_control_plane() {
+        assert_eq!(
+            access_requests(" t1 ", "pending", None).url(),
+            "/control/v1/access-requests?tenant=t1&state=pending"
+        );
+        assert_eq!(
+            access_requests("", "", None).url(),
+            "/control/v1/access-requests"
+        );
+        let approve = approve_access_request("r/1", &list("viewer, admin"));
+        assert_eq!(approve.url(), "/control/v1/access-requests/r%2F1/approve");
+        assert_eq!(approve.body.unwrap(), json!({"roles": ["viewer", "admin"]}));
+        assert_eq!(
+            deny_access_request("r1").url(),
+            "/control/v1/access-requests/r1/deny"
+        );
+    }
+
+    #[test]
     fn tenants_default_to_the_root_parent() {
-        let request = create_tenant("t1", " ", &json!({}), &[]);
-        assert_eq!(request.body.unwrap()["parent"], "root");
+        let request = create_tenant("t1", " ", " ", &json!({}), &[]);
+        let body = request.body.unwrap();
+        assert_eq!(body["parent"], "root");
+        assert_eq!(body.get("key"), None, "no key unless one is given");
+        let keyed = create_tenant("t1", "acme", " acme-north ", &json!({}), &[]);
+        assert_eq!(keyed.body.unwrap()["key"], "acme-north");
+        assert_eq!(
+            set_tenant_key("t1", "acme").url(),
+            "/control/v1/tenants/t1/key"
+        );
     }
 
     #[test]

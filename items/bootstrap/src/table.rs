@@ -16,7 +16,7 @@ use crate::{Problem, line_of};
 /// The columns each table accepts, required ones first. Facts come on top.
 pub(crate) fn columns(table: &str) -> (&'static [&'static str], &'static [&'static str], bool) {
     match table {
-        "tenants.csv" => (&["id"], &["parent", "templates", "metadata"], true),
+        "tenants.csv" => (&["id"], &["key", "parent", "templates", "metadata"], true),
         "subjects.csv" => (&["id"], &["kind", "state", "metadata"], false),
         "credentials.csv" => (
             &["id", "subject", "kind"],
@@ -279,6 +279,7 @@ fn add_row(
         "tenants.csv" => {
             let tenant = Tenant {
                 id: row.id("id"),
+                key: row.get("key").map(str::to_owned),
                 parent: row.get("parent").map_or(TenantRef::Root, TenantRef::parse),
                 facts: row.facts(),
                 templates: row.list("templates"),

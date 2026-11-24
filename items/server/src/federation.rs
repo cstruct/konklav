@@ -5,7 +5,6 @@
 //! authorization codes and validates ID tokens. The HTTP flow around it is
 //! in `federation_api`.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -18,6 +17,9 @@ use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
 use crate::config::BrowserConfig;
+
+mod github;
+pub use github::GitHub;
 
 /// How long discovery documents are trusted before being fetched again.
 const METADATA_TTL: Duration = Duration::from_secs(3600);
@@ -41,10 +43,24 @@ pub enum FederationError {
     RequirementsNotMet(&'static str),
 }
 
+/// How a provider signs people in and says who they are.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Protocol {
+    /// OpenID Connect: discovery, an ID token, and userinfo.
+    #[default]
+    Oidc,
+    /// GitHub's OAuth 2.0 and REST API.
+    GitHub(GitHub),
+}
+
 /// A configured identity provider.
 #[derive(Clone, Debug, Default)]
 pub struct Settings {
     pub id: String,
+    /// What sign-in screens call it, as in "Continue with GitHub"; the id
+    /// when not configured.
+    pub name: Option<String>,
+    pub protocol: Protocol,
     pub issuer: String,
     pub client_id: String,
     pub client_secret: String,
@@ -308,13 +324,16 @@ impl Provider {
         state: &str,
         request: &LoginRequest,
     ) -> Result<String, FederationError> {
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(request.code_verifier.as_bytes()));
+        if let Protocol::GitHub(github) = &self.settings.protocol {
+            return github.authorization_url(&self.settings, state, &challenge);
+        }
         let metadata = self.metadata().await?;
         let scopes = if self.settings.scopes.is_empty() {
             "openid email".to_owned()
         } else {
             self.settings.scopes.join(" ")
         };
-        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(request.code_verifier.as_bytes()));
         let mut params = vec![
             ("response_type", "code".to_owned()),
             ("client_id", self.settings.client_id.clone()),
@@ -334,6 +353,27 @@ impl Provider {
         reqwest::Url::parse_with_params(&metadata.authorization_endpoint, &params)
             .map(String::from)
             .map_err(|error| FederationError::Provider(error.to_string()))
+    }
+
+    /// Finishes a login the provider sent back `code` for: exchanges it
+    /// and returns the claims of who signed in, checked against the
+    /// provider's requirements.
+    pub async fn sign_in(
+        &self,
+        code: &str,
+        request: &LoginRequest,
+    ) -> Result<IdClaims, FederationError> {
+        if let Protocol::GitHub(github) = &self.settings.protocol {
+            return github
+                .sign_in(&self.http, &self.settings, code, request)
+                .await;
+        }
+        let tokens = self.exchange(code, &request.code_verifier).await?;
+        let mut claims = self.verify(&tokens.id_token, &request.nonce).await?;
+        self.add_userinfo(tokens.access_token.as_deref(), &mut claims)
+            .await?;
+        self.check_requirements(&claims, chrono::Utc::now().timestamp())?;
+        Ok(claims)
     }
 
     /// Exchanges an authorization code for the provider's tokens.
@@ -587,9 +627,40 @@ pub fn federated_prefix(provider: &str) -> String {
     format!("{provider}|")
 }
 
-/// The configured identity providers, by id.
+/// A provider's protocol from its `kind`. GitHub has no ID token or
+/// discovery, so settings that need them are refused.
+// r[impl federation.github]
+fn protocol(provider: &crate::config::IdentityProvider) -> Result<Protocol, String> {
+    let fail = |problem: String| format!("identity provider `{}`: {problem}", provider.id);
+    match provider.kind.as_deref() {
+        None | Some("oidc") => Ok(Protocol::Oidc),
+        Some("github") => {
+            let unsupported = [
+                ("require_acr", provider.require_acr.is_some()),
+                ("max_age_seconds", provider.max_age_seconds.is_some()),
+                ("methods", !provider.methods.is_empty()),
+                ("pinned_jwks_file", provider.pinned_jwks_file.is_some()),
+                ("peering", provider.peering),
+                ("workloads", provider.workloads),
+            ];
+            if let Some((name, _)) = unsupported.iter().find(|(_, set)| *set) {
+                return Err(fail(format!(
+                    "GitHub has no ID token or discovery, so `{name}` can't be used"
+                )));
+            }
+            GitHub::new(&provider.issuer)
+                .map(Protocol::GitHub)
+                .map_err(fail)
+        }
+        Some(other) => Err(fail(format!(
+            "kind must be `oidc` or `github`, not `{other}`"
+        ))),
+    }
+}
+
+/// The configured identity providers, in configuration order.
 #[derive(Default)]
-pub struct Providers(HashMap<String, Arc<Provider>>);
+pub struct Providers(Vec<Arc<Provider>>);
 
 impl Providers {
     /// Builds the providers from configuration. Every provider needs a
@@ -597,8 +668,14 @@ impl Providers {
     // r[impl federation.idp.config]
     pub fn from_config(config: &BrowserConfig) -> Result<Self, String> {
         let http = crate::outbound::client(TIMEOUT).map_err(|error| error.to_string())?;
-        let mut providers = HashMap::new();
+        let mut providers: Vec<Arc<Provider>> = Vec::new();
         for provider in &config.identity_providers {
+            if providers.iter().any(|p| p.settings.id == provider.id) {
+                return Err(format!(
+                    "identity provider `{}` is configured twice",
+                    provider.id
+                ));
+            }
             let secret = config
                 .identity_provider_secrets
                 .iter()
@@ -616,8 +693,11 @@ impl Providers {
                 &format!("identity provider `{}`: pass_claims", provider.id),
                 &provider.pass_claims,
             )?;
+            let protocol = protocol(provider)?;
             let settings = Settings {
                 id: provider.id.clone(),
+                name: provider.name.clone(),
+                protocol,
                 issuer: provider.issuer.clone(),
                 client_id: provider.client_id.clone(),
                 client_secret: secret.client_secret.clone(),
@@ -676,10 +756,7 @@ impl Providers {
                     .collect::<Result<_, _>>()
                     .map_err(|error| format!("identity provider `{}`: {error}", provider.id))?,
             };
-            providers.insert(
-                provider.id.clone(),
-                Arc::new(Provider::new(settings, http.clone())),
-            );
+            providers.push(Arc::new(Provider::new(settings, http.clone())));
         }
         Ok(Self(providers))
     }
@@ -696,18 +773,19 @@ impl Providers {
         Self(
             settings
                 .into_iter()
-                .map(|s| (s.id.clone(), Arc::new(Provider::new(s, http.clone()))))
+                .map(|s| Arc::new(Provider::new(s, http.clone())))
                 .collect(),
         )
     }
 
     #[must_use]
     pub fn get(&self, id: &str) -> Option<&Arc<Provider>> {
-        self.0.get(id)
+        self.0.iter().find(|provider| provider.settings.id == id)
     }
 
+    /// The providers, in configuration order.
     pub fn iter(&self) -> impl Iterator<Item = &Arc<Provider>> {
-        self.0.values()
+        self.0.iter()
     }
 
     /// The scope some provider passes `claim` under, if any.

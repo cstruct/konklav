@@ -10,3 +10,5 @@
 /items/py/target/
 /config/*.pem
 /mise.local.toml
+/items/login/node_modules/
+/items/login/dist/

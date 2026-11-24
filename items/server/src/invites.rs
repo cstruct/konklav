@@ -203,6 +203,7 @@ async fn create(
         ));
     }
     let mut conn = db.get().await?;
+    let tenant = stored_tenant(&mut conn, body.tenant.as_deref()).await?;
     let id = body.id.unwrap_or_else(uuid::Uuid::now_v7);
     let secret = generate_secret();
     let expires_at = Utc::now() + Duration::hours(body.expires_in_hours.clamp(1, 24 * 30));
@@ -213,7 +214,7 @@ async fn create(
         .map(credentials::normalize_identifier)
         .unwrap_or_default();
     let details = serde_json::to_value(InviteDetails {
-        tenant: body.tenant.clone(),
+        tenant: tenant.clone(),
         roles: body.roles.clone(),
         facts: body.facts.clone(),
         membership: body.membership,
@@ -236,7 +237,7 @@ async fn create(
                 )
                 .await;
             }
-            if let Some(reference) = &body.tenant {
+            if let Some(reference) = &tenant {
                 check_roles(conn, reference, &body.roles, inviter).await?;
             }
             // What Postgres stored, to the microsecond, so a repeat answers
@@ -285,6 +286,23 @@ async fn create(
     ))
 }
 
+/// The tenant an invite keeps: an id as given, or the id of the tenant a
+/// key names, resolved now.
+async fn stored_tenant(
+    conn: &mut konklav_store::Connection,
+    reference: Option<&str>,
+) -> Result<Option<String>, ApiError> {
+    let Some(reference) = reference else {
+        return Ok(None);
+    };
+    Ok(Some(match crate::tenant_refs::parse(reference)? {
+        tenants::Reference::Key(_) => crate::tenant_refs::require(conn, reference)
+            .await?
+            .to_string(),
+        tenants::Reference::Id(_) => reference.to_owned(),
+    }))
+}
+
 /// Checks that the tenant `reference` names exists and has each of `roles`.
 /// A member may give only roles their membership there holds tenant-wide,
 /// and none that names a `konklav:` action.
@@ -294,8 +312,7 @@ async fn check_roles(
     keys: &[String],
     inviter: Inviter,
 ) -> Result<(), ApiError> {
-    let tenant = tenants::parse_reference(reference)
-        .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
+    let tenant = crate::tenant_refs::require(conn, reference).await?;
     tenants::get(conn, tenant)
         .await
         .map_err(|_| ApiError::not_found("tenant"))?;
@@ -327,7 +344,7 @@ async fn check_roles(
 /// The roles `subject`'s active membership in `tenant` is assigned
 /// tenant-wide; none without one.
 // r[impl authn.invite.tenant-roles]
-async fn held_roles(
+pub(crate) async fn held_roles(
     conn: &mut konklav_store::Connection,
     subject: SubjectId,
     tenant: TenantId,
@@ -446,16 +463,9 @@ async fn list_invites(
     Query(query): Query<InviteQuery>,
 ) -> Result<Json<InvitePage>, ApiError> {
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
-    let tenant = query
-        .tenant
-        .as_deref()
-        .map(|reference| {
-            tenants::parse_reference(reference)
-                .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))
-        })
-        .transpose()?;
     let filter = metadata::filter(query.metadata.as_deref())?;
     let mut conn = db.get().await?;
+    let tenant = crate::tenant_refs::require_some(&mut conn, query.tenant.as_deref()).await?;
     let found = challenges::list_invites(
         &mut conn,
         tenant,
@@ -527,8 +537,16 @@ async fn tenant_inviter(
     let caller = crate::flows::own_session(state, conn, headers)
         .await?
         .subject_id;
-    let tenant = tenants::parse_reference(tenant)
-        .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
+    let refused = || {
+        ApiError::new(
+            ErrorCode::Forbidden,
+            "inviting others into this tenant needs `konklav:tenant:invite` there",
+        )
+    };
+    // A key no tenant has is refused as a tenant the caller may not invite into.
+    let tenant = crate::tenant_refs::resolve(conn, tenant)
+        .await?
+        .ok_or_else(refused)?;
     let entitlements = compile_input::load(conn, caller, Some(tenant))
         .await?
         .compile();
@@ -609,7 +627,7 @@ async fn revoke_tenant_invite(
     let found = find_invite(&mut conn, id).await?;
     let details: InviteDetails = serde_json::from_value(found.details.clone()).unwrap_or_default();
     let into = details.tenant.as_deref().and_then(tenants::parse_reference);
-    if !is_link_only(&found) || into != Some(tenant) {
+    if !is_link_only(&found) || into != Some(tenants::Reference::Id(tenant)) {
         return Err(ApiError::not_found("invite"));
     }
     Ok(Json(revoke(&mut conn, id).await?))
@@ -1123,7 +1141,11 @@ async fn join_invited_tenant(
     let Some(reference) = &details.tenant else {
         return Ok(None);
     };
-    let tenant = tenants::parse_reference(reference).ok_or_else(invalid_invite)?;
+    let tenant = match tenants::parse_reference(reference) {
+        Some(reference) => tenants::resolve(conn, &reference).await?,
+        None => None,
+    }
+    .ok_or_else(invalid_invite)?;
     // r[impl authn.invite.membership-id]
     let membership = match (
         details.membership,

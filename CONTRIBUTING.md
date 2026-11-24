@@ -42,6 +42,7 @@ with the [README](README.md).
   - `py-control-plane`: the Python control-plane client (pure Python)
   - `py-fastapi`: route policies for FastAPI (pure Python)
   - `console`: the operators' web UI (Leptos, WASM)
+  - `login`: the login page the server embeds (Svelte)
   - `test-support`: shared test helpers
 - `config/`: development configuration.
 - `examples/`: runnable examples that start real servers and that the tests
@@ -53,7 +54,7 @@ with the [README](README.md).
 ## Development environment
 
 [mise](https://mise.jdx.dev) manages the toolchain, the environment and the
-local services. It covers Rust, Tracey, Trunk, uv, Hydra and Diesel's CLI
+local services. It covers Rust, Node (for the login page), Tracey, Trunk, uv, Hydra and Diesel's CLI
 (which bundles libpq, so no system Postgres client is needed). You also
 need Docker for the local Postgres and the OpenSSL headers (for example
 `brew install openssl@3`).
@@ -69,6 +70,9 @@ protocol, is the relying SDK's rate-limit store; only its tests use it. Everyday
 
 - `mise run serve` starts Postgres, migrates it, creates an untracked
   development signing key if needed, and serves on ports 8080 to 8082.
+- `mise run login:build` builds the login page the server embeds, and
+  `login:dev` serves it with hot reloading on <http://localhost:5174>. See
+  [`items/login`](items/login/README.md).
 - `mise run console:serve` serves the operators' console on
   <http://127.0.0.1:8083> against that server. `console:build` makes a
   release build. See [`items/console`](items/console/README.md).

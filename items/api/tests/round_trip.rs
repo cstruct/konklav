@@ -29,6 +29,7 @@ fn tenant(id: &str, parent: Option<&str>) -> Value {
         "facts": {"plan": "pro"},
         "metadata": {"billing_id": "b-1"},
         "metadata_etag": "0123456789abcdef0123456789abcdef",
+        "key": parent.map(|_| "acme-north"),
         "created_at": "2026-11-02T10:00:00Z",
         "updated_at": "2026-11-02T10:00:00Z",
     })

@@ -996,3 +996,67 @@ async fn metadata_is_applied_compared_exported_and_limited() {
         "{refused}"
     );
 }
+
+// r[verify bootstrap.tenant-key]
+// r[verify tenant.key.reference]
+#[tokio::test(flavor = "multi_thread")]
+async fn tenant_keys_are_stored_named_and_exported() {
+    let app = TestApp::new().await;
+    let stored = uuid::Uuid::now_v7();
+    let made = app
+        .control(
+            Method::PUT,
+            &format!("/v1/tenants/{stored}"),
+            Some(serde_json::json!({"key": "stored"})),
+        )
+        .await;
+    assert!(made.status.is_success(), "{:?}", made.body);
+    let acme = "0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+    let seed = format!(
+        "format 1.2\nid_namespace {NAMESPACE}\ntenants (\n    {{id {acme}, key acme, children ({{key acme-north}})}}\n    {{key acme-south, parent acme}}\n    {{key under-stored, parent stored}}\n)\nsubjects ({{email ada@example.com, password_hash \"$argon2id$v=19$m=65536,t=3,p=4$8+FttqUgBxV0WJVJEoSFig$sTbjdRtZ6f7ZyvBNPA+oh9ju0QJs7jIKIFEyit//6T0\"}})\n"
+    );
+    let dir = scratch("tenant-keys", &[("seed.styx", seed)]);
+    let first = apply(&app, std::slice::from_ref(&dir), Options::default()).await;
+    assert!(first.committed, "{first}");
+    assert_eq!(tally(&first, "tenants"), created(4), "{first}");
+
+    let tenant = |key: &'static str| {
+        let app = &app;
+        async move {
+            app.control(Method::GET, &format!("/v1/tenants/{key}"), None)
+                .await
+                .body
+        }
+    };
+    assert_eq!(
+        tenant("acme").await["id"],
+        acme,
+        "the given id, with its key"
+    );
+    assert_eq!(tenant("acme-north").await["parent_id"], acme);
+    assert_eq!(
+        tenant("acme-south").await["parent_id"],
+        acme,
+        "a key names the set's tenant with it"
+    );
+    assert_eq!(
+        tenant("under-stored").await["parent_id"],
+        stored.to_string(),
+        "or the stored tenant with it"
+    );
+    let again = apply(&app, std::slice::from_ref(&dir), Options::default()).await;
+    assert_eq!(tally(&again, "tenants"), skipped(4), "{again}");
+
+    let out = std::env::temp_dir().join(format!("konklav-export-keys-{}", uuid::Uuid::now_v7()));
+    konklav_server::export::run(app.db.pool(), &app.state.auth.secrets, &out)
+        .await
+        .unwrap();
+    let exported = &read_dir(&out)["set.styx"];
+    assert!(exported.contains("acme-north"), "{exported}");
+    let copy = TestApp::new().await;
+    let applied = apply(&copy, std::slice::from_ref(&out), Options::default()).await;
+    assert!(applied.committed, "{applied}");
+    let copied = copy.control(Method::GET, "/v1/tenants/acme", None).await;
+    assert_eq!(copied.body["id"], acme, "keys survive export");
+    std::fs::remove_dir_all(out).unwrap();
+}

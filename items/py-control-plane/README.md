@@ -24,7 +24,8 @@ Each release publishes it to PyPI.
   them: `client.tenants`, `memberships`, `subjects`, `credentials`,
   `sessions`, `signing_keys`, `catalog`, `templates`, `roles`,
   `assignments`, `entitlements`, `explain`, `shares`,
-  `registered_scopes`, `invites`, `oidc_clients`, `imports` and
+  `registered_scopes`, `invites`, `access_requests`, `oidc_clients`,
+  `imports` and
   `batches`. Path arguments come first, then the request body as `body`,
   then query parameters by keyword. `request` sends anything else.
 - Batches: `client.batch()` collects writes through the same namespaces

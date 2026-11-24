@@ -19,6 +19,8 @@ uv = "0.8.24"
 # Builds and serves the console (items/console) as a WASM app; fetches the
 # matching wasm-bindgen CLI by itself.
 "github:trunk-rs/trunk" = "0.21.14"
+# Builds the login page (items/login), a Svelte app the server embeds.
+node = "24.22.2"
 "cargo:diesel_cli" = { version = "2.3.14", default-features = false, features = "postgres-bundled" }
 
 [env]
@@ -59,11 +61,12 @@ run = "docker compose -f dev/compose.yaml exec postgres psql -U konklav -d konkl
 
 [tasks.build]
 description = "Build every crate"
+depends = ["login:build"]
 run = "cargo build --workspace"
 
 [tasks.test]
 description = "Run every test; database tests use isolated databases on the local Postgres"
-depends = ["db:up", "py:test", "py-control-plane:test", "py-control-plane:integration", "py-fastapi:test", "example:python", "console:smoke"]
+depends = ["db:up", "py:test", "py-control-plane:test", "py-control-plane:integration", "py-fastapi:test", "example:python", "console:smoke", "login:test", "login:build"]
 # The Rust host's rate-limit store tests need its optional `redis` feature.
 run = ["cargo test --workspace", "cargo test -p konklav-relying-client --features redis"]
 
@@ -251,6 +254,31 @@ grep -q 'konklav-console' ../../target/console/smoke/index.html
 ls ../../target/console/smoke/*.wasm >/dev/null
 """
 
+[tasks."login:install"]
+description = "Install the login page's locked dependencies"
+dir = "items/login"
+run = "npm ci --no-audit --no-fund"
+sources = ["package.json", "package-lock.json"]
+outputs = ["node_modules/.package-lock.json"]
+
+[tasks."login:build"]
+description = "Build the login page into items/login/dist, which the server embeds"
+depends = ["login:install"]
+dir = "items/login"
+run = "npm run build"
+
+[tasks."login:dev"]
+description = "Serve the login page on http://localhost:5174, rebuilding on change, proxying to `mise run serve`"
+depends = ["login:install"]
+dir = "items/login"
+run = "npm run dev"
+
+[tasks."login:test"]
+description = "Type-check the login page and run its unit tests"
+depends = ["login:install"]
+dir = "items/login"
+run = ["npm run check", "npm test"]
+
 [tasks.migrate]
 description = "Apply pending migrations to the local database"
 depends = ["db:up"]
@@ -268,12 +296,15 @@ URLS_CONSENT = "http://127.0.0.1:3000/consent"
 SECRETS_SYSTEM = "konklav-dev-only-hydra-system-secret"
 
 [tasks."dev:signing-key"]
-description = "Create the untracked development signing key if it is missing"
-run = "test -f config/dev.signing-key.pem || openssl genpkey -algorithm Ed25519 -out config/dev.signing-key.pem"
+description = "Create the untracked development signing and ID-token keys if they are missing"
+run = [
+    "test -f config/dev.signing-key.pem || openssl genpkey -algorithm Ed25519 -out config/dev.signing-key.pem",
+    "test -f config/dev.id-token-key.pem || openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out config/dev.id-token-key.pem",
+]
 
 [tasks.serve]
 description = "Run the server against the local database with config/dev.styx"
-depends = ["migrate", "dev:signing-key"]
+depends = ["migrate", "dev:signing-key", "login:build"]
 run = "cargo run -q -p konklav-server -- serve"
 
 [tasks."db:schema"]

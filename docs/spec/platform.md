@@ -584,6 +584,15 @@ declaration that names the version the set needs and the newest it reads.
 A set of an older major version MAY instead be upgraded in memory to the
 current format after it is read, so that applying sees one shape.
 
+r[bootstrap.tenant-key]
+From format 1.2, a nested tenant MAY have both an `id` and a `key`, and a
+`tenants.csv` row MAY have a `key` column; the key MUST then be stored as
+the tenant's key (`tenant.key`), and a key that isn't a valid tenant key
+MUST be reported as a problem. Sets of older formats MUST NOT store keys. A
+tenant reference that isn't a UUID or `root` MUST name the set's tenant
+with that key if there is one, else the stored tenant with that key if
+there is one, else an external id (`bootstrap.ids`).
+
 r[bootstrap.format.export]
 The `export` command MUST declare the current format version in the set it
 writes.

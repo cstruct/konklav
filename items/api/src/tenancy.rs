@@ -26,14 +26,23 @@ pub struct Tenant {
     /// Changes whenever `metadata` does; send it as `If-Match` to patch
     /// the metadata only if no one else has since.
     pub metadata_etag: String,
+    /// Its tenant key, usable instead of its id wherever a tenant is named;
+    /// once set, it never changes.
+    #[schema(required)]
+    pub key: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateTenant {
-    /// The parent tenant (a UUID or `root`); `root` when absent.
+    /// The parent tenant (a UUID, a tenant key or `root`); `root` when
+    /// absent.
     pub parent: Option<String>,
+    /// A tenant key: lowercase words joined by hyphens, such as
+    /// `acme-north`, unique among all tenants. It never changes once set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
     #[serde(default = "empty_object")]
     #[schema(value_type = Object)]
     pub facts: serde_json::Value,
@@ -48,6 +57,14 @@ pub struct CreateTenant {
 
 pub(crate) fn empty_object() -> serde_json::Value {
     serde_json::json!({})
+}
+
+/// Gives a tenant that has none a key.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct SetTenantKey {
+    /// Lowercase words joined by hyphens, such as `acme-north`, at most 63
+    /// characters, not `root`, and unique among all tenants.
+    pub key: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -104,7 +121,7 @@ pub struct Membership {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateMembership {
     pub subject: SubjectId,
-    /// The tenant (a UUID or `root`).
+    /// The tenant (a UUID, a tenant key or `root`).
     pub tenant: String,
     #[serde(default = "empty_object")]
     #[schema(value_type = Object)]

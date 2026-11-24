@@ -6,7 +6,10 @@ use leptos_router::path;
 
 use super::common::{Id, Loading, Mark};
 use super::console::{Console, Phase, use_console};
-use super::{authz, clients, home, invites, keys, passkeys, sessions, sign_in, subjects, tenants};
+use super::{
+    access_requests, authz, clients, home, invites, keys, passkeys, sessions, sign_in, subjects,
+    tenants,
+};
 use crate::grants::Capability;
 
 #[component]
@@ -43,6 +46,7 @@ fn Shell() -> impl IntoView {
             <nav class="side">
                 <NavLink href="/subjects" label="Subjects" capability=Capability::Subjects/>
                 <NavLink href="/tenants" label="Tenants" capability=Capability::Tenants/>
+                <NavLink href="/access-requests" label="Access requests" capability=Capability::Tenants/>
                 <NavLink href="/authz" label="Authorization" capability=Capability::Authz/>
                 <NavLink href="/sessions" label="Sessions" capability=Capability::Sessions/>
                 <NavLink href="/invites" label="Invites" capability=Capability::Invites/>
@@ -57,6 +61,7 @@ fn Shell() -> impl IntoView {
                     <Route path=path!("/tenants") view=tenants::Tenants/>
                     <Route path=path!("/tenants/:id") view=tenants::TenantPage/>
                     <Route path=path!("/memberships/:id") view=tenants::MembershipPage/>
+                    <Route path=path!("/access-requests") view=access_requests::AccessRequests/>
                     <Route path=path!("/authz") view=authz::Authorization/>
                     <Route path=path!("/sessions") view=sessions::Sessions/>
                     <Route path=path!("/invites") view=invites::Invites/>

@@ -10,11 +10,21 @@ FROM chef AS plan
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
+# The login page the server embeds (items/login). Keep the Node version in sync with mise.toml.
+FROM node:24.22.2-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS login
+WORKDIR /src/items/login
+COPY items/login/package.json items/login/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY items/login ./
+RUN npm run build
+
 FROM chef AS build
 COPY --from=plan /src/recipe.json recipe.json
 RUN cargo chef cook --release --locked --bin konklav-server --recipe-path recipe.json
 COPY . .
-RUN cargo build --release --locked --bin konklav-server
+COPY --from=login /src/items/login/dist items/login/dist
+# Fail rather than ship the placeholder page.
+RUN KONKLAV_REQUIRE_LOGIN_PAGE=1 cargo build --release --locked --bin konklav-server
 
 # glibc, libgcc, OpenSSL (which passkeys link) and CA certificates, as the build's
 # Debian has them, and no shell. Runs as the nonroot user (65532).

@@ -116,6 +116,25 @@ Use `localhost` rather than `127.0.0.1`, because passkeys don't work on IP
 addresses. Sign in as the operator, or use the bootstrap token to create
 one there instead of with `curl`.
 
+### Single sign-on out of the box
+
+The server can serve a login page of its own, so Konklav works as an OpenID
+provider for off-the-shelf clients, such as a Kubernetes cluster through
+`kubelogin`, Harbor or Grafana, without a login application of your own.
+Turn it on next to `browser` and `oidc_provider`:
+
+```styx
+login_page {
+    enabled true
+    title "Example Corp"
+}
+```
+
+It signs people in at `{issuer}/login/` with passwords, MFA, passkeys and
+identity providers, GitHub among them, and lets people who aren't members
+of the tenant a client asks for request access, for operators to approve;
+see [`items/login`](items/login/README.md).
+
 ## Where next
 
 - **Vocabulary:** [`docs/nomenclature.md`](docs/nomenclature.md) defines

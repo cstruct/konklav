@@ -88,6 +88,7 @@ pub(crate) fn groups() -> Vec<(OpenApiRouter<AppState>, &'static str)> {
     };
     vec![
         (control_authz::tenancy(), capabilities::TENANTS),
+        (crate::access_requests::control(), capabilities::TENANTS),
         (subjects(), capabilities::SUBJECTS),
         (erasure(), capabilities::SUBJECTS_ERASE),
         (sessions(), capabilities::SESSIONS),

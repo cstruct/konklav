@@ -30,7 +30,7 @@ Out of scope: anything that needs the database, such as finding natural keys, co
 ### Nested (Styx)
 
 ```styx
-format 1.1                                          // the bootstrap format version; see below
+format 1.2                                          // the bootstrap format version; see below
 id_namespace 3f1c9a52-6a1e-4d0b-9a0e-6c1d8f0b2e11   // needed for external ids and tenant keys
 catalog_file "catalog.json"                         // relative to this file
 
@@ -38,7 +38,8 @@ templates ({key reader, metadata {label Reader}, policies ({action project:read}
 global_roles ({key support, policies ({action konklav:subject:impersonate})})
 
 tenants ({
-    key acme                        // or `id`; a top-level tenant may name a `parent`
+    key acme                        // its tenant key; `id` too, or the key is its external id
+                                    // a top-level tenant may name a `parent`
     facts {seats 25}
     metadata {billing_id acct-17}   // opaque to Konklav
     templates (reader)           // roles to derive when the tenant is created
@@ -78,7 +79,7 @@ Every table has a header row. Rows name other records by id. An empty cell is an
 
 | Table | Required columns | Optional columns |
 |---|---|---|
-| `tenants.csv` | `id` | `parent` (an id or `root`), `templates`, `metadata`, `fact.*` |
+| `tenants.csv` | `id` | `key` (its tenant key), `parent` (an id, a key or `root`), `templates`, `metadata`, `fact.*` |
 | `subjects.csv` | `id` | `kind`, `state`, `metadata` |
 | `credentials.csv` | `id`, `subject`, `kind` | `identifier`, `password_hash`, `password`, `mfa_factors_required`, `session_flags`, `provider`, `provider_subject`, `a_hash`, `a_created_at`, `a_expires_at`, `b_hash`, `b_created_at`, `b_expires_at`, `metadata` |
 | `mfa_factors.csv` | `id`, `subject`, `kind` | `seed_base32`, `email`, `active` |
@@ -93,7 +94,7 @@ CSV can't declare an id namespace, templates or roles. Put those in a `.styx` fi
 
 ### Format versions
 
-The tables, columns and keys above are bootstrap format 1.1, which added metadata to 1.0. The format has its own `major.minor` version, apart from Konklav's release version:
+The tables, columns and keys above are bootstrap format 1.2, which stores tenant keys; 1.1 added metadata to 1.0. The format has its own `major.minor` version, apart from Konklav's release version:
 
 - **A minor version** only adds: a new optional table, column or key. Every set of an older minor version is still a valid set of the newer one.
 - **A major version** is anything else: removing or renaming a table, column or key, making one required, or changing what a value means.
@@ -130,6 +131,8 @@ The snapshot can't see what values mean, such as a new credential kind or a chan
 - **Any other id** is an external id. It becomes UUID v5 of the id namespace and `<kind>:<id>`, where the kind is `tenant`, `subject`, `credential`, `mfa_factor`, `membership` or `session`.
 - **Nested records without an id** are found by their natural key:
   - a tenant by its `key`, used as an external id
+
+From format 1.2, a tenant's `key` is also its tenant key, stored with it and usable instead of its id wherever Konklav names a tenant. A tenant may then have both an `id` and a `key` (before 1.2 that is a problem, and keys aren't stored), and export writes both. A tenant reference that isn't a UUID or `root` names the set's tenant with that key if there is one, else the stored tenant with that key, else it is an external id.
   - a subject by an active credential for its login identifier
   - a credential by its kind and identifier
   - a membership by its subject and tenant

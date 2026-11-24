@@ -201,9 +201,22 @@ fn reports_every_problem_at_once() {
 #[test]
 fn the_dev_config_loads() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config");
-    let (_, database, _, _, browser, _, _, mfa) =
+    let (_, database, _, tokens, mut browser, _, _, mfa) =
         load(&root.join("dev.styx"), &root.join("dev.secrets.styx"), &[]).unwrap();
     assert_eq!(database.database.port, 15432);
+    // Served from the issuer, 127.0.0.1, where passkeys (for localhost)
+    // can't work, so the page offers none and passkeys keep their origins.
+    let page = konklav_server::login_page::LoginPage::configure(&tokens.tokens, &mut browser)
+        .unwrap()
+        .expect("the dev config turns the login page on");
+    assert!(!page.passkeys);
+    assert!(
+        tokens
+            .oidc_provider
+            .as_ref()
+            .is_some_and(|provider| provider.login_url.is_none()),
+        "the dev config's OpenID provider hands off to the login page"
+    );
     let passkeys = browser.passkeys.as_ref().unwrap();
     assert!(
         konklav_server::passkeys::Verifier::from_config(passkeys, browser.browser.as_ref()).is_ok()
@@ -339,6 +352,7 @@ identity_providers ({{
     );
 }
 
+// r[verify federation.github]
 #[test]
 fn malformed_provisioning_and_grants_are_refused() {
     let files = Files::new("identity-provider-rules");
@@ -372,6 +386,15 @@ identity_providers ({{
             "grants ({claim groups, contains sre, global_role operator, tenant root})",
             "needs either global_role, or tenant",
         ),
+        ("kind saml", "kind must be `oidc` or `github`"),
+        (
+            "kind github\n    require_acr urn:hwk",
+            "GitHub has no ID token or discovery, so `require_acr`",
+        ),
+        (
+            "kind github\n    workloads true",
+            "GitHub has no ID token or discovery, so `workloads`",
+        ),
     ] {
         let (.., browser, _, _, _) = load(
             &files.write("c.styx", &provider(extra)),
@@ -394,6 +417,19 @@ identity_providers ({{
     )
     .unwrap();
     assert!(konklav_server::federation::Providers::from_config(&browser).is_ok());
+    let (.., browser, _, _, _) = load(
+        &files.write("c.styx", &provider("kind github")),
+        &files.write("s.styx", &secrets),
+        &[],
+    )
+    .unwrap();
+    let providers = konklav_server::federation::Providers::from_config(&browser).unwrap();
+    let github = providers.get("ops").unwrap();
+    assert!(matches!(
+        &github.settings.protocol,
+        konklav_server::federation::Protocol::GitHub(endpoints)
+            if endpoints.api() == "https://ops.example/api/v3"
+    ));
 }
 
 // r[verify oidc.provider.algorithms]
@@ -421,7 +457,7 @@ p1XNGpwF1zXMHj8NrRZRBsdiy2jZvNVSLlPqzmK3P4YLDAtSoKNCeXst
     .unwrap();
     let config = tokens.oidc_provider.expect("the section loads");
     let provider =
-        konklav_server::oidc::OpenIdProvider::load(&config, &tokens.tokens.issuer).unwrap();
+        konklav_server::oidc::OpenIdProvider::load(&config, &tokens.tokens.issuer, None).unwrap();
     assert_eq!(provider.jwk.alg, "ES256");
     assert_eq!(
         provider.jwk.x.as_deref(),
@@ -449,7 +485,7 @@ p1XNGpwF1zXMHj8NrRZRBsdiy2jZvNVSLlPqzmK3P4YLDAtSoKNCeXst
     .unwrap();
     let config = tokens.oidc_provider.unwrap();
     let provider =
-        konklav_server::oidc::OpenIdProvider::load(&config, &tokens.tokens.issuer).unwrap();
+        konklav_server::oidc::OpenIdProvider::load(&config, &tokens.tokens.issuer, None).unwrap();
     assert!(provider.logout_private_addresses);
 
     let hooked = |scopes: &str| {
@@ -468,7 +504,7 @@ p1XNGpwF1zXMHj8NrRZRBsdiy2jZvNVSLlPqzmK3P4YLDAtSoKNCeXst
         )
         .unwrap();
         let config = tokens.oidc_provider.unwrap();
-        konklav_server::oidc::OpenIdProvider::load(&config, &tokens.tokens.issuer)
+        konklav_server::oidc::OpenIdProvider::load(&config, &tokens.tokens.issuer, None)
             .map(|provider| provider.claims_hook.is_some())
     };
     assert_eq!(load_hook("profile (name given_name)"), Ok(true));
@@ -586,6 +622,7 @@ fn bootstrap_tokens_must_be_long_and_may_expire() {
             batch_key_max_seconds: 3600,
             metadata_max_bytes: 16384,
         }),
+        access_requests: None,
     };
     assert!(config("short", None).bootstrap_expiry().is_err());
     let long = "a".repeat(32);
@@ -727,4 +764,153 @@ fn the_issuer_and_claims_hook_must_use_https_outside_development() {
         )
     );
     assert_eq!(check_deployment(&files, &insecure, SECRETS), Ok(()));
+}
+
+const LOGIN_PAGE_ID_TOKEN_KEY: &str = "-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgUoptOOQL2DZqHV4Q
+GpDMUYd6rsbhOjYqdxTU6xh4DmahRANCAARjr/UQTOoK84SKa5ZB1Rg9mLRWjzyy
+p1XNGpwF1zXMHj8NrRZRBsdiy2jZvNVSLlPqzmK3P4YLDAtSoKNCeXst
+-----END PRIVATE KEY-----
+";
+
+// r[verify oidc.provider.login-page]
+#[test]
+fn the_login_page_is_the_login_url_unless_one_is_configured() {
+    use konklav_server::login_page::LoginPage;
+
+    let files = Files::new("login-page");
+    let key = files.write("id-token.pem", LOGIN_PAGE_ID_TOKEN_KEY);
+    let public = format!(
+        r#"{CONFIG}
+browser {{
+    allowed_origins ("https://app.example")
+}}
+passkeys {{
+    rp_id example
+    rp_name Example
+    origins ("https://app.example")
+}}
+identity_providers ({{
+    id ops
+    name "Ops directory"
+    issuer "https://ops.example"
+    client_id prod-eu
+    redirect_uri "https://auth.example/v1/login/oidc/ops/callback"
+    return_urls ("https://app.example/")
+    local_mfa_factors 0
+}})
+oidc_provider {{
+    id_token_key_file "{}"
+}}
+login_page {{
+    title "Example Corp"
+}}
+"#,
+        key.display()
+    );
+    let secrets =
+        format!("{SECRETS}identity_provider_secrets ({{provider ops, client_secret shh}})\n");
+    let (_, _, _, tokens, mut browser, ..) = load(
+        &files.write("c.styx", &public),
+        &files.write("s.styx", &secrets),
+        &[],
+    )
+    .unwrap();
+    let page = LoginPage::configure(&tokens.tokens, &mut browser)
+        .unwrap()
+        .expect("the page is configured");
+    assert_eq!(page.title, "Example Corp");
+    assert_eq!(page.return_to, "https://auth.example/login/");
+    assert!(page.passkeys);
+    assert_eq!(page.identity_providers.len(), 1);
+    assert_eq!(page.identity_providers[0].id, "ops");
+    assert_eq!(page.identity_providers[0].name, "Ops directory");
+
+    // The page, served from the issuer's origin, may use browser sign-in
+    // and passkeys, and identity providers may return to it, after the
+    // URLs configured before it.
+    let allowed = &browser.browser.as_ref().unwrap().allowed_origins;
+    assert_eq!(allowed, &["https://app.example", "https://auth.example"]);
+    assert_eq!(
+        browser.passkeys.as_ref().unwrap().origins,
+        ["https://app.example", "https://auth.example"]
+    );
+    assert_eq!(
+        browser.identity_providers[0].return_urls,
+        ["https://app.example/", "https://auth.example/login/"]
+    );
+    assert!(konklav_server::federation::Providers::from_config(&browser).is_ok());
+    assert!(
+        konklav_server::passkeys::Verifier::from_config(
+            browser.passkeys.as_ref().unwrap(),
+            browser.browser.as_ref()
+        )
+        .is_ok()
+    );
+
+    let config = tokens.oidc_provider.as_ref().unwrap();
+    let provider = konklav_server::oidc::OpenIdProvider::load(
+        config,
+        &tokens.tokens.issuer,
+        Some(&page.return_to),
+    )
+    .unwrap();
+    assert_eq!(provider.login_url, "https://auth.example/login/");
+
+    // A configured login URL wins.
+    let mut configured = config.clone();
+    configured.login_url = Some("https://login.example/".into());
+    let provider = konklav_server::oidc::OpenIdProvider::load(
+        &configured,
+        &tokens.tokens.issuer,
+        Some(&page.return_to),
+    )
+    .unwrap();
+    assert_eq!(provider.login_url, "https://login.example/");
+
+    // Without the page, there is nowhere to send people.
+    let refused =
+        konklav_server::oidc::OpenIdProvider::load(config, &tokens.tokens.issuer, None).err();
+    assert!(
+        refused.is_some_and(|error| error.contains("login_url")),
+        "a login URL is required without the login page"
+    );
+}
+
+// r[verify oidc.provider.login-page]
+#[test]
+fn the_login_page_needs_browser_sign_in() {
+    use konklav_server::login_page::LoginPage;
+
+    let files = Files::new("login-page-without-browser");
+    let (_, _, _, tokens, mut browser, ..) = load(
+        &files.write(
+            "c.styx",
+            &format!("{CONFIG}login_page {{\n    enabled true\n}}\n"),
+        ),
+        &files.write("s.styx", SECRETS),
+        &[],
+    )
+    .unwrap();
+    assert!(browser.login_page.is_some());
+    let refused = LoginPage::configure(&tokens.tokens, &mut browser).unwrap_err();
+    assert!(refused.contains("browser"), "{refused}");
+
+    for off in [
+        String::new(),
+        "login_page {\n    enabled false\n}\n".to_owned(),
+    ] {
+        let (_, _, _, tokens, mut browser, ..) = load(
+            &files.write("off.styx", &format!("{CONFIG}{off}")),
+            &files.write("s.styx", SECRETS),
+            &[],
+        )
+        .unwrap();
+        assert!(
+            LoginPage::configure(&tokens.tokens, &mut browser)
+                .unwrap()
+                .is_none(),
+            "{off}"
+        );
+    }
 }

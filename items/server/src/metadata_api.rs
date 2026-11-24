@@ -204,7 +204,7 @@ async fn patch_invite(
 ///
 /// As for subjects.
 #[utoipa::path(patch, path = "/tenants/{id}/metadata", operation_id = "patch_tenant_metadata", tag = "tenants",
-    params(("id" = String, Path, description = "The tenant: a UUID or `root`"), ("If-Match" = Option<String>, Header, description = "A `metadata_etag`")),
+    params(("id" = String, Path, description = "The tenant: a UUID, a tenant key or `root`"), ("If-Match" = Option<String>, Header, description = "A `metadata_etag`")),
     request_body(content = Object, content_type = "application/merge-patch+json"),
     responses(
         (status = 200, description = PATCHED, body = Written<api::Tenant>),
@@ -217,9 +217,8 @@ async fn patch_tenant(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<Value>,
 ) -> Result<Response, ApiError> {
-    let id = tenants::parse_reference(&id)
-        .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
     let mut conn = db.get().await?;
+    let id = crate::tenant_refs::require(&mut conn, &id).await?;
     let (value, written, cursor) = conn
         .transaction::<_, ApiError, _>(async |conn| {
             let written = metadata::patch(
@@ -335,7 +334,7 @@ async fn patch_template(
 /// As for subjects; the role's policies are untouched. Built-in roles
 /// can't be patched.
 #[utoipa::path(patch, path = "/tenants/{id}/roles/{key}/metadata", operation_id = "patch_role_metadata", tag = "roles",
-    params(("id" = String, Path, description = "The tenant: a UUID or `root`"), ("key" = String, Path), ("If-Match" = Option<String>, Header, description = "A `metadata_etag`")),
+    params(("id" = String, Path, description = "The tenant: a UUID, a tenant key or `root`"), ("key" = String, Path), ("If-Match" = Option<String>, Header, description = "A `metadata_etag`")),
     request_body(content = Object, content_type = "application/merge-patch+json"),
     responses(
         (status = 200, description = PATCHED, body = Written<api::Role>),
@@ -349,13 +348,13 @@ async fn patch_role(
     Path((tenant, key)): Path<(String, String)>,
     ApiJson(body): ApiJson<Value>,
 ) -> Result<Response, ApiError> {
-    let tenant = tenants::parse_reference(&tenant)
-        .ok_or_else(|| ApiError::invalid_request("tenant must be a UUID or `root`"))?;
-    let role = {
+    let (tenant, role) = {
         let mut conn = db.get().await?;
-        roles::get(&mut conn, tenant, &key)
+        let tenant = crate::tenant_refs::require(&mut conn, &tenant).await?;
+        let role = roles::get(&mut conn, tenant, &key)
             .await
-            .map_err(not_found_as("role"))?
+            .map_err(not_found_as("role"))?;
+        (tenant, role)
     };
     if role.builtin {
         return Err(ApiError::invalid_request(format!(

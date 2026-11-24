@@ -58,6 +58,11 @@ Terms are introduced in dependency order: each definition only uses terms define
   - The tenant that always exists. Its identifier is the nil UUID, and APIs accept `root` for it.
   - It is the top of the tenant tree and the home of `global roles` (see Authorization).
 
+- `tenant key`
+  - An optional, human-readable name for a tenant, such as `acme` or `acme-north`: lowercase words joined by hyphens, unique among all tenants.
+  - Wherever a tenant can be named by its UUID, its key can be used instead. Tokens and events still identify tenants by UUID.
+  - A tenant gets its key when it is created or later, and keeps it for good: a key never changes, is never removed and is never taken by another tenant.
+
 - `tenant tree`
   - Every tenant except the root has exactly one parent tenant.
   - A parent-child relationship grants nothing by itself. Access across tenants always requires an explicit membership or an `assumption grant` (see Authentication).
@@ -103,6 +108,11 @@ Terms are introduced in dependency order: each definition only uses terms define
   - A subject has at most one active membership per tenant, and can have memberships in many tenants.
   - Access inside a tenant always goes through a membership; Konklav keeps no implicit global user state.
   - Example: the same person can be a member of tenant A and tenant B, with different roles in each.
+
+- `access request`
+  - A signed-in subject's request for a membership in a tenant it isn't a member of, which an operator on the control plane, or a member holding `konklav:tenant:admit` there, approves (creating the membership) or denies.
+  - It is `pending`, `approved`, `denied` or `withdrawn` (by the subject, or by erasure). A subject has at most one pending request per tenant.
+  - Only tenants the configuration names take requests.
 
 - `tenant member`
   - A human subject acting inside a tenant through a membership.
@@ -358,7 +368,9 @@ Terms are introduced in dependency order: each definition only uses terms define
 
 - `tenant capability`
   - A built-in action in the `konklav:` namespace that, unlike a control-plane capability, is granted through tenant roles and holds in that tenant.
-  - The one there is: `konklav:tenant:invite`, which lets a member of the tenant make link-only invites into it on the subject-facing surface, giving only roles they hold there.
+  - There are two:
+    - `konklav:tenant:invite`, which lets a member of the tenant make link-only invites into it on the subject-facing surface, giving only roles they hold there.
+    - `konklav:tenant:admit`, which lets a member of the tenant approve or deny access requests to it on the subject-facing surface, giving only roles they hold there.
 
 - `built-in role`
   - A global role that Konklav defines and ships, granting a fixed set of control-plane capabilities.
@@ -447,6 +459,7 @@ Terms are introduced in dependency order: each definition only uses terms define
     - `delivery.requested`
     - `metadata.changed`
     - `invite.redeemed`
+    - `access_request.changed`
 
 - `outbox`
   - The database table where events are written and kept for a retention period.
@@ -532,6 +545,7 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `identity provider`
   - An external service that Konklav trusts to authenticate subjects, such as a corporate directory, a national eID broker, or another Konklav instance.
   - Each one is configured with its own provisioning policy, authentication-method mapping and claim mapping rules.
+  - Its `kind` is `oidc` (an OpenID provider, the default) or `github`: GitHub or GitHub Enterprise, which sign people in with plain OAuth 2.0 and describe them through their REST API instead of an ID token.
 
 - `federated credential`
   - A credential that proves a subject through an identity provider.
@@ -558,6 +572,10 @@ Terms are introduced in dependency order: each definition only uses terms define
 
 - `login hand-off`
   - How Konklav's OpenID provider gets a subject signed in without its own user interface: it redirects to a configured login application, which signs the subject in through the subject-facing surface and then completes the pending login request.
+
+- `login page`
+  - The optional login application built into the server, served by the subject-facing surface at `/login/` when configured. It is the login URL of clients that register none, so Konklav's OpenID provider works without a login application of the deployment's own.
+  - It uses only the subject-facing surface's public endpoints, like any other login application.
 
 - `upstream` and `downstream` instance
   - In federation between Konklav instances, the upstream is the OpenID provider (for example, an operators' instance) and each downstream (dev, staging, a production region) trusts it as an identity provider.
