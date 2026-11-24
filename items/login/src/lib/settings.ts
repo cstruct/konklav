@@ -17,9 +17,17 @@ export interface Settings {
    * one of their return URLs exactly.
    */
   return_to: string | null;
+  /** Whether someone who isn't a member of the tenant a client asks for may request access. */
+  access_requests: boolean;
 }
 
-export const DEFAULTS: Settings = { title: "Sign in", passkeys: false, identity_providers: [], return_to: null };
+export const DEFAULTS: Settings = {
+  title: "Sign in",
+  passkeys: false,
+  identity_providers: [],
+  return_to: null,
+  access_requests: false,
+};
 
 export async function load(page: URL): Promise<Settings> {
   try {

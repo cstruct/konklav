@@ -403,8 +403,13 @@ config_tree! {
             /// What the login page calls the provider, as in "Continue with
             /// Example". Defaults to the id.
             pub name: Option<String>,
+            /// `oidc` (the default), an OpenID provider, or `github`:
+            /// GitHub or GitHub Enterprise, which sign in with plain OAuth
+            /// 2.0 and describe people through their REST API.
+            pub kind: Option<String>,
             /// The provider's issuer; endpoints and keys come from its
-            /// discovery document.
+            /// discovery document. For `github`, GitHub's web address:
+            /// `https://github.com`, or a GitHub Enterprise one.
             pub issuer: String,
             pub client_id: String,
             /// This instance's `/v1/login/oidc/{id}/callback` URL, as
@@ -514,6 +519,22 @@ config_tree! {
             /// compact JSON.
             #[facet(default = 16384)]
             pub metadata_max_bytes: u32,
+        }>,
+        /// Access requests: signed-in people may ask for a membership in
+        /// the tenants named here, and operators approve or deny on the
+        /// control plane. Without it, nobody can ask.
+        pub access_requests: Option<pub struct AccessRequests {
+            /// Tenants (UUIDs or `root`) that take requests.
+            #[facet(default)]
+            pub tenants: Vec<String>,
+            /// Every active tenant takes requests. Asking then tells
+            /// whoever is signed in which tenant ids exist.
+            #[facet(default)]
+            pub all_tenants: bool,
+            /// How long after a denial the subject may ask the same tenant
+            /// again.
+            #[facet(default = 168)]
+            pub retry_after_denial_hours: u32,
         }>,
     }
 }
@@ -702,6 +723,35 @@ impl Database {
 pub const MIN_BOOTSTRAP_TOKEN_CHARS: usize = 32;
 
 impl ControlConfig {
+    /// Which tenants take access requests, if any do.
+    ///
+    /// # Errors
+    ///
+    /// When `access_requests` names no tenant, or something that isn't one.
+    pub fn access_requests(&self) -> Result<Option<crate::access_requests::Settings>, String> {
+        let Some(config) = &self.access_requests else {
+            return Ok(None);
+        };
+        let tenants = config
+            .tenants
+            .iter()
+            .map(|tenant| {
+                konklav_store::tenants::parse_reference(tenant)
+                    .ok_or_else(|| format!("access_requests: `{tenant}` is not a tenant id"))
+            })
+            .collect::<Result<std::collections::HashSet<_>, _>>()?;
+        if tenants.is_empty() && !config.all_tenants {
+            return Err(
+                "access_requests names no tenants: list `tenants`, or set `all_tenants true`"
+                    .into(),
+            );
+        }
+        Ok(Some(crate::access_requests::Settings {
+            tenants: (!config.all_tenants).then_some(tenants),
+            retry_after_denial: chrono::Duration::hours(i64::from(config.retry_after_denial_hours)),
+        }))
+    }
+
     /// The batch limits, the defaults when `[control]` is absent.
     #[must_use]
     pub fn batches(&self) -> crate::batch_api::BatchLimits {

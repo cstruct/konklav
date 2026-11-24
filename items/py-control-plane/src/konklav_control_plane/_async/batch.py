@@ -41,6 +41,7 @@ class Batch:
     assignments: resources.Assignments[Batched]
     shares: resources.Shares[Batched]
     registered_scopes: resources.RegisteredScopes[Batched]
+    access_requests: resources.AccessRequests[Batched]
     invites: resources.Invites[Batched]
     oidc_clients: resources.OidcClients[Batched]
     imports: resources.Imports[Batched]
@@ -70,6 +71,7 @@ class Batch:
         self.assignments = resources.Assignments(client, self)
         self.shares = resources.Shares(client, self)
         self.registered_scopes = resources.RegisteredScopes(client, self)
+        self.access_requests = resources.AccessRequests(client, self)
         self.invites = resources.Invites(client, self)
         self.oidc_clients = resources.OidcClients(client, self)
         self.imports = resources.Imports(client, self)

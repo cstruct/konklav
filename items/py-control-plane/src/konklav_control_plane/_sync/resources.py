@@ -739,6 +739,73 @@ class RegisteredScopes(_Resource[M]):
         return self._do(Call("DELETE", path("registered-scopes", kind, id), written=True))
 
 
+class AccessRequests(_Resource[M]):
+    """Requests from signed-in people for a membership in a tenant that
+    takes them. Approving one creates the membership."""
+
+    @operation("list_access_requests")
+    def list(
+        self: AccessRequests[Direct],
+        *,
+        tenant: str | None = None,
+        subject: str | None = None,
+        state: str | None = None,
+        before: str | None = None,
+        limit: int | None = None,
+    ) -> types.AccessRequestPage:
+        """Requests, newest first, optionally only those for `tenant`, from
+        `subject`, or in `state`, such as `state="pending"`."""
+        params = {"tenant": tenant, "subject": subject, "state": state, "before": before, "limit": limit}
+        return cast(types.AccessRequestPage, self._direct._get(path("access-requests"), params))
+
+    def iter(
+        self: AccessRequests[Direct],
+        *,
+        tenant: str | None = None,
+        subject: str | None = None,
+        state: str | None = None,
+        limit: int | None = None,
+    ) -> Iterator[types.AccessRequest]:
+        """Every matching request, page after page."""
+        params = {"tenant": tenant, "subject": subject, "state": state, "limit": limit}
+        for request in self._direct._pages(path("access-requests"), "access_requests", params):
+            yield cast(types.AccessRequest, request)
+
+    @operation("get_access_request")
+    def get(self: AccessRequests[Direct], id: str) -> types.AccessRequest:
+        return cast(types.AccessRequest, self._direct._get(path("access-requests", id)))
+
+    @overload
+    def approve(
+        self: AccessRequests[Direct], id: str, body: types.ApproveAccessRequest | None = None
+    ) -> Written[types.AccessRequest]: ...
+
+    @overload
+    def approve(
+        self: AccessRequests[Batched], id: str, body: types.ApproveAccessRequest | None = None
+    ) -> Pending[Written[types.AccessRequest]]: ...
+
+    @operation("approve_access_request")
+    def approve(self, id: str, body: types.ApproveAccessRequest | None = None) -> Any:
+        """Makes the subject a member of the tenant, with the `roles` and
+        `facts` given. Approving an approved request again changes nothing;
+        a denied or withdrawn one can't be approved."""
+        json: Any = body if body is not None else {}
+        return self._do(Call("POST", path("access-requests", id, "approve"), json=json, written=True))
+
+    @overload
+    def deny(self: AccessRequests[Direct], id: str) -> Written[types.AccessRequest]: ...
+
+    @overload
+    def deny(self: AccessRequests[Batched], id: str) -> Pending[Written[types.AccessRequest]]: ...
+
+    @operation("deny_access_request")
+    def deny(self, id: str) -> Any:
+        """The subject may ask the same tenant again only after the server's
+        `retry_after_denial_hours`."""
+        return self._do(Call("POST", path("access-requests", id, "deny"), written=True))
+
+
 class Invites(_Resource[M]):
     @overload
     def create(self: Invites[Direct], body: types.CreateInvite) -> Written[types.CreatedInvite]: ...

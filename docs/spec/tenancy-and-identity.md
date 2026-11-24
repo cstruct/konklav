@@ -138,6 +138,60 @@ r[membership.facts]
 Memberships MUST be able to carry facts declared in the action catalog.
 Relying systems MAY write membership facts through the control plane.
 
+## Access requests
+
+r[membership.access-request]
+When configured, a signed-in human subject whose login is complete (not
+`partial`) MUST be able to request a membership in an active tenant that
+takes access requests and where it has no active membership. A subject MUST
+have at most one pending request per tenant; asking again while one is
+pending MUST answer that one.
+
+r[membership.access-request.disclosure]
+A request for a tenant that doesn't exist, isn't active or takes no access
+requests MUST be refused with the same answer, so that requests disclose
+no tenant that doesn't take them.
+
+r[membership.access-request.retry]
+After a denial, a new request from the same subject for the same tenant
+MUST be refused until a configured time has passed.
+
+r[membership.access-request.decision]
+A pending request MUST be decided once: approved or denied by an operator
+holding `konklav:tenants:manage`, or by a member of its tenant as
+`membership.access-request.tenant` allows, or withdrawn by its subject. Approving MUST
+create the membership, with the facts and role assignments the approval
+names, in the same transaction; when the subject has become a member
+meanwhile, approving MUST record that membership and create none. Deciding
+a request again the same way MUST answer as the first time; deciding it
+another way MUST fail.
+
+r[membership.access-request.tenant]
+On the subject-facing surface, a subject with a full session that isn't
+impersonated and that holds `konklav:tenant:admit` tenant-wide in a tenant
+(`authz.tenant-capability`) MUST be able to list, approve and deny the
+access requests to that tenant, and MUST be refused for any other tenant,
+and with a partial session. A request to another tenant MUST be not found.
+No one MAY decide their own request. An approval MUST give only roles of the
+tenant that the decider's active membership there is assigned tenant-wide,
+and none whose policies, or whose template's, name a `konklav:` action, so
+no one admits another into more than they hold and the capability doesn't
+spread through approvals.
+
+r[membership.access-request.decider]
+A decided request MUST record who decided it: the member or operator who
+approved or denied it (none for the bootstrap token), or the subject who
+withdrew it (none when erasure withdrew it). Listing and getting requests
+MUST show it.
+
+r[membership.access-request.event]
+Every new or decided access request MUST emit `access_request.changed`
+carrying the request's id, subject, tenant, state and, once approved, the
+membership.
+
+r[membership.access-request.erasure]
+Erasing a subject MUST withdraw its pending access requests.
+
 ## Facts
 
 r[fact.typed]

@@ -179,13 +179,26 @@ async fn file(Path(path): Path<String>) -> Response {
     }
 }
 
+/// What `config.json` holds: the page's settings, and whether people may
+/// request access to the tenant a client asks for.
+#[derive(Serialize)]
+struct PageConfig<'a> {
+    #[serde(flatten)]
+    page: &'a LoginPage,
+    access_requests: bool,
+}
+
 /// `GET /login/config.json`: what the page offers. Read on every load, so
 /// never cached.
+// r[impl oidc.provider.login-page.access-requests]
 async fn config(State(state): State<AppState>) -> Response {
     match &state.auth.login_page {
         Some(page) => (
             [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
-            axum::Json(page),
+            axum::Json(PageConfig {
+                page,
+                access_requests: state.auth.access_requests.is_some(),
+            }),
         )
             .into_response(),
         None => not_found(),

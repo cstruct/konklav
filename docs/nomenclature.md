@@ -104,6 +104,11 @@ Terms are introduced in dependency order: each definition only uses terms define
   - Access inside a tenant always goes through a membership; Konklav keeps no implicit global user state.
   - Example: the same person can be a member of tenant A and tenant B, with different roles in each.
 
+- `access request`
+  - A signed-in subject's request for a membership in a tenant it isn't a member of, which an operator on the control plane, or a member holding `konklav:tenant:admit` there, approves (creating the membership) or denies.
+  - It is `pending`, `approved`, `denied` or `withdrawn` (by the subject, or by erasure). A subject has at most one pending request per tenant.
+  - Only tenants the configuration names take requests.
+
 - `tenant member`
   - A human subject acting inside a tenant through a membership.
   - Use this term when the text is specifically about the end-user experience inside a tenant.
@@ -358,7 +363,9 @@ Terms are introduced in dependency order: each definition only uses terms define
 
 - `tenant capability`
   - A built-in action in the `konklav:` namespace that, unlike a control-plane capability, is granted through tenant roles and holds in that tenant.
-  - The one there is: `konklav:tenant:invite`, which lets a member of the tenant make link-only invites into it on the subject-facing surface, giving only roles they hold there.
+  - There are two:
+    - `konklav:tenant:invite`, which lets a member of the tenant make link-only invites into it on the subject-facing surface, giving only roles they hold there.
+    - `konklav:tenant:admit`, which lets a member of the tenant approve or deny access requests to it on the subject-facing surface, giving only roles they hold there.
 
 - `built-in role`
   - A global role that Konklav defines and ships, granting a fixed set of control-plane capabilities.
@@ -447,6 +454,7 @@ Terms are introduced in dependency order: each definition only uses terms define
     - `delivery.requested`
     - `metadata.changed`
     - `invite.redeemed`
+    - `access_request.changed`
 
 - `outbox`
   - The database table where events are written and kept for a retention period.
@@ -532,6 +540,7 @@ Terms are introduced in dependency order: each definition only uses terms define
 - `identity provider`
   - An external service that Konklav trusts to authenticate subjects, such as a corporate directory, a national eID broker, or another Konklav instance.
   - Each one is configured with its own provisioning policy, authentication-method mapping and claim mapping rules.
+  - Its `kind` is `oidc` (an OpenID provider, the default) or `github`: GitHub or GitHub Enterprise, which sign people in with plain OAuth 2.0 and describe them through their REST API instead of an ID token.
 
 - `federated credential`
   - A credential that proves a subject through an identity provider.

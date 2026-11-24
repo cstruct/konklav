@@ -352,6 +352,7 @@ identity_providers ({{
     );
 }
 
+// r[verify federation.github]
 #[test]
 fn malformed_provisioning_and_grants_are_refused() {
     let files = Files::new("identity-provider-rules");
@@ -385,6 +386,15 @@ identity_providers ({{
             "grants ({claim groups, contains sre, global_role operator, tenant root})",
             "needs either global_role, or tenant",
         ),
+        ("kind saml", "kind must be `oidc` or `github`"),
+        (
+            "kind github\n    require_acr urn:hwk",
+            "GitHub has no ID token or discovery, so `require_acr`",
+        ),
+        (
+            "kind github\n    workloads true",
+            "GitHub has no ID token or discovery, so `workloads`",
+        ),
     ] {
         let (.., browser, _, _, _) = load(
             &files.write("c.styx", &provider(extra)),
@@ -407,6 +417,19 @@ identity_providers ({{
     )
     .unwrap();
     assert!(konklav_server::federation::Providers::from_config(&browser).is_ok());
+    let (.., browser, _, _, _) = load(
+        &files.write("c.styx", &provider("kind github")),
+        &files.write("s.styx", &secrets),
+        &[],
+    )
+    .unwrap();
+    let providers = konklav_server::federation::Providers::from_config(&browser).unwrap();
+    let github = providers.get("ops").unwrap();
+    assert!(matches!(
+        &github.settings.protocol,
+        konklav_server::federation::Protocol::GitHub(endpoints)
+            if endpoints.api() == "https://ops.example/api/v3"
+    ));
 }
 
 // r[verify oidc.provider.algorithms]
@@ -599,6 +622,7 @@ fn bootstrap_tokens_must_be_long_and_may_expire() {
             batch_key_max_seconds: 3600,
             metadata_max_bytes: 16384,
         }),
+        access_requests: None,
     };
     assert!(config("short", None).bootstrap_expiry().is_err());
     let long = "a".repeat(32);

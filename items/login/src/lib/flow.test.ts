@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { afterRefusedAccept, shouldRestore, start, tenantToEnter } from "./flow";
+import { accessRequestPath, afterNoAccess, afterRefusedAccept, shouldRestore, start, tenantToEnter } from "./flow";
 import { requestId, type LoginRequest } from "./login-request";
 import { apiBase } from "./api";
 import { decode, encode } from "./base64url";
@@ -76,6 +76,23 @@ describe("tenantToEnter", () => {
     expect(tenantToEnter(request(undefined, { tenant: "t1" }), "t1")).toBeNull();
     expect(tenantToEnter(request(), "t1")).toBeNull();
     expect(tenantToEnter(null, undefined)).toBeNull();
+  });
+});
+
+// r[verify oidc.provider.login-page.access-requests]
+describe("afterNoAccess", () => {
+  it("offers to request access when the server takes requests", () => {
+    expect(afterNoAccess(request(undefined, { tenant: "t1" }), true)).toEqual({ kind: "ask" });
+  });
+  it("asks for another sign-in when it doesn't", () => {
+    expect(afterNoAccess(request(undefined, { tenant: "t1" }), false)).toEqual({ kind: "sign-in" });
+  });
+  it("shows nothing for prompt=none", () => {
+    expect(afterNoAccess(request("none", { tenant: "t1" }), true)).toEqual({ kind: "reject", error: "login_required" });
+  });
+  it("names the tenant in the path, escaped", () => {
+    expect(accessRequestPath("root")).toBe("/tenants/root/access-request");
+    expect(accessRequestPath("a/../b")).toBe("/tenants/a%2F..%2Fb/access-request");
   });
 });
 

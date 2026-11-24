@@ -537,3 +537,32 @@ pub struct Passkey {
     pub created_at: String,
     pub last_used_at: Option<String>,
 }
+
+/// A signed-in person's request for a membership in a tenant.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct AccessRequest {
+    pub id: String,
+    pub subject_id: String,
+    pub tenant_id: String,
+    /// `pending`, `approved`, `denied` or `withdrawn`.
+    pub state: String,
+    pub membership_id: Option<String>,
+    pub created_at: String,
+    pub decided_at: Option<String>,
+    /// Who approved, denied or withdrew it; none for the bootstrap token.
+    #[serde(default)]
+    pub decided_by: Option<String>,
+}
+
+impl AccessRequest {
+    #[must_use]
+    pub fn is_pending(&self) -> bool {
+        self.state == "pending"
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct AccessRequestPage {
+    pub access_requests: Vec<AccessRequest>,
+    pub next: Option<String>,
+}

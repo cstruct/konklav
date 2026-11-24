@@ -348,6 +348,7 @@ pub struct Erasure {
 /// 5. its role assignments; its memberships end and lose their facts, in
 ///    their row versions too
 /// 6. the remembered batch answers that name it or one of its own addresses
+/// 7. its pending access requests are withdrawn
 ///
 /// Erasing an erased subject changes nothing.
 ///
@@ -401,6 +402,7 @@ pub async fn erase(conn: &mut AsyncPgConnection, id: SubjectId) -> StoreResult<E
         let recipients = recipients(conn, subject).await?;
         sessions::end_for_erasure(conn, id).await?;
         remove_held(conn, subject, &recipients).await?;
+        crate::access_requests::withdraw_all(conn, id).await?;
 
         let erased: Subject = diesel::update(subject::table.find(subject))
             .set((

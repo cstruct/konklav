@@ -78,3 +78,36 @@ export function federationError(error: string): string {
       return `The identity provider sign-in failed (${error}).`;
   }
 }
+
+/** What `/v1/tenants/{id}/access-request` answers. */
+export interface AccessRequest {
+  id: string;
+  state: "pending" | "approved" | "denied" | "withdrawn";
+  created_at: string;
+  decided_at?: string | null;
+}
+
+export function accessRequestPath(tenant: string): string {
+  return `/tenants/${encodeURIComponent(tenant)}/access-request`;
+}
+
+/** The tenant a login request names refused the person signed in. */
+export class NoAccess extends Error {
+  readonly tenant: string;
+
+  constructor(tenant: string, message: string) {
+    super(message);
+    this.tenant = tenant;
+  }
+}
+
+/**
+ * After the requested tenant refused the person: offer to request access
+ * when the server takes requests, except with `prompt=none`, which must not
+ * show anything.
+ */
+// r[impl oidc.provider.login-page.access-requests]
+export function afterNoAccess(request: LoginRequest, accessRequests: boolean): Start | { kind: "ask" } {
+  if (prompts(request).has("none")) return { kind: "reject", error: "login_required" };
+  return accessRequests ? { kind: "ask" } : { kind: "sign-in" };
+}

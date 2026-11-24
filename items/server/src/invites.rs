@@ -327,7 +327,7 @@ async fn check_roles(
 /// The roles `subject`'s active membership in `tenant` is assigned
 /// tenant-wide; none without one.
 // r[impl authn.invite.tenant-roles]
-async fn held_roles(
+pub(crate) async fn held_roles(
     conn: &mut konklav_store::Connection,
     subject: SubjectId,
     tenant: TenantId,

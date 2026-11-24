@@ -9,6 +9,7 @@
 // r[impl item.api.transport-only]
 // r[impl item.api.both-directions]
 // r[impl item.api.schemas]
+mod access_requests;
 mod authz;
 mod batch;
 mod catalog;
@@ -29,6 +30,9 @@ mod templates;
 mod tenancy;
 mod written;
 
+pub use access_requests::{
+    AccessRequest, AccessRequestPage, AccessRequestQuery, AccessRequestState, ApproveAccessRequest,
+};
 pub use authz::{AssignRole, AssignmentTarget, EntitlementQuery, RoleAssignment};
 pub use batch::{Batch, BatchMethod, BatchOperation, BatchResult, BatchResults};
 pub use catalog::{

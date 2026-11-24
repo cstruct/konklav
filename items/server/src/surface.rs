@@ -11,8 +11,9 @@ use axum::routing::get;
 
 use crate::config::Listen;
 use crate::{
-    AppState, capabilities, control_api, cors, dpop, error, federation_api, feed, flows, health,
-    invites, keys, login_page, oidc_api, passkeys_api, relying_api, subject_api, telemetry,
+    AppState, access_requests, capabilities, control_api, cors, dpop, error, federation_api, feed,
+    flows, health, invites, keys, login_page, oidc_api, passkeys_api, relying_api, subject_api,
+    telemetry,
 };
 
 /// One of Konklav's groups of endpoints.
@@ -39,6 +40,7 @@ impl Surface {
                 .merge(flows::routes(state))
                 .merge(passkeys_api::routes(state))
                 .merge(invites::subject_routes(state))
+                .merge(access_requests::subject_routes())
                 .merge(capabilities::routes()),
             Self::Relying => relying_api::routes().merge(feed::routes()),
             Self::Control => control_api::routes(state),

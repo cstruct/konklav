@@ -35,6 +35,8 @@ token.
     time when history is enabled
   - sessions, revoked one at a time or by filter
   - invites
+  - access requests: listing them by tenant and state, approving one
+    with roles in its tenant, or denying it (`konklav:tenants:manage`)
   - OIDC clients: register or replace, issue a new secret, disable
   - signing keys, with break-glass revocation
 

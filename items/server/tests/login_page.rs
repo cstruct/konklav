@@ -153,8 +153,24 @@ async fn the_page_learns_what_it_offers_from_its_config() {
             "passkeys": false,
             "identity_providers": [{"id": "ops", "name": "Ops directory"}],
             "return_to": "https://auth.example/login/",
+            "access_requests": false,
         })
     );
+}
+
+// r[verify oidc.provider.login-page.access-requests]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_page_offers_access_requests_when_the_server_takes_them() {
+    let app = TestApp::with_auth(|auth| {
+        auth.login_page = Some(page());
+        auth.access_requests = Some(konklav_server::access_requests::Settings {
+            tenants: None,
+            retry_after_denial: chrono::Duration::hours(1),
+        });
+    })
+    .await;
+    let reply = app.send(Method::GET, "/login/config.json", &[], None).await;
+    assert_eq!(reply.body["access_requests"], true);
 }
 
 // r[verify oidc.provider.login-page]

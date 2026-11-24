@@ -1,6 +1,19 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    access_request (id) {
+        id -> Uuid,
+        subject_id -> Uuid,
+        tenant_id -> Uuid,
+        state -> Text,
+        membership_id -> Nullable<Uuid>,
+        created_at -> Timestamptz,
+        decided_at -> Nullable<Timestamptz>,
+        decided_by -> Nullable<Uuid>,
+    }
+}
+
+diesel::table! {
     backchannel_logout (id) {
         id -> Uuid,
         client_id -> Text,
@@ -393,6 +406,9 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(access_request -> membership (membership_id));
+diesel::joinable!(access_request -> subject (subject_id));
+diesel::joinable!(access_request -> tenant (tenant_id));
 diesel::joinable!(backchannel_logout -> oidc_client (client_id));
 diesel::joinable!(backchannel_logout -> session (session_id));
 diesel::joinable!(backchannel_logout -> subject (subject_id));
@@ -425,6 +441,7 @@ diesel::joinable!(template_policy -> catalog_action (action));
 diesel::joinable!(template_policy -> template (template_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    access_request,
     backchannel_logout,
     batch_result,
     bearer_assertion,

@@ -476,6 +476,35 @@ pub fn create_invite(email: &str, tenant: &str, roles: &[String], hours: i64) ->
     Request::control(Method::Post, "/invites").json(body)
 }
 
+// --- Access requests ---------------------------------------------------------
+
+/// Access requests, newest first, optionally for one tenant or in one state.
+#[must_use]
+pub fn access_requests(tenant: &str, state: &str, before: Option<&str>) -> Request {
+    Request::control(Method::Get, "/access-requests")
+        .query("tenant", Some(tenant))
+        .query("state", Some(state))
+        .query("before", before)
+}
+
+/// Approves a request, making its subject a member with `roles`.
+#[must_use]
+pub fn approve_access_request(id: &str, roles: &[String]) -> Request {
+    Request::control(
+        Method::Post,
+        format!("/access-requests/{}/approve", encode(id)),
+    )
+    .json(json!({"roles": roles}))
+}
+
+#[must_use]
+pub fn deny_access_request(id: &str) -> Request {
+    Request::control(
+        Method::Post,
+        format!("/access-requests/{}/deny", encode(id)),
+    )
+}
+
 // --- OIDC clients ------------------------------------------------------------
 
 #[must_use]
@@ -614,6 +643,25 @@ mod tests {
             .body
             .unwrap();
         assert_eq!(emailed["email"], "ada@example.com");
+    }
+
+    #[test]
+    fn access_requests_are_listed_and_decided_on_the_control_plane() {
+        assert_eq!(
+            access_requests(" t1 ", "pending", None).url(),
+            "/control/v1/access-requests?tenant=t1&state=pending"
+        );
+        assert_eq!(
+            access_requests("", "", None).url(),
+            "/control/v1/access-requests"
+        );
+        let approve = approve_access_request("r/1", &list("viewer, admin"));
+        assert_eq!(approve.url(), "/control/v1/access-requests/r%2F1/approve");
+        assert_eq!(approve.body.unwrap(), json!({"roles": ["viewer", "admin"]}));
+        assert_eq!(
+            deny_access_request("r1").url(),
+            "/control/v1/access-requests/r1/deny"
+        );
     }
 
     #[test]

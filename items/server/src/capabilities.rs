@@ -32,6 +32,7 @@ pub const SCOPES_REGISTER: &str = "konklav:scopes:register";
 /// A tenant capability, not a control-plane one: granted through tenant
 /// roles, it holds in that tenant (`authz.tenant-capability`).
 pub const TENANT_INVITE: &str = "konklav:tenant:invite";
+pub const TENANT_ADMIT: &str = "konklav:tenant:admit";
 
 /// Whether `subject` holds `capability` through its global assignments.
 // r[impl authz.control-plane.capability]

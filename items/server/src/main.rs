@@ -343,6 +343,7 @@ async fn serve(
     }
     let mut auth = AuthContext::new(&tokens, browser.browser.as_ref(), &control, keys.signer);
     auth.control_token_expires_at = control.bootstrap_expiry()?;
+    auth.access_requests = control.access_requests()?;
     if auth.control_token.is_some() {
         tracing::warn!(
             expires_at = ?auth.control_token_expires_at,

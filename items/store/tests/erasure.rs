@@ -1133,6 +1133,22 @@ const DECISIONS: &[Table] = &[
         personal: &[],
         unreported: &[],
     },
+    // Ids, a state and times. Erasure withdraws the pending ones.
+    Table {
+        name: "access_request",
+        plain: &[
+            "id",
+            "subject_id",
+            "tenant_id",
+            "state",
+            "membership_id",
+            "created_at",
+            "decided_at",
+            "decided_by",
+        ],
+        personal: &[],
+        unreported: &[],
+    },
     Table {
         name: "backchannel_logout",
         plain: &[

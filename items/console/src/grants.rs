@@ -53,7 +53,7 @@ impl Capability {
         match self {
             Self::Subjects => "Subjects, their credentials and personal data reports",
             Self::Erase => "Erasing subjects",
-            Self::Tenants => "Tenants and memberships",
+            Self::Tenants => "Tenants, memberships and access requests",
             Self::Authz => "Catalog, templates, roles, assignments and entitlements",
             Self::Sessions => "Listing and revoking sessions",
             Self::Keys => "Signing keys",

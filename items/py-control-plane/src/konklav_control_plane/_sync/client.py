@@ -57,6 +57,7 @@ class ControlPlaneClient:
     explain: resources.Explain[Direct]
     shares: resources.Shares[Direct]
     registered_scopes: resources.RegisteredScopes[Direct]
+    access_requests: resources.AccessRequests[Direct]
     invites: resources.Invites[Direct]
     oidc_clients: resources.OidcClients[Direct]
     imports: resources.Imports[Direct]
@@ -96,6 +97,7 @@ class ControlPlaneClient:
         self.explain = resources.Explain(self)
         self.shares = resources.Shares(self)
         self.registered_scopes = resources.RegisteredScopes(self)
+        self.access_requests = resources.AccessRequests(self)
         self.invites = resources.Invites(self)
         self.oidc_clients = resources.OidcClients(self)
         self.imports = resources.Imports(self)

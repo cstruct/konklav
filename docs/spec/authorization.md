@@ -116,14 +116,16 @@ Control-plane capabilities MUST only be grantable through global
 assignments.
 
 r[authz.tenant-capability]
-`konklav:tenant:invite` MUST be a tenant capability: a built-in action in
-the `konklav:` namespace that, unlike a control-plane capability, MAY be
-granted through tenant roles, and holds in the tenant whose membership it
-is assigned to, or in every tenant when granted through a global role. It
-lets a subject make invites into the tenant on the subject-facing surface
-(`authn.invite.tenant`). Writing or assigning a role that names
-it MUST require `konklav:control:all`, as for a control-plane capability
-(`authz.control-plane.escalation`).
+`konklav:tenant:invite` and `konklav:tenant:admit` MUST be tenant
+capabilities: built-in actions in the `konklav:` namespace that, unlike a
+control-plane capability, MAY be granted through tenant roles, and hold in
+the tenant whose membership they are assigned to, or in every tenant when
+granted through a global role. `konklav:tenant:invite` lets a subject make
+invites into the tenant on the subject-facing surface
+(`authn.invite.tenant`); `konklav:tenant:admit` lets a subject decide access
+requests to it there (`membership.access-request.tenant`). Writing or
+assigning a role that names either MUST require `konklav:control:all`, as
+for a control-plane capability (`authz.control-plane.escalation`).
 
 r[authz.control-plane.escalation]
 Granting or withdrawing control-plane capabilities (writing or deleting a

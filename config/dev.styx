@@ -55,3 +55,9 @@ login_page {
     enabled true
     title "Konklav (dev)"
 }
+
+// Anyone signed in may ask to join any tenant from the login page; decide
+// at /v1/access-requests on the control plane.
+access_requests {
+    all_tenants true
+}

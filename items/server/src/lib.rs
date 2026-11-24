@@ -1,6 +1,7 @@
 //! The Konklav server: one binary serving the subject-facing, relying and
 //! control-plane surfaces.
 
+pub mod access_requests;
 pub mod batch_api;
 pub mod bootstrap;
 mod capabilities;
@@ -91,6 +92,8 @@ pub struct AuthContext {
     pub passkeys: Option<passkeys::Verifier>,
     /// The built-in login page, when configured.
     pub login_page: Option<login_page::LoginPage>,
+    /// Which tenants take access requests; `None` when none do.
+    pub access_requests: Option<access_requests::Settings>,
     /// Reverse proxies trusted to report client addresses.
     pub trusted_proxies: Vec<std::net::IpAddr>,
     /// How large control-plane batches may be, and how long their
@@ -251,6 +254,7 @@ impl AuthContext {
             oidc: None,
             passkeys: None,
             login_page: None,
+            access_requests: None,
             trusted_proxies: Vec::new(),
             batches: control.batches(),
             metadata_limit: control.metadata_limit(),
@@ -280,7 +284,10 @@ mod tests {
         let mut auth = AuthContext::new(
             &tokens,
             None,
-            &config::ControlConfig { control: None },
+            &config::ControlConfig {
+                control: None,
+                access_requests: None,
+            },
             signer,
         );
         auth.hashing_slots = HashingSlots::new(slots, 16);

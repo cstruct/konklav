@@ -131,7 +131,9 @@ login_page {
 ```
 
 It signs people in at `{issuer}/login/` with passwords, MFA, passkeys and
-identity providers; see [`items/login`](items/login/README.md).
+identity providers, GitHub among them, and lets people who aren't members
+of the tenant a client asks for request access, for operators to approve;
+see [`items/login`](items/login/README.md).
 
 ## Where next
 

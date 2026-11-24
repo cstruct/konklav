@@ -5,6 +5,11 @@ from __future__ import annotations
 
 from typing import Any, Literal, NotRequired, TypedDict
 
+type AccessRequestState = Literal['pending', 'approved', 'denied', 'withdrawn']
+"""
+Where an access request stands.
+"""
+
 
 class ActionEntry(TypedDict):
     """
@@ -950,6 +955,22 @@ class VouchedScope(TypedDict):
     kind: str
 
 
+class WrittenAccessRequest(TypedDict):
+    """
+    A write's result and the cursor of the last event it produced, if any.
+    """
+
+    created_at: str
+    decided_at: str | None
+    decided_by: SubjectId | None
+    id: str
+    membership_id: MembershipId | None
+    state: AccessRequestState
+    subject_id: SubjectId
+    tenant_id: TenantId
+    cursor: NotRequired[Cursor | None]
+
+
 class WrittenBatchResults(TypedDict):
     """
     A write's result and the cursor of the last event it produced, if any.
@@ -1222,6 +1243,46 @@ class WrittenTenant(TypedDict):
     state: TenantState
     updated_at: str
     cursor: NotRequired[Cursor | None]
+
+
+class AccessRequest(TypedDict):
+    """
+    A signed-in subject's request for a membership in a tenant.
+    """
+
+    created_at: str
+    decided_at: str | None
+    decided_by: SubjectId | None
+    id: str
+    membership_id: MembershipId | None
+    state: AccessRequestState
+    subject_id: SubjectId
+    tenant_id: TenantId
+
+
+class AccessRequestPage(TypedDict):
+    access_requests: list[AccessRequest]
+    next: str | None
+
+
+class ApproveAccessRequest(TypedDict):
+    """
+    Approves an access request: the subject becomes a member of the tenant.
+    """
+
+    facts: NotRequired[dict[str, Any]]
+    """
+    Membership facts.
+    """
+    membership: NotRequired[MembershipId | None]
+    metadata: NotRequired[dict[str, Any]]
+    """
+    The membership's metadata, an object opaque to Konklav.
+    """
+    roles: NotRequired[list[str]]
+    """
+    Role keys in the tenant to assign to the membership.
+    """
 
 
 class AssignRole(TypedDict):

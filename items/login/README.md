@@ -17,14 +17,16 @@ without the deployment writing a login application of its own.
   - `prompt=none` (refused with `login_required` when nobody is signed in)
     and `prompt=login` (a fresh sign-in, never an existing one)
   - `login_hint`, which fills in the email address
-  - entering the tenant a `tenant:<id>` scope asks for
+  - entering the tenant a `tenant:<id>` scope asks for, and, when the
+    person isn't a member and the server takes access requests, asking for
+    access, showing where the request stands, and withdrawing it
   - cancelling, which refuses the request with `access_denied`
 - Signing in through the subject-facing surface as a browser client:
   - password, followed by MFA (TOTP or an emailed code) when the credential
     requires it
   - passkeys, when `passkeys` is configured
-  - identity providers, one button each, with MFA afterwards when the
-    provider requires local factors
+  - identity providers, OpenID providers and GitHub alike, one button
+    each, with MFA afterwards when the provider requires local factors
 - Without a login request, showing who is signed in, and signing out, which
   ends every client session started from that sign-in.
 
@@ -32,6 +34,7 @@ Out of scope:
 
 - Choosing a tenant when the request names none: Konklav has no endpoint
   that lists a subject's memberships, so the client's session gets none.
+- Deciding access requests: operators do that on the control plane.
 - Email-link and phone-code sign-in, and password reset: they need a
   relying system that delivers challenges.
 - Registration, consent screens (clients are pre-consented) and
@@ -43,7 +46,8 @@ Out of scope:
 - What the server serves under `/login/`: `index.html`, the hashed files in
   `assets/`, and `config.json`, which the server writes and the page reads
   on load (`src/lib/settings.ts`): the title, whether passkeys are
-  configured, the identity providers and the URL they return to.
+  configured, the identity providers and the URL they return to, and
+  whether the server takes access requests.
 - `src/lib/`, the logic apart from the components:
   - `api.ts`: calls to `/v1` with a DPoP proof each, Konklav's error
     envelope, and where `/v1` is relative to the page
@@ -52,8 +56,10 @@ Out of scope:
     JSON
   - `login-request.ts`: the request id from the address, `prompt`, and
     keeping the id across an identity provider's round trip
-  - `flow.ts`: what to do on load and after each step, without the DOM
-- `src/*.svelte`: the views (`App`, `SignIn`, `Mfa`, `Account`).
+  - `flow.ts`: what to do on load and after each step, without the DOM,
+    and the access-request calls
+- `src/*.svelte`: the views (`App`, `SignIn`, `Mfa`, `RequestAccess`,
+  `Account`).
 
 ## Relationships
 
@@ -101,6 +107,42 @@ With the page on, the server:
 - adds the issuer's origin to `browser.allowed_origins`, and to
   `passkeys.origins` when those are listed
 - adds `{issuer}/login/` to every identity provider's `return_urls`
+
+To offer GitHub, register an OAuth app (or a GitHub App) whose callback URL
+is the provider's `redirect_uri`, and add it as an identity provider of
+kind `github`, with its client secret in the secrets file:
+
+```styx
+identity_providers ({
+    id github
+    kind github
+    name GitHub
+    issuer "https://github.com"
+    client_id "Iv1.0123456789abcdef"
+    redirect_uri "https://id.example/v1/login/oidc/github/callback"
+    // read:org adds the person's organizations and teams as `groups`.
+    scopes (read:user user:email read:org)
+    return_urls ()
+    provisioning create
+    link_verified_email_domains (example.com)
+    local_mfa_factors 0
+    grants ({claim groups, contains "example/platform", tenant "01936f4e-2b1a-7c3d-9e8f-0a1b2c3d4e5f", roles (admin)})
+})
+```
+
+To let people who sign in for a client asking for a tenant they aren't a
+member of request access, name the tenants that take requests; operators
+then approve or deny on the control plane (`/v1/access-requests`), or a
+tenant's own members holding `konklav:tenant:admit` there do, through a
+relying system, at `/v1/tenants/{id}/access-requests`, and
+`access_request.changed` on the change feed tells a relying system there is
+something to decide:
+
+```styx
+access_requests {
+    tenants ("01936f4e-2b1a-7c3d-9e8f-0a1b2c3d4e5f")
+}
+```
 
 Then register clients through the control plane as usual. For a Kubernetes
 cluster with `kubelogin`, a public client:

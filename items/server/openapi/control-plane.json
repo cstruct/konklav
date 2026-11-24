@@ -10,6 +10,242 @@
     "version": "1.9.0"
   },
   "paths": {
+    "/v1/access-requests": {
+      "get": {
+        "tags": [
+          "access-requests"
+        ],
+        "summary": "Lists access requests, newest first.",
+        "description": "Optionally only those for one tenant, from one subject, or in one state,\nsuch as the pending ones to decide.",
+        "operationId": "list_access_requests",
+        "parameters": [
+          {
+            "name": "tenant",
+            "in": "query",
+            "description": "Only requests for this tenant (a UUID or `root`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "subject",
+            "in": "query",
+            "description": "Only this subject's requests.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SubjectId"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AccessRequestState"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessRequestPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
+      }
+    },
+    "/v1/access-requests/{id}": {
+      "get": {
+        "tags": [
+          "access-requests"
+        ],
+        "summary": "Gets an access request.",
+        "operationId": "get_access_request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessRequest"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
+      }
+    },
+    "/v1/access-requests/{id}/approve": {
+      "post": {
+        "tags": [
+          "access-requests"
+        ],
+        "summary": "Approves an access request: the subject becomes a member of the tenant,\nwith the facts and roles given, in one transaction.",
+        "description": "When the subject has become a member meanwhile, the approval records\nthat membership and creates none, but still assigns the roles. Giving a\nrole that names a `konklav:` action needs `konklav:control:all`. No one\nmay approve their own request. Approving an approved request again\nanswers 200 with it and changes nothing; a denied or withdrawn one can't\nbe approved.",
+        "operationId": "approve_access_request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveAccessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_AccessRequest"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Denied or withdrawn already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
+      }
+    },
+    "/v1/access-requests/{id}/deny": {
+      "post": {
+        "tags": [
+          "access-requests"
+        ],
+        "summary": "Denies an access request.",
+        "description": "The subject may ask the same tenant again only after\n`access_requests.retry_after_denial_hours`. No one may deny their own\nrequest. Denying a denied request again answers 200 with it; an approved\nor withdrawn one can't be denied.",
+        "operationId": "deny_access_request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Written_AccessRequest"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Approved or withdrawn already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An error; branch on `error.code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-konklav-capability": "konklav:tenants:manage"
+      }
+    },
     "/v1/assignments/{id}": {
       "delete": {
         "tags": [
@@ -4079,6 +4315,100 @@
   },
   "components": {
     "schemas": {
+      "AccessRequest": {
+        "type": "object",
+        "description": "A signed-in subject's request for a membership in a tenant.",
+        "required": [
+          "id",
+          "subject_id",
+          "tenant_id",
+          "state",
+          "membership_id",
+          "created_at",
+          "decided_at",
+          "decided_by"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "decided_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SubjectId",
+                "description": "Who approved, denied or withdrew it; null for the bootstrap token or\nerasure."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "membership_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MembershipId",
+                "description": "Once approved, the membership the approval created, or found when\nthe subject had become a member meanwhile."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/AccessRequestState"
+          },
+          "subject_id": {
+            "$ref": "#/components/schemas/SubjectId"
+          },
+          "tenant_id": {
+            "$ref": "#/components/schemas/TenantId"
+          }
+        }
+      },
+      "AccessRequestPage": {
+        "type": "object",
+        "required": [
+          "access_requests",
+          "next"
+        ],
+        "properties": {
+          "access_requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccessRequest"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "AccessRequestState": {
+        "type": "string",
+        "description": "Where an access request stands.",
+        "enum": [
+          "pending",
+          "approved",
+          "denied",
+          "withdrawn"
+        ]
+      },
       "ActionEntry": {
         "type": "object",
         "description": "A declared action.",
@@ -4147,6 +4477,38 @@
           },
           "reason": {
             "$ref": "#/components/schemas/Reason"
+          }
+        }
+      },
+      "ApproveAccessRequest": {
+        "type": "object",
+        "description": "Approves an access request: the subject becomes a member of the tenant.",
+        "properties": {
+          "facts": {
+            "type": "object",
+            "description": "Membership facts."
+          },
+          "membership": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MembershipId",
+                "description": "The id of the membership the approval creates, so that a relying\nsystem can name it; generated when absent."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "description": "The membership's metadata, an object opaque to Konklav."
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Role keys in the tenant to assign to the membership."
           }
         }
       },
@@ -8699,6 +9061,88 @@
             "type": "string"
           }
         }
+      },
+      "Written_AccessRequest": {
+        "allOf": [
+          {
+            "type": "object",
+            "description": "A signed-in subject's request for a membership in a tenant.",
+            "required": [
+              "id",
+              "subject_id",
+              "tenant_id",
+              "state",
+              "membership_id",
+              "created_at",
+              "decided_at",
+              "decided_by"
+            ],
+            "properties": {
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "decided_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "decided_by": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SubjectId",
+                    "description": "Who approved, denied or withdrew it; null for the bootstrap token or\nerasure."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "membership_id": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/MembershipId",
+                    "description": "Once approved, the membership the approval created, or found when\nthe subject had become a member meanwhile."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "$ref": "#/components/schemas/AccessRequestState"
+              },
+              "subject_id": {
+                "$ref": "#/components/schemas/SubjectId"
+              },
+              "tenant_id": {
+                "$ref": "#/components/schemas/TenantId"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A write's result and the cursor of the last event it produced, if any."
       },
       "Written_BatchResults": {
         "allOf": [

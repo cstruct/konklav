@@ -38,6 +38,31 @@ provisioning and claim mapping. The ID token's claims MUST win where both
 hold one. The login MUST fail if the UserInfo request fails or its `sub`
 differs from the ID token's.
 
+r[federation.github]
+An identity provider of kind `github` MUST sign people in through GitHub's
+OAuth 2.0 authorization code flow, with the `state`, PKCE verifier and
+browser binding of `federation.idp.code-flow`, at
+`{issuer}/login/oauth/authorize` and `{issuer}/login/oauth/access_token`.
+A token response that carries an `error` MUST fail the login, whatever its
+status. Configuration that needs an ID token or discovery (`require_acr`,
+`max_age_seconds`, `methods`, `pinned_jwks_file`, `peering`, `workloads`)
+MUST be refused for such a provider.
+
+r[federation.github.identity]
+A GitHub login's `sub` MUST be the account's numeric `id` from `GET /user`,
+never its login or an email address, which can change hands. When the
+scopes include `user:email` or `user`, its email MUST be the primary address
+from `GET /user/emails`, verified only when GitHub reports it verified;
+otherwise it MUST be the profile's public address, if any, unverified.
+The login, name, avatar and profile URL MUST be offered as the claims
+`preferred_username`, `name`, `picture` and `profile`.
+
+r[federation.github.groups]
+When a GitHub provider's scopes include `read:org`, the login's `groups`
+claim MUST list the organizations the person belongs to by login, and their
+teams as `<organization>/<team slug>`. Without `read:org` there MUST be no
+`groups` claim.
+
 r[federation.jwks-refresh]
 A token naming a key the provider's cached keys lack MAY cause the keys to
 be fetched again, but at most once a minute per provider, so tokens with
@@ -228,6 +253,14 @@ The login page MUST NOT keep access or refresh tokens in web storage: the
 refresh token MUST be the HttpOnly cookie of a browser login, and the
 access token MUST stay in the page's memory. Its sessions MUST be bound to
 a non-extractable DPoP key whenever the browser can keep one.
+
+r[oidc.provider.login-page.access-requests]
+When the person signed in on the login page may not enter the tenant a login
+request names and the server takes access requests, the page MUST offer to
+request access to it, show the state of the person's latest request for it,
+and let them withdraw a pending one, sign in as someone else, or refuse the
+request with `access_denied`. With `prompt=none` it MUST show nothing and
+refuse the request with `login_required`.
 
 r[oidc.provider.id-token]
 ID tokens MUST carry `iss`, `sub` (the subject id), `aud` (the client id),

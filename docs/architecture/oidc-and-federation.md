@@ -76,6 +76,37 @@ The callback redirects to the return URL with `signed_in=true`,
 `account_linked_elsewhere`. Linking enforces the provider's `acr` and
 `max_age` requirements too.
 
+### GitHub
+
+GitHub and GitHub Enterprise sign people in with plain OAuth 2.0: they have
+no discovery document and issue no ID token. A provider with `kind github`
+(`r[federation.github]`) keeps everything above except steps 2's exchange
+and validation:
+
+- The authorization request goes to `{issuer}/login/oauth/authorize`, with
+  the same `state`, PKCE challenge and browser binding, and no `nonce`.
+- The code is exchanged at `{issuer}/login/oauth/access_token`. GitHub
+  answers a refused exchange with 200 and an `error`, which fails the login.
+- The person's token is then used once, against the REST API
+  (`api.github.com`, `api.<host>` for GitHub Enterprise Cloud on `ghe.com`,
+  or `{issuer}/api/v3` for GitHub Enterprise Server), and kept nowhere.
+  `GET /user` gives the account; its numeric `id` is the `sub`, since
+  logins and email addresses can be renamed and taken by someone else
+  (`r[federation.github.identity]`). `GET /user/emails` gives the primary
+  address and whether GitHub verified it, so verified-email linking works
+  as for OpenID providers.
+- With `read:org` among the scopes, `GET /user/orgs` and `GET /user/teams`
+  give a `groups` claim of organizations and `<organization>/<team>`
+  (`r[federation.github.groups]`), which claim mapping can turn into
+  memberships and roles. The login, name, avatar and profile URL are
+  `preferred_username`, `name`, `picture` and `profile`, for `pass_claims`.
+
+Settings that need an ID token or discovery, `require_acr`,
+`max_age_seconds`, `methods`, `pinned_jwks_file`, `peering` and
+`workloads`, are refused for such a provider. Its sessions carry only the
+`fed` method, so local MFA (`local_mfa_factors`) is how a deployment asks
+for more than GitHub's own sign-in.
+
 ## Konklav as an OpenID provider
 
 The provider role reuses sessions, refresh rotation, access tokens and step
@@ -222,6 +253,46 @@ What the server adds:
 
 Like other browser clients, the page keeps no token in web storage
 (`r[oidc.provider.login-page.storage]`).
+
+### Access requests
+
+When the page can't enter the tenant a `tenant:<id>` scope asks for because
+the person isn't a member, and `access_requests` is configured, it offers to
+ask for access (`r[oidc.provider.login-page.access-requests]`). Access
+requests are a subject-facing feature of their own, not the page's: any
+login application can use `/v1/tenants/{id}/access-request` (`GET` the
+latest, `POST` to ask, `DELETE` to withdraw).
+
+- Only the tenants `access_requests.tenants` names take requests, or every
+  active tenant with `all_tenants true`. Asking any other tenant, one that
+  doesn't exist, or one that isn't active gets the same refusal, so asking
+  tells nobody which tenants exist (`r[membership.access-request.disclosure]`).
+- A subject has at most one pending request per tenant, and after a denial
+  waits `retry_after_denial_hours` before asking again.
+- Operators with `konklav:tenants:manage` list, approve and deny requests
+  on the control plane (`/v1/access-requests`). Approving creates the
+  membership, with roles and facts, in the same transaction
+  (`r[membership.access-request.decision]`); giving a role that names a
+  `konklav:` action needs `konklav:control:all`, as assigning it would.
+- A tenant's own members decide too, with the tenant capability
+  `konklav:tenant:admit` (`r[authz.tenant-capability]`), like
+  `konklav:tenant:invite` for invites: a member whose full session holds it
+  tenant-wide lists, approves and denies the tenant's requests at
+  `/v1/tenants/{id}/access-requests` on the subject-facing surface
+  (`r[membership.access-request.tenant]`). They give only roles their own
+  membership holds there tenant-wide, and none naming a `konklav:` action,
+  so nobody admits another into more than they have and the capability
+  doesn't spread. A relying system offers this to its users by passing their
+  requests on with their own tokens, so Konklav checks the person who
+  decides rather than trusting the relying system.
+- No one decides their own request, and every decision records who made it
+  (`r[membership.access-request.decider]`).
+- Every new or decided request emits `access_request.changed`, which is how
+  a relying system learns there is something to decide and tells whoever
+  decides. Konklav sends no messages itself.
+
+A request holds ids, a state and times, so it isn't personal data; erasing
+the subject withdraws its pending ones.
 
 ### Client credentials, revocation and logout
 
@@ -543,6 +614,8 @@ Proposed defaults, to confirm before implementation:
 | Claims hook authentication | A request JWT signed with the ID-token key | A shared secret |
 | Identity provider claims for clients | Passed claims, kept on the session until it ends | A copy on the federated credential; the upstream's refresh token kept to call its userinfo |
 | SAML | Deferred; brokers translate SAML to OIDC | Native SAML |
+| GitHub | A provider `kind` that reads the account from GitHub's REST API, keyed by its numeric id | Only through an OIDC broker such as Dex |
+| Joining a tenant from the login page | Access requests, decided by operators on the control plane, for the tenants configuration names | Invites only |
 
 ## Phases
 

@@ -409,12 +409,11 @@ async fn finish(
         return Err(Failure::Provider);
     }
     let code = query.code.as_deref().ok_or(Failure::Provider)?;
-    let tokens = provider.exchange(code, &details.code_verifier).await?;
-    let mut claims = provider.verify(&tokens.id_token, &details.nonce).await?;
-    provider
-        .add_userinfo(tokens.access_token.as_deref(), &mut claims)
-        .await?;
-    provider.check_requirements(&claims, Utc::now().timestamp())?;
+    let request = LoginRequest {
+        nonce: details.nonce.clone(),
+        code_verifier: details.code_verifier.clone(),
+    };
+    let claims = provider.sign_in(code, &request).await?;
     let identifier = federated_identifier(&provider.settings.id, &claims.sub);
     let existing = credentials::find_active(conn, CredentialKind::Federated, &identifier)
         .await

@@ -4,6 +4,7 @@
 //! it through this crate. Repository functions take a connection so callers
 //! can compose them inside one transaction.
 
+pub mod access_requests;
 pub mod backchannel;
 pub mod batch_results;
 pub mod bearer_assertions;
