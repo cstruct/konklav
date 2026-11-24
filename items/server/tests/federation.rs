@@ -217,7 +217,12 @@ async fn token(
         Signing::Symmetric => {
             let mut header = Header::new(Algorithm::HS256);
             header.kid = Some("k1".into());
-            jsonwebtoken::encode(&header, &claims, &EncodingKey::from_secret(b"shared")).unwrap()
+            jsonwebtoken::encode(
+                &header,
+                &claims,
+                &EncodingKey::from_secret(b"shared").unwrap(),
+            )
+            .unwrap()
         }
     };
     let mut body = json!({"id_token": id_token, "token_type": "Bearer"});

@@ -71,7 +71,7 @@ hmac = "0.13.0"
 http = "1.5.0"
 http-body-util = "0.1.5"
 lettre = { version = "0.11.24", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls", "rustls-native-certs", "aws-lc-rs"] }
-jsonwebtoken = { version = "11.1.0", default-features = false, features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "12.0.0", default-features = false, features = ["aws_lc_rs"] }
 # Without `std`, which pulls in getrandom and breaks the wasm32 build of
 # konklav-token. Members that load PEM keys add `pkcs8`, `pem` and `std`.
 p256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
