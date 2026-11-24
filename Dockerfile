@@ -11,7 +11,7 @@ COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 # The login page the server embeds (items/login). Keep the Node version in sync with mise.toml.
-FROM node:24.22.2-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS login
+FROM node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS login
 WORKDIR /src/items/login
 COPY items/login/package.json items/login/package-lock.json ./
 RUN npm ci --no-audit --no-fund
