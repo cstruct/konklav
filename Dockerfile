@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Keep the Rust version in sync with mise.toml.
-FROM rust:1.99.1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS chef
+FROM rust:1.100.0-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea AS chef
 RUN cargo install cargo-chef --locked --version 0.1.78
 WORKDIR /src
 
