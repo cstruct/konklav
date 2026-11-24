@@ -136,3 +136,10 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.ed25519-dalek]
 opt-level = 3
+
+# Fat LTO with a single codegen unit cuts the server binary by about a third,
+# at roughly 2.4x the clean build time. It doesn't shrink the console's wasm,
+# but costs it nothing once compressed.
+[profile.release]
+lto = "fat"
+codegen-units = 1

@@ -30,3 +30,8 @@ missing_errors_doc = "allow"
 needless_pass_by_value = "allow"
 
 [workspace]
+
+# Matches the release profile in the repository's workspace Cargo.toml.
+[profile.release]
+lto = "fat"
+codegen-units = 1
