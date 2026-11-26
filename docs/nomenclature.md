@@ -39,6 +39,10 @@ Terms are introduced in dependency order: each definition only uses terms define
   - A library that calls the control-plane surface on an operator's or automation's behalf, such as the Python package `konklav-control-plane`.
   - It is separate from the relying SDK: it changes what Konklav knows, while the relying SDK asks Konklav for decisions. Neither depends on the other.
 
+- `operator CLI`
+  - The command-line control-plane client `konklav` (the Rust crate `konklav-cli`), for operators at a terminal and for automation.
+  - It signs in through the browser with a `native login hand-off` (see Federation), or with a password or secret key at the terminal, and binds every session it starts to a DPoP key (see Authentication).
+
 - `batch`
   - One control-plane request that applies several control-plane write operations in order, all or nothing.
   - Its operations are the ordinary ones, with their usual paths, bodies and answers. Later operations name what earlier ones created by the ids the caller chose, never by reading earlier results.
@@ -572,6 +576,20 @@ Terms are introduced in dependency order: each definition only uses terms define
 
 - `login hand-off`
   - How Konklav's OpenID provider gets a subject signed in without its own user interface: it redirects to a configured login application, which signs the subject in through the subject-facing surface and then completes the pending login request.
+
+- `login request`
+  - A pending sign-in that a login application completes: Konklav keeps it as a challenge, bound to the browser that started it, until the login application accepts it with a session or refuses it.
+  - Its requester is either an OIDC client (through the authorization endpoint) or a native app (through a native login hand-off).
+  - Login applications read, accept and refuse login requests at `/v1/login-requests/{id}`; the older `/v1/oauth2/login-requests/{id}` paths are deprecated aliases.
+
+- `native login hand-off`
+  - A login request started by a native app on the subject's own computer, such as the operator CLI, which waits for the answer on a loopback redirect URI (`http://127.0.0.1:<port>/callback`).
+  - It always carries a PKCE challenge and a `dpop_jkt`. The code it ends in is exchanged, with a DPoP proof from that key, for a native session with Konklav's own audience, not for a client session.
+  - It works without the OpenID provider, needing only a login application.
+
+- `native session`
+  - The bound session a native login hand-off starts. It copies the authentication of the session that accepted the request, but is independent of it: signing out in the browser doesn't end it.
+  - Its absolute lifetime is its own, shorter than other sessions' by default.
 
 - `login page`
   - The optional login application built into the server, served by the subject-facing surface at `/login/` when configured. It is the login URL of clients that register none, so Konklav's OpenID provider works without a login application of the deployment's own.

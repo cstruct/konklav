@@ -62,6 +62,7 @@ and spec-first development with Tracey.
 | `konklav-py-fastapi` | FastAPI integration of the Python binding's route policies (`konklav-fastapi`) |
 | `konklav-bootstrap` | Reading bootstrap sets (CSV or Styx) for `konklav-server bootstrap` |
 | `konklav-console` | Browser UI for operators, calling the control plane (Leptos, WASM) |
+| `konklav-cli` | Operator CLI (`konklav`): browser or terminal sign-in to DPoP-bound sessions, and control-plane commands |
 
 ![Dependencies between Konklav's Rust crates](diagrams/items.svg)
 

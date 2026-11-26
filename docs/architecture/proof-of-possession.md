@@ -178,6 +178,40 @@ and reaches the control plane, so it's the most valuable token to steal.
 - **The console** creates its key with WebCrypto, keeps the `CryptoKey` in
   IndexedDB, and signs a proof in its single `send` function.
 
+### Native apps: the native login hand-off
+
+The operator CLI, and any other native app on the subject's own computer,
+signs in through the browser and gets a bound session of Konklav's own
+(`session.native-handoff.*`). It can't use the OpenID provider for that:
+client tokens never reach Konklav's own surfaces
+(`oidc.provider.client-audience`), and that boundary keeps a phishing
+client registration from collecting control-plane tokens.
+
+1. The app makes a P-256 DPoP key, a PKCE verifier and a `state`, listens
+   on `http://127.0.0.1:<port>/callback`, and opens the browser at
+   `/v1/login-requests/native/authorize` with the redirect URI, the code
+   challenge, `dpop_jkt`, `state` and its app name.
+2. Konklav keeps a login request of kind `native`, binds it to the browser
+   with a cookie as for an OIDC authorization request, and redirects to the
+   login URL. The login application signs the subject in, asks them to
+   confirm the app, and accepts the request at
+   `/v1/login-requests/{id}/accept`.
+3. The browser follows `redirect_to` to
+   `/v1/login-requests/native/resume`, which checks the cookie and the
+   acceptance secret and redirects to the loopback URI with a code.
+4. The app exchanges the code at `/v1/login-requests/native/token` with
+   the verifier and a DPoP proof from its key. The new native session is
+   independent of the browser's, so signing out there doesn't end it, and
+   it lives 12 hours unless configured.
+
+A link to `…/native/authorize` that an attacker sends gets them nothing:
+the code goes to the victim's own loopback interface, and is useless
+without the DPoP key that only the requesting app holds.
+
+`control { require_dpop true }` refuses unbound access tokens on the
+control plane (`session.dpop.control-required`), for deployments whose
+console, CLI and automation all bind their sessions.
+
 Out of scope for the first slice:
 
 - Server-provided nonces (`DPoP-Nonce`, `use_dpop_nonce`). They remove the

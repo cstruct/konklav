@@ -23,3 +23,11 @@ r[item.token.dpop-proof]
 thumbprint computation. Konklav's endpoints and the relying core both use
 them, and the caller supplies the current time, the request and any replay
 state.
+
+r[item.token.dpop-signer]
+With its `sign` feature, `konklav-token` MUST offer a DPoP proof signer for
+ES256 keys, so Rust clients of Konklav make proofs with one implementation.
+Its proofs MUST verify with the crate's own proof verification, and its key
+thumbprints MUST equal the crate's thumbprint computation. The caller MUST
+supply the time and the `jti`, as for verification, and without the feature
+the crate MUST build as before, `wasm32` included.

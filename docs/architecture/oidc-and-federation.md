@@ -195,15 +195,15 @@ built into the server (see [below](#the-built-in-login-page)):
    the request as a challenge, sets a cookie binding it to the browser, and
    redirects to the login URL with `login_request=<id>`.
 2. The login application (a relying system's frontend, or a small
-   operators' login app) reads `GET /v1/oauth2/login-requests/{id}`, which
+   operators' login app) reads `GET /v1/login-requests/{id}`, which
    includes the request's `prompt` and `login_hint`. It signs the subject in
    through the existing `/v1` API, including MFA, step-up and tenant
    selection. It may instead refuse the request with `POST
-   /v1/oauth2/login-requests/{id}/reject` and an error such as
+   /v1/login-requests/{id}/reject` and an error such as
    `login_required`: that is how `prompt=none` is answered when nobody is
    signed in. The refusal returns a `redirect_to` too, and the error
    reaches the client the same way a code would.
-3. It calls `POST /v1/oauth2/login-requests/{id}/accept` with the session's
+3. It calls `POST /v1/login-requests/{id}/accept` with the session's
    access token (and the usual browser `Origin` and client header).
    Konklav checks `max_age`, `acr_values`, `prompt=login` (a sign-in after
    the request started) and the requested tenant against the session, and
@@ -601,7 +601,7 @@ file first.
 | Signing keys | An ES256 key for ID tokens, in JWKS with its `alg` |
 | Control plane | OIDC clients (`konklav:clients:manage`); break-glass credentials flagged |
 | Subject surface | `/v1/login/oidc/*`, linking, login-request acceptance |
-| New surface paths | `/.well-known/openid-configuration`, `/v1/oauth2/authorize` (and `/resume`), `/v1/oauth2/login-requests/{id}` (and `/accept`, `/reject`), `/v1/oauth2/token`, `/v1/oauth2/userinfo`, `/v1/oauth2/revoke`, `/v1/oauth2/logout` |
+| New surface paths | `/.well-known/openid-configuration`, `/v1/oauth2/authorize` (and `/resume`), `/v1/login-requests/{id}` (and `/accept`, `/reject`; the `/v1/oauth2/login-requests/…` aliases are deprecated), `/v1/oauth2/token`, `/v1/oauth2/userinfo`, `/v1/oauth2/revoke`, `/v1/oauth2/logout` |
 | Feed | `break_glass.used`; `subject.changed`; the client-scoped peer feed |
 
 ## Decisions
