@@ -2944,12 +2944,10 @@ dependencies = [
 name = "konklav-test-support"
 version = "1.10.1"
 dependencies = [
- "base64 0.23.1",
  "diesel",
  "diesel-async",
  "konklav-store",
  "konklav-token",
- "p256",
  "serde_json",
  "tokio",
  "uuid",

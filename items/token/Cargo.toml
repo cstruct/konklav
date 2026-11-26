@@ -12,6 +12,8 @@ repository.workspace = true
 # OpenAPI schemas for the claim types the control plane returns, for the
 # server's API document.
 openapi = ["dep:utoipa"]
+# A DPoP proof signer for Rust clients of Konklav.
+sign = []
 
 [dependencies]
 konklav-core.workspace = true
