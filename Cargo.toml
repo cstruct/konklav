@@ -7,6 +7,7 @@ members = [
     "items/authz",
     "items/axum",
     "items/bootstrap",
+    "items/cli",
     "items/console",
     "items/core",
     "items/relying",
@@ -37,6 +38,7 @@ konklav-authn = { path = "items/authn" }
 konklav-authz = { version = "=1.10.1", path = "items/authz" }
 konklav-axum = { version = "=1.10.1", path = "items/axum" }
 konklav-bootstrap = { path = "items/bootstrap" }
+konklav-cli = { path = "items/cli" }
 konklav-console = { path = "items/console" }
 konklav-core = { version = "=1.10.1", path = "items/core", default-features = false }
 konklav-examples = { path = "examples" }
