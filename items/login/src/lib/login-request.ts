@@ -1,10 +1,19 @@
 // The pending authorization request Konklav handed this page, as
 // `?login_request=<id>`.
 
-/** What `GET /v1/oauth2/login-requests/{id}` answers. */
+/**
+ * What `GET /v1/login-requests/{id}` answers: a request an OIDC client
+ * started (`kind: "oidc"`), or one a native app on this computer started,
+ * such as the operator CLI (`kind: "native"`), which names only the app.
+ */
 export interface LoginRequest {
-  client_id: string;
-  scopes: string[];
+  /** Older servers leave it out for OIDC requests. */
+  kind?: "oidc" | "native";
+  /** The OIDC client, for an OIDC request. */
+  client_id?: string;
+  /** The app, for a native request. */
+  app?: string;
+  scopes?: string[];
   tenant?: string | null;
   max_age?: number | null;
   acr_values?: string[] | string | null;
@@ -31,7 +40,17 @@ export function prompts(request: LoginRequest | null): Set<string> {
 }
 
 export function path(id: string): string {
-  return `/oauth2/login-requests/${encodeURIComponent(id)}`;
+  return `/login-requests/${encodeURIComponent(id)}`;
+}
+
+/** Whether a native app on this computer started the request. */
+export function isNative(request: LoginRequest | null): boolean {
+  return request?.kind === "native";
+}
+
+/** Who the request is for: the OIDC client, or the native app. */
+export function requester(request: LoginRequest): string {
+  return (isNative(request) ? request.app : request.client_id) ?? "";
 }
 
 // A sign-in through an identity provider leaves the page and comes back to

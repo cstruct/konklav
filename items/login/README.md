@@ -10,8 +10,11 @@ without the deployment writing a login application of its own.
 
 ## Responsibilities
 
-- Answering login requests that Konklav's authorization endpoint hands off
-  to it (`?login_request=<id>`):
+- Answering login requests that Konklav hands off to it
+  (`?login_request=<id>`), at `/v1/login-requests/{id}`, from OIDC clients
+  and from native apps on the person's computer such as the operator CLI:
+  - a native app's request is accepted only after the person confirms it
+    on a page that names the app, even when they are already signed in
   - single sign-on: a person already signed in here is sent straight back
     to the client
   - `prompt=none` (refused with `login_required` when nobody is signed in)
@@ -57,11 +60,12 @@ Out of scope:
   - `dpop.ts`: the page's non-extractable P-256 key and its proofs
   - `webauthn.ts`: passkey options and assertions to and from webauthn-rs'
     JSON
-  - `login-request.ts`: the request id from the address, `prompt`, and
-    keeping the id across an identity provider's round trip
+  - `login-request.ts`: the request id from the address, its kind, the
+    requester's name, `prompt`, and keeping the id across an identity
+    provider's round trip
   - `flow.ts`: what to do on load and after each step, without the DOM,
     and the access-request calls
-- `src/*.svelte`: the views (`App`, `SignIn`, `Mfa`, `RequestAccess`,
+- `src/*.svelte`: the views (`App`, `SignIn`, `Mfa`, `Confirm`, `RequestAccess`,
   `Account`).
 
 ## Relationships

@@ -443,3 +443,90 @@ async fn the_relying_surface_alone_takes_bound_tokens_only_with_proofs() {
         StatusCode::OK
     );
 }
+
+/// Makes `EMAIL` an operator.
+async fn make_operator(app: &TestApp) {
+    let subject = app.human(EMAIL, PASSWORD).await;
+    let assigned = app
+        .control(
+            Method::POST,
+            &format!("/v1/subjects/{subject}/global-assignments"),
+            Some(json!({"role": "konklav.admin"})),
+        )
+        .await;
+    assert_eq!(assigned.status, StatusCode::CREATED, "{:?}", assigned.body);
+}
+
+async fn list_subjects_bound(app: &TestApp, key: &DpopKey, access: &str) -> common::Reply {
+    let auth = format!("DPoP {access}");
+    let proof = key.proof("GET", &url("/v1/subjects"), Some(access));
+    app.send(
+        Method::GET,
+        "/v1/subjects",
+        &[("authorization", &auth), ("dpop", &proof)],
+        None,
+    )
+    .await
+}
+
+// r[verify session.dpop.control-required]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_control_plane_can_require_bound_sessions() {
+    let app = TestApp::with_auth(|auth| auth.control_require_dpop = true).await;
+    make_operator(&app).await;
+    let key = DpopKey::new(1);
+
+    let bound = bound_login(&app, &key).await;
+    let access = bound.body["access_token"].as_str().unwrap();
+    let listed = list_subjects_bound(&app, &key, access).await;
+    assert_eq!(listed.status, StatusCode::OK, "{:?}", listed.body);
+
+    // An unbound native session is refused, with a DPoP challenge.
+    let unbound = app.login(EMAIL, PASSWORD).await;
+    let access = unbound.body["access_token"].as_str().unwrap();
+    let refused = app.with_bearer(Method::GET, "/v1/subjects", access).await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNAUTHORIZED,
+        "{:?}",
+        refused.body
+    );
+    assert!(
+        challenge(&refused).starts_with("DPoP"),
+        "{}",
+        challenge(&refused)
+    );
+    // So is an unbound browser session.
+    let browser = app
+        .send(
+            Method::POST,
+            "/v1/login/password",
+            &[("origin", ORIGIN), ("x-konklav-client", "web")],
+            Some(json!({"identifier": EMAIL, "password": PASSWORD, "client": "browser"})),
+        )
+        .await;
+    assert_eq!(browser.status, StatusCode::OK, "{:?}", browser.body);
+    let access = browser.body["access_token"].as_str().unwrap();
+    let refused = app.with_bearer(Method::GET, "/v1/subjects", access).await;
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+    // Subject-facing endpoints still take it.
+    let own = app
+        .with_bearer(Method::GET, "/v1/capabilities", access)
+        .await;
+    assert_eq!(own.status, StatusCode::OK, "{:?}", own.body);
+
+    // The bootstrap token still works.
+    let listed = app.control(Method::GET, "/v1/subjects", None).await;
+    assert_eq!(listed.status, StatusCode::OK, "{:?}", listed.body);
+}
+
+// r[verify session.dpop.control-required]
+#[tokio::test(flavor = "multi_thread")]
+async fn unbound_sessions_reach_the_control_plane_by_default() {
+    let app = TestApp::new().await;
+    make_operator(&app).await;
+    let unbound = app.login(EMAIL, PASSWORD).await;
+    let access = unbound.body["access_token"].as_str().unwrap();
+    let listed = app.with_bearer(Method::GET, "/v1/subjects", access).await;
+    assert_eq!(listed.status, StatusCode::OK, "{:?}", listed.body);
+}

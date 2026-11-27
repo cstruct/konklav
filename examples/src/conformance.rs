@@ -244,7 +244,7 @@ async fn answer(
     let mut call = page
         .http
         .post(format!(
-            "{}/v1/oauth2/login-requests/{request}/{verb}",
+            "{}/v1/login-requests/{request}/{verb}",
             page.konklav
         ))
         .header(header::ORIGIN, &page.origin)
@@ -273,7 +273,7 @@ async fn show(
     let view: Value = match page
         .http
         .get(format!(
-            "{}/v1/oauth2/login-requests/{}",
+            "{}/v1/login-requests/{}",
             page.konklav, query.login_request
         ))
         .send()
@@ -403,10 +403,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(shown.status(), StatusCode::OK);
-        assert_eq!(
-            *asked.lock().unwrap(),
-            [format!("/v1/oauth2/login-requests/{id}")]
-        );
+        assert_eq!(*asked.lock().unwrap(), [format!("/v1/login-requests/{id}")]);
 
         // Another endpoint's path, and markup for the page.
         for bad in ["..%2F..%2Flogin%2Fpassword%3F", "%22%3E%3Cscript%3E"] {

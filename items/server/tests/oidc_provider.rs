@@ -181,7 +181,7 @@ async fn authorize(world: &World, extra: &[(&str, &str)]) -> String {
     let viewed = app
         .send(
             Method::GET,
-            &format!("/v1/oauth2/login-requests/{request}"),
+            &format!("/v1/login-requests/{request}"),
             &[],
             None,
         )
@@ -190,13 +190,14 @@ async fn authorize(world: &World, extra: &[(&str, &str)]) -> String {
         .iter()
         .find(|(k, _)| *k == "client_id")
         .map_or("console", |(_, v)| *v);
+    assert_eq!(viewed.body["kind"], "oidc");
     assert_eq!(viewed.body["client_id"], client);
 
     let auth = format!("Bearer {}", world.login_token);
     let accepted = app
         .send(
             Method::POST,
-            &format!("/v1/oauth2/login-requests/{request}/accept"),
+            &format!("/v1/login-requests/{request}/accept"),
             &[
                 ("authorization", &auth),
                 ("origin", ORIGIN),
@@ -264,6 +265,7 @@ async fn id_token_claims(app: &TestApp, token: &str) -> Value {
 
 // r[verify oidc.provider.code-flow]
 // r[verify oidc.provider.login-handoff]
+// r[verify session.login-requests.paths]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_request_started_in_one_browser_cannot_be_accepted_in_another() {
     let world = world().await;

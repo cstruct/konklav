@@ -1,7 +1,8 @@
 <script lang="ts">
-  // The login page. Konklav's authorization endpoint sends the browser here
-  // with `?login_request=<id>` when an OIDC client starts a sign-in; opened
-  // without one, it shows who is signed in.
+  // The login page. Konklav sends the browser here with
+  // `?login_request=<id>` when an OIDC client or a native app on this
+  // computer starts a sign-in; opened without one, it shows who is signed
+  // in.
   //
   // Nothing secret goes to web storage: the refresh token is Konklav's
   // HttpOnly cookie, the access token lives in `konklav` only, and the DPoP
@@ -10,6 +11,7 @@
   import { onMount } from "svelte";
 
   import Account from "./Account.svelte";
+  import Confirm from "./Confirm.svelte";
   import Mfa from "./Mfa.svelte";
   import RequestAccess from "./RequestAccess.svelte";
   import SignIn from "./SignIn.svelte";
@@ -21,6 +23,7 @@
     afterNoAccess,
     afterRefusedAccept,
     federationError,
+    needsConfirmation,
     shouldRestore,
     signInError,
     start,
@@ -33,6 +36,7 @@
     recallAfterReturn,
     rememberForReturn,
     requestId,
+    requester,
     type LoginRequest,
   } from "./lib/login-request";
   import { DEFAULTS, load, type IdentityProvider, type Settings } from "./lib/settings";
@@ -44,6 +48,7 @@
     | { kind: "sign-in"; message?: string }
     | { kind: "mfa" }
     | { kind: "account" }
+    | { kind: "confirm" }
     | { kind: "no-access"; tenant: string; access: AccessRequest | null; message?: string }
     | { kind: "leaving" };
 
@@ -55,6 +60,8 @@
   let busy = $state(false);
   let request: LoginRequest | null = $state(null);
   let id: string | null = null;
+  /** Whether the person agreed to a native app's request. */
+  let confirmed = false;
 
   const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -73,6 +80,10 @@
   async function accept() {
     if (!id || !request) {
       view = { kind: "account" };
+      return;
+    }
+    if (needsConfirmation(request, confirmed)) {
+      view = { kind: "confirm" };
       return;
     }
     const tenant = tenantToEnter(request, claimsOf(konklav.accessToken ?? "").tid);
@@ -231,6 +242,16 @@
 
   const cancel = () => attempt(() => reject("access_denied"));
 
+  async function allow() {
+    confirmed = true;
+    busy = true;
+    try {
+      await follow({ kind: "accept" });
+    } finally {
+      busy = false;
+    }
+  }
+
   async function signOut() {
     busy = true;
     try {
@@ -324,7 +345,7 @@
     {:else if view.kind === "no-access"}
       <RequestAccess
         title={settings.title}
-        client={request?.client_id ?? ""}
+        client={request ? requester(request) : ""}
         access={view.access}
         {busy}
         message={view.message}
@@ -334,6 +355,8 @@
         onSwitch={signOut}
         onCancel={cancel}
       />
+    {:else if view.kind === "confirm"}
+      <Confirm title={settings.title} app={request?.app ?? ""} {busy} onAllow={allow} onCancel={cancel} />
     {:else if view.kind === "account"}
       <Account title={settings.title} token={konklav.accessToken ?? ""} {busy} onSignOut={signOut} />
     {/if}

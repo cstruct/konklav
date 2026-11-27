@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { accessRequestPath, afterNoAccess, afterRefusedAccept, shouldRestore, start, tenantToEnter } from "./flow";
-import { requestId, type LoginRequest } from "./login-request";
+import {
+  accessRequestPath,
+  afterNoAccess,
+  afterRefusedAccept,
+  needsConfirmation,
+  shouldRestore,
+  start,
+  tenantToEnter,
+} from "./flow";
+import { path, requestId, requester, type LoginRequest } from "./login-request";
 import { apiBase } from "./api";
 import { decode, encode } from "./base64url";
 
@@ -111,5 +119,35 @@ describe("base64url", () => {
     const bytes = new Uint8Array([0xfb, 0xff, 0x00, 0x10]);
     expect(encode(bytes)).toBe("-_8AEA");
     expect([...decode("-_8AEA")]).toEqual([...bytes]);
+  });
+});
+
+// r[verify session.native-handoff.confirm]
+describe("native requests", () => {
+  const native: LoginRequest = { kind: "native", app: "konklav-cli" };
+  it("ask before accepting, even when signed in", () => {
+    expect(start(native, false, true)).toEqual({ kind: "accept" });
+    expect(needsConfirmation(native, false)).toBe(true);
+    expect(needsConfirmation(native, true)).toBe(false);
+  });
+  it("don't ask for OIDC requests", () => {
+    expect(needsConfirmation(request(), false)).toBe(false);
+    expect(needsConfirmation({ kind: "oidc", client_id: "kubernetes" }, false)).toBe(false);
+  });
+  it("name the app", () => {
+    expect(requester(native)).toBe("konklav-cli");
+    expect(requester(request())).toBe("kubernetes");
+  });
+  it("have no tenant to enter", () => {
+    expect(tenantToEnter(native, undefined)).toBeNull();
+  });
+});
+
+// r[verify session.login-requests.paths]
+describe("path", () => {
+  it("uses the neutral login-request paths", () => {
+    expect(path("0193a2f1-7c1e-7000-8000-000000000000")).toBe(
+      "/login-requests/0193a2f1-7c1e-7000-8000-000000000000",
+    );
   });
 });

@@ -210,7 +210,7 @@ async fn tool_signs_in(down: &Server, access: &str) -> Result<Value> {
     step("the app, signed in through the upstream, accepts the request");
     let accepted: Value = http
         .post(format!(
-            "{}/v1/oauth2/login-requests/{request}/accept",
+            "{}/v1/login-requests/{request}/accept",
             down.subject
         ))
         .bearer_auth(access)
@@ -292,10 +292,7 @@ async fn sign_in(up: &Server, down: &Server) -> Result<String> {
     })?;
     let token = login["access_token"].as_str().unwrap_or_default();
     let accepted: Value = http
-        .post(format!(
-            "{}/v1/oauth2/login-requests/{request}/accept",
-            up.subject
-        ))
+        .post(format!("{}/v1/login-requests/{request}/accept", up.subject))
         .bearer_auth(token)
         .header(header::ORIGIN, LOGIN_PAGE)
         .header("x-konklav-client", "web")

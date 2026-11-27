@@ -68,6 +68,11 @@ login_page {
     title "Konklav (dev)"
 }
 
+// `konklav login` signs in through the login page.
+native_handoff {
+    enabled true
+}
+
 // Anyone signed in may ask to join any tenant from the login page; decide
 // at /v1/access-requests on the control plane.
 access_requests {

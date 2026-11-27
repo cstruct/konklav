@@ -157,6 +157,9 @@ fn check_operator(
 ) -> GuardFuture {
     Box::pin(async move {
         let mut request = request;
+        if let Some(refused) = refuse_unbound(&state, request.headers()) {
+            return refused;
+        }
         let db = Db::new(&state, request.extensions());
         match authorize_operator(&state, &db, capability, request.headers()).await {
             Ok(operator) => {
@@ -166,6 +169,47 @@ fn check_operator(
             Err(error) => error.into_response(),
         }
     })
+}
+
+/// Whether `presented` is the bootstrap token, while it is accepted.
+// r[impl platform.config.bootstrap-token]
+fn is_bootstrap(state: &AppState, presented: &str) -> bool {
+    state.auth.control_token.as_ref().is_some_and(|bootstrap| {
+        bool::from(presented.as_bytes().ct_eq(bootstrap.as_bytes()))
+            && state
+                .auth
+                .control_token_expires_at
+                .is_none_or(|expires| Utc::now() < expires)
+    })
+}
+
+/// With `control.require_dpop`, the refusal of a request whose access
+/// token isn't sender-constrained: 401 with a `DPoP` challenge. Refusing
+/// needs no verified token; one that passes here is still verified, with
+/// its proof, by [`authorize_operator`].
+// r[impl session.dpop.control-required]
+fn refuse_unbound(state: &AppState, headers: &axum::http::HeaderMap) -> Option<Response> {
+    if !state.auth.control_require_dpop {
+        return None;
+    }
+    let presented = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))?;
+    let bound = konklav_token::decode_claims_unverified(presented)
+        .is_some_and(|claims| claims.cnf.is_some());
+    if bound || is_bootstrap(state, presented) {
+        return None;
+    }
+    let mut response = ApiError::new(
+        ErrorCode::Unauthenticated,
+        "the control plane takes only DPoP-bound access tokens",
+    )
+    .into_response();
+    response
+        .headers_mut()
+        .insert(header::WWW_AUTHENTICATE, crate::dpop::challenge());
+    Some(response)
 }
 
 async fn authorize_operator(
@@ -184,14 +228,7 @@ async fn authorize_operator(
                 "missing control-plane credentials",
             )
         })?;
-    // r[impl platform.config.bootstrap-token]
-    if let Some(bootstrap) = &state.auth.control_token
-        && bool::from(presented.as_bytes().ct_eq(bootstrap.as_bytes()))
-        && state
-            .auth
-            .control_token_expires_at
-            .is_none_or(|expires| Utc::now() < expires)
-    {
+    if is_bootstrap(state, presented) {
         tracing::info!(?capability, "control plane used with the bootstrap token");
         return Ok(Operator {
             all: true,

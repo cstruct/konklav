@@ -288,17 +288,19 @@ async fn export(database: DatabaseConfig, mfa: MfaConfig, out: &Path) -> ExitCod
     }
 }
 
-async fn serve(
-    listen: ListenConfig,
-    database: DatabaseConfig,
-    tokens: TokensConfig,
-    mut browser: BrowserConfig,
-    control: ControlConfig,
-    feed: FeedConfig,
-    mfa: MfaConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    config::check_deployment(&tokens, &browser, &control, &mfa)?;
-    let login_page = LoginPage::configure(&tokens.tokens, &mut browser)?;
+/// The login page, the OpenID provider and the native login hand-off, which
+/// all send people to a login URL: the login page's unless one is set.
+type LoginApplications = (
+    Option<LoginPage>,
+    Option<konklav_server::oidc::OpenIdProvider>,
+    Option<konklav_server::native_handoff::Settings>,
+);
+
+fn login_applications(
+    tokens: &TokensConfig,
+    browser: &mut BrowserConfig,
+) -> Result<LoginApplications, String> {
+    let login_page = LoginPage::configure(&tokens.tokens, browser)?;
     let login_page_url = login_page
         .as_ref()
         .map(|_| LoginPage::url(&tokens.tokens.issuer));
@@ -313,6 +315,29 @@ async fn serve(
             )
         })
         .transpose()?;
+    let native_handoff = konklav_server::native_handoff::Settings::configure(
+        &tokens.tokens,
+        browser,
+        login_page_url.as_deref(),
+        tokens
+            .oidc_provider
+            .as_ref()
+            .and_then(|provider| provider.login_url.as_deref()),
+    )?;
+    Ok((login_page, oidc, native_handoff))
+}
+
+async fn serve(
+    listen: ListenConfig,
+    database: DatabaseConfig,
+    tokens: TokensConfig,
+    mut browser: BrowserConfig,
+    control: ControlConfig,
+    feed: FeedConfig,
+    mfa: MfaConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    config::check_deployment(&tokens, &browser, &control, &mfa)?;
+    let (login_page, oidc, native_handoff) = login_applications(&tokens, &mut browser)?;
     let pacing = konklav_server::pacing::Pacing {
         floor: tokens.pacing_floor(),
         jitter: tokens.pacing_jitter(),
@@ -363,6 +388,7 @@ async fn serve(
         .clone_from(&listen.listen.trusted_proxies);
     auth.oidc = oidc;
     auth.login_page = login_page;
+    auth.native_handoff = native_handoff;
     auth.identity_providers = konklav_server::federation::Providers::from_config(&browser)?;
     auth.passkeys = browser
         .passkeys
