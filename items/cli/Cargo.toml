@@ -6,7 +6,7 @@ license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
-publish.workspace = true
+publish = true
 
 [[bin]]
 name = "konklav"
@@ -21,7 +21,7 @@ facet.workspace = true
 facet-styx.workspace = true
 fd-lock = "4.0.4"
 getrandom.workspace = true
-keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust", "vendored"] }
 konklav-api.workspace = true
 konklav-core.workspace = true
 konklav-token = { workspace = true, features = ["sign"] }

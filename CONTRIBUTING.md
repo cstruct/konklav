@@ -154,8 +154,9 @@ The release workflow then:
 1. Checks the tag against the four manifests, the crates' requirements on
    each other and the FastAPI integration's on `konklav-relying`, and runs
    CI again.
-2. Builds `konklav-server` for x86_64 and aarch64 Linux and aarch64 macOS,
-   and the console as a static bundle.
+2. Builds `konklav-server` and the operator CLI `konklav` for x86_64 and
+   aarch64 Linux and aarch64 macOS, `konklav` also for x86_64 Windows, and
+   the console as a static bundle.
 3. Builds the Python wheels (abi3, for Python 3.12 and later) for x86_64 and
    aarch64 Linux (manylinux_2_28 and musllinux_1_2) and aarch64 macOS, and
    an sdist, and runs the binding's tests against each, the musllinux ones
@@ -173,11 +174,14 @@ The release workflow then:
 6. Publishes the crates with `publish = true` to crates.io, also through
    trusted publishing, from the `crates-io` environment. These are
    `konklav-core`, `konklav-token`, `konklav-authz`, `konklav-relying`,
-   `konklav-relying-client` and `konklav-axum`; every other crate inherits
+   `konklav-relying-client`, `konklav-axum`, `konklav-api` and
+   `konklav-cli` (so `cargo install konklav-cli` installs `konklav`);
+   every other crate inherits
    `publish = false`.
    Crates already on crates.io at that version are skipped, so a failed
    release can be rerun.
-7. Publishes a GitHub release with the archives, the Python packages and
+7. Publishes a GitHub release with the archives (`konklav-server-…` and
+   `konklav-…` per target, a `.zip` for Windows), the Python packages and
    `SHA256SUMS`.
 
 A version with a pre-release part, such as `0.2.0-rc.1`, makes a

@@ -33,12 +33,12 @@ publish = false
 [workspace.dependencies]
 # The crates published to crates.io require each other at exactly the release
 # version, which `mise run release:bump` sets along with the workspace version.
-konklav-api = { path = "items/api" }
+konklav-api = { version = "=1.10.1", path = "items/api" }
 konklav-authn = { path = "items/authn" }
 konklav-authz = { version = "=1.10.1", path = "items/authz" }
 konklav-axum = { version = "=1.10.1", path = "items/axum" }
 konklav-bootstrap = { path = "items/bootstrap" }
-konklav-cli = { path = "items/cli" }
+konklav-cli = { version = "=1.10.1", path = "items/cli" }
 konklav-console = { path = "items/console" }
 konklav-core = { version = "=1.10.1", path = "items/core", default-features = false }
 konklav-examples = { path = "examples" }
