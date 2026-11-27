@@ -6,6 +6,7 @@
 
 // r[impl item.cli.independent]
 pub mod browser;
+pub mod control;
 pub mod error;
 pub mod profile;
 pub mod session;

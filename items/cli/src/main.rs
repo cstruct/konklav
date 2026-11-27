@@ -1,7 +1,9 @@
 //! `konklav`, the operator CLI.
 
-use std::io::{BufRead as _, IsTerminal as _, Write as _};
+use std::io::{IsTerminal as _, Write as _};
 use std::process::ExitCode;
+
+mod commands;
 
 use clap::{Args, Parser, Subcommand};
 use konklav_cli::profile::{self, Config, CredentialStore, Profile};
@@ -35,6 +37,29 @@ enum Command {
     Whoami,
     /// Send a control-plane request, such as `konklav api GET /v1/tenants`.
     Api(ApiArgs),
+    /// List, show, create, suspend and activate tenants.
+    #[command(subcommand)]
+    Tenants(commands::Tenants),
+    /// List, show, create, disable and enable subjects.
+    #[command(subcommand)]
+    Subjects(commands::Subjects),
+    /// List, show, create and revoke invites.
+    #[command(subcommand)]
+    Invites(commands::Invites),
+    /// List, show, save and delete a tenant's roles.
+    #[command(subcommand)]
+    Roles(commands::Roles),
+    /// List, add and remove role assignments.
+    #[command(subcommand)]
+    Assignments(commands::Assignments),
+    /// List, show and revoke sessions.
+    #[command(subcommand)]
+    Sessions(commands::Sessions),
+    /// Explain why a subject may or may not do an action.
+    Explain(commands::Explain),
+    /// Apply batches of writes.
+    #[command(subcommand)]
+    Batch(commands::Batches),
 }
 
 #[derive(Args)]
@@ -127,6 +152,23 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Api(args) => {
             let mut session = Session::load(context(&dir, cli.profile.as_deref())?)?;
             api(&mut session, args).await
+        }
+        command => {
+            let mut session = Session::load(context(&dir, cli.profile.as_deref())?)?;
+            let json = cli.json;
+            match command {
+                Command::Tenants(c) => commands::tenants(&mut session, json, c).await,
+                Command::Subjects(c) => commands::subjects(&mut session, json, c).await,
+                Command::Invites(c) => commands::invites(&mut session, json, c).await,
+                Command::Roles(c) => commands::roles(&mut session, json, c).await,
+                Command::Assignments(c) => commands::assignments(&mut session, json, c).await,
+                Command::Sessions(c) => commands::sessions(&mut session, json, c).await,
+                Command::Explain(c) => commands::explain(&mut session, json, c).await,
+                Command::Batch(c) => commands::batch(&mut session, json, c).await,
+                Command::Login(_) | Command::Logout | Command::Whoami | Command::Api(_) => {
+                    unreachable!("handled above")
+                }
+            }
         }
     }
 }
@@ -383,19 +425,5 @@ async fn api(session: &mut Session, args: ApiArgs) -> Result<ExitCode> {
 }
 
 fn read_body(data: &str) -> Result<Value> {
-    let text = match data.strip_prefix('@') {
-        Some("-") => {
-            let mut text = String::new();
-            for line in std::io::stdin().lock().lines() {
-                text.push_str(&line.map_err(|e| Error::local(e.to_string()))?);
-                text.push('\n');
-            }
-            text
-        }
-        Some(path) => {
-            std::fs::read_to_string(path).map_err(|e| Error::usage(format!("{path}: {e}")))?
-        }
-        None => data.to_owned(),
-    };
-    serde_json::from_str(&text).map_err(|e| Error::usage(format!("the body isn't JSON: {e}")))
+    commands::read_json(data)
 }

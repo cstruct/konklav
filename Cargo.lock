@@ -3080,6 +3080,8 @@ dependencies = [
  "fd-lock",
  "getrandom 0.4.3",
  "keyring",
+ "konklav-api",
+ "konklav-core",
  "konklav-token",
  "reqwest 0.13.5",
  "rpassword",

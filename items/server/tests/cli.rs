@@ -458,3 +458,232 @@ async fn a_browser_login_says_when_the_server_does_not_offer_it() {
         refused.err()
     );
 }
+
+/// The typed commands' calls, one group after another, as an operator
+/// signed in with a bound session.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::too_many_lines)]
+async fn typed_commands_manage_the_control_plane() {
+    use konklav_api::{
+        AssignRole, Batch, BatchMethod, BatchOperation, CreateInvite, CreateSubject, CreateTenant,
+        InviteQuery, InviteState, PutRole, RevokeSessions, SessionFilter, SessionQuery,
+        SubjectKind, SubjectQuery, SubjectState, TenantQuery, TenantState,
+    };
+    use konklav_cli::control::Target;
+
+    let (app, base) = TestApp::serving(|_, _| {}).await;
+    let operator_id = operator(&app).await;
+    let catalog = app
+        .control(
+            Method::PUT,
+            "/v1/catalog",
+            Some(json!({"actions": [{"name": "docs:read"}]})),
+        )
+        .await;
+    assert!(catalog.status.is_success(), "{:?}", catalog.body);
+    let store = Arc::new(MemoryStore::default());
+    let mut session = password_login(&base, &store).await;
+
+    // Tenants.
+    let tenant = session
+        .create_tenant(&CreateTenant {
+            parent: Some("root".into()),
+            key: Some("acme".into()),
+            facts: json!({}),
+            templates: Vec::new(),
+            metadata: json!({}),
+        })
+        .await
+        .unwrap();
+    assert_eq!(session.tenant("acme").await.unwrap().id, tenant.id);
+    let page = session
+        .tenants(&TenantQuery {
+            parent: Some("root".into()),
+            ..TenantQuery::default()
+        })
+        .await
+        .unwrap();
+    assert!(page.tenants.iter().any(|t| t.id == tenant.id));
+    let suspended = session
+        .set_tenant_state("acme", TenantState::Suspended)
+        .await
+        .unwrap();
+    assert_eq!(suspended.state, TenantState::Suspended);
+    session
+        .set_tenant_state("acme", TenantState::Active)
+        .await
+        .unwrap();
+    let missing = session.tenant("no-such-tenant").await.unwrap_err();
+    assert!(
+        matches!(missing, Error::Api { status: 404, .. }),
+        "{missing:?}"
+    );
+    assert_eq!(missing.exit_code(), std::process::ExitCode::from(1));
+
+    // Subjects.
+    let subject = session
+        .create_subject(&CreateSubject {
+            kind: SubjectKind::Service,
+            metadata: json!({}),
+        })
+        .await
+        .unwrap();
+    let id = subject.id.to_string();
+    assert_eq!(session.subject(&id).await.unwrap().subject.id, subject.id);
+    let services = session
+        .subjects(&SubjectQuery {
+            kind: Some(SubjectKind::Service),
+            ..SubjectQuery::default()
+        })
+        .await
+        .unwrap();
+    assert!(services.subjects.iter().any(|s| s.id == subject.id));
+    let found = session
+        .subjects(&SubjectQuery {
+            identifier: Some(EMAIL.into()),
+            ..SubjectQuery::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(found.subjects[0].id.to_string(), operator_id);
+    let disabled = session.set_subject_enabled(&id, false).await.unwrap();
+    assert_eq!(disabled.state, SubjectState::Disabled);
+    session.set_subject_enabled(&id, true).await.unwrap();
+
+    // Roles and assignments.
+    let role: PutRole = serde_json::from_value(json!({
+        "policies": [{"action": "docs:read", "effect": "allow"}]
+    }))
+    .unwrap();
+    session.put_role("root", "reader", &role).await.unwrap();
+    assert!(
+        session
+            .roles("root")
+            .await
+            .unwrap()
+            .iter()
+            .any(|r| r.key == "reader")
+    );
+    assert_eq!(
+        session.role("root", "reader").await.unwrap().policies.len(),
+        1
+    );
+    let assigned = session
+        .assign(
+            &Target::Subject(id.clone()),
+            &AssignRole {
+                id: None,
+                role: "reader".into(),
+                scope: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        session
+            .global_assignments(&id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|a| a.id == assigned.id)
+    );
+    let explained = session.explain(&id, "docs:read", None).await.unwrap();
+    assert!(!explained.granted_at.is_empty(), "{explained:?}");
+    session.unassign(&assigned.id.to_string()).await.unwrap();
+    let explained = session.explain(&id, "docs:read", None).await.unwrap();
+    assert!(explained.granted_at.is_empty(), "{explained:?}");
+    assert!(session.delete_role("root", "reader").await.unwrap().deleted);
+
+    // Invites.
+    let created = session
+        .create_invite(&CreateInvite {
+            id: None,
+            email: None,
+            tenant: Some("acme".into()),
+            roles: Vec::new(),
+            facts: json!({}),
+            membership: None,
+            expires_in_hours: 1,
+            metadata: json!({}),
+            public_metadata: json!({}),
+            sign_up: false,
+        })
+        .await
+        .unwrap();
+    assert!(created.token.is_some(), "a link invite has a token");
+    let invite = created.invite_id.to_string();
+    assert_eq!(
+        session.invite(&invite).await.unwrap().state,
+        InviteState::Pending
+    );
+    let listed = session
+        .invites(&InviteQuery {
+            tenant: Some("acme".into()),
+            ..InviteQuery::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(listed.invites.len(), 1);
+    let revoked = session.revoke_invite(&invite).await.unwrap();
+    assert_eq!(revoked.state, InviteState::Revoked);
+
+    // Sessions: the operator's other session goes, this one stays.
+    let other = app.login(EMAIL, PASSWORD).await;
+    let other_id = other.body["session_id"].as_str().unwrap().to_owned();
+    let active = session
+        .sessions(&SessionQuery {
+            subject: Some(operator_id.parse().unwrap()),
+            active: true,
+            ..SessionQuery::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(active.sessions.len(), 2);
+    assert!(
+        session
+            .konklav_session(session.id().to_owned().as_str())
+            .await
+            .unwrap()
+            .dpop_jkt
+            .is_some()
+    );
+    let revoked = session
+        .revoke_sessions(&RevokeSessions {
+            filter: SessionFilter {
+                subject: Some(operator_id.parse().unwrap()),
+                ..SessionFilter::default()
+            },
+            keep: Some(session.id().parse().unwrap()),
+            reason: Some("test".into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        revoked
+            .revoked
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        [other_id]
+    );
+
+    // Batches: the same key applies once.
+    let batch = Batch {
+        operations: vec![BatchOperation {
+            method: BatchMethod::Put,
+            path: "/tenants/root/roles/batched".into(),
+            body: Some(json!({})),
+            if_match: None,
+        }],
+        idempotency_key: Some("cli-test-batch".into()),
+        idempotency_seconds: None,
+    };
+    let first = session.apply_batch(&batch).await.unwrap();
+    assert_eq!(first.results[0].status, 200, "{first:?}");
+    let again = session.apply_batch(&batch).await.unwrap();
+    assert_eq!(again, first);
+    assert_eq!(
+        session.role("root", "batched").await.unwrap().key,
+        "batched"
+    );
+}
