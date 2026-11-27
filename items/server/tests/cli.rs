@@ -150,10 +150,9 @@ async fn logout_revokes_the_session_and_forgets_it() {
     assert!(store.get("test").unwrap().is_none());
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_password_login_completes_mfa() {
-    let (app, base) = TestApp::serving(|_, _| {}).await;
-    operator(&app).await;
+/// Gives `EMAIL` an active TOTP factor and makes its password need it.
+/// Returns the code for a step from now; each code works once.
+async fn require_totp(app: &TestApp) -> impl Fn(i64) -> String + use<> {
     let token = app.login(EMAIL, PASSWORD).await.body["access_token"]
         .as_str()
         .unwrap()
@@ -169,8 +168,7 @@ async fn a_password_login_completes_mfa() {
         .await;
     let secret = enrolled.body["secret"].as_str().unwrap().to_owned();
     let factor = enrolled.body["factor_id"].as_str().unwrap().to_owned();
-    // Each code works once, so the login uses the next step's.
-    let code = |offset: i64| {
+    let code = move |offset: i64| {
         let decoded = base32_decode(&secret);
         TotpSecret::from_bytes(decoded).code_at_step(chrono::Utc::now().timestamp() / 30 + offset)
     };
@@ -183,13 +181,19 @@ async fn a_password_login_completes_mfa() {
         )
         .await;
     assert_eq!(activated.body["active"], true, "{:?}", activated.body);
-    {
-        let mut conn = app.db.pool().get().await.unwrap();
-        diesel::sql_query("update credential set mfa_factors_required = 1")
-            .execute(&mut conn)
-            .await
-            .unwrap();
-    }
+    let mut conn = app.db.pool().get().await.unwrap();
+    diesel::sql_query("update credential set mfa_factors_required = 1")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    code
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_password_login_completes_mfa() {
+    let (app, base) = TestApp::serving(|_, _| {}).await;
+    operator(&app).await;
+    let code = require_totp(&app).await;
 
     let store = Arc::new(MemoryStore::default());
     let login = session::login_password(context(&base, &store, None), EMAIL, PASSWORD)
@@ -291,4 +295,166 @@ fn base32_decode(input: &str) -> Vec<u8> {
         }
     }
     out
+}
+
+/// What the login page does for a native request: it reads the request,
+/// signs in with the password and a TOTP `code`, and accepts. Returns the
+/// page's access token and where it sends the browser.
+async fn play_login_page(
+    browser: &reqwest::Client,
+    base: &str,
+    request: &str,
+    code: &str,
+) -> (String, String) {
+    // The login page: it sees a native request, signs in, and accepts.
+    let page = |method: Method, path: &str| {
+        browser
+            .request(method, format!("{base}/v1{path}"))
+            .header("origin", common::ORIGIN)
+            .header("x-konklav-client", "web")
+    };
+    let viewed: serde_json::Value = page(Method::GET, &format!("/login-requests/{request}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(viewed["kind"], "native");
+    assert_eq!(viewed["app"], konklav_cli::browser::APP);
+    let partial: serde_json::Value = page(Method::POST, "/login/password")
+        .json(&json!({"identifier": EMAIL, "password": PASSWORD, "client": "browser"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(partial["token_kind"], "partial", "{partial}");
+    let partial = partial["access_token"].as_str().unwrap();
+    let factors: serde_json::Value = page(Method::GET, "/mfa")
+        .bearer_auth(partial)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let full: serde_json::Value = page(Method::POST, "/login/mfa")
+        .bearer_auth(partial)
+        .json(&json!({"factor_id": factors[0]["id"], "code": code}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let full = full["access_token"].as_str().unwrap();
+    // Here the page asks the person to confirm.
+    let accepted: serde_json::Value =
+        page(Method::POST, &format!("/login-requests/{request}/accept"))
+            .bearer_auth(full)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    (
+        full.to_owned(),
+        accepted["redirect_to"].as_str().unwrap().to_owned(),
+    )
+}
+
+/// The browser in a browser sign-in: it follows Konklav's redirects by
+/// hand, and plays the login application with the calls the login page
+/// makes, through password and MFA.
+// r[verify item.cli.loopback]
+// r[verify session.native-handoff.session]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_login_ends_in_a_bound_session() {
+    let (app, base) = TestApp::serving(|auth, base| {
+        auth.native_handoff = Some(konklav_server::native_handoff::Settings {
+            login_url: format!("{base}/login/"),
+            apps: vec![konklav_cli::browser::APP.into()],
+            session_lifetime: chrono::Duration::hours(12),
+        });
+    })
+    .await;
+    operator(&app).await;
+    let code = require_totp(&app).await;
+    let store = Arc::new(MemoryStore::default());
+    let login = konklav_cli::BrowserLogin::start(context(&base, &store, None))
+        .await
+        .unwrap();
+    let browser = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let started = browser.get(login.url()).send().await.unwrap();
+    assert_eq!(started.status(), StatusCode::SEE_OTHER);
+    let to_page = started.headers()["location"].to_str().unwrap().to_owned();
+    assert!(to_page.starts_with(&format!("{base}/login/?login_request=")));
+    let request = to_page.rsplit('=').next().unwrap().to_owned();
+    // The cookie is `Secure`, which a client won't send over plain HTTP by
+    // itself.
+    let cookie = started.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let finishing = tokio::spawn(login.finish(std::time::Duration::from_secs(30)));
+
+    let (full, resume) = play_login_page(&browser, &base, &request, &code(1)).await;
+    let resumed = browser
+        .get(&resume)
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resumed.status(), StatusCode::SEE_OTHER);
+    let to_cli = resumed.headers()["location"].to_str().unwrap().to_owned();
+    assert!(to_cli.starts_with("http://127.0.0.1:"), "{to_cli}");
+    let closed = browser.get(&to_cli).send().await.unwrap();
+    assert_eq!(closed.status(), StatusCode::OK);
+    assert!(closed.text().await.unwrap().contains("close this tab"));
+
+    let mut session = finishing.await.unwrap().unwrap();
+    assert!(bound(&stored(&store).access_token));
+    let tenants = session
+        .send(Method::GET, Surface::Control, "/v1/tenants", None)
+        .await
+        .unwrap();
+    assert_eq!(tenants.status, StatusCode::OK);
+    // The browser's sign-out leaves the CLI's session.
+    let signed_out = browser
+        .post(format!("{base}/v1/sign-out"))
+        .header("origin", common::ORIGIN)
+        .header("x-konklav-client", "web")
+        .bearer_auth(&full)
+        .send()
+        .await
+        .unwrap();
+    assert!(signed_out.status().is_success());
+    expire(&store);
+    let mut session = Session::load(context(&base, &store, None)).unwrap();
+    let tenants = session
+        .send(Method::GET, Surface::Control, "/v1/tenants", None)
+        .await
+        .unwrap();
+    assert_eq!(tenants.status, StatusCode::OK);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_login_says_when_the_server_does_not_offer_it() {
+    let (_app, base) = TestApp::serving(|_, _| {}).await;
+    let store = Arc::new(MemoryStore::default());
+    let refused = konklav_cli::BrowserLogin::start(context(&base, &store, None)).await;
+    assert!(
+        matches!(refused, Err(Error::Usage(_))),
+        "{:?}",
+        refused.err()
+    );
 }

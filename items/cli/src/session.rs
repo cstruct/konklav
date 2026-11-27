@@ -66,7 +66,7 @@ impl Context {
         })
     }
 
-    fn url(&self, surface: Surface, path: &str) -> Result<url::Url> {
+    pub(crate) fn url(&self, surface: Surface, path: &str) -> Result<url::Url> {
         let base = match surface {
             Surface::Subject => &self.profile.url,
             Surface::Control => self.profile.control_base(),
@@ -78,6 +78,10 @@ impl Context {
             .map_err(|e| Error::usage(format!("not a path: {path:?}: {e}")))
     }
 
+    pub(crate) fn http(&self) -> &reqwest::Client {
+        &self.http
+    }
+
     fn lock(&self) -> Result<Option<ProfileLock>> {
         self.lock_dir
             .as_deref()
@@ -87,14 +91,14 @@ impl Context {
 }
 
 /// A DPoP key, with the offset of Konklav's clock from ours.
-struct Dpop {
+pub(crate) struct Dpop {
     signer: ProofSigner,
     /// Seconds to add to the local clock, learned from a refused proof.
     skew: AtomicI64,
 }
 
 impl Dpop {
-    fn generate() -> Self {
+    pub(crate) fn generate() -> Self {
         loop {
             let mut secret = [0; 32];
             getrandom::fill(&mut secret).expect("the system has randomness");
@@ -121,6 +125,10 @@ impl Dpop {
             .ok_or_else(|| {
                 Error::NotSignedIn("the stored DPoP key is unreadable; run `konklav login`".into())
             })
+    }
+
+    pub(crate) fn thumbprint(&self) -> String {
+        self.signer.thumbprint()
     }
 
     fn encoded(&self) -> String {
@@ -384,7 +392,12 @@ async fn send(
 
 /// Sends a request that starts a session, retrying once if the proof was
 /// refused because the clocks disagree.
-async fn start(context: &Context, dpop: &Dpop, path: &str, body: Value) -> Result<Response> {
+pub(crate) async fn start(
+    context: &Context,
+    dpop: &Dpop,
+    path: &str,
+    body: Value,
+) -> Result<Response> {
     let url = context.url(Surface::Subject, path)?;
     let mut retried = false;
     loop {
@@ -403,6 +416,17 @@ async fn start(context: &Context, dpop: &Dpop, path: &str, body: Value) -> Resul
             continue;
         }
         return response.ok();
+    }
+}
+
+/// The session a session-starting response holds, stored. It must be a
+/// full one.
+pub(crate) fn from_response(context: Context, dpop: Dpop, response: &Response) -> Result<Session> {
+    let token = parse_token(response)?;
+    let refresh_token = token.refresh_token.clone();
+    match finish(context, dpop, token, refresh_token)? {
+        PasswordLogin::Done(session) => Ok(session),
+        PasswordLogin::Mfa(_) => Err(Error::local("Konklav answered with a partial session")),
     }
 }
 
@@ -445,12 +469,7 @@ pub async fn login_secret_key(context: Context, key_id: &str, secret: &str) -> R
         json!({"key_id": key_id, "secret": secret}),
     )
     .await?;
-    let token = parse_token(&response)?;
-    let refresh_token = token.refresh_token.clone();
-    match finish(context, dpop, token, refresh_token)? {
-        PasswordLogin::Done(session) => Ok(session),
-        PasswordLogin::Mfa(_) => Err(Error::local("a secret-key login never needs MFA")),
-    }
+    from_response(context, dpop, &response)
 }
 
 /// A full session, bound to its DPoP key.

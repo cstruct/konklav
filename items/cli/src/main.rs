@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand};
 use konklav_cli::profile::{self, Config, CredentialStore, Profile};
 use konklav_cli::session::{self, Factor};
-use konklav_cli::{Context, Error, PasswordLogin, Result, Session, Surface, store};
+use konklav_cli::{BrowserLogin, Context, Error, PasswordLogin, Result, Session, Surface, store};
 use reqwest::Method;
 use serde_json::{Value, json};
 
@@ -63,6 +63,10 @@ struct LoginArgs {
     /// comes from `KONKLAV_SECRET_KEY` or the first line of standard input.
     #[arg(long, value_name = "KEY_ID")]
     secret_key: Option<String>,
+    /// Print the sign-in URL instead of opening a browser, for a browser
+    /// elsewhere on this computer.
+    #[arg(long, conflicts_with_all = ["password", "secret_key"])]
+    no_browser: bool,
 }
 
 #[derive(Args)]
@@ -225,9 +229,7 @@ async fn login(
             }
         }
     } else {
-        return Err(Error::usage(
-            "browser login isn't available yet; use --password or --secret-key",
-        ));
+        browser_login(context, args.no_browser).await?
     };
     config.profiles.insert(name.clone(), profile);
     if config.default.is_none() {
@@ -237,6 +239,28 @@ async fn login(
     let who = whoami(&mut session).await?;
     print(json, &who, || format!("Signed in.\n{}", describe(&who)));
     Ok(ExitCode::SUCCESS)
+}
+
+/// Signs in through the browser: opens the sign-in page, unless told not
+/// to, and waits for it to come back to the loopback listener.
+async fn browser_login(context: Context, no_browser: bool) -> Result<Session> {
+    let login = BrowserLogin::start(context).await?;
+    if no_browser {
+        eprintln!(
+            "Open this URL in a browser on this computer to sign in:\n\n  {}\n",
+            login.url()
+        );
+    } else {
+        eprintln!(
+            "Opening the sign-in page in your browser. If it doesn't open, visit:\n\n  {}\n",
+            login.url()
+        );
+        if let Err(error) = webbrowser::open(login.url()) {
+            eprintln!("konklav: couldn't open a browser ({error}); open the URL yourself");
+        }
+    }
+    eprintln!("Waiting for the sign-in to finish…");
+    login.finish(konklav_cli::browser::TIMEOUT).await
 }
 
 fn choose_factor(factors: &[Factor]) -> Result<Factor> {
