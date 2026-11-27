@@ -35,7 +35,7 @@ Planned software items (see
 - [`py-control-plane`](py-control-plane.md) (pure Python, built by uv)
 - [`py-fastapi`](py-fastapi.md) (pure Python, built by uv)
 - [`axum`](axum.md)
-- `cli`
+- [`cli`](cli.md)
 - `test-support` (test-only)
 
 Specs are added as each item is built.

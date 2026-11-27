@@ -71,6 +71,7 @@ pub fn auth_context(signer: Signer) -> AuthContext {
         }),
         control_token: Some(CONTROL_TOKEN.into()),
         control_token_expires_at: None,
+        control_require_dpop: false,
         secrets: konklav_authn::SecretBox::new([("test", TOTP_KEY)]).unwrap(),
         // Tests that are about pacing set their own.
         pacing: konklav_server::pacing::Pacing::NONE,
@@ -78,6 +79,7 @@ pub fn auth_context(signer: Signer) -> AuthContext {
         oidc: None,
         passkeys: None,
         login_page: None,
+        native_handoff: None,
         access_requests: None,
         trusted_proxies: Vec::new(),
         batches: konklav_server::batch_api::BatchLimits::DEFAULT,

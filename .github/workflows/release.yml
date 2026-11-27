@@ -127,20 +127,28 @@ jobs:
       - name: Build the login page
         run: mise run login:build
 
-      # Fails rather than embed the placeholder page.
-      - name: Build release binary
+      # The server and the operator CLI. The server fails rather than embed
+      # the placeholder page.
+      - name: Build release binaries
         env:
           KONKLAV_REQUIRE_LOGIN_PAGE: "1"
-        run: cargo build --locked --release --bin konklav-server --target "$TARGET"
+        run: cargo build --locked --release --bin konklav-server --bin konklav --target "$TARGET"
 
-      - name: Smoke test release binary
-        run: '"target/$TARGET/release/konklav-server" --version'
+      - name: Smoke test release binaries
+        run: |
+          "target/$TARGET/release/konklav-server" --version
+          "target/$TARGET/release/konklav" --version
 
-      - name: Package binary
+      - name: Package binaries
         run: |
           archive="konklav-server-$TAG_NAME-$TARGET"
           mkdir -p "dist/$archive"
           cp "target/$TARGET/release/konklav-server" README.md LICENSE "dist/$archive/"
+          tar -czf "dist/$archive.tar.gz" -C dist "$archive"
+          archive="konklav-$TAG_NAME-$TARGET"
+          mkdir -p "dist/$archive"
+          cp "target/$TARGET/release/konklav" LICENSE "dist/$archive/"
+          cp items/cli/README.md "dist/$archive/README.md"
           tar -czf "dist/$archive.tar.gz" -C dist "$archive"
 
       - name: Upload release archive
@@ -148,6 +156,52 @@ jobs:
         with:
           name: binary-${{ matrix.target }}
           path: dist/*.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  # The operator CLI also runs on Windows, unlike the server.
+  cli-windows:
+    name: Build the CLI (x86_64-pc-windows-msvc)
+    needs: [validate, ci]
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      TARGET: x86_64-pc-windows-msvc
+      TAG_NAME: ${{ github.ref_name }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        with:
+          install_args: rust
+
+      - name: Build release binary
+        run: cargo build --locked --release --bin konklav --target "$TARGET"
+
+      - name: Smoke test release binary
+        run: '"target/$TARGET/release/konklav.exe" --version'
+
+      - name: Package binary
+        shell: pwsh
+        run: |
+          $archive = "konklav-$env:TAG_NAME-$env:TARGET"
+          New-Item -ItemType Directory -Path "dist/$archive" | Out-Null
+          Copy-Item "target/$env:TARGET/release/konklav.exe", LICENSE "dist/$archive/"
+          Copy-Item items/cli/README.md "dist/$archive/README.md"
+          Compress-Archive -Path "dist/$archive" -DestinationPath "dist/$archive.zip"
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: binary-x86_64-pc-windows-msvc
+          path: dist/*.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -203,7 +257,7 @@ jobs:
   # can never be uploaded again, even after deleting it.
   pypi:
     name: Publish to PyPI
-    needs: [validate, build, console, docker, python]
+    needs: [validate, build, cli-windows, console, docker, python]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Trusted publishing: PyPI accepts this workflow in this environment by
@@ -244,7 +298,7 @@ jobs:
   # waits for everything else to build.
   crates:
     name: Publish to crates.io
-    needs: [validate, build, console, docker, python]
+    needs: [validate, build, cli-windows, console, docker, python]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     # Named in each crate's trusted publisher on crates.io.
@@ -295,7 +349,7 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: [validate, build, console, docker, pypi, crates]
+    needs: [validate, build, cli-windows, console, docker, pypi, crates]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -317,7 +371,7 @@ jobs:
 
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum -- *.tar.gz *.whl > SHA256SUMS
+        run: sha256sum -- *.tar.gz *.zip *.whl > SHA256SUMS
 
       - name: Create release with binaries
         env:
@@ -331,6 +385,6 @@ jobs:
           if [[ "$PRERELEASE" == 'true' ]]; then
             flags+=(--prerelease)
           fi
-          notes="Docker image: \`$IMAGE:${TAG_NAME#v}\`, for linux/amd64 and linux/arm64. The Linux binaries need glibc 2.35 and OpenSSL 3 or later. Python packages: [\`konklav-relying\`](https://pypi.org/project/konklav-relying/), the Python control-plane client [\`konklav-control-plane\`](https://pypi.org/project/konklav-control-plane/) and the FastAPI integration [\`konklav-fastapi\`](https://pypi.org/project/konklav-fastapi/) on PyPI. Rust crates: [\`konklav-relying\`](https://crates.io/crates/konklav-relying), [\`konklav-relying-client\`](https://crates.io/crates/konklav-relying-client), the axum integration [\`konklav-axum\`](https://crates.io/crates/konklav-axum) and [\`konklav-authz\`](https://crates.io/crates/konklav-authz) on crates.io."
+          notes="Docker image: \`$IMAGE:${TAG_NAME#v}\`, for linux/amd64 and linux/arm64. The Linux binaries need glibc 2.35 and OpenSSL 3 or later. Python packages: [\`konklav-relying\`](https://pypi.org/project/konklav-relying/), the Python control-plane client [\`konklav-control-plane\`](https://pypi.org/project/konklav-control-plane/) and the FastAPI integration [\`konklav-fastapi\`](https://pypi.org/project/konklav-fastapi/) on PyPI. Operator CLI: the \`konklav-$TAG_NAME-*\` archives, or [\`cargo install konklav-cli\`](https://crates.io/crates/konklav-cli). Rust crates: [\`konklav-relying\`](https://crates.io/crates/konklav-relying), [\`konklav-relying-client\`](https://crates.io/crates/konklav-relying-client), the axum integration [\`konklav-axum\`](https://crates.io/crates/konklav-axum) and [\`konklav-authz\`](https://crates.io/crates/konklav-authz) on crates.io."
           gh release create "$TAG_NAME" dist/* \
             --verify-tag --generate-notes --notes "$notes" --title "$TAG_NAME" "${flags[@]}"

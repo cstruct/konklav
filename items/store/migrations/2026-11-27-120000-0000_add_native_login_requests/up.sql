@@ -1,0 +1,9 @@
+-- Native login hand-offs: a login request started by a native app on the
+-- subject's computer, and the code it ends in.
+alter table challenge drop constraint challenge_purpose_check;
+alter table challenge add constraint challenge_purpose_check check (purpose in (
+    'email_link', 'phone_code', 'mfa_email_code', 'invite', 'reset_password',
+    'oidc_login', 'oidc_link', 'oidc_authorize', 'oidc_code',
+    'passkey_register', 'passkey_login',
+    'native_authorize', 'native_code'
+));

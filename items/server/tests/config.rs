@@ -617,6 +617,7 @@ fn bootstrap_tokens_must_be_long_and_may_expire() {
         control: Some(Control {
             bootstrap_token: Some(token.to_owned()),
             bootstrap_token_expires_at: expires.map(str::to_owned),
+            require_dpop: false,
             batch_max_operations: 100,
             batch_key_seconds: 600,
             batch_key_max_seconds: 3600,

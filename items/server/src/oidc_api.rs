@@ -5,7 +5,7 @@
 //!    them as a challenge bound to the browser by a cookie, and redirects to
 //!    the login application with `login_request=<id>`.
 //! 2. The login application signs the subject in through the `/v1` API and
-//!    calls `POST /v1/oauth2/login-requests/{id}/accept` with that session's
+//!    calls `POST /v1/login-requests/{id}/accept` with that session's
 //!    access token. Konklav checks `max_age`, `acr_values` and any requested
 //!    tenant, and answers with the URL to send the browser to.
 //! 3. `GET /v1/oauth2/authorize/resume` checks the browser is the one that
@@ -45,12 +45,12 @@ use crate::{AppState, cors, dpop, issue};
 
 /// Binds a login request to the browser that started it. Lax: the browser
 /// comes back from the login application by navigation.
-const AUTHORIZE_COOKIE: Cookie = Cookie {
+pub(crate) const AUTHORIZE_COOKIE: Cookie = Cookie {
     name: "konklav_authorize",
     same_site: SameSite::Lax,
 };
-const LOGIN_REQUEST_MINUTES: i64 = 10;
-const CODE_SECONDS: i64 = 60;
+pub(crate) const LOGIN_REQUEST_MINUTES: i64 = 10;
+pub(crate) const CODE_SECONDS: i64 = 60;
 
 pub fn routes(state: &AppState) -> Router<AppState> {
     // Browser apps registered as public clients call these directly.
@@ -73,9 +73,6 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         )
         .route("/oauth2/authorize", get(authorize_get).post(authorize_post))
         .route("/oauth2/authorize/resume", get(resume))
-        .route("/oauth2/login-requests/{id}", get(login_request))
-        .route("/oauth2/login-requests/{id}/accept", post(accept))
-        .route("/oauth2/login-requests/{id}/reject", post(reject))
         .route("/oauth2/logout", get(logout))
         .route("/oauth2/peer/events", post(peer_events))
         .route("/oauth2/peer/subjects", post(peer_subject))
@@ -278,14 +275,14 @@ struct CodeDetails {
     tenant: Option<TenantId>,
 }
 
-fn redirect_to(url: &str, params: &[(&str, &str)]) -> Response {
+pub(crate) fn redirect_to(url: &str, params: &[(&str, &str)]) -> Response {
     let target =
         reqwest::Url::parse_with_params(url, params).map_or_else(|_| url.to_owned(), String::from);
     (StatusCode::SEE_OTHER, [(header::LOCATION, target)]).into_response()
 }
 
 /// An error sent back to the client's redirect URI (RFC 6749 4.1.2.1).
-fn client_error(
+pub(crate) fn client_error(
     details_redirect: &str,
     error: &str,
     state: Option<&str>,
@@ -299,11 +296,11 @@ fn client_error(
 }
 
 /// Secure unless browser clients are configured otherwise.
-fn secure_cookies(state: &AppState) -> bool {
+pub(crate) fn secure_cookies(state: &AppState) -> bool {
     state.auth.browser.as_ref().is_none_or(|b| b.secure_cookies)
 }
 
-fn cookie(state: &AppState, value: &str, max_age: i64) -> HeaderValue {
+pub(crate) fn cookie(state: &AppState, value: &str, max_age: i64) -> HeaderValue {
     AUTHORIZE_COOKIE.set(secure_cookies(state), value, max_age)
 }
 
@@ -339,7 +336,7 @@ async fn authorize_post(
 /// An error that can't go back to the client, as a page for the person
 /// whose browser is showing it.
 // r[impl oidc.provider.error-page]
-fn error_page(result: Result<Response, ApiError>) -> Response {
+pub(crate) fn error_page(result: Result<Response, ApiError>) -> Response {
     let error = match result {
         Ok(response) => return response,
         Err(error) => error,
@@ -537,14 +534,14 @@ fn claim_scope<'a>(state: &'a AppState, claim: &str) -> Option<(&'a str, bool)> 
 /// An S256 challenge: the base64url SHA-256 of a verifier, 43 characters
 /// (RFC 7636 4.2 allows 43 to 128 unreserved characters).
 /// A SHA-256 key thumbprint: 43 base64url characters.
-fn is_thumbprint(jkt: &str) -> bool {
+pub(crate) fn is_thumbprint(jkt: &str) -> bool {
     jkt.len() == 43
         && jkt
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-fn is_code_challenge(challenge: &str) -> bool {
+pub(crate) fn is_code_challenge(challenge: &str) -> bool {
     (43..=128).contains(&challenge.len())
         && challenge
             .bytes()
@@ -614,7 +611,10 @@ async fn pending_request(
 }
 
 #[derive(Serialize)]
-struct LoginRequestView {
+pub(crate) struct LoginRequestView {
+    /// `oidc`: an OIDC client started the request.
+    // r[impl session.login-requests.paths]
+    kind: &'static str,
     client_id: String,
     scopes: Vec<String>,
     tenant: Option<TenantId>,
@@ -627,9 +627,9 @@ struct LoginRequestView {
     login_hint: Option<String>,
 }
 
-/// `GET /v1/oauth2/login-requests/{id}`: what the login application needs
+/// `GET /v1/login-requests/{id}` for an OIDC request: what the login application needs
 /// to know to satisfy a request.
-async fn login_request(
+pub(crate) async fn login_request(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<LoginRequestView>, ApiError> {
@@ -637,6 +637,7 @@ async fn login_request(
     let mut conn = state.pool.get().await?;
     let (_, details) = pending_request(&mut conn, &id).await?;
     Ok(Json(LoginRequestView {
+        kind: "oidc",
         client_id: details.client_id,
         scopes: details.scopes,
         tenant: details.tenant,
@@ -648,14 +649,14 @@ async fn login_request(
 }
 
 #[derive(Serialize)]
-struct Accepted {
-    redirect_to: String,
+pub(crate) struct Accepted {
+    pub(crate) redirect_to: String,
 }
 
-/// `POST /v1/oauth2/login-requests/{id}/accept`, with the login
+/// `POST /v1/login-requests/{id}/accept` for an OIDC request, with the login
 /// application's access token.
 // r[impl oidc.provider.tenant]
-async fn accept(
+pub(crate) async fn accept(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
@@ -722,12 +723,12 @@ async fn accept(
 }
 
 #[derive(Deserialize)]
-struct Refusal {
-    error: String,
+pub(crate) struct Refusal {
+    pub(crate) error: String,
 }
 
 /// Errors a login application may refuse a request with.
-const REFUSALS: [&str; 5] = [
+pub(crate) const REFUSALS: [&str; 5] = [
     "login_required",
     "interaction_required",
     "consent_required",
@@ -735,12 +736,12 @@ const REFUSALS: [&str; 5] = [
     "access_denied",
 ];
 
-/// `POST /v1/oauth2/login-requests/{id}/reject`: the login application
+/// `POST /v1/login-requests/{id}/reject` for an OIDC request: the login application
 /// refuses the request, as it must for `prompt=none` when nobody is signed
 /// in. Like `accept`, it returns where to send the browser, which then
 /// carries the error to the client.
 // r[impl oidc.provider.login-refusal]
-async fn reject(
+pub(crate) async fn reject(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
@@ -776,7 +777,7 @@ async fn reject(
     }))
 }
 
-fn acceptance_hash(request: uuid::Uuid, secret: &str) -> String {
+pub(crate) fn acceptance_hash(request: uuid::Uuid, secret: &str) -> String {
     STANDARD.encode(hash_challenge_secret(
         &format!("{request}.acceptance"),
         secret,
@@ -784,9 +785,47 @@ fn acceptance_hash(request: uuid::Uuid, secret: &str) -> String {
 }
 
 #[derive(Deserialize)]
-struct ResumeQuery {
-    login_request: String,
-    acceptance: Option<String>,
+pub(crate) struct ResumeQuery {
+    pub(crate) login_request: String,
+    pub(crate) acceptance: Option<String>,
+}
+
+/// Checks that the browser resuming a login request both started it (its
+/// cookie) and received its answer (the acceptance secret), so a request
+/// started in one browser can't be completed with a session from another.
+// r[impl oidc.provider.login-handoff]
+// r[impl session.native-handoff.code]
+pub(crate) fn check_resuming_browser(
+    state: &AppState,
+    headers: &HeaderMap,
+    challenge: &Challenge,
+    acceptance_hash_stored: Option<&str>,
+    acceptance: Option<&str>,
+) -> Result<(), ApiError> {
+    let foreign = || ApiError::invalid_request("this browser didn't start the request");
+    let cookie_value = AUTHORIZE_COOKIE
+        .read(headers, secure_cookies(state))
+        .ok_or_else(foreign)?;
+    let (cookie_id, secret) = cookie_value.split_once('.').ok_or_else(foreign)?;
+    if cookie_id != challenge.id.to_string() {
+        return Err(foreign());
+    }
+    let matches: bool = hash_challenge_secret(&challenge.id.to_string(), secret)
+        .ct_eq(&challenge.secret_hash)
+        .into();
+    let accepted_here = match (acceptance_hash_stored, acceptance) {
+        (Some(hash), Some(acceptance)) => bool::from(
+            acceptance_hash(challenge.id, acceptance)
+                .as_bytes()
+                .ct_eq(hash.as_bytes()),
+        ),
+        _ => false,
+    };
+    if matches && accepted_here {
+        Ok(())
+    } else {
+        Err(foreign())
+    }
 }
 
 /// `GET /v1/oauth2/authorize/resume`
@@ -797,32 +836,15 @@ async fn resume(
 ) -> Result<Response, ApiError> {
     provider(&state)?;
     let foreign = || ApiError::invalid_request("this browser didn't start the request");
-    let cookie_value = AUTHORIZE_COOKIE
-        .read(&headers, secure_cookies(&state))
-        .ok_or_else(foreign)?;
-    let (cookie_id, secret) = cookie_value.split_once('.').ok_or_else(foreign)?;
-    if cookie_id != query.login_request {
-        return Err(foreign());
-    }
     let mut conn = state.pool.get().await?;
     let (challenge, details) = pending_request(&mut conn, &query.login_request).await?;
-    let matches: bool = hash_challenge_secret(&challenge.id.to_string(), secret)
-        .ct_eq(&challenge.secret_hash)
-        .into();
-    if !matches {
-        return Err(foreign());
-    }
-    let accepted_here = match (&details.acceptance_hash, &query.acceptance) {
-        (Some(hash), Some(acceptance)) => bool::from(
-            acceptance_hash(challenge.id, acceptance)
-                .as_bytes()
-                .ct_eq(hash.as_bytes()),
-        ),
-        _ => false,
-    };
-    if !accepted_here {
-        return Err(foreign());
-    }
+    check_resuming_browser(
+        &state,
+        &headers,
+        &challenge,
+        details.acceptance_hash.as_deref(),
+        query.acceptance.as_deref(),
+    )?;
     if let Some(error) = &details.refusal {
         if !challenges::consume(&mut conn, challenge.id, Utc::now()).await? {
             return Err(foreign());
@@ -1279,7 +1301,7 @@ async fn revoke_if_reused(conn: &mut Connection, id: uuid::Uuid) -> Result<(), A
 /// tenant is active, the membership too, and the session's flags don't
 /// confine it elsewhere.
 // r[impl oidc.provider.tenant]
-async fn accepted_membership(
+pub(crate) async fn accepted_membership(
     conn: &mut Connection,
     parent: &Session,
     tenant: TenantId,

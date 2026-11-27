@@ -30,6 +30,11 @@ pub enum Purpose {
     PasskeyRegister,
     /// Logging in, or stepping up, with a passkey.
     PasskeyLogin,
+    /// A native login hand-off, waiting for a login application to sign
+    /// the subject in.
+    NativeAuthorize,
+    /// The code a native login hand-off ends in.
+    NativeCode,
 }
 
 impl Purpose {
@@ -47,6 +52,8 @@ impl Purpose {
             Self::OidcCode => "oidc_code",
             Self::PasskeyRegister => "passkey_register",
             Self::PasskeyLogin => "passkey_login",
+            Self::NativeAuthorize => "native_authorize",
+            Self::NativeCode => "native_code",
         }
     }
 }

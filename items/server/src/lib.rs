@@ -32,6 +32,7 @@ pub mod login_methods;
 pub mod login_page;
 pub mod metadata;
 mod metadata_api;
+pub mod native_handoff;
 pub mod oidc;
 mod oidc_api;
 mod oidc_clients_api;
@@ -82,6 +83,9 @@ pub struct AuthContext {
     pub control_token: Option<String>,
     /// When the bootstrap token stops being accepted, if ever.
     pub control_token_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Whether the control plane refuses access tokens that aren't
+    /// sender-constrained.
+    pub control_require_dpop: bool,
     /// Encrypts TOTP seeds.
     pub secrets: konklav_authn::SecretBox,
     /// How long authentication endpoints take at least.
@@ -94,6 +98,8 @@ pub struct AuthContext {
     pub passkeys: Option<passkeys::Verifier>,
     /// The built-in login page, when configured.
     pub login_page: Option<login_page::LoginPage>,
+    /// The native login hand-off, when configured.
+    pub native_handoff: Option<native_handoff::Settings>,
     /// Which tenants take access requests; `None` when none do.
     pub access_requests: Option<access_requests::Settings>,
     /// Reverse proxies trusted to report client addresses.
@@ -250,12 +256,14 @@ impl AuthContext {
             }),
             control_token: control.bootstrap_token(),
             control_token_expires_at: None,
+            control_require_dpop: control.control.as_ref().is_some_and(|c| c.require_dpop),
             secrets: konklav_authn::SecretBox::new([]).expect("an empty key set is valid"),
             pacing: pacing::Pacing::DEFAULT,
             identity_providers: federation::Providers::default(),
             oidc: None,
             passkeys: None,
             login_page: None,
+            native_handoff: None,
             access_requests: None,
             trusted_proxies: Vec::new(),
             batches: control.batches(),

@@ -8,6 +8,8 @@
 // r[impl item.token.sans-io]
 mod claims;
 mod dpop;
+#[cfg(feature = "sign")]
+mod dpop_sign;
 mod jwk;
 mod jws;
 
@@ -16,6 +18,8 @@ pub use dpop::{
     MAX_PROOF_LEN, PROOF_ALGORITHMS, Proof, ProofError, ProofRequest, access_token_hash,
     ec_thumbprint, ed25519_thumbprint, normalize_htu, verify_proof,
 };
+#[cfg(feature = "sign")]
+pub use dpop_sign::{InvalidKey, ProofSigner};
 pub use jwk::{Jwk, JwkSet, kid_for};
 pub use jws::{
     Signer, VerifyError, VerifyOptions, decode_claims_unverified, decode_unverified_kid, verify,

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { LoginRequest } from "./lib/login-request";
+  import { requester, type LoginRequest } from "./lib/login-request";
   import type { IdentityProvider, Settings } from "./lib/settings";
 
   interface Props {
@@ -31,7 +31,7 @@
 
 <h1>{settings.title}</h1>
 {#if request}
-  <p class="muted">to continue to <strong>{request.client_id}</strong></p>
+  <p class="muted">to continue to <strong>{requester(request)}</strong></p>
 {:else}
   <p class="muted">Sign in to your account.</p>
 {/if}

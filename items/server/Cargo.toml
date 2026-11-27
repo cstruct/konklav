@@ -63,7 +63,9 @@ webauthn-rs.workspace = true
 webauthn-rs-proto.workspace = true
 
 [dev-dependencies]
+konklav-cli.workspace = true
 konklav-examples.workspace = true
+tempfile = "3"
 opentelemetry-proto.workspace = true
 prost.workspace = true
 openidconnect = "4.0.1"

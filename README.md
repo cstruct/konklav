@@ -116,6 +116,21 @@ Use `localhost` rather than `127.0.0.1`, because passkeys don't work on IP
 addresses. Sign in as the operator, or use the bootstrap token to create
 one there instead of with `curl`.
 
+### The operator CLI
+
+`konklav` does the same from a terminal, over DPoP-bound sessions. With the
+dev configuration it signs in through the login page:
+
+```sh
+cargo install konklav-cli
+konklav login --url http://127.0.0.1:8080 --control-url http://127.0.0.1:8082
+konklav tenants list
+```
+
+A deployment offers browser sign-in to the CLI with
+`native_handoff { enabled true }` next to `browser`; `konklav login
+--password` works without it. See [`items/cli`](items/cli/README.md).
+
 ### Single sign-on out of the box
 
 The server can serve a login page of its own, so Konklav works as an OpenID
@@ -156,6 +171,7 @@ see [`items/login`](items/login/README.md).
   [relying core](items/relying/README.md).
 - **Operating it:** the [server](items/server/README.md) (commands,
   configuration, every endpoint), the [console](items/console/README.md),
+  the [operator CLI](items/cli/README.md),
   and [bootstrap sets](items/bootstrap/README.md) for seeding and
   importing.
 - **Federation:** [OIDC and federation](docs/architecture/oidc-and-federation.md),

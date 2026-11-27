@@ -334,10 +334,77 @@ sender-constrained token whose DPoP proof was not verified for that
 request, whatever the listener's routing, so that leaving the proof check
 out of a route can't turn the token into a bearer token.
 
+r[session.dpop.control-required]
+A deployment MUST be able to require that the control-plane surface is used
+only with sender-constrained access tokens. It MUST then refuse any other
+access token with 401 and a `DPoP` challenge, whatever session it belongs
+to; the bootstrap token MUST still be accepted. It MUST be off unless
+configured.
+
 r[session.client-kind]
 Whether a login returns cookies or body tokens MUST be decided by the
 endpoint or an explicit request parameter, never by inspecting user-agent
 headers.
+
+## Native login hand-off
+
+A native app on the subject's computer, such as the operator CLI, signs in
+through a login application in the browser, and gets a session of Konklav's
+own through a loopback redirect.
+
+r[session.login-requests.paths]
+Login applications MUST read, accept and refuse login requests, whether an
+OIDC client or a native app started them, at `/v1/login-requests/{id}`,
+`/v1/login-requests/{id}/accept` and `/v1/login-requests/{id}/reject`. The
+paths under `/v1/oauth2/login-requests/` MUST keep working as aliases until
+the next major version. A login request MUST say which kind of requester
+started it.
+
+r[session.native-handoff.disabled]
+The native login hand-off MUST be off unless configured. Turning it on MUST
+require a login URL, and MUST NOT require the OpenID provider.
+
+r[session.native-handoff.redirect]
+A native login hand-off MUST name a redirect URI that is `http` on the
+loopback IP literal `127.0.0.1` or `[::1]`, with any port and the path
+`/callback`, and nothing else: not `localhost`, another host, a query, a
+fragment, or a private-use scheme. A request whose redirect URI fails these
+checks MUST be answered with a human-readable page, never a redirect.
+
+r[session.native-handoff.pkce]
+A native login hand-off MUST carry a PKCE `S256` code challenge, and the
+code exchange MUST present its verifier.
+
+r[session.native-handoff.dpop]
+A native login hand-off MUST name a DPoP key with `dpop_jkt`, and the code
+exchange MUST carry a DPoP proof made with that key for the exchange's own
+URL. Without both it MUST be refused.
+
+r[session.native-handoff.confirm]
+A login application MUST ask the subject to confirm, naming the requesting
+app, before it accepts a native login hand-off, even when the subject is
+already signed in.
+
+r[session.native-handoff.code]
+Konklav MUST issue a native login hand-off's code only to the browser that
+both started the request and received its acceptance, and send it only to
+the request's redirect URI with the request's `state` and `iss`. The code
+MUST be single-use, short-lived and bound to the redirect URI, the code
+challenge, the DPoP key and the accepting session. Presenting it again MUST
+fail and revoke the session it was exchanged for.
+
+r[session.native-handoff.session]
+Exchanging the code MUST start a new session bound to the request's DPoP
+key, with Konklav's own audience, the accepting session's subject,
+credential, authentication methods, `auth_time` and tenant, and its refresh
+token in the response body as for a native login. Ending the accepting
+session MUST NOT end it.
+
+r[session.native-handoff.lifetime]
+A native session's absolute lifetime MUST be the native hand-off's
+configured lifetime, 12 hours unless configured, and never longer than the
+instance's session lifetime or the cap of the identity provider the
+accepting session signed in through.
 
 ## Challenges and delivery
 

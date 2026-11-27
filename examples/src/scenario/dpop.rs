@@ -156,7 +156,7 @@ async fn sign_in(server: &Server, key: &DpopKey) -> Result<Value> {
     })?;
     let accepted: Value = http
         .post(format!(
-            "{}/v1/oauth2/login-requests/{request}/accept",
+            "{}/v1/login-requests/{request}/accept",
             server.subject
         ))
         .bearer_auth(login["access_token"].as_str().unwrap_or_default())

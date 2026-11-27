@@ -15,7 +15,7 @@ const loginRequest = new URLSearchParams(location.search).get("login_request");
 // `/`, `?`, `#` or `..` in it, a link here could aim those calls at another
 // endpoint.
 const loginRequestPath = /^[A-Za-z0-9_-]+$/.test(loginRequest ?? "")
-  ? `/v1/oauth2/login-requests/${loginRequest}`
+  ? `/v1/login-requests/${loginRequest}`
   : null;
 
 /// The Konklav session's access token, in memory only.

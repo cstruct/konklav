@@ -393,6 +393,30 @@ config_tree! {
             /// name. Defaults to `Sign in`.
             pub title: Option<String>,
         }>,
+        /// The native login hand-off: native apps on a subject's computer,
+        /// such as the operator CLI, sign in through the login application
+        /// in the browser and get a session of their own through a loopback
+        /// redirect. A section of its own, loaded with `browser`, which the
+        /// login application needs. Without it, the hand-off's endpoints
+        /// answer 404. Turn it on with `native_handoff { enabled true }`.
+        // r[impl session.native-handoff.disabled]
+        pub native_handoff: Option<pub struct NativeHandoff {
+            #[facet(default = true)]
+            pub enabled: bool,
+            /// Where hand-offs send people to sign in. Defaults to the
+            /// built-in login page when it is served, then to
+            /// `oidc_provider.login_url`; one of them is required.
+            pub login_url: Option<String>,
+            /// The names apps may give with `app`, which the login
+            /// application shows when it asks to confirm. Defaults to
+            /// `konklav-cli`.
+            #[facet(default)]
+            pub apps: Vec<String>,
+            /// A native session's absolute lifetime, at most
+            /// `tokens.session_lifetime_seconds`.
+            #[facet(default = 43_200)]
+            pub session_lifetime_seconds: u32,
+        }>,
         /// OpenID providers browser clients can sign in through. A section
         /// of its own, loaded with `browser` (contexts are limited in
         /// number).
@@ -502,6 +526,11 @@ config_tree! {
             /// At least [`MIN_BOOTSTRAP_TOKEN_CHARS`] characters.
             #[config(secret)]
             pub bootstrap_token: Option<String>,
+            /// Refuse access tokens that aren't sender-constrained (DPoP)
+            /// on the control plane. The bootstrap token is still accepted.
+            // r[impl session.dpop.control-required]
+            #[facet(default)]
+            pub require_dpop: bool,
             /// When the bootstrap token stops working, as RFC 3339, such as
             /// `2026-11-01T00:00:00Z`.
             pub bootstrap_token_expires_at: Option<String>,

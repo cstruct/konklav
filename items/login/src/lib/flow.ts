@@ -1,6 +1,6 @@
 // The page's decisions, kept apart from the DOM so they can be tested.
 
-import { prompts, type LoginRequest } from "./login-request";
+import { isNative, prompts, type LoginRequest } from "./login-request";
 
 /** What the page does once it knows the request and whether someone is signed in. */
 export type Start =
@@ -110,4 +110,14 @@ export class NoAccess extends Error {
 export function afterNoAccess(request: LoginRequest, accessRequests: boolean): Start | { kind: "ask" } {
   if (prompts(request).has("none")) return { kind: "reject", error: "login_required" };
   return accessRequests ? { kind: "ask" } : { kind: "sign-in" };
+}
+
+/**
+ * Whether to ask before accepting: always for a native app's request,
+ * even with a sign-in already there, since the app gets a session of its
+ * own that can act for the person.
+ */
+// r[impl session.native-handoff.confirm]
+export function needsConfirmation(request: LoginRequest | null, confirmed: boolean): boolean {
+  return isNative(request) && !confirmed;
 }
