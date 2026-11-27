@@ -2990,7 +2990,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-api"
-version = "1.10.1"
+version = "1.11.1"
 dependencies = [
  "chrono",
  "http",
@@ -3004,7 +3004,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-authn"
-version = "1.10.1"
+version = "1.11.1"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -3021,7 +3021,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-authz"
-version = "1.10.1"
+version = "1.11.1"
 dependencies = [
  "konklav-core",
  "konklav-token",
@@ -3032,7 +3032,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-axum"
-version = "1.10.1"
+version = "1.11.1"
 dependencies = [
  "axum",
  "chrono",
@@ -3058,7 +3058,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-bootstrap"
-version = "1.10.1"
+version = "1.11.1"
 dependencies = [
  "csv",
  "facet",
@@ -3071,7 +3071,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-cli"
-version = "1.10.1"
+version = "1.11.1"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -3100,7 +3100,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-console"
-version = "1.10.1"
+version = "1.11.1"
 dependencies = [
  "base64 0.23.1",
  "futures-util",
@@ -3118,7 +3118,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-core"
-version = "1.10.1"
+version = "1.11.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3128,7 +3128,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-examples"
-version = "1.10.1"
+version = "1.11.1"
 dependencies = [
  "aws-lc-rs",
  "axum",
@@ -3152,7 +3152,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-relying"
-version = "1.10.1"
+version = "1.11.1"
 dependencies = [
  "ed25519-dalek",
  "hmac 0.13.0",
@@ -3167,7 +3167,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-relying-client"
-version = "1.10.1"
+version = "1.11.1"
 dependencies = [
  "chrono",
  "ed25519-dalek",
@@ -3194,7 +3194,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-server"
-version = "1.10.1"
+version = "1.11.1"
 dependencies = [
  "aws-lc-rs",
  "axum",
@@ -3257,7 +3257,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-sso-example"
-version = "1.10.1"
+version = "1.11.1"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -3281,7 +3281,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-store"
-version = "1.10.1"
+version = "1.11.1"
 dependencies = [
  "chrono",
  "diesel",
@@ -3300,7 +3300,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-test-support"
-version = "1.10.1"
+version = "1.11.1"
 dependencies = [
  "diesel",
  "diesel-async",
@@ -3313,7 +3313,7 @@ dependencies = [
 
 [[package]]
 name = "konklav-token"
-version = "1.10.1"
+version = "1.11.1"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek",

@@ -22,7 +22,7 @@ resolver = "3"
 exclude = ["items/py"]
 
 [workspace.package]
-version = "1.10.1"
+version = "1.11.1"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -33,22 +33,22 @@ publish = false
 [workspace.dependencies]
 # The crates published to crates.io require each other at exactly the release
 # version, which `mise run release:bump` sets along with the workspace version.
-konklav-api = { version = "=1.10.1", path = "items/api" }
+konklav-api = { version = "=1.11.1", path = "items/api" }
 konklav-authn = { path = "items/authn" }
-konklav-authz = { version = "=1.10.1", path = "items/authz" }
-konklav-axum = { version = "=1.10.1", path = "items/axum" }
+konklav-authz = { version = "=1.11.1", path = "items/authz" }
+konklav-axum = { version = "=1.11.1", path = "items/axum" }
 konklav-bootstrap = { path = "items/bootstrap" }
-konklav-cli = { version = "=1.10.1", path = "items/cli" }
+konklav-cli = { version = "=1.11.1", path = "items/cli" }
 konklav-console = { path = "items/console" }
-konklav-core = { version = "=1.10.1", path = "items/core", default-features = false }
+konklav-core = { version = "=1.11.1", path = "items/core", default-features = false }
 konklav-examples = { path = "examples" }
 konklav-sso-example = { path = "examples/notes-app/rust" }
-konklav-relying = { version = "=1.10.1", path = "items/relying" }
-konklav-relying-client = { version = "=1.10.1", path = "items/relying-client" }
+konklav-relying = { version = "=1.11.1", path = "items/relying" }
+konklav-relying-client = { version = "=1.11.1", path = "items/relying-client" }
 konklav-server = { path = "items/server" }
 konklav-store = { path = "items/store" }
 konklav-test-support = { path = "items/test-support" }
-konklav-token = { version = "=1.10.1", path = "items/token" }
+konklav-token = { version = "=1.11.1", path = "items/token" }
 
 aes-gcm = "0.11.1"
 aws-lc-rs = "1.18.2"
