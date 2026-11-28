@@ -1,0 +1,9 @@
+// The first operator for the development quickstart: a human subject with
+// a plaintext password and the built-in konklav.admin global role. Apply it
+// with --allow-plaintext-passwords; never use it outside development.
+format 1.2
+subjects ({
+    email ada@example.com
+    password "correct horse"
+    global_roles (konklav.admin)
+})
