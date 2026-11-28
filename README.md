@@ -59,40 +59,35 @@ Run the commands from the repository root.
    - relying on `:8081`
    - control-plane on `:8082`
 
-4. Create the first operator, a human subject with a password credential
-   and the built-in `konklav.admin` global role. Until one exists, the
-   control plane accepts only the bootstrap token, `control.bootstrap_token`
-   in [`config/dev.secrets.styx`](config/dev.secrets.styx). In a second
-   terminal:
+4. Create the first operator, a human subject with a password and the
+   built-in `konklav.admin` global role, from the development bootstrap set
+   [`examples/bootstrap/dev-operator.styx`](examples/bootstrap/dev-operator.styx).
+   In a second terminal, with the same environment:
 
    ```sh
-   TOKEN=konklav-dev-control-token-0123456789
-   ID=$(uuidgen | tr A-Z a-z)
-   curl -X PUT localhost:8082/v1/subjects/$ID \
-     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-     -d '{"kind": "human"}'
-   curl -X POST localhost:8082/v1/subjects/$ID/credentials \
-     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-     -d '{"kind": "password", "identifier": "ada@example.com", "password": "correct horse"}'
-   curl -X POST localhost:8082/v1/subjects/$ID/global-assignments \
-     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-     -d '{"role": "konklav.admin"}'
+   konklav-server bootstrap --allow-plaintext-passwords examples/bootstrap/dev-operator.styx
    ```
 
-   A `409` means the identifier is already taken in your database. Pick
-   another one.
+   Applying it again skips what it already created. A conflict means
+   `ada@example.com` already has another password in your database: change
+   the email in the file.
 
-5. Sign in as the operator:
+5. Install the operator CLI and sign in as the operator. With the dev
+   configuration, `konklav login` opens the login page in the browser:
 
    ```sh
-   curl -X POST localhost:8080/v1/login/password \
-     -H 'Content-Type: application/json' \
-     -d '{"identifier": "ada@example.com", "password": "correct horse"}'
+   cargo install --locked --path items/cli
+   konklav login --url http://127.0.0.1:8080 --control-url http://127.0.0.1:8082
+   konklav whoami
+   konklav tenants list
    ```
 
-   The response holds an access token for the control plane. In a real
-   deployment, remove the bootstrap token from the secrets file once an
-   operator exists.
+   `konklav login --password` signs in at the terminal instead. Every
+   session the CLI starts is bound to a DPoP key it keeps in the operating
+   system's credential store. In a real deployment, remove the bootstrap
+   token, `control.bootstrap_token` in
+   [`config/dev.secrets.styx`](config/dev.secrets.styx), once an operator
+   exists.
 
 To start from a populated database instead, seed it with the example
 bootstrap set:
@@ -114,18 +109,15 @@ cd items/console && trunk serve
 
 Use `localhost` rather than `127.0.0.1`, because passkeys don't work on IP
 addresses. Sign in as the operator, or use the bootstrap token to create
-one there instead of with `curl`.
+one there instead of with a bootstrap set.
 
 ### The operator CLI
 
-`konklav` does the same from a terminal, over DPoP-bound sessions. With the
-dev configuration it signs in through the login page:
-
-```sh
-cargo install konklav-cli
-konklav login --url http://127.0.0.1:8080 --control-url http://127.0.0.1:8082
-konklav tenants list
-```
+`konklav` works on the control plane from a terminal or a script, over
+DPoP-bound sessions: tenants, subjects, invites, roles, assignments,
+sessions, decision explanations, batches, and any other call through
+`konklav api`. Install it from crates.io with `cargo install konklav-cli`,
+or take a binary from the GitHub release.
 
 A deployment offers browser sign-in to the CLI with
 `native_handoff { enabled true }` next to `browser`; `konklav login
